@@ -1,0 +1,770 @@
+import CoreKit
+import Foundation
+
+/// Reads one line of the entry field. English and Russian are understood at the same time and
+/// independently of the interface language.
+///
+/// Ambiguity is resolved by a fixed order of passes; every pass only sees the words no
+/// earlier pass has claimed, and a claimed word can never reappear in the note:
+///
+///  1. **kind** — a leading "+" (glued to a word too: "+кэшбэк") or a kind word; the
+///     longest phrase wins, so "возврат денег" is a reimbursement while a bare "возврат" is
+///     a refund; "аванс" is income unless «за» names a job it pays for ("аванс за ремонт");
+///     a kind word inside a longer known name ("Salary card") is left to the name;
+///  2. **goal** and **debt** — only behind their marker ("цель" / "goal", "долг" / "loan"),
+///     because a goal called "Отпуск" must not swallow the word in a note;
+///  3. **for whom** — "для <имя>" / "for <name>", then the standalone words
+///     ("друзьям", "family"…). A named person also sets `forWhom` to `.other`: the concrete
+///     relation lives in the database, not in the line. A possessive or an article behind
+///     a marker ("for my wife", "для моей мамы", "at the Ritz") goes with the marker;
+///  4. **place** behind "в" / "at" — unless a known event or payment method stands there
+///     ("в День рождения", "in cash"), which then takes the marker, or a time ("в среду",
+///     "at 9am"), which stays in the note with it —, then known places,
+///     events and payment methods anywhere in the line. Inside one pass the longest
+///     dictionary spelling wins; on equal length the order is place, event, payment method;
+///  5. **currency** — a word, a code or a symbol, including the forms glued to the number;
+///     a code that is also an English word ("try", "gel", "amd") only glued to the number or
+///     in capitals right after it;
+///  6. **date** — keywords, ISO, `12.09.2026` and `12.09`. A bare `12.09` is read as a date
+///     only when the line still holds another number that can be the amount, otherwise
+///     "кофе 12.09" would have no amount at all;
+///  7. **amount** — the longest run of neighbouring unclaimed words that evaluates as an
+///     expression; runs are tried left to right, so the first number of the line wins —
+///     unless it is a count or a day ("2 шт", "3 ночи", "к 8 марта") and another number is
+///     there. A "+" in front of it ("кэшбэк +250") is the sign of income when nothing else
+///     named the kind;
+///  8. **note** — everything left, joined by single spaces.
+public struct InputLineParser: Sendable {
+  private let vocabulary: ParserVocabulary
+  private let calendar: CalendarContext
+
+  public init(vocabulary: ParserVocabulary, calendar: CalendarContext) {
+    self.vocabulary = vocabulary
+    self.calendar = calendar
+  }
+
+  public func parse(_ text: String, today: DateOnly) -> ParsedInput {
+    var session = ParseSession(
+      text: text, vocabulary: vocabulary, calendar: calendar, today: today)
+    session.readKind()
+    session.readGoalAndDebt()
+    session.readPeople()
+    session.readMarkedPlace()
+    session.readKnownNames()
+    session.readCurrency()
+    session.readDate()
+    session.readAmount()
+    return session.finish()
+  }
+}
+
+/// Mutable state of one `parse` call. Kept apart from the parser itself so the parser stays
+/// immutable and `Sendable`.
+private struct ParseSession {
+  struct Claim {
+    let role: ParsedRole
+    let text: String
+    let start: Int
+  }
+
+  var words: [InputWord]
+  let vocabulary: ParserVocabulary
+  let calendar: CalendarContext
+  let today: DateOnly
+  var result = ParsedInput()
+  var claims: [Claim] = []
+
+  init(text: String, vocabulary: ParserVocabulary, calendar: CalendarContext, today: DateOnly) {
+    self.words = InputWord.split(text)
+    self.vocabulary = vocabulary
+    self.calendar = calendar
+    self.today = today
+  }
+
+  // MARK: - Claims
+
+  mutating func claim(_ range: Range<Int>, as role: ParsedRole?, text: String? = nil) {
+    guard !range.isEmpty, range.upperBound <= words.count else { return }
+    if let role {
+      let body = text ?? range.map { words[$0].original }.joined(separator: " ")
+      claims.append(Claim(role: role, text: body, start: words[range.lowerBound].start))
+    }
+    for index in range {
+      words[index].claimed = true
+    }
+  }
+
+  mutating func claim(_ index: Int, as role: ParsedRole?, text: String? = nil) {
+    claim(index..<(index + 1), as: role, text: text)
+  }
+
+  // MARK: - Dictionary matching
+
+  func matches(_ parts: [String], at index: Int, loose: Bool) -> Bool {
+    guard !parts.isEmpty, index >= 0, index + parts.count <= words.count else { return false }
+    for offset in 0..<parts.count {
+      let word = words[index + offset]
+      guard !word.claimed else { return false }
+      // Behind a marker every word of a name is declined, not only a one-word name's:
+      // «в Азбуке вкуса», «для Анны Петровой».
+      let equal =
+        loose
+        ? TextNormalizer.looselyEqual(word.normalized, parts[offset])
+        : word.normalized == parts[offset]
+      guard equal else { return false }
+    }
+    return true
+  }
+
+  /// Longest spelling of any entry that starts exactly at `index`.
+  func bestMatch(
+    _ entries: [ParserVocabulary.Entry], at index: Int, loose: Bool
+  ) -> (entry: ParserVocabulary.Entry, range: Range<Int>)? {
+    var best: (entry: ParserVocabulary.Entry, range: Range<Int>)?
+    for entry in entries {
+      for spelling in entry.spellings {
+        let parts = spelling.split(separator: " ").map { TextNormalizer.normalized(String($0)) }
+        guard matches(parts, at: index, loose: loose) else { continue }
+        if best == nil || parts.count > best!.range.count {
+          best = (entry, index..<(index + parts.count))
+        }
+      }
+    }
+    return best
+  }
+
+  // MARK: - Passes
+
+  mutating func readKind() {
+    if let first = words.first, first.amountText.first == "+" {
+      result.kind = .income
+      if first.amountText == "+" {
+        claim(0, as: .kind, text: first.original)
+      } else {
+        claims.append(Claim(role: .kind, text: "+", start: first.start))
+        // Glued to a word, the sign is read and the word is what stands behind it: «+кэшбэк»
+        // leaves «кэшбэк» in the note, «+Пятёрочка» is the place. A number keeps its sign.
+        if !isAmountish(first), let sign = first.original.firstIndex(of: "+") {
+          var rest = first.original
+          rest.remove(at: sign)
+          words[0] = InputWord(original: rest, start: first.start + 1)
+        }
+      }
+    }
+    for phrase in Lexicon.kindPhrases {
+      for index in words.indices where matches(phrase.words, at: index, loose: false) {
+        if phrase.words.count == 1, Lexicon.russianAdvanceWords.contains(phrase.words[0]),
+          paysForAJob(after: index + 1)
+        {
+          continue
+        }
+        if isInsideALongerName(index..<(index + phrase.words.count)) { continue }
+        result.kind = phrase.meaning
+        claim(index..<(index + phrase.words.count), as: .kind)
+        return
+      }
+    }
+  }
+
+  /// A kind word that is part of a longer name the dictionaries know belongs to the name, the
+  /// way the longer spelling wins inside every other pass: «Salary card» is a payment method,
+  /// «Кафе Доход» a place — not income with the rest of the name left in the note.
+  private func isInsideALongerName(_ range: Range<Int>) -> Bool {
+    let lists = [
+      vocabulary.places, vocabulary.events, vocabulary.paymentMethods, vocabulary.goals,
+      vocabulary.debts, vocabulary.people,
+    ]
+    // Only a name that can reach the phrase is looked up: a long line is not walked whole
+    // for every kind word in it.
+    let longest =
+      lists.joined().flatMap(\.spellings)
+      .map { $0.split(separator: " ").count }.max() ?? 0
+    guard longest > range.count else { return false }
+    for start in max(0, range.upperBound - longest)...range.lowerBound {
+      for entries in lists {
+        guard let match = bestMatch(entries, at: start, loose: false) else { continue }
+        if match.range.upperBound >= range.upperBound, match.range.count > range.count {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  /// «за» and what it pays for behind an advance: «аванс за ремонт» is a prepayment. A month
+  /// or a number there ("аванс за сентябрь", "аванс за 2 недели") keeps it the salary's.
+  private func paysForAJob(after index: Int) -> Bool {
+    guard index < words.count, !words[index].claimed,
+      words[index].normalized == Lexicon.russianAdvanceMarker
+    else { return false }
+    var next = index + 1
+    if next < words.count, Lexicon.determiners.contains(words[next].normalized) { next += 1 }
+    guard next < words.count, !words[next].normalized.isEmpty, !isAmountish(words[next]) else {
+      return false
+    }
+    return !Lexicon.russianSalaryPeriods.contains(words[next].normalized)
+  }
+
+  mutating func readGoalAndDebt() {
+    result.goalId = readMarked(
+      markers: Lexicon.goalMarkers, entries: vocabulary.goals, role: .goal)
+    result.debtId = readMarked(
+      markers: Lexicon.debtMarkers, entries: vocabulary.debts, role: .debt)
+  }
+
+  /// A goal or a debt: the marker word plus the name. The name usually follows the marker,
+  /// but "Ипотека 30000 кредит" also works — and a name that is itself the marker
+  /// ("ипотека") is matched on the marker word.
+  private mutating func readMarked(
+    markers: Set<String>, entries: [ParserVocabulary.Entry], role: ParsedRole
+  ) -> UUID? {
+    guard !entries.isEmpty else { return nil }
+    for index in words.indices where !words[index].claimed {
+      guard markers.contains(words[index].normalized) else { continue }
+      if let match = bestMatch(entries, at: index + 1, loose: true) {
+        claim(index, as: nil)
+        claim(match.range, as: role)
+        return match.entry.id
+      }
+      for other in words.indices where !words[other].claimed {
+        guard let match = bestMatch(entries, at: other, loose: false) else { continue }
+        if !match.range.contains(index) { claim(index, as: nil) }
+        claim(match.range, as: role)
+        return match.entry.id
+      }
+    }
+    return nil
+  }
+
+  /// Where the name behind the marker at `marker` starts: the next word, or the one after it
+  /// when the next word is a possessive or an article ("for my wife", "для моей мамы",
+  /// "at the Ritz") — such a word belongs to the marker, it is never a name. Nil when nothing
+  /// readable is left, so "for my" at the end of a line stays in the note.
+  func nameStart(after marker: Int) -> Int? {
+    var next = marker + 1
+    if next < words.count, !words[next].claimed,
+      Lexicon.determiners.contains(words[next].normalized)
+    {
+      next += 1
+    }
+    guard next < words.count, !words[next].claimed, !words[next].normalized.isEmpty else {
+      return nil
+    }
+    return next
+  }
+
+  /// A dictionary name behind the marker. A name that itself begins with the article
+  /// ("The Ritz") is tried first, as written; then the name after the article.
+  func bestMatch(
+    _ entries: [ParserVocabulary.Entry], behind marker: Int, from start: Int
+  ) -> (entry: ParserVocabulary.Entry, range: Range<Int>)? {
+    if start > marker + 1, let whole = bestMatch(entries, at: marker + 1, loose: true) {
+      return whole
+    }
+    return bestMatch(entries, at: start, loose: true)
+  }
+
+  mutating func readPeople() {
+    for index in words.indices where !words[index].claimed {
+      guard Lexicon.personMarkers.contains(words[index].normalized),
+        let next = nameStart(after: index)
+      else { continue }
+      if let forWhom = Lexicon.forWhomWords[words[next].normalized] {
+        result.forWhom = forWhom
+        claim(index..<next, as: nil)
+        claim(next, as: .forWhom, text: words[next].original)
+        break
+      }
+      if let match = bestMatch(vocabulary.people, behind: index, from: next) {
+        result.personId = match.entry.id
+        result.forWhom = result.forWhom ?? .other
+        claim(index..<match.range.lowerBound, as: nil)
+        claim(match.range, as: .person)
+        break
+      }
+      // A number, a currency, a time ("for lunch") or a name the dictionary knows as
+      // something else ("for her birthday") is not a new person.
+      guard !isAmountish(words[next]), currencyAffix(in: words[next].amountText) == nil,
+        !Lexicon.timeWords.contains(words[next].normalized),
+        !knowsOtherName(behind: index, from: next)
+      else { continue }
+      // "для семьи", "для мамы": behind a marker the word is declined. Its forms are listed,
+      // not guessed from a stem — «Жени» is a name, not «жены». A known person still wins.
+      if let forWhom = Lexicon.declinedForWhomWords[words[next].normalized] {
+        result.forWhom = forWhom
+        claim(index..<next, as: nil)
+        claim(next, as: .forWhom, text: words[next].original)
+        break
+      }
+      let name = TextNormalizer.trimmingEdgePunctuation(words[next].original)
+      result.unknownPersonName = name
+      result.unknownPersonPhrase = phrase(from: index, to: next, name: name)
+      result.forWhom = result.forWhom ?? .other
+      claim(index..<next, as: nil)
+      claim(next, as: .person, text: words[next].original)
+      break
+    }
+    guard result.forWhom == nil else { return }
+    for index in words.indices where !words[index].claimed {
+      guard let forWhom = Lexicon.forWhomWords[words[index].normalized] else { continue }
+      result.forWhom = forWhom
+      claim(index, as: .forWhom, text: words[index].original)
+      return
+    }
+  }
+
+  /// The words from the marker to an unknown name, as typed: «для Пети», «at the Ritz» —
+  /// a possessive or an article between them goes with the marker (`nameStart`), so the
+  /// note the app gives them back to reads as the line did.
+  private func phrase(from marker: Int, to start: Int, name: String) -> String {
+    (words[marker..<start].map(\.original) + [name]).joined(separator: " ")
+  }
+
+  /// A known place, event or payment method starts behind the marker.
+  private func knowsOtherName(behind marker: Int, from start: Int) -> Bool {
+    [vocabulary.places, vocabulary.events, vocabulary.paymentMethods].contains { entries in
+      bestMatch(entries, behind: marker, from: start) != nil
+    }
+  }
+
+  mutating func readMarkedPlace() {
+    for index in words.indices where !words[index].claimed {
+      guard Lexicon.placeMarkers.contains(words[index].normalized),
+        let next = nameStart(after: index)
+      else { continue }
+      if let match = bestMatch(vocabulary.places, behind: index, from: next) {
+        result.placeId = match.entry.id
+        claim(index..<match.range.lowerBound, as: nil)
+        claim(match.range, as: .place)
+        return
+      }
+      // "в День рождения", "in cash": the marker is a plain preposition in front of a known
+      // event or payment method, which takes the marker with it — a place may still follow.
+      if readMarkedName(after: index, from: next) { continue }
+      // An unknown place, but only if the next word is not something else we can read, nor
+      // a time: "в среду", "в январе", "в 12:30", "at 9am" say when, not where.
+      guard !isAmountish(words[next]), currencyAffix(in: words[next].amountText) == nil,
+        Lexicon.forWhomWords[words[next].normalized] == nil,
+        date(from: words[next].normalized, allowDayMonth: false) == nil,
+        !Lexicon.datePhrases.contains(where: { matches($0.words, at: next, loose: false) }),
+        !Lexicon.timeWords.contains(words[next].normalized),
+        !isClockTime(words[next].normalized)
+      else { continue }
+      let name = TextNormalizer.trimmingEdgePunctuation(words[next].original)
+      result.unknownPlaceName = name
+      result.unknownPlacePhrase = phrase(from: index, to: next, name: name)
+      claim(index..<next, as: nil)
+      claim(next, as: .place, text: words[next].original)
+      return
+    }
+  }
+
+  /// A known event or payment method behind the place marker at `marker`: the longer
+  /// spelling wins, on equal length the event (the order of `readKnownNames`).
+  private mutating func readMarkedName(after marker: Int, from start: Int) -> Bool {
+    var winner: (role: ParsedRole, entry: ParserVocabulary.Entry, range: Range<Int>)?
+    if result.eventId == nil,
+      let match = bestMatch(vocabulary.events, behind: marker, from: start)
+    {
+      winner = (.event, match.entry, match.range)
+    }
+    if result.paymentMethodId == nil,
+      let match = bestMatch(vocabulary.paymentMethods, behind: marker, from: start),
+      match.range.count > (winner?.range.count ?? 0)
+    {
+      winner = (.paymentMethod, match.entry, match.range)
+    }
+    guard let winner else { return false }
+    if winner.role == .event {
+      result.eventId = winner.entry.id
+    } else {
+      result.paymentMethodId = winner.entry.id
+    }
+    claim(marker..<winner.range.lowerBound, as: nil)
+    claim(winner.range, as: winner.role)
+    return true
+  }
+
+  /// Places, events and payment methods written without any marker. Inside one position
+  /// the longest spelling wins; on equal length the order is place, event, payment method.
+  mutating func readKnownNames() {
+    for index in words.indices where !words[index].claimed {
+      var winner: (role: ParsedRole, entry: ParserVocabulary.Entry, range: Range<Int>)?
+      if result.placeId == nil,
+        let match = bestMatch(vocabulary.places, at: index, loose: false)
+      {
+        winner = (.place, match.entry, match.range)
+      }
+      if result.eventId == nil,
+        let match = bestMatch(vocabulary.events, at: index, loose: false),
+        match.range.count > (winner?.range.count ?? 0)
+      {
+        winner = (.event, match.entry, match.range)
+      }
+      if result.paymentMethodId == nil,
+        let match = bestMatch(vocabulary.paymentMethods, at: index, loose: false),
+        match.range.count > (winner?.range.count ?? 0)
+      {
+        winner = (.paymentMethod, match.entry, match.range)
+      }
+      guard let winner else { continue }
+      switch winner.role {
+      case .place: result.placeId = winner.entry.id
+      case .event: result.eventId = winner.entry.id
+      default: result.paymentMethodId = winner.entry.id
+      }
+      claim(winner.range, as: winner.role)
+    }
+  }
+
+  mutating func readCurrency() {
+    guard result.currency == nil else { return }
+    for index in words.indices where !words[index].claimed {
+      guard let affix = currencyAffix(in: words[index].amountText) else { continue }
+      guard
+        vocabulary.enabledCurrencies.isEmpty
+          || vocabulary.enabledCurrencies.contains(affix.code)
+      else {
+        // Off in the settings. Glued to the number it is set aside the way a word of its own
+        // is: "250usd" still has the amount 250, and "usd" stays in the note.
+        if !affix.residual.isEmpty {
+          words[index].amountText = affix.residual
+          words[index].ignoredCurrency = affix.text
+        }
+        continue
+      }
+      guard !affix.residual.isEmpty || standsAsCurrency(index) else { continue }
+      result.currency = affix.code
+      if affix.residual.isEmpty {
+        claim(index, as: .currency, text: words[index].original)
+      } else {
+        words[index].amountText = affix.residual
+        claims.append(Claim(role: .currency, text: affix.text, start: words[index].start))
+      }
+      return
+    }
+  }
+
+  /// A code that is also an everyday word ("try", "gel", "amd") stands for its currency only
+  /// written in capitals right after a number: "ужин 250 TRY" is in lira, "coffee 250 try new
+  /// latte" and "видеокарта AMD 25000" are not. Every other currency word
+  /// counts wherever it stands.
+  private func standsAsCurrency(_ index: Int) -> Bool {
+    let written = TextNormalizer.trimmingEdgePunctuation(words[index].original)
+    guard Lexicon.wordlikeCurrencyCodes.contains(TextNormalizer.normalized(written)) else {
+      return true
+    }
+    guard written == written.uppercased(), index > 0 else { return false }
+    let before = words[index - 1]
+    return !before.claimed && isAmountish(before)
+      && before.amountText.contains(where: ExpressionLexer.isDigit)
+  }
+
+  mutating func readDate() {
+    guard result.date == nil else { return }
+    for phrase in Lexicon.datePhrases {
+      for index in words.indices where matches(phrase.words, at: index, loose: false) {
+        result.date = calendar.adding(days: phrase.meaning, to: today)
+        claim(index..<(index + phrase.words.count), as: .date)
+        return
+      }
+    }
+    // Gathered once: asking per word would walk the whole line for every word of it.
+    let numbers = amountCandidates()
+    for index in words.indices where !words[index].claimed {
+      let allowDayMonth = numbers.count > (numbers.contains(index) ? 1 : 0)
+      guard let parsed = date(from: words[index].normalized, allowDayMonth: allowDayMonth) else {
+        continue
+      }
+      result.date = parsed
+      claim(index, as: .date, text: words[index].original)
+      return
+    }
+  }
+
+  mutating func readAmount() {
+    guard result.amount == nil else { return }
+    let aside = countsAndDays()
+    func readable(_ index: Int) -> Bool {
+      !words[index].claimed && isAmountish(words[index]) && !aside.contains(index)
+    }
+    var index = 0
+    while index < words.count {
+      guard readable(index) else {
+        index += 1
+        continue
+      }
+      var end = index
+      while end + 1 < words.count, readable(end + 1) {
+        end += 1
+      }
+      if readAmount(in: index...end) { return }
+      index = end + 1
+    }
+  }
+
+  /// Numbers that say how many or which day rather than how much: in front of a unit or a
+  /// span of time ("2 шт", "1,5 кг", "3 ночи"), of a month ("к 8 марта") or behind an English
+  /// one ("March 8"). They stay in the note while the line holds another number to be the
+  /// amount; the only number of a line is still its amount.
+  private func countsAndDays() -> Set<Int> {
+    let numbers = amountCandidates()
+    var aside: Set<Int> = []
+    for index in numbers {
+      let unit =
+        index + 1 < words.count && !words[index + 1].claimed
+        && Lexicon.wordsAfterACount.contains(words[index + 1].normalized)
+      let month =
+        index > 0 && !words[index - 1].claimed
+        && Lexicon.monthsBeforeADay.contains(words[index - 1].normalized)
+      if unit || month { aside.insert(index) }
+    }
+    return aside.count < numbers.count ? aside : []
+  }
+
+  /// How many neighbouring words one amount may span. A number grouped by spaces
+  /// ("1 250 000,50") and a formula written with spaces around its signs both stay well
+  /// inside this; the ceiling is what keeps a pasted wall of numbers from costing the
+  /// square of its length in evaluated candidates.
+  private static let amountWindow = 12
+
+  /// Longest sub-run first, so "1 250,50" beats "1". A candidate must start with a word
+  /// that holds a digit or an opening bracket: otherwise "кофе - 250" would become −250.
+  /// A negative result is not an amount either — the sign of an operation comes from its
+  /// kind, so "кофе 100-250" must not quietly save an expense of −150.
+  ///
+  /// A candidate that reads as a whole formula but cannot be an amount — it divides by zero,
+  /// comes out negative or is larger than one amount may be — takes every shorter piece of
+  /// itself down with it: "10" of "кофе 10 / 0" is not what was typed. A number next to it is
+  /// still free to be the amount. When nothing is found, `amountProblem` says why.
+  private mutating func readAmount(in run: ClosedRange<Int>) -> Bool {
+    var refused: [Range<Int>] = []
+    for length in stride(from: min(run.count, Self.amountWindow), through: 1, by: -1) {
+      for start in run.lowerBound...(run.upperBound - length + 1) {
+        let head = words[start].amountText
+        guard head.contains(where: { ExpressionLexer.isDigit($0) || $0 == "(" }) else { continue }
+        let range = start..<(start + length)
+        guard
+          !refused.contains(where: {
+            $0.lowerBound <= range.lowerBound && range.upperBound <= $0.upperBound
+          })
+        else { continue }
+        let candidate = range.map { words[$0].amountText }.joined(separator: " ")
+        let value: Decimal
+        do {
+          value = try ExpressionEvaluator.evaluate(candidate)
+        } catch {
+          guard let problem = Self.problem(of: error) else {
+            remember(.malformed)
+            continue
+          }
+          remember(problem)
+          refused.append(range)
+          continue
+        }
+        guard value >= 0 else {
+          remember(.negative)
+          refused.append(range)
+          continue
+        }
+        result.amount = value
+        result.amountProblem = nil
+        if ExpressionEvaluator.isFormula(candidate) {
+          result.amountExpression = candidate
+        }
+        if candidate.first == "+" { readSignOfTheAmount() }
+        claim(range, as: .amount, text: candidate)
+        return true
+      }
+    }
+    return false
+  }
+
+  /// A «+» in front of the amount is the sign of income wherever the amount stands: «кэшбэк
+  /// +250» is income as «+250 кэшбэк» is. A kind word says more and keeps its kind; so do a
+  /// goal and a debt, where «+5000» is what is added.
+  private mutating func readSignOfTheAmount() {
+    guard !claims.contains(where: { $0.role == .kind }), result.goalId == nil,
+      result.debtId == nil
+    else { return }
+    result.kind = .income
+  }
+
+  /// A formula that was read whole but has no acceptable value; nil for one that cannot be
+  /// read at all, which is what every too-long candidate of a run is.
+  private static func problem(of error: any Error) -> ParsedInput.AmountProblem? {
+    switch error as? CoreError {
+    case .divisionByZero: .divisionByZero
+    case .amountOutOfRange: .tooLarge
+    default: nil
+    }
+  }
+
+  /// Keeps the first reason a formula was refused; an unreadable one only until a readable
+  /// one is refused.
+  private mutating func remember(_ problem: ParsedInput.AmountProblem) {
+    guard let kept = result.amountProblem else {
+      result.amountProblem = problem
+      return
+    }
+    if kept == .malformed, problem != .malformed { result.amountProblem = problem }
+  }
+
+  mutating func finish() -> ParsedInput {
+    let leftovers: [(text: String, start: Int)] = words.compactMap { word in
+      guard word.claimed else { return word.normalized.isEmpty ? nil : (word.original, word.start) }
+      return word.ignoredCurrency.map { ($0, word.start) }
+    }
+    let note = leftovers.map(\.text).joined(separator: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    result.note = note
+    if let first = leftovers.first, !note.isEmpty {
+      claims.append(Claim(role: .note, text: note, start: first.start))
+    }
+    result.tokens =
+      claims
+      .sorted { $0.start < $1.start }
+      .map { ParsedToken(role: $0.role, text: $0.text) }
+    return result
+  }
+
+  // MARK: - Helpers
+
+  private func isAmountish(_ word: InputWord) -> Bool {
+    let text = word.amountText
+    guard !text.isEmpty else { return false }
+    return text.allSatisfy { character in
+      ExpressionLexer.isDigit(character)
+        || ExpressionLexer.operatorKind(character) != nil
+        || ExpressionLexer.decimalSeparators.contains(character)
+        || ExpressionLexer.thousandSuffixes.contains(character)
+        || ExpressionLexer.isSpace(character)
+    }
+  }
+
+  /// Positions of the unclaimed words that still hold a number.
+  private func amountCandidates() -> Set<Int> {
+    var found: Set<Int> = []
+    for index in words.indices where !words[index].claimed && isAmountish(words[index]) {
+      if words[index].amountText.contains(where: ExpressionLexer.isDigit) { found.insert(index) }
+    }
+    return found
+  }
+
+  /// A time of day as written: "12:30", "9am", "11:45pm".
+  private func isClockTime(_ text: String) -> Bool {
+    var body = Substring(text)
+    let meridiem = body.hasSuffix("am") || body.hasSuffix("pm")
+    if meridiem { body = body.dropLast(2) }
+    let parts = body.split(separator: ":", omittingEmptySubsequences: false)
+    guard allDigits(parts), (1...2).contains(parts[0].count) else { return false }
+    switch parts.count {
+    case 1: return meridiem
+    case 2: return parts[1].count == 2
+    default: return false
+    }
+  }
+
+  /// `today` / `сегодня` are handled by the phrase table; this reads the written forms:
+  /// ISO `2026-09-12`, `12.09.2026`, `12.09.26` and the bare `12.09` (a two-digit month).
+  private func date(from text: String, allowDayMonth: Bool) -> DateOnly? {
+    if text.contains("-") {
+      let parts = text.split(separator: "-", omittingEmptySubsequences: false)
+      guard parts.count == 3, parts[0].count == 4, allDigits(parts),
+        let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2])
+      else { return nil }
+      return validated(year: year, month: month, day: day)
+    }
+    let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+    guard allDigits(parts), parts[0].count <= 2 else { return nil }
+    if parts.count == 3 {
+      guard parts[1].count <= 2, let day = Int(parts[0]), let month = Int(parts[1]),
+        var year = Int(parts[2])
+      else { return nil }
+      if parts[2].count <= 2 { year = nearestYear(endingIn: year) }
+      return validated(year: year, month: month, day: day)
+    }
+    // A bare day and month writes the month with two digits, the way the spec shows it
+    // («12.09», and «1.09»): one digit after the point is a fraction — «молоко 1.5 90» is one
+    // and a half, not the first of May.
+    guard allowDayMonth, parts.count == 2, parts[1].count == 2,
+      let day = Int(parts[0]), let month = Int(parts[1])
+    else { return nil }
+    // The year is the latest one that does not put the date into the future. For every day
+    // but 29 February that is this year or the last; a leap day may lie up to eight years
+    // back, since 2100 skips one.
+    for year in stride(from: today.year, through: today.year - 8, by: -1) {
+      if let date = validated(year: year, month: month, day: day), date <= today {
+        return date
+      }
+    }
+    return nil
+  }
+
+  /// The year a two-digit year means: the one ending in those digits that lies no more than
+  /// twenty years after this one and less than eighty before it, the window date parsers
+  /// commonly use — «12.09.99» is 1999, «12.09.30» is 2030, never a century ahead.
+  private func nearestYear(endingIn twoDigits: Int) -> Int {
+    var year = today.year - today.year % 100 + twoDigits
+    if year > today.year + 20 { year -= 100 }
+    if year <= today.year - 80 { year += 100 }
+    return year
+  }
+
+  private func allDigits(_ parts: [Substring]) -> Bool {
+    !parts.isEmpty && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(ExpressionLexer.isDigit) }
+  }
+
+  private func validated(year: Int, month: Int, day: Int) -> DateOnly? {
+    guard (1...12).contains(month), day >= 1, year >= 1900, year <= 9999 else { return nil }
+    guard day <= calendar.daysInMonth(MonthKey(year: year, month: month)) else { return nil }
+    return DateOnly(year: year, month: month, day: day)
+  }
+
+  /// Recognises a currency written as a word, a code or a symbol, glued to the amount or
+  /// standing on its own. Returns what is left of the word for the amount pass.
+  private func currencyAffix(
+    in raw: String
+  ) -> (code: CurrencyCode, residual: String, text: String)? {
+    let trimmed = raw.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else { return nil }
+    if let code = Lexicon.currencyWords[TextNormalizer.normalized(trimmed)] {
+      return (CurrencyCode(code), "", trimmed)
+    }
+    let characters = Array(trimmed)
+    if characters.count == 1, let code = Lexicon.currencySymbols[characters[0]] {
+      return (CurrencyCode(code), "", trimmed)
+    }
+    if let code = Lexicon.currencySymbols[characters[0]] {
+      let residual = String(characters.dropFirst())
+      if residual.contains(where: ExpressionLexer.isDigit) {
+        return (CurrencyCode(code), residual, String(characters[0]))
+      }
+    }
+    // The sign of income written before the symbol: "+$500" is "+500" in dollars, as "+500$".
+    let sign = ExpressionLexer.operatorKind(characters[0])
+    if characters.count > 2, sign == .plus || sign == .minus,
+      let code = Lexicon.currencySymbols[characters[1]]
+    {
+      let residual = String(characters[0]) + String(characters.dropFirst(2))
+      if residual.contains(where: ExpressionLexer.isDigit) {
+        return (CurrencyCode(code), residual, String(characters[1]))
+      }
+    }
+    if let last = characters.last, let code = Lexicon.currencySymbols[last] {
+      let residual = String(characters.dropLast())
+      if residual.contains(where: ExpressionLexer.isDigit) {
+        return (CurrencyCode(code), residual, String(last))
+      }
+    }
+    var cut = characters.count
+    while cut > 0, characters[cut - 1].isLetter { cut -= 1 }
+    guard cut > 0, cut < characters.count else { return nil }
+    let letters = String(characters[cut...])
+    let residual = String(characters[..<cut])
+    guard let code = Lexicon.currencyWords[TextNormalizer.normalized(letters)],
+      residual.contains(where: ExpressionLexer.isDigit)
+    else { return nil }
+    return (CurrencyCode(code), residual, letters)
+  }
+}

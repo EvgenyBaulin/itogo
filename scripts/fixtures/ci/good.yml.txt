@@ -1,0 +1,28 @@
+# Runs everything make verify runs but fmt and lint, each job and each test with a limit, and
+# XcodeGen of the pinned release, and actions on Node 24 (# uses: actions/checkout@v4 is a comment).
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # uses: actions/checkout@v4 would be read if this were not a comment
+      - uses: actions/setup-python@v6
+      - name: Install XcodeGen, not with brew install xcodegen
+        run: scripts/install-xcodegen.sh "$RUNNER_TEMP/xcodegen"
+      - name: Test, as make test-core does
+        run: ITOGO_PYTHON="$(command -v python)" make test-core
+      - name: Build and check
+        run: |
+          make build check-a check-b
+          make ci-checks   # the read-only checks
+      - name: One more test run
+        run: |
+          xcodebuild -scheme Itogo -only-testing:ItogoTests \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 120 test
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - run: swift test   # a package test has no allowance to give

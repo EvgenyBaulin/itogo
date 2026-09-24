@@ -1,0 +1,235 @@
+# Release of the Direct build, by a tag `vX.Y.Z`, in four steps: build Release and run the
+# tests; package the app and sign the package; create the GitHub release; put the entry into
+# appcast.xml on Pages. The tests run in a job of their own, without the key.
+#
+# This is the spare path. Releases are made by hand on the author's Mac with
+# `make release-local` and `gh release create` (README.md, «Releasing»); such a release creates
+# its tag, the tag starts this workflow, and the first job below sees the release already out
+# and stops. Both paths read the version with scripts/release-version.sh and write the entry of
+# the feed with scripts/release-entry.sh, and `make check-scripts` tests those two. A tag pushed
+# without a release needs the secrets SPARKLE_PUBLIC_KEY and SPARKLE_PRIVATE_KEY and Pages
+# published from the branch gh-pages.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+# Two tags pushed together would both write the feed; one after the other, each sees the
+# entry of the one before.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # A release published by hand (`make release-local`, then a new release on GitHub) creates
+  # its tag, and the tag starts this workflow too. That release is out and its entry goes
+  # into the feed by hand: building and signing it again would end red on
+  # `gh release create`, or sooner, on a secret the hand path never needed. Only a tag pushed
+  # without a release goes on.
+  published:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      by_hand: ${{ steps.ask.outputs.by_hand }}
+    steps:
+      - name: Ask whether the release of the tag is already published
+        id: ask
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::$GITHUB_REF_NAME is already published; nothing is built, the feed is written by hand"
+            echo "by_hand=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "by_hand=no" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The tests, in a job of their own that holds no secret: pandas and what it needs come from
+  # PyPI, and nothing fetched for a test runs where the private key is read.
+  test:
+    needs: published
+    if: needs.published.outputs.by_hand == 'no'
+    # The same compiler as the author's Mac and as build.yml: macos-26 has only Xcode 26.6.
+    runs-on: xcode-27
+    # make verify from scratch takes well under half an hour on the owner's Mac.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      # The whole history with its tags: the build number is compared with the release before.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # The short version comes from the tag, and project.yml
+      # has to say the same: a tag v1.0.1 over a project.yml of 1.0.0 would ship an archive
+      # named 1.0.1 holding an app that says 1.0.0. And CFBundleVersion grows with every
+      # release, or Sparkle never offers this one. First, before an hour of tests.
+      - name: Check the tag and the build number against project.yml
+        run: |
+          scripts/release-version.sh tag "$GITHUB_REF_NAME"
+          scripts/release-version.sh grew
+
+      # One release of XcodeGen, built from its source checked against a checksum: the project
+      # is generated the same way every day, not by the day's Homebrew formula.
+      - name: Install XcodeGen
+        run: scripts/install-xcodegen.sh "$RUNNER_TEMP/xcodegen"
+
+      # pandas reads every Reports table back with `read_csv(path)` and no parameters, as on
+      # every push: without ITOGO_PYTHON that suite is skipped and the job still ends green
+      # (scripts/check-ci.sh fails on that).
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pandas for the CSV check
+        run: python -m pip install --no-cache-dir -r scripts/requirements-dev.txt
+
+      # The tests of the packages and of the application, with the limits `make test` gives
+      # them: a test that hangs fails with its name instead of holding the runner for hours.
+      - name: Generate the project and run the tests
+        env:
+          # The runner has no room for the widest windows and no accessibility tree of SwiftUI:
+          # the tests that need either skip (Apps/macOS/Tests/TestEnvironment.swift).
+          TEST_RUNNER_ITOGO_CI: "1"
+        run: |
+          xcodegen generate --spec project.yml
+          ITOGO_PYTHON="$(command -v python)" swift test --package-path Packages/AppCore
+          swift test --package-path Packages/AppDatabase
+          xcodebuild -project Itogo.xcodeproj -scheme Itogo -configuration Debug \
+            -destination 'platform=macOS' -derivedDataPath build -only-testing:ItogoTests \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 300 \
+            CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" test
+
+  release:
+    needs: [published, test]
+    if: needs.published.outputs.by_hand == 'no'
+    runs-on: xcode-27
+    # The Release build and the signing; a runner that is not done in an hour is stuck.
+    timeout-minutes: 60
+    # The release and the push of the feed to gh-pages, and a new build of Pages from it;
+    # nothing else is written.
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # One release of XcodeGen, built from its source checked against a checksum: the project
+      # is generated the same way every day, not by the day's Homebrew formula.
+      - name: Install XcodeGen
+        run: scripts/install-xcodegen.sh "$RUNNER_TEMP/xcodegen"
+
+      - name: Generate the project
+        run: xcodegen generate --spec project.yml
+
+      # What was built has to carry the key, the version and the updater, not what was meant
+      # to be built (the same checks as step 6 of make-release.sh).
+      - name: Build Release
+        env:
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+        run: |
+          test -n "$SPARKLE_PUBLIC_KEY" || {
+            echo "SPARKLE_PUBLIC_KEY is not set; see README.md, Releasing"; exit 1; }
+          version="${GITHUB_REF_NAME#v}"
+          build="$(scripts/release-version.sh build)"
+          xcodebuild -project Itogo.xcodeproj -scheme Itogo -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
+            MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build" \
+            SU_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_KEY" build
+          app=build/Build/Products/Release/Itogo.app
+          scripts/release-version.sh app "$app" "$version" "$build"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")" \
+            = "$SPARKLE_PUBLIC_KEY" || { echo "the built app does not carry the public key"; exit 1; }
+          # The id every installed copy is known by; the Debug build's own must never ship.
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" \
+            = io.github.EvgenyBaulin.itogo || {
+            echo "the built app is not io.github.EvgenyBaulin.itogo"; exit 1; }
+          test -d "$app/Contents/Frameworks/Sparkle.framework/XPCServices/Installer.xpc" || {
+            echo "the built app has no Sparkle, or no installer service of it"; exit 1; }
+          test ! -d "$app/Contents/XPCServices" || {
+            echo "the app bundles XPC services of its own; Sparkle refuses to start"; exit 1; }
+
+      - name: Package and sign
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY" || {
+            echo "SPARKLE_PRIVATE_KEY is not set; see README.md, Releasing"; exit 1; }
+          version="${GITHUB_REF_NAME#v}"
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/Build/Products/Release/Itogo.app "Itogo-${version}.zip"
+          # `-path`, not `-name`: the package ships three files called sign_update, two of
+          # them the DSA script of Sparkle 1 under bin/old_dsa_scripts/.
+          signer="build/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
+          if [ ! -x "$signer" ]; then
+            signer="$(find build/SourcePackages/artifacts -type f -perm -111 \
+              -path '*/bin/sign_update' -print -quit 2>/dev/null || true)"
+          fi
+          test -n "$signer" && test -x "$signer" || {
+            echo "Sparkle's sign_update was not found"; exit 1; }
+          # `-p`: the signature alone. Without it the tool adds a length attribute of its own,
+          # and the entry would carry two (scripts/release-entry.sh).
+          "$signer" --ed-key-file - -p "Itogo-${version}.zip" <<< "$SPARKLE_PRIVATE_KEY" \
+            > "signature-${version}.txt"
+          cat "signature-${version}.txt"
+
+      # The entry is read back inside the envelope of the feed before it is written. It stays
+      # among the artifacts with the archive: if a later step fails, the release can be
+      # finished by hand from there.
+      - name: Write the entry of the feed
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/release-entry.sh "$version" "$(scripts/release-version.sh build)" \
+            "$(stat -f%z "Itogo-${version}.zip")" "$(cat "signature-${version}.txt")" \
+            > "appcast-entry-${version}.xml"
+          cat "appcast-entry-${version}.xml"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: release
+          path: |
+            Itogo-*.zip
+            signature-*.txt
+            appcast-entry-*.xml
+
+      # GitHub's own command line, not an action of somebody else's: this job holds the private
+      # key of every update, and nothing it runs needs to come from outside the runner.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # The notes are the section of CHANGELOG.md for this version, when it has one.
+          awk -v head="## [${version}]" '
+            index($0, head) == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > release-notes.md
+          [ -s release-notes.md ] || echo "See CHANGELOG.md." > release-notes.md
+          gh release create "$GITHUB_REF_NAME" "Itogo-${version}.zip" --verify-tag \
+            --title "Itogo ${version}" --notes-file release-notes.md
+
+      # Last, once the archive the entry points at can be downloaded. The feed lives on the
+      # orphan branch gh-pages, one file; the entry goes in newest first, and a build number the
+      # feed already announces, or one below, is refused. The commit carries the name of the
+      # tagged commit's author: the history has one name. A push made with the token of a
+      # workflow starts no build of Pages by itself, so one is asked for.
+      - name: Announce the release in the feed on Pages
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          git fetch --depth=1 origin gh-pages
+          git worktree add --detach pages FETCH_HEAD
+          scripts/release-entry.sh into pages/appcast.xml "$version" \
+            "$(scripts/release-version.sh build)" "$(stat -f%z "Itogo-${version}.zip")" \
+            "$(cat "signature-${version}.txt")"
+          git -C pages add appcast.xml
+          git -C pages -c user.name="$(git log -1 --format=%an)" \
+            -c user.email="$(git log -1 --format=%ae)" commit -m "Announce ${version}"
+          git -C pages push origin HEAD:gh-pages
+          GH_TOKEN=${{ github.token }} gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds"

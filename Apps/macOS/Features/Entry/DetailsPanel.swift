@@ -1,0 +1,858 @@
+import AppCore
+import SwiftUI
+
+/// The ↓ panel. Every field of an operation is here: type, category with suggestions,
+/// quality, for whom, place, event, payment method, goal, debt, note, date, currency and
+/// rate — plus splitting, paying for somebody else and buying on credit.
+struct DetailsPanel: View {
+  @Dependency(\.environment) private var environment
+  @Dependency(\.compute) private var compute
+  /// Handed to the sheet of «Add…», which SwiftUI lays out in a host of its own.
+  @Environment(\.dependencies) private var dependencies
+  @Bindable var model: EntryDraftModel
+  /// Return in a text field of the panel («Сохранение — Enter»). The ↓ panel
+  /// of the entry line saves with it; the editor of a saved operation has «Save» of its own.
+  var submit: (() -> Void)? = nil
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      typeRow
+      Divider()
+      mainFields
+      if model.isSplit {
+        Divider()
+        splitEditor
+      }
+      Divider()
+      footer
+      // «Save» is inactive for these, and nothing else in the panel says why. Wraps in the
+      // width it is given: the panel is also the inspector, a column of a split view.
+      if let refusal = model.shownRefusalKey {
+        Text(verbatim: t(refusal))
+          .font(.caption)
+          .foregroundStyle(.red)
+          .accessibilityIdentifier("entry.refusal")
+      }
+      // A record «Add…» asked for that the database refused: nothing was chosen.
+      if let failure = model.creationFailureKey {
+        Text(verbatim: t(failure))
+          .font(.caption)
+          .foregroundStyle(.red)
+      }
+    }
+    .frame(maxWidth: 720, alignment: .leading)
+    .onSubmit { submit?() }
+    // «Add…» of a menu: a record of its kind, chosen in that menu once it is saved.
+    .sheet(item: $model.adding) { kind in
+      AddRecordSheet(kind: kind, model: model, today: environment.today) {
+        model.adding = nil
+      }
+      .handingOver(dependencies)
+    }
+  }
+
+  // MARK: Type
+
+  private var typeRow: some View {
+    Picker(selection: $model.draft.kind) {
+      ForEach(TransactionKind.allCases, id: \.self) { kind in
+        Text(verbatim: environment.language("kind.\(kind.rawValue)")).tag(kind)
+      }
+    } label: {
+      Text(verbatim: t("entry.category"))
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+    // Money came back for a part: what the operation is stays as the reimbursement found it.
+    .disabled(model.hasClosedPart)
+    // The defaults also drop a category of the other kind from every part, so switching an
+    // expense to income never leaves an expense category behind.
+    .onChange(of: model.draft.kind) { _, _ in
+      model.applyDefaults(today: environment.today)
+    }
+  }
+
+  // MARK: Main fields
+
+  @ViewBuilder
+  private var mainFields: some View {
+    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+      GridRow {
+        fieldLabel("entry.amount")
+        HStack(spacing: 8) {
+          AmountField(
+            amount: totalBinding, locale: environment.language.locale,
+            // The text goes along: a formula typed here is kept in `amount_expr`.
+            onTyped: { model.setTotal($0, typed: $1) }
+          )
+          .frame(width: 140)
+          // One part is the whole operation: its amount is the total.
+          .disabled(!model.isSplit && model.hasClosedPart)
+          if let expression = model.draft.amountExpression {
+            Text(verbatim: expression)
+              .font(.caption.monospaced())
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+      if !model.isSplit && model.hasClosedPart {
+        GridRow {
+          Color.clear.frame(width: 1, height: 1)
+          closedPartCaption
+        }
+      }
+      GridRow {
+        fieldLabel("entry.category")
+        categoryPicker(forPartAt: 0)
+      }
+      GridRow {
+        fieldLabel("entry.subcategory")
+        subcategoryPicker(forPartAt: 0)
+      }
+      if !model.categorySuggestions.isEmpty {
+        GridRow {
+          Color.clear.frame(width: 1, height: 1)
+          suggestionChips
+        }
+      }
+      if model.hasQuality {
+        GridRow {
+          fieldLabel("entry.quality")
+          qualityPicker(for: partBinding(0))
+        }
+      }
+      GridRow {
+        fieldLabel("entry.forWhom")
+        forWhomPicker(forPartAt: 0)
+      }
+      GridRow {
+        fieldLabel("entry.place")
+        // Through the model, like a place the line names: it brings its category and its
+        // payment method. A place not been to yet is added from the menu, and the name the line
+        // could not match is where its sheet starts.
+        referencePicker(
+          selection: Binding(
+            get: { model.draft.placeId },
+            set: { model.setPlace($0, today: environment.today) }),
+          options: model.places.map { ($0.id, $0.name) }, adding: .place)
+      }
+      GridRow {
+        fieldLabel("entry.event")
+        HStack(spacing: 8) {
+          referencePicker(
+            selection: partBinding(0).eventId,
+            options: model.events.map { ($0.id, $0.name) }, adding: .event(part: 0))
+          if let suggested = model.suggestedEvent, model.draft.parts.first?.eventId == nil {
+            Button {
+              model.draft.parts[0].eventId = suggested.id
+            } label: {
+              Label {
+                Text(verbatim: suggested.name)
+              } icon: {
+                Image(systemName: "calendar.badge.plus")
+              }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(t("entry.eventSuggested"))
+          }
+        }
+      }
+      GridRow {
+        fieldLabel("entry.paymentMethod")
+        // A method chosen here is the owner's: no place chosen after it replaces it.
+        referencePicker(
+          selection: Binding(
+            get: { model.draft.paymentMethodId }, set: { model.setPaymentMethod($0) }),
+          options: model.paymentMethods.map { ($0.id, $0.name) }, adding: .paymentMethod)
+      }
+      if model.isGoalContribution(model.part(at: 0)) {
+        GridRow {
+          fieldLabel("entry.goal")
+          referencePicker(
+            selection: Binding(
+              get: { model.part(at: 0).goalId },
+              set: {
+                model.setGoal($0, forPartAt: 0)
+                model.applyDefaults(today: environment.today)
+              }),
+            options: model.goals.map { ($0.id, $0.name) })
+        }
+      }
+      if model.draft.kind == .expense || model.draft.debtId != nil {
+        GridRow {
+          fieldLabel("entry.debt")
+          referencePicker(
+            selection: $model.draft.debtId,
+            options: model.debts.map { ($0.id, $0.name) })
+        }
+      }
+      GridRow {
+        fieldLabel("entry.note")
+        TextField(text: Binding($model.draft.note, replacingNilWith: "")) {
+          Text(verbatim: t("entry.note"))
+        }
+        .labelsHidden()
+      }
+      GridRow {
+        fieldLabel("entry.date")
+        // A new day offers the event covering it instead of the old day's.
+        DatePicker(
+          selection: Binding(
+            get: { model.draft.occurredAt },
+            set: { model.setDate($0, today: environment.today) }),
+          displayedComponents: [.date, .hourAndMinute]
+        ) {
+          Text(verbatim: t("entry.date"))
+        }
+        .labelsHidden()
+        .environment(\.locale, environment.language.locale)
+      }
+      if model.draft.kind == .income {
+        GridRow {
+          fieldLabel("entry.periodMonth")
+          periodMonthPicker
+        }
+        if !openExpectations.isEmpty {
+          GridRow {
+            fieldLabel("entry.expected")
+            if model.linksExpectedIncome {
+              Picker(selection: $model.expectedIncomeId) {
+                Text(verbatim: "—").tag(UUID?.none)
+                ForEach(openExpectations) { status in
+                  Text(verbatim: status.income.name).tag(Optional(status.id))
+                }
+              } label: {
+                EmptyView()
+              }
+              .labelsHidden()
+            } else {
+              // The editor writes no link: a saved income is tied in Planning.
+              caption("entry.expectedInPlanning")
+            }
+          }
+        }
+      }
+      GridRow {
+        fieldLabel("entry.currency")
+        currencyPicker
+      }
+      if model.draft.currency != .rub {
+        GridRow {
+          fieldLabel("entry.rate")
+          rateField
+        }
+      }
+    }
+  }
+
+  private var suggestionChips: some View {
+    HStack(spacing: 6) {
+      ForEach(model.categorySuggestions, id: \.id) { category in
+        // History remembers the most specific category, so a chip fills both pickers and
+        // shows the whole path — otherwise two chips could read the same.
+        Button(title(for: category)) {
+          model.applySuggestion(category)
+          model.applyDefaults(today: environment.today)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+      }
+    }
+  }
+
+  // MARK: Split, paid for someone, on credit
+
+  private var splitEditor: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      // Two lines per part, not one. A part carries everything an operation does («У
+      // каждой части свои категория, подкатегория, оценка, сумма (тоже выражением), «для
+      // кого», событие и признак «за другого»»), and all of it in one row came to about 790 pt
+      // against a panel of 720 — the «−» would have fallen off the right edge, and in the
+      // inspector, which is 360 pt wide, most of the row with it.
+      ForEach(Array(model.draft.parts.enumerated()), id: \.element.id) { index, part in
+        VStack(alignment: .leading, spacing: 4) {
+          HStack(spacing: 10) {
+            // Stacked rather than side by side: a split row has to fit the panel as well.
+            VStack(alignment: .leading, spacing: 4) {
+              categoryPicker(forPartAt: index)
+              subcategoryPicker(forPartAt: index)
+            }
+            .frame(maxWidth: 200)
+            // Each part has a quality of its own, so it sits next to the amount.
+            VStack(alignment: .leading, spacing: 4) {
+              AmountField(amount: partBinding(index).amount, locale: environment.language.locale)
+                .frame(width: 120)
+                .disabled(model.isClosedPart(id: part.id))
+              if model.hasQuality {
+                qualityMenu(for: partBinding(index))
+              }
+            }
+            Spacer(minLength: 0)
+            Button {
+              model.removePart(id: part.id)
+            } label: {
+              Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            // A part someone gave the money back for stays.
+            .disabled(!model.canRemovePart(id: part.id))
+          }
+          // The second line: «для кого» with its person, the event, and «за другого» with the
+          // debtor. Until 21.09 the first two were offered for part one only, and the only way
+          // to set them on part two was the bulk menu of the table. One line in the panel;
+          // in the inspector, 360 pt, it did not fit — about 400 pt in English — and the column
+          // showed the middle of the whole editor, «mount» and «ategory» cut at the left
+          // (24.09, `testTheEditorFitsTheInspectorBesideTheSidebar`), so there the three groups
+          // go one under another.
+          ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+              partForWhom(index)
+              partEvent(index)
+              partPaidForSomeone(index, part)
+              Spacer(minLength: 0)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+              HStack(spacing: 10) { partForWhom(index) }
+              HStack(spacing: 10) { partEvent(index) }
+              HStack(spacing: 10) { partPaidForSomeone(index, part) }
+            }
+          }
+          .font(.caption)
+          if model.isClosedPart(id: part.id) {
+            closedPartCaption
+          }
+          if index < model.draft.parts.count - 1 { Divider() }
+        }
+      }
+      HStack {
+        Text(verbatim: t("entry.unallocated"))
+          .foregroundStyle(model.draft.isBalanced ? Color.secondary : Color.red)
+        Text(
+          verbatim: environment.money.exact(model.draft.unallocated, currency: model.draft.currency)
+        )
+        .font(.body.monospacedDigit())
+        .foregroundStyle(model.draft.isBalanced ? Color.secondary : Color.red)
+      }
+      .font(.caption)
+    }
+  }
+
+  @ViewBuilder
+  private func partForWhom(_ index: Int) -> some View {
+    partLabel("entry.forWhom")
+    forWhomPicker(forPartAt: index)
+  }
+
+  @ViewBuilder
+  private func partEvent(_ index: Int) -> some View {
+    partLabel("entry.event")
+    referencePicker(
+      selection: partBinding(index).eventId,
+      options: model.events.map { ($0.id, $0.name) }, adding: .event(part: index)
+    )
+    .frame(maxWidth: 140)
+  }
+
+  @ViewBuilder
+  private func partPaidForSomeone(_ index: Int, _ part: PartDraft) -> some View {
+    Toggle(isOn: partBinding(index).reimbursable) {
+      Text(verbatim: t("entry.paidForSomeone"))
+    }
+    .toggleStyle(.checkbox)
+    // Its money came back: the part stays paid for them.
+    .disabled(model.isClosedPart(id: part.id))
+    if part.reimbursable {
+      // Who pays it back is added from the menu, like the person of «для кого».
+      referencePicker(
+        selection: partBinding(index).debtorPersonId,
+        options: model.people.map { ($0.id, $0.name) }, adding: .debtor(part: index)
+      )
+      .frame(maxWidth: 140)
+      .disabled(model.isClosedPart(id: part.id))
+    }
+  }
+
+  private var footer: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(spacing: 12) {
+        Button(t("entry.split")) {
+          model.addPart()
+        }
+        .buttonStyle(.bordered)
+
+        Button(t("entry.paidForSomeone")) {
+          model.markLastPartPaidForSomeone()
+        }
+        .buttonStyle(.bordered)
+
+        // In the editor the box only says what the purchase is: a saved purchase is put on
+        // credit or taken off it in Debts, never by a plan the editor would not write. A plain
+        // one does not show it at all.
+        if model.canChangeCredit || model.isOnCredit {
+          Toggle(isOn: onCreditBinding) {
+            Text(verbatim: t("entry.onCredit"))
+          }
+          .toggleStyle(.checkbox)
+          .disabled(!model.canChangeCredit)
+        }
+
+        Spacer()
+      }
+
+      if !model.canChangeCredit && model.isOnCredit {
+        caption("entry.creditInDebts")
+      }
+
+      if model.creditPlan != nil {
+        creditFields
+      }
+    }
+  }
+
+  /// Which debt the purchase joins — an existing one or a new one — and how it is repaid.
+  @ViewBuilder
+  private var creditFields: some View {
+    let plan = Binding(
+      get: { model.creditPlan ?? EntryDraftModel.CreditPlan() },
+      set: { model.creditPlan = $0 })
+
+    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+      GridRow {
+        fieldLabel("entry.debt")
+        Picker(selection: plan.debtId) {
+          Text(verbatim: t("entry.newDebt")).tag(UUID?.none)
+          ForEach(model.debts, id: \.id) { debt in
+            Text(verbatim: debt.name).tag(UUID?.some(debt.id))
+          }
+        } label: {
+          EmptyView()
+        }
+        .labelsHidden()
+      }
+      // The count and the instalment move together, and only a new debt takes them: an
+      // existing one keeps its own payment.
+      if plan.wrappedValue.debtId == nil {
+        GridRow {
+          fieldLabel("entry.payments")
+          Stepper(
+            value: Binding(
+              get: { plan.wrappedValue.payments }, set: { model.setCreditPayments($0) }),
+            in: EntryDraftModel.creditPaymentsRange
+          ) {
+            Text(verbatim: "\(plan.wrappedValue.payments)")
+              .font(.body.monospacedDigit())
+          }
+          .fixedSize()
+        }
+        GridRow {
+          fieldLabel("entry.monthlyPayment")
+          AmountField(
+            amount: Binding(
+              get: { plan.wrappedValue.monthlyAmount }, set: { model.setCreditMonthly($0) }),
+            locale: environment.language.locale
+          )
+          .frame(width: 120)
+        }
+      }
+    }
+  }
+
+  // MARK: Pieces
+
+  private func fieldLabel(_ key: String) -> some View {
+    Text(verbatim: t(key))
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .gridColumnAlignment(.leading)
+  }
+
+  /// The category of a part. Choosing one drops whatever subcategory was under the
+  /// previous category, so the pair can never end up mismatched.
+  private func categoryPicker(forPartAt index: Int) -> some View {
+    // The source is set inside the binding rather than in `onChange`: only a choice made
+    // here is `manual`, while a category that history or a template filled in keeps its
+    // own source.
+    let selection = Binding<UUID?>(
+      get: { model.categoryOfPart(model.part(at: index)) },
+      set: { newValue in
+        model.setCategory(newValue, forPartAt: index)
+        model.applyDefaults(today: environment.today)
+      })
+
+    return Picker(selection: addingSelection(selection, .category(part: index))) {
+      Text(verbatim: "—").tag(UUID?.none)
+      ForEach(model.categoryOptions(forPartAt: index), id: \.id) { category in
+        Text(verbatim: optionTitle(category)).tag(UUID?.some(category.id))
+      }
+      addItem
+    } label: {
+      Text(verbatim: t("entry.category"))
+    }
+    .labelsHidden()
+  }
+
+  /// The subcategory of a part: only children of the chosen category, plus the dash, which
+  /// leaves the operation on the category itself. «Add…» files a new one under that category
+  /// — only one of the owner's (`canAddSubcategory`) — so the menu is off only when there is
+  /// neither a child to choose nor a category to add one under.
+  private func subcategoryPicker(forPartAt index: Int) -> some View {
+    let children = model.subcategoryOptions(forPartAt: index)
+    let canAdd = model.canAddSubcategory(forPartAt: index)
+    let selection = Binding<UUID?>(
+      get: { model.subcategoryOfPart(model.part(at: index)) },
+      set: { newValue in
+        model.setSubcategory(newValue, forPartAt: index)
+        model.applyDefaults(today: environment.today)
+      })
+
+    return Picker(
+      selection: canAdd ? addingSelection(selection, .subcategory(part: index)) : selection
+    ) {
+      Text(verbatim: "—").tag(UUID?.none)
+      ForEach(children, id: \.id) { category in
+        Text(verbatim: optionTitle(category)).tag(UUID?.some(category.id))
+      }
+      if canAdd { addItem }
+    } label: {
+      Text(verbatim: t("entry.subcategory"))
+    }
+    .labelsHidden()
+    .disabled(children.isEmpty && !canAdd)
+  }
+
+  private func qualityPicker(for part: Binding<PartDraft>) -> some View {
+    Picker(selection: qualitySelection(for: part)) {
+      ForEach(Quality.allCases, id: \.self) { quality in
+        Text(verbatim: environment.language(Palette.qualityKey(quality)))
+          .tag(Quality?.some(quality))
+      }
+    } label: {
+      Text(verbatim: t("entry.quality"))
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+    .disabled(!model.canRateByHand(part.wrappedValue))
+  }
+
+  /// The same choice folded into a menu, narrow enough for a row of the split. Every value
+  /// carries its symbol and its name, never a colour alone.
+  private func qualityMenu(for part: Binding<PartDraft>) -> some View {
+    Picker(selection: qualitySelection(for: part)) {
+      ForEach(Quality.allCases, id: \.self) { quality in
+        Label {
+          Text(verbatim: environment.language(Palette.qualityKey(quality)))
+        } icon: {
+          Image(systemName: Palette.qualitySymbol(quality))
+        }
+        .tag(Quality?.some(quality))
+      }
+    } label: {
+      Text(verbatim: t("entry.quality"))
+    }
+    .pickerStyle(.menu)
+    .labelsHidden()
+    .fixedSize()
+    .help(t("entry.quality"))
+    .disabled(!model.canRateByHand(part.wrappedValue))
+  }
+
+  /// Same reasoning as the category picker: only a choice made here is `manual`, and a
+  /// contribution to a goal cannot be re-rated at all.
+  private func qualitySelection(for part: Binding<PartDraft>) -> Binding<Quality?> {
+    Binding(
+      get: { part.wrappedValue.quality },
+      set: { newValue in
+        part.wrappedValue.quality = newValue
+        part.wrappedValue.qualitySource = .manual
+      })
+  }
+
+  private func forWhomPicker(forPartAt index: Int) -> some View {
+    let part = partBinding(index)
+    return HStack(spacing: 6) {
+      // Choosing a value drops the person the part named. A set person beats the value
+      // everywhere the app renders «для кого» (`TransactionRows`), so leaving it would make
+      // the choice invisible — and the bulk edit already drops it for the same reason
+      // (`BulkEditRule`).
+      Picker(selection: forWhomBinding(for: part)) {
+        ForEach(ForWhom.allCases, id: \.self) { value in
+          Text(verbatim: environment.label(for: value)).tag(value)
+        }
+      } label: {
+        Text(verbatim: t("entry.forWhom"))
+      }
+      .labelsHidden()
+      referencePicker(
+        selection: part.forPersonId,
+        options: model.people.map { ($0.id, $0.name) }, adding: .person(part: index))
+    }
+  }
+
+  /// «Для кого» as a choice that also lets go of the person the part named.
+  private func forWhomBinding(for part: Binding<PartDraft>) -> Binding<ForWhom> {
+    Binding(
+      get: { part.wrappedValue.forWhom },
+      set: { value in
+        guard value != part.wrappedValue.forWhom else { return }
+        part.wrappedValue.forWhom = value
+        part.wrappedValue.forPersonId = nil
+      })
+  }
+
+  /// A short caption beside a control of a split row: the field grid has a label column and
+  /// a row of the split editor does not, and a disabled empty picker with nothing beside it
+  /// is indistinguishable from a broken one.
+  private func partLabel(_ key: String) -> some View {
+    Text(verbatim: t(key))
+      .foregroundStyle(.secondary)
+      .fixedSize()
+  }
+
+  /// A menu of a dictionary. Given `adding`, «Add…» ends it and opens the sheet of that kind,
+  /// and the menu is never off for want of rows: «Add…» is always there to choose. The goal and
+  /// the debt have no «Add…» and are off while there is nothing to choose.
+  private func referencePicker(
+    selection: Binding<UUID?>, options: [(UUID, String)], adding kind: AddFromPicker.Kind? = nil
+  ) -> some View {
+    Picker(selection: kind.map { addingSelection(selection, $0) } ?? selection) {
+      Text(verbatim: "—").tag(UUID?.none)
+      ForEach(options, id: \.0) { option in
+        Text(verbatim: option.1).tag(UUID?.some(option.0))
+      }
+      if kind != nil { addItem }
+    } label: {
+      EmptyView()
+    }
+    .labelsHidden()
+    .disabled(kind == nil && options.isEmpty)
+  }
+
+  /// The last item of a menu of a dictionary, after a line.
+  @ViewBuilder
+  private var addItem: some View {
+    Divider()
+    Text(verbatim: t("entry.add")).tag(UUID?.some(AddFromPicker.tag))
+  }
+
+  /// The choice of a menu that ends with «Add…»: that item opens the sheet of `kind` and
+  /// leaves the choice as it was.
+  private func addingSelection(
+    _ selection: Binding<UUID?>, _ kind: AddFromPicker.Kind
+  ) -> Binding<UUID?> {
+    AddFromPicker.selection(selection) { model.adding = kind }
+  }
+
+  /// Expectations not fulfilled yet, from the planning the pipeline counted.
+  private var openExpectations: [ExpectedIncomeStatus] {
+    (compute.snapshot?.planning.expected ?? []).filter { !$0.isFulfilled && !$0.income.closed }
+  }
+
+  /// Income says which month it is for; by default that is the month of its date.
+  private var periodMonthPicker: some View {
+    Picker(
+      selection: Binding(
+        get: { model.shownPeriodMonth },
+        set: { model.draft.periodMonth = $0 })
+    ) {
+      ForEach(model.periodMonthOptions, id: \.iso) { month in
+        Text(verbatim: month.iso).tag(month)
+      }
+    } label: {
+      EmptyView()
+    }
+    .labelsHidden()
+  }
+
+  private var currencyPicker: some View {
+    Picker(selection: $model.draft.currency) {
+      ForEach(environment.vocabulary.enabledCurrencies, id: \.code) { currency in
+        Text(verbatim: currency.code).tag(currency)
+      }
+    } label: {
+      EmptyView()
+    }
+    .labelsHidden()
+    .disabled(model.hasClosedPart)
+  }
+
+  /// Why the money of a part cannot be changed: someone gave it back.
+  private var closedPartCaption: some View { caption("entry.closedPart") }
+
+  /// Why a field cannot be changed here, or where it is changed instead.
+  private func caption(_ key: String) -> some View {
+    Text(verbatim: t(key))
+      .font(.caption)
+      .foregroundStyle(.secondary)
+  }
+
+  private var rateField: some View {
+    HStack(spacing: 8) {
+      RateField(model: model, title: t("entry.rate"), locale: environment.language.locale)
+        .labelsHidden()
+        .frame(width: 120)
+      if model.draft.rateSource == .manual {
+        Text(verbatim: t("entry.rateManual"))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  // MARK: Helpers
+
+  private func t(_ key: String) -> String { environment.language(key, table: "Entry") }
+
+  /// A retired category is only ever shown for what is already filed under it, and says so.
+  private func optionTitle(_ category: CoreKit.Category) -> String {
+    category.archived ? environment.format("common.archivedName", category.name) : category.name
+  }
+
+  private func title(for category: CoreKit.Category) -> String {
+    guard let parentId = category.parentId,
+      let parent = model.categories.first(where: { $0.id == parentId })
+    else { return category.name }
+    return "\(parent.name) › \(category.name)"
+  }
+
+  private var onCreditBinding: Binding<Bool> {
+    Binding(
+      get: { model.isOnCredit },
+      set: { isOn in
+        if isOn {
+          model.startCreditPlan()
+        } else {
+          model.stopCreditPlan()
+        }
+      })
+  }
+
+  /// The total of the operation. A draft with a single part keeps that part in step, so
+  /// correcting the amount of an ordinary operation just works; a split keeps its parts
+  /// and shows what is left unallocated.
+  private var totalBinding: Binding<AmountE4> {
+    Binding(get: { model.draft.amount }, set: { model.setTotal($0) })
+  }
+
+  private func partBinding(_ index: Int) -> Binding<PartDraft> {
+    Binding(
+      get: { model.draft.parts.indices.contains(index) ? model.draft.parts[index] : PartDraft() },
+      set: { newValue in
+        guard model.draft.parts.indices.contains(index) else { return }
+        model.draft.parts[index] = newValue
+      })
+  }
+}
+
+/// An amount that can be typed as an expression: "1500×3−2000" is evaluated as you type.
+/// The field also follows the amount when something else changes it — splitting evenly,
+/// for example — so what is shown is always what will be saved.
+struct AmountField: View {
+  @Binding var amount: AmountE4
+  let locale: Locale
+  /// Given, it is told every amount typed together with the text behind it, and writes the
+  /// amount itself: the total of an operation keeps a formula typed in it (`amount_expr`).
+  var onTyped: ((AmountE4, String) -> Void)? = nil
+  @State private var text: String = ""
+  @State private var lastShown: AmountE4 = .zero
+
+  var body: some View {
+    TextField(text: $text) {
+      Text(verbatim: "0")
+    }
+    .labelsHidden()
+    .font(.body.monospacedDigit())
+    .onAppear { show(amount) }
+    .onChange(of: amount) { _, newValue in
+      guard newValue != lastShown else { return }
+      show(newValue)
+    }
+    .onChange(of: text) { _, newValue in
+      guard let parsed = Self.amount(from: newValue) else { return }
+      lastShown = parsed
+      if let onTyped { onTyped(parsed, newValue) } else { amount = parsed }
+    }
+  }
+
+  /// What the text says: zero when it is empty — a field cleared by hand, not the last digit
+  /// left in it (fourth review, 19.09) — the value of an expression that reads, and nothing
+  /// while it is half typed, so the amount stays as it was.
+  static func amount(from text: String) -> AmountE4? {
+    guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return .zero }
+    guard let value = try? ExpressionEvaluator.evaluate(text) else { return nil }
+    return try? AmountE4(decimal: value)
+  }
+
+  private func show(_ value: AmountE4) {
+    lastShown = value
+    text = Self.text(for: value, locale: locale)
+  }
+
+  /// What the field shows for an amount: nothing for zero, otherwise the number as the
+  /// interface language writes it — «1500,5» in Russian — without grouping, so it reads back
+  /// as the same amount (the evaluator takes either separator).
+  static func text(for value: AmountE4, locale: Locale) -> String {
+    value.isZero ? "" : FieldNumber.text(value.decimal, locale: locale)
+  }
+}
+
+/// The rate typed by hand. The text stays as it is typed — «81,» is 81 half-typed, «81,40»
+/// is 81.4 — and is rewritten only when the rate becomes one the text does not read: cleared,
+/// or put there by something else. Bound straight to the rate, the field showed every
+/// keystroke back as the number it made, so the separator vanished under the cursor and
+/// «81,43» came out as 8143. `AmountField` keeps its text the same way.
+struct RateField: View {
+  let model: EntryDraftModel
+  let title: String
+  let locale: Locale
+  @State private var text = ""
+
+  var body: some View {
+    TextField(text: $text) {
+      Text(verbatim: title)
+    }
+    .onAppear { text = Self.text(afterTyping: text, rate: model.draft.rate, locale: locale) }
+    // Half-typed text must not clear the rate and claim the owner chose it: that combination
+    // is what converts a foreign amount one to one (see the model). Text that already reads as
+    // the rate is the rate being shown, not typed: passed on, it would make a bank rate manual.
+    .onChange(of: text) { _, typed in
+      guard !Self.reads(typed, as: model.draft.rate) else { return }
+      model.setManualRate(typed)
+    }
+    .onChange(of: model.draft.rate) { _, rate in
+      text = Self.text(afterTyping: text, rate: rate, locale: locale)
+    }
+  }
+
+  /// What the field shows once the model has taken `typed`: the text as typed while it reads
+  /// as the rate, otherwise the rate itself.
+  static func text(afterTyping typed: String, rate: Decimal?, locale: Locale) -> String {
+    reads(typed, as: rate) ? typed : (rate.map { FieldNumber.text($0, locale: locale) } ?? "")
+  }
+
+  /// Whether `text` says `rate`: the same number however it is typed, or nothing for no rate.
+  static func reads(_ text: String, as rate: Decimal?) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    guard let rate else { return trimmed.isEmpty }
+    return DecimalMath.parse(trimmed) == rate
+  }
+}
+
+/// A number put into a text field for editing: the decimal separator of the interface
+/// language, no grouping. `Decimal` itself always prints a dot.
+enum FieldNumber {
+  static func text(_ value: Decimal, locale: Locale) -> String {
+    let separator = locale.decimalSeparator ?? "."
+    let plain = "\(value)"
+    return separator == "." ? plain : plain.replacingOccurrences(of: ".", with: separator)
+  }
+}
+
+extension Binding<String> {
+  /// Lets a `TextField` edit an optional note without inventing an empty string in the model.
+  init(_ source: Binding<String?>, replacingNilWith placeholder: String) {
+    self.init(
+      get: { source.wrappedValue ?? placeholder },
+      set: { source.wrappedValue = $0.isEmpty ? nil : $0 })
+  }
+}

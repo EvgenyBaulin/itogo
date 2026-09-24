@@ -1,0 +1,29 @@
+# Says make verify in a comment and in the name of a step, and runs less; two jobs without
+# limits and a test without one; the AppCore tests three times on macOS without pandas (the
+# Linux job needs none); XcodeGen from Homebrew; two actions on Node 20 and one nobody listed.
+jobs:
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: someone/else@v1
+      - run: brew install xcodegen
+      - name: Test
+        run: make test-core build   # not make verify
+      - name: Check, as make verify does
+        run: |
+          make check-a && echo done
+          swift test --package-path Packages/AppCore
+          xcodebuild -scheme Itogo -only-testing:ItogoTests \
+            CODE_SIGN_IDENTITY="-" test
+  linux:
+    runs-on: ubuntu-latest
+    # timeout-minutes: 40 is only a comment here
+    steps:
+      - uses: actions/setup-python@v5   # not actions/setup-python@v6
+      - run: swift test
+  xcode:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - run: swift test --package-path Packages/AppCore

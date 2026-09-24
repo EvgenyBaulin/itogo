@@ -1,0 +1,279 @@
+import Foundation
+
+/// A bill or a subscription that comes back on a schedule (`scheduled_payments`). `nextDate`
+/// is the next due date not yet paid or skipped; `nil` once the schedule is over.
+public struct ScheduledPayment: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var name: String
+  public var kind: ScheduledKind
+  /// In `currency`; for a subscription the price as of today when there is no price history.
+  public var amountE4: AmountE4
+  public var currency: CurrencyCode
+  public var categoryId: UUID?
+  public var paymentMethodId: UUID?
+  public var forWhom: ForWhom
+  public var forPersonId: UUID?
+  /// Paid for somebody who gives the money back (a subscription for someone else).
+  public var reimbursable: Bool
+  public var debtorPersonId: UUID?
+  /// How much that person gives back, which may differ from what I pay; `nil` — all of it.
+  public var reimbursementAmountE4: AmountE4?
+  public var reimbursementCurrency: CurrencyCode?
+  public var freq: Frequency
+  /// Every `interval` weeks, months or years; at least 1.
+  public var interval: Int
+  /// Day of the month (monthly, yearly) or weekday 1…7, Monday first (weekly).
+  public var day: Int?
+  /// Month 1…12 of a yearly payment.
+  public var month: Int?
+  public var nextDate: DateOnly?
+  public var endDate: DateOnly?
+  public var trialEnd: DateOnly?
+  public var cancelURL: String?
+  public var remindDaysBefore: Int?
+  public var active: Bool
+
+  public init(
+    id: UUID = UUID(), name: String, kind: ScheduledKind = .bill, amountE4: AmountE4,
+    currency: CurrencyCode = .rub, categoryId: UUID? = nil, paymentMethodId: UUID? = nil,
+    forWhom: ForWhom = .me, forPersonId: UUID? = nil, reimbursable: Bool = false,
+    debtorPersonId: UUID? = nil, reimbursementAmountE4: AmountE4? = nil,
+    reimbursementCurrency: CurrencyCode? = nil, freq: Frequency = .monthly, interval: Int = 1,
+    day: Int? = nil, month: Int? = nil, nextDate: DateOnly? = nil, endDate: DateOnly? = nil,
+    trialEnd: DateOnly? = nil, cancelURL: String? = nil, remindDaysBefore: Int? = nil,
+    active: Bool = true
+  ) {
+    self.id = id
+    self.name = name
+    self.kind = kind
+    self.amountE4 = amountE4
+    self.currency = currency
+    self.categoryId = categoryId
+    self.paymentMethodId = paymentMethodId
+    self.forWhom = forWhom
+    self.forPersonId = forPersonId
+    self.reimbursable = reimbursable
+    self.debtorPersonId = debtorPersonId
+    self.reimbursementAmountE4 = reimbursementAmountE4
+    self.reimbursementCurrency = reimbursementCurrency
+    self.freq = freq
+    self.interval = interval
+    self.day = day
+    self.month = month
+    self.nextDate = nextDate
+    self.endDate = endDate
+    self.trialEnd = trialEnd
+    self.cancelURL = cancelURL
+    self.remindDaysBefore = remindDaysBefore
+    self.active = active
+  }
+}
+
+/// A price of a subscription from `date` on (`subscription_prices`), in the payment's
+/// currency. A date in the future announces a change.
+public struct SubscriptionPrice: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var paymentId: UUID
+  public var date: DateOnly
+  public var amountE4: AmountE4
+
+  public init(id: UUID = UUID(), paymentId: UUID, date: DateOnly, amountE4: AmountE4) {
+    self.id = id
+    self.paymentId = paymentId
+    self.date = date
+    self.amountE4 = amountE4
+  }
+}
+
+/// Money I expect (`expected_income`): once, in parts (a prepayment and the rest), or on a
+/// schedule (monthly help in parts).
+public struct ExpectedIncome: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var name: String
+  public var categoryId: UUID?
+  public var personId: UUID?
+  public var kind: ExpectedIncomeKind
+  /// The whole amount — of the one-off income, or of one occurrence of a recurring one.
+  public var totalE4: AmountE4
+  public var currency: CurrencyCode
+  /// When it is due (one-off), or the first due date (recurring).
+  public var dueDate: DateOnly?
+  public var freq: Frequency?
+  public var day: Int?
+  public var partsExpected: Int
+  public var closed: Bool
+
+  public init(
+    id: UUID = UUID(), name: String, categoryId: UUID? = nil, personId: UUID? = nil,
+    kind: ExpectedIncomeKind = .oneOff, totalE4: AmountE4, currency: CurrencyCode = .rub,
+    dueDate: DateOnly? = nil, freq: Frequency? = nil, day: Int? = nil, partsExpected: Int = 1,
+    closed: Bool = false
+  ) {
+    self.id = id
+    self.name = name
+    self.categoryId = categoryId
+    self.personId = personId
+    self.kind = kind
+    self.totalE4 = totalE4
+    self.currency = currency
+    self.dueDate = dueDate
+    self.freq = freq
+    self.day = day
+    self.partsExpected = partsExpected
+    self.closed = closed
+  }
+}
+
+/// A received income tied to what was expected (`expected_income_links`).
+public struct ExpectedIncomeLink: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var expectedIncomeId: UUID
+  public var transactionId: UUID
+
+  public init(id: UUID = UUID(), expectedIncomeId: UUID, transactionId: UUID) {
+    self.id = id
+    self.expectedIncomeId = expectedIncomeId
+    self.transactionId = transactionId
+  }
+}
+
+/// A monthly limit (`budgets`), in rubles: on a category or subcategory, on bad spending,
+/// or on a «for whom» value.
+public struct Budget: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var scope: BudgetScope
+  public var categoryId: UUID?
+  public var forWhom: ForWhom?
+  public var amountE4: AmountE4
+  public var rollover: Bool
+  /// The month the limit started; the rollover counts from it.
+  public var startMonth: MonthKey?
+
+  public init(
+    id: UUID = UUID(), scope: BudgetScope, categoryId: UUID? = nil, forWhom: ForWhom? = nil,
+    amountE4: AmountE4, rollover: Bool = false, startMonth: MonthKey? = nil
+  ) {
+    self.id = id
+    self.scope = scope
+    self.categoryId = categoryId
+    self.forWhom = forWhom
+    self.amountE4 = amountE4
+    self.rollover = rollover
+    self.startMonth = startMonth
+  }
+}
+
+/// One currency of a reconciliation typed by currency, with the rate it was counted at.
+public struct ReconciliationAmount: Hashable, Sendable, Codable {
+  public var currency: CurrencyCode
+  public var amountE4: AmountE4
+  /// Rubles per one unit; `nil` for rubles.
+  public var rubPerUnit: Decimal?
+  public var rubE4: AmountE4
+
+  public init(currency: CurrencyCode, amountE4: AmountE4, rubPerUnit: Decimal?, rubE4: AmountE4) {
+    self.currency = currency
+    self.amountE4 = amountE4
+    self.rubPerUnit = rubPerUnit
+    self.rubE4 = rubE4
+  }
+}
+
+/// «How much money do I have in total» at a moment (`reconciliations`). The first one is the
+/// starting point; each next one compares the actual total with the expected.
+public struct Reconciliation: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var date: DateOnly
+  /// The instant it was made; the window of the next reconciliation starts here.
+  public var reconciledAt: Date?
+  public var actualTotalRubE4: AmountE4
+  public var expectedTotalRubE4: AmountE4?
+  /// actual − expected; `nil` for the starting point.
+  public var differenceE4: AmountE4?
+  /// The operation that recorded the difference, if one was written.
+  public var transactionId: UUID?
+  public var breakdown: [ReconciliationAmount]
+
+  public init(
+    id: UUID = UUID(), date: DateOnly, reconciledAt: Date? = nil, actualTotalRubE4: AmountE4,
+    expectedTotalRubE4: AmountE4? = nil, differenceE4: AmountE4? = nil,
+    transactionId: UUID? = nil, breakdown: [ReconciliationAmount] = []
+  ) {
+    self.id = id
+    self.date = date
+    self.reconciledAt = reconciledAt
+    self.actualTotalRubE4 = actualTotalRubE4
+    self.expectedTotalRubE4 = expectedTotalRubE4
+    self.differenceE4 = differenceE4
+    self.transactionId = transactionId
+    self.breakdown = breakdown
+  }
+}
+
+/// Settings the planning reads, kept in `settings` under these keys and passed in by the app.
+public struct PlanningSettings: Hashable, Sendable, Codable {
+  public static let reconcileEveryDaysKey = "planning.reconcileEveryDays"
+  public static let savingsTargetKey = "planning.savingsTargetBp"
+  public static let reserveGoalPlanKey = "planning.reserveGoalPlan"
+  public static let reconcileIncludesGoalSavingsKey = "planning.reconcileIncludesGoalSavings"
+  public static let dismissedRemindersKey = "reminders.dismissed"
+  /// The categories the difference of a reconciliation is written to — «Сверка» and its
+  /// income twin. Ordinary categories, made the first time a difference is recorded and
+  /// remembered here by id, the way the cashback category is.
+  public static let reconcileExpenseCategoryKey = "planning.reconcileExpenseCategory"
+  public static let reconcileIncomeCategoryKey = "planning.reconcileIncomeCategory"
+
+  /// Remind to reconcile when the last one is older than this (default 14).
+  public var reconcileEveryDays: Int
+  /// The target share of savings in basis points (default 1 000 = 10 %).
+  public var savingsTargetBp: Int
+  /// «Free to spend» keeps back what is left of this month's goal plans (default on).
+  public var reserveGoalPlan: Bool
+  /// Contributions to goals stay in the total I reconcile (default on).
+  public var reconcileIncludesGoalSavings: Bool
+  /// Ids of reminders put off until they change (`Reminder.id`).
+  public var dismissedReminders: Set<String>
+
+  public init(
+    reconcileEveryDays: Int = 14, savingsTargetBp: Int = 1_000, reserveGoalPlan: Bool = true,
+    reconcileIncludesGoalSavings: Bool = true, dismissedReminders: Set<String> = []
+  ) {
+    self.reconcileEveryDays = reconcileEveryDays
+    self.savingsTargetBp = savingsTargetBp
+    self.reserveGoalPlan = reserveGoalPlan
+    self.reconcileIncludesGoalSavings = reconcileIncludesGoalSavings
+    self.dismissedReminders = dismissedReminders
+  }
+}
+
+/// Everything of planning, reconciliation and debts the snapshot carries besides the
+/// operations and the dictionaries: read in the same transaction as the rest of the dataset.
+public struct PlanningBook: Hashable, Sendable, Codable {
+  public var scheduled: [ScheduledPayment]
+  public var prices: [SubscriptionPrice]
+  public var expected: [ExpectedIncome]
+  public var expectedLinks: [ExpectedIncomeLink]
+  public var budgets: [Budget]
+  /// Oldest first.
+  public var reconciliations: [Reconciliation]
+  public var debtEntries: [DebtEntry]
+  public var settings: PlanningSettings
+
+  public init(
+    scheduled: [ScheduledPayment] = [], prices: [SubscriptionPrice] = [],
+    expected: [ExpectedIncome] = [], expectedLinks: [ExpectedIncomeLink] = [],
+    budgets: [Budget] = [], reconciliations: [Reconciliation] = [],
+    debtEntries: [DebtEntry] = [], settings: PlanningSettings = PlanningSettings()
+  ) {
+    self.scheduled = scheduled
+    self.prices = prices
+    self.expected = expected
+    self.expectedLinks = expectedLinks
+    self.budgets = budgets
+    self.reconciliations = reconciliations
+    self.debtEntries = debtEntries
+    self.settings = settings
+  }
+
+  public static let empty = PlanningBook()
+}

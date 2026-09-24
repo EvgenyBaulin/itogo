@@ -1,0 +1,176 @@
+import Foundation
+
+/// Known names the parser can recognise in the entry line. The app fills it from the
+/// database; the parser itself stays free of storage.
+public struct ParserVocabulary: Hashable, Sendable {
+  public struct Entry: Hashable, Sendable {
+    public let id: UUID
+    public let name: String
+    public let aliases: [String]
+
+    public init(id: UUID, name: String, aliases: [String] = []) {
+      self.id = id
+      self.name = name
+      self.aliases = aliases
+    }
+
+    /// Every spelling this entry answers to, longest first so "кофе точка" wins over "кофе".
+    public var spellings: [String] {
+      ([name] + aliases)
+        .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        .filter { !$0.isEmpty }
+        .sorted { $0.count > $1.count }
+    }
+  }
+
+  public var people: [Entry]
+  public var places: [Entry]
+  public var paymentMethods: [Entry]
+  public var events: [Entry]
+  public var goals: [Entry]
+  public var debts: [Entry]
+  public var enabledCurrencies: [CurrencyCode]
+
+  public init(
+    people: [Entry] = [], places: [Entry] = [], paymentMethods: [Entry] = [],
+    events: [Entry] = [], goals: [Entry] = [], debts: [Entry] = [],
+    enabledCurrencies: [CurrencyCode] = CurrencyCode.defaultEnabled
+  ) {
+    self.people = people
+    self.places = places
+    self.paymentMethods = paymentMethods
+    self.events = events
+    self.goals = goals
+    self.debts = debts
+    self.enabledCurrencies = enabledCurrencies
+  }
+
+  public static let empty = ParserVocabulary()
+}
+
+/// What a recognised piece of the entry line means. Used for highlighting and for tests.
+public enum ParsedRole: String, Hashable, Sendable, CaseIterable {
+  case amount
+  case currency
+  case date
+  case kind
+  case forWhom
+  case person
+  case place
+  case event
+  case paymentMethod
+  case goal
+  case debt
+  case note
+}
+
+public struct ParsedToken: Hashable, Sendable {
+  public let role: ParsedRole
+  public let text: String
+
+  public init(role: ParsedRole, text: String) {
+    self.role = role
+    self.text = text
+  }
+}
+
+/// Result of reading one line of input. English and Russian are understood regardless of
+/// the interface language. Anything not recognised becomes the note.
+public struct ParsedInput: Hashable, Sendable {
+  /// Why the line has no amount although a number was typed: a division by zero or garbage
+  /// is never saved, it is a clear error instead.
+  public enum AmountProblem: Hashable, Sendable {
+    /// A formula divides by zero: `3000÷0`, `10 / 0`.
+    case divisionByZero
+    /// Larger than one amount may be (`AmountE4.inputLimit`).
+    case tooLarge
+    /// The formula comes out below zero; the sign of an operation comes from its kind.
+    case negative
+    /// A number or a formula that cannot be read: `12++`, `(1000+600`.
+    case malformed
+  }
+
+  public var kind: TransactionKind
+  public var amount: Decimal?
+  /// The expression exactly as typed, kept when the amount was a formula.
+  public var amountExpression: String?
+  /// Set only while `amount` is nil: what went wrong with the number that was typed.
+  public var amountProblem: AmountProblem?
+  public var currency: CurrencyCode?
+  public var date: DateOnly?
+  public var forWhom: ForWhom?
+  public var personId: UUID?
+  public var placeId: UUID?
+  public var eventId: UUID?
+  public var paymentMethodId: UUID?
+  public var goalId: UUID?
+  public var debtId: UUID?
+  /// A name that looked like a person but is not in the dictionary yet.
+  public var unknownPersonName: String?
+  /// A place written as "в <место>" / "at <place>" that is not in the dictionary yet.
+  public var unknownPlaceName: String?
+  /// The words that named `unknownPersonName`, the marker included, as typed: «для Пети».
+  /// They leave the note like every word the parser read; the app gives them back to the
+  /// note while nothing is made of the name, so nothing typed is lost.
+  public var unknownPersonPhrase: String?
+  /// The same for `unknownPlaceName`: «в Кофемании».
+  public var unknownPlacePhrase: String?
+  public var note: String
+  public var tokens: [ParsedToken]
+
+  public init(
+    kind: TransactionKind = .expense,
+    amount: Decimal? = nil,
+    amountExpression: String? = nil,
+    amountProblem: AmountProblem? = nil,
+    currency: CurrencyCode? = nil,
+    date: DateOnly? = nil,
+    forWhom: ForWhom? = nil,
+    personId: UUID? = nil,
+    placeId: UUID? = nil,
+    eventId: UUID? = nil,
+    paymentMethodId: UUID? = nil,
+    goalId: UUID? = nil,
+    debtId: UUID? = nil,
+    unknownPersonName: String? = nil,
+    unknownPlaceName: String? = nil,
+    unknownPersonPhrase: String? = nil,
+    unknownPlacePhrase: String? = nil,
+    note: String = "",
+    tokens: [ParsedToken] = []
+  ) {
+    self.kind = kind
+    self.amount = amount
+    self.amountExpression = amountExpression
+    self.amountProblem = amountProblem
+    self.currency = currency
+    self.date = date
+    self.forWhom = forWhom
+    self.personId = personId
+    self.placeId = placeId
+    self.eventId = eventId
+    self.paymentMethodId = paymentMethodId
+    self.goalId = goalId
+    self.debtId = debtId
+    self.unknownPersonName = unknownPersonName
+    self.unknownPlaceName = unknownPlaceName
+    self.unknownPersonPhrase = unknownPersonPhrase
+    self.unknownPlacePhrase = unknownPlacePhrase
+    self.note = note
+    self.tokens = tokens
+  }
+
+  /// Nothing can be saved without an amount.
+  public var isSaveable: Bool { amount != nil }
+
+  /// The amount as written, when what it comes to is worth showing at once, before Enter:
+  /// a formula, or a number whose lone separator is read as the decimal one although three
+  /// digits follow it — «1,250» is 1,25, not 1 250.
+  public var amountToPreview: String? {
+    if let amountExpression { return amountExpression }
+    guard amount != nil, let written = tokens.first(where: { $0.role == .amount })?.text,
+      DecimalMath.hasAmbiguousSeparator(written)
+    else { return nil }
+    return written
+  }
+}

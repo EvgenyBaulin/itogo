@@ -1,0 +1,172 @@
+import Foundation
+
+/// One operation as a whole. Amounts live in its parts; `amountE4` is their total.
+public struct Transaction: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var kind: TransactionKind
+  public var occurredAt: Date
+
+  public var currency: CurrencyCode
+  public var amountE4: AmountE4
+  /// The expression the user typed, kept verbatim: "(1000+600)/2".
+  public var amountExpr: String?
+
+  public var rate: Decimal?
+  public var rateDate: DateOnly?
+  public var rateSource: RateSource?
+  public var rateProvisional: Bool
+  public var amountRubE4: AmountE4
+
+  public var note: String?
+  public var placeId: UUID?
+  public var paymentMethodId: UUID?
+  /// Income only: which month the money is for. Defaults to the month of the date.
+  public var periodMonth: MonthKey?
+  /// Payment against a debt.
+  public var debtId: UUID?
+  /// Purchase made on credit or in instalments.
+  public var creditDebtId: UUID?
+
+  public var importBatchId: UUID?
+  public var externalId: String?
+
+  public var createdAt: Date
+  public var updatedAt: Date
+  public var deletedAt: Date?
+
+  public init(
+    id: UUID = UUID(),
+    kind: TransactionKind,
+    occurredAt: Date,
+    currency: CurrencyCode = .rub,
+    amountE4: AmountE4,
+    amountExpr: String? = nil,
+    rate: Decimal? = nil,
+    rateDate: DateOnly? = nil,
+    rateSource: RateSource? = nil,
+    rateProvisional: Bool = false,
+    amountRubE4: AmountE4? = nil,
+    note: String? = nil,
+    placeId: UUID? = nil,
+    paymentMethodId: UUID? = nil,
+    periodMonth: MonthKey? = nil,
+    debtId: UUID? = nil,
+    creditDebtId: UUID? = nil,
+    importBatchId: UUID? = nil,
+    externalId: String? = nil,
+    createdAt: Date = Date(),
+    updatedAt: Date = Date(),
+    deletedAt: Date? = nil
+  ) {
+    self.id = id
+    self.kind = kind
+    self.occurredAt = occurredAt
+    self.currency = currency
+    self.amountE4 = amountE4
+    self.amountExpr = amountExpr
+    self.rate = rate
+    self.rateDate = rateDate
+    self.rateSource = rateSource
+    self.rateProvisional = rateProvisional
+    self.amountRubE4 = amountRubE4 ?? amountE4
+    self.note = note
+    self.placeId = placeId
+    self.paymentMethodId = paymentMethodId
+    self.periodMonth = periodMonth
+    self.debtId = debtId
+    self.creditDebtId = creditDebtId
+    self.importBatchId = importBatchId
+    self.externalId = externalId
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+    self.deletedAt = deletedAt
+  }
+
+  public var isDeleted: Bool { deletedAt != nil }
+}
+
+/// A part of an operation. Every operation has at least one; parts add up to the total.
+public struct TransactionPart: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var transactionId: UUID
+
+  public var categoryId: UUID?
+  public var categorySource: CategorySource
+  public var quality: Quality?
+  public var qualitySource: QualitySource?
+
+  public var amountE4: AmountE4
+  public var amountRubE4: AmountE4
+
+  public var forWhom: ForWhom
+  public var forPersonId: UUID?
+
+  /// Paid for somebody else and expected back. Such a part is not my spending.
+  public var reimbursable: Bool
+  public var debtorPersonId: UUID?
+  public var reimbursementStatus: ReimbursementStatus?
+
+  public var eventId: UUID?
+  public var goalId: UUID?
+  public var note: String?
+
+  public init(
+    id: UUID = UUID(),
+    transactionId: UUID,
+    categoryId: UUID? = nil,
+    categorySource: CategorySource = .manual,
+    quality: Quality? = nil,
+    qualitySource: QualitySource? = nil,
+    amountE4: AmountE4,
+    amountRubE4: AmountE4? = nil,
+    forWhom: ForWhom = .me,
+    forPersonId: UUID? = nil,
+    reimbursable: Bool = false,
+    debtorPersonId: UUID? = nil,
+    reimbursementStatus: ReimbursementStatus? = nil,
+    eventId: UUID? = nil,
+    goalId: UUID? = nil,
+    note: String? = nil
+  ) {
+    self.id = id
+    self.transactionId = transactionId
+    self.categoryId = categoryId
+    self.categorySource = categorySource
+    self.quality = quality
+    self.qualitySource = qualitySource
+    self.amountE4 = amountE4
+    self.amountRubE4 = amountRubE4 ?? amountE4
+    self.forWhom = forWhom
+    self.forPersonId = forPersonId
+    self.reimbursable = reimbursable
+    self.debtorPersonId = debtorPersonId
+    self.reimbursementStatus = reimbursementStatus
+    self.eventId = eventId
+    self.goalId = goalId
+    self.note = note
+  }
+}
+
+/// An operation with its parts, as the app and the reports work with it.
+public struct TransactionEntry: Identifiable, Hashable, Sendable, Codable {
+  public var transaction: Transaction
+  public var parts: [TransactionPart]
+
+  public init(transaction: Transaction, parts: [TransactionPart]) {
+    self.transaction = transaction
+    self.parts = parts
+  }
+
+  public var id: UUID { transaction.id }
+  public var isSplit: Bool { parts.count > 1 }
+
+  /// Parts must add up to the operation total, otherwise the entry cannot be saved.
+  public var partsBalance: AmountE4 {
+    transaction.amountE4 - AmountE4.sum(parts.map(\.amountE4))
+  }
+
+  /// At least one part, and the parts add up to the total. A zero operation without parts
+  /// adds up too, and is still not one the repository may save — the same rule as
+  /// `TransactionDraft.isBalanced`.
+  public var isBalanced: Bool { !parts.isEmpty && partsBalance.isZero }
+}
