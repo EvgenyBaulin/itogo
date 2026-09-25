@@ -341,9 +341,9 @@ struct EntryBar<Accessory: View>: View {
   }
 
   /// What the line currently comes to, shown above the capsule while it is being typed.
-  /// Only a formula is worth showing, and a number whose lone separator could be read either
-  /// way («1,250» is 1,25: a lone separator is the decimal one): a plain "250" already reads
-  /// as itself.
+  /// Only a formula is worth showing, a number not written the way the app writes numbers —
+  /// «1500,5 = 1,500.50 ₽», «0,500 = 0.50 ₽» — and a point that may be taken for thousands,
+  /// «1.500 = 1.50 ₽». A plain «250» or «1,500» already reads as itself.
   private var preview: String? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }

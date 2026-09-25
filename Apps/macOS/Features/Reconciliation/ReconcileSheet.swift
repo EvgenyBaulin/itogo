@@ -49,7 +49,7 @@ struct ReconcileSheet: View {
         currencyRows(snapshot)
       } else {
         HStack {
-          AmountField(amount: $total, locale: environment.language.locale)
+          AmountField(amount: $total)
             .frame(width: 200)
           Text(verbatim: "₽").foregroundStyle(.secondary)
         }
@@ -160,17 +160,15 @@ struct ReconcileSheet: View {
         HStack {
           Text(verbatim: currency.code).frame(width: 44, alignment: .leading)
           AmountField(
-            amount: Binding(get: { amounts[currency] ?? .zero }, set: { amounts[currency] = $0 }),
-            locale: environment.language.locale
+            amount: Binding(get: { amounts[currency] ?? .zero }, set: { amounts[currency] = $0 })
           )
           .frame(width: 160)
           if currency != .rub {
             if let rate = snapshot?.context.rubPerUnit[currency] {
-              // The latest rate of the bank, as the language writes numbers, and the rubles.
+              // The latest rate of the bank, written the way the app writes rates, and the rubles.
               let rubles =
                 (try? AmountE4(decimal: (amounts[currency] ?? .zero).decimal * rate)) ?? .zero
-              let rateText = rate.formatted(
-                .number.locale(environment.language.locale).precision(.fractionLength(0...4)))
+              let rateText = environment.money.rate(rate)
               let day = snapshot?.context.rateDays[currency].map { environment.dates.longDay($0) }
               Text(
                 verbatim: "× \(rateText) ₽ = \(environment.money.exact(rubles))"
@@ -242,7 +240,7 @@ struct ReconcileSheet: View {
     .font(.callout.weight(.semibold))
   }
 
-  /// «−5 550,49 ₽»: a reconciliation shows kopecks, the operation it writes has them too.
+  /// «−5,550.49 ₽»: a reconciliation shows kopecks, the operation it writes has them too.
   private func signedExact(_ amount: AmountE4) -> String {
     (amount.isNegative ? "−" : amount.isZero ? "" : "+") + environment.money.exact(amount.magnitude)
   }

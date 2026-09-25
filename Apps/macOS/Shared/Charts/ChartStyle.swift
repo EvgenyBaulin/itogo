@@ -231,12 +231,12 @@ private struct LineSample: Shape {
 /// The words on the axes of every chart: money in whole rubles through the formatter of the
 /// app, in the language of the window — never the format Charts would pick by itself.
 enum ChartAxis {
-  /// The label of a money axis at `value`: «12 000 ₽», «1,2 млн ₽».
+  /// The label of a money axis at `value`: «12,000 ₽», «1.2 млн ₽».
   static func money(_ value: AxisValue, _ formatter: MoneyFormatter) -> String {
     value.as(Int64.self).map { formatter.axis($0) } ?? ""
   }
 
-  /// The label of a count axis: «12», «1 250».
+  /// The label of a count axis: «12», «1,250».
   static func count(_ value: AxisValue, _ formatter: MoneyFormatter) -> String {
     value.as(Int64.self).map { formatter.count($0) } ?? ""
   }

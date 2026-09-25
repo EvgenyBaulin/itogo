@@ -311,7 +311,9 @@ struct TransactionListing: Sendable {
       title: RowTitle.resolve(
         note: transaction.note, category: cells.lazy.compactMap(\.category).first,
         kind: transaction.kind),
-      expression: transaction.amountExpr, partNumber: nil,
+      // A formula kept from before, its numbers written the way the app writes them.
+      expression: transaction.amountExpr.map { ExpressionEvaluator.canonical($0) ?? $0 },
+      partNumber: nil,
       place: transaction.placeId.flatMap { names.places[$0] },
       category: category,
       forWhom: RowCell.of(cells.map(\.forWhom)),

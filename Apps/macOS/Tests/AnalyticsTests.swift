@@ -649,8 +649,8 @@ final class AnalyticsWordsTests: XCTestCase {
 
     environment.language.choice = .russian
     XCTAssertEqual(AnalyticsText.title(of: period, environment), "Сентябрь 2026")
-    XCTAssertEqual(environment.money.axis(1_234_567), "1,2\(space)млн\(space)₽")
-    XCTAssertEqual(environment.money.axis(12_400), "12\(space)400\(space)₽")
+    XCTAssertEqual(environment.money.axis(1_234_567), "1.2\(space)млн\(space)₽")
+    XCTAssertEqual(environment.money.axis(12_400), "12,400\(space)₽")
     XCTAssertEqual(environment.dates.shortWeekday(1), "Пн")
     XCTAssertEqual(environment.dates.shortWeekday(7), "Вс")
     XCTAssertEqual(AnalyticsText.t("analytics.section.quality", environment), "Хорошие и плохие")

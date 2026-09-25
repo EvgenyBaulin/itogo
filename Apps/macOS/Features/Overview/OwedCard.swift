@@ -21,7 +21,7 @@ struct OwedCard: View {
               .font(.title2.monospacedDigit())
             Text(
               verbatim: environment.language.format(
-                "owed.count", table: "Entry", owed.count)
+                "owed.count", table: "Entry", counts: owed.count)
             )
             .font(.caption)
             .foregroundStyle(.secondary)

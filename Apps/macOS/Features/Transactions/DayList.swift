@@ -207,8 +207,10 @@ struct TransactionRow: View {
         RowTitleText(title: RowTitle.of(entry, tree: names))
         HStack(spacing: 8) {
           Text(verbatim: environment.dates.time(entry.transaction.occurredAt))
+          // A formula kept from before is shown with its numbers written the way the app
+          // writes them, like every other number.
           if let expression = entry.transaction.amountExpr {
-            Text(verbatim: expression)
+            Text(verbatim: ExpressionEvaluator.canonical(expression) ?? expression)
           }
           if entry.transaction.kind == .reimbursement {
             // Listed among the income because money came in, but it is not income: it

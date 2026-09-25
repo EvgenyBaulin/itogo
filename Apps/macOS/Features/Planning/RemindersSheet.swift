@@ -219,7 +219,7 @@ struct RemindersSheet: View {
         let today = compute.snapshot?.today
       else { return t("reminders.reconciliationFirst") }
       return environment.language.format(
-        "reminders.reconciliation", table: "Planning", max(0, last.date.days(to: today)))
+        "reminders.reconciliation", table: "Planning", counts: max(0, last.date.days(to: today)))
     }
   }
 

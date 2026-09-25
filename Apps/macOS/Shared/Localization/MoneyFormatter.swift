@@ -3,6 +3,11 @@ import Foundation
 
 /// Formats amounts for the interface. Totals, reports and charts are rounded to whole
 /// rubles, half up; operation lists show the exact amount.
+///
+/// The numbers are written the same way in every language — a comma between the thousands,
+/// a point before the fraction, «1,234.50 ₽» (`NumberText`) — so a figure read in one
+/// language is the figure typed in the other. Only the words around a number follow the
+/// language: «млн» or «M», and the space before «%» that Russian writes.
 public struct MoneyFormatter: Sendable {
   private let locale: Locale
 
@@ -10,18 +15,13 @@ public struct MoneyFormatter: Sendable {
     self.locale = locale
   }
 
+  private var isRussian: Bool { locale.language.languageCode?.identifier == "ru" }
+
   /// The exact amount of a list: a whole amount without a fraction, anything else
-  /// with at least the two digits of kopecks and up to the four of E4 — «250 ₽», «1 234,50 ₽»,
-  /// «12,345 ₽».
+  /// with at least the two digits of kopecks and up to the four of E4 — «250 ₽», «1,234.50 ₽»,
+  /// «4.625 ₽».
   public func exact(_ amount: AmountE4, currency: CurrencyCode = .rub) -> String {
-    let decimal = amount.decimal
-    let formatter = numberFormatter(.decimal)
-    formatter.minimumFractionDigits = amount.raw % AmountE4.unitsPerWhole == 0 ? 0 : 2
-    formatter.maximumFractionDigits = 4
-    formatter.usesGroupingSeparator = true
-    let number = NSDecimalNumber(decimal: decimal)
-    let text = formatter.string(from: number) ?? "\(decimal)"
-    return "\(text)\u{00A0}\(symbol(for: currency))"
+    "\(NumberText.amount(amount))\u{00A0}\(symbol(for: currency))"
   }
 
   /// Rounded to whole units, half away from zero — the form used by totals and charts.
@@ -29,56 +29,59 @@ public struct MoneyFormatter: Sendable {
     wholeText(DecimalMath.round(amount.decimal, scale: 0), currency)
   }
 
-  /// Whole rubles a chart plots, as the same words as `rounded`: «12 400 ₽». The value is
+  /// Whole rubles a chart plots, as the same words as `rounded`: «12,400 ₽». The value is
   /// rounded already (`AmountE4.wholeRubles`), so nothing here rounds again, and it is written
   /// from the number itself: the largest whole rubles have no E4 to go back to.
   public func rubles(_ whole: Int64) -> String {
-    wholeText(Decimal(whole), .rub)
+    "\(NumberText.integer(whole))\u{00A0}₽"
   }
 
   /// Whole rubles of a chart with their sign, as `signedRounded` writes a difference:
-  /// «+3 400 ₽», «−1 200 ₽», «0 ₽».
+  /// «+3,400 ₽», «−1,200 ₽», «0 ₽».
   public func signedRubles(_ whole: Int64) -> String {
     let value = Decimal(whole)
     return Self.sign(of: value) + wholeText(value < 0 ? -value : value, .rub)
   }
 
-  /// A figure rounded to whole units already, in the grouping of the language.
+  /// A figure rounded to whole units already, its thousands grouped.
   private func wholeText(_ whole: Decimal, _ currency: CurrencyCode) -> String {
-    let formatter = numberFormatter(.decimal)
-    formatter.maximumFractionDigits = 0
-    let text = formatter.string(from: NSDecimalNumber(decimal: whole)) ?? "\(whole)"
-    return "\(text)\u{00A0}\(symbol(for: currency))"
+    "\(NumberText.decimal(whole, fractionDigits: 0...0))\u{00A0}\(symbol(for: currency))"
   }
 
   /// A label of a money axis: whole rubles below a million, from a million the compact form
-  /// of the same words with one decimal — «1,2 млн ₽», «1.2M ₽». The figure is rounded half
-  /// away from zero like every other amount, and the unit is chosen by the rounded figure:
-  /// 999 950 000 is «1 млрд ₽», not «1 000 млн ₽».
+  /// with one decimal and the word of the language — «1.2 млн ₽», «1.2M ₽». The figure is
+  /// rounded half away from zero like every other amount, and the unit is chosen by the rounded
+  /// figure: 999 950 000 is «1 млрд ₽», not «1,000 млн ₽».
   public func axis(_ whole: Int64) -> String {
     guard whole.magnitude >= 1_000_000 else { return rubles(whole) }
     let inMillions = DecimalMath.round(Decimal(whole) / 1_000_000, scale: 1)
     let billions = inMillions >= 1_000 || inMillions <= -1_000
     let scaled =
       billions ? DecimalMath.round(Decimal(whole) / 1_000_000_000, scale: 1) : inMillions
-    let formatter = numberFormatter(.decimal)
-    formatter.minimumFractionDigits = 0
-    formatter.maximumFractionDigits = 1
-    let number = formatter.string(from: NSDecimalNumber(decimal: scaled)) ?? "\(scaled)"
-    let russian = locale.language.languageCode?.identifier == "ru"
-    let suffix = russian ? (billions ? "\u{00A0}млрд" : "\u{00A0}млн") : (billions ? "B" : "M")
+    let number = NumberText.decimal(scaled, fractionDigits: 0...1)
+    let suffix =
+      isRussian ? (billions ? "\u{00A0}млрд" : "\u{00A0}млн") : (billions ? "B" : "M")
     return "\(number)\(suffix)\u{00A0}₽"
   }
 
-  /// A whole number in the grouping of the language: «1 250», «1,250» — counts on a chart.
+  /// A whole number with its thousands grouped: «1,250» — counts on a chart.
   public func count(_ value: Int64) -> String {
-    let formatter = numberFormatter(.decimal)
-    formatter.maximumFractionDigits = 0
-    return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+    NumberText.integer(value)
   }
 
-  /// A difference in whole units with its sign: «+3 400 ₽», «−1 200 ₽», «0 ₽». The sign is
-  /// that of the rounded amount, so −0,40 ₽ reads «0 ₽» rather than «−0 ₽». The minus is the
+  /// A rate of exchange or of interest, up to four decimals: «83.125», «81.4321», «12.5».
+  public func rate(_ value: Decimal) -> String {
+    NumberText.decimal(value, fractionDigits: 0...4)
+  }
+
+  /// A plain number in the one way numbers are written, rounded to at most
+  /// `fractionDigits.upperBound` digits: a share of a debt, «0.5».
+  public func number(_ value: Decimal, fractionDigits: ClosedRange<Int> = 0...4) -> String {
+    NumberText.decimal(value, fractionDigits: fractionDigits)
+  }
+
+  /// A difference in whole units with its sign: «+3,400 ₽», «−1,200 ₽», «0 ₽». The sign is
+  /// that of the rounded amount, so −0.40 ₽ reads «0 ₽» rather than «−0 ₽». The minus is the
   /// typographic one (U+2212), as in the rest of the interface.
   public func signedRounded(_ amount: AmountE4, currency: CurrencyCode = .rub) -> String {
     let whole = DecimalMath.round(amount.decimal, scale: 0)
@@ -86,12 +89,12 @@ public struct MoneyFormatter: Sendable {
   }
 
   /// Basis points as a percent, rounded half away from zero to `fractionDigits`: 3 333 bp
-  /// is «33,3 %» in Russian and «33.3%» in English. A share of a card, of a report line.
+  /// is «33.3 %» in Russian and «33.3%» in English. A share of a card, of a report line.
   public func percent(basisPoints: Int, fractionDigits: Int = 1) -> String {
     percentText(Self.percent(of: basisPoints, fractionDigits: fractionDigits), fractionDigits)
   }
 
-  /// A change in basis points with its sign: «+8,3 %», «−53,4 %», «0,0 %». As with money,
+  /// A change in basis points with its sign: «+8.3 %», «−53.4 %», «0.0 %». As with money,
   /// the sign is that of the rounded figure.
   public func signedPercent(basisPoints: Int, fractionDigits: Int = 1) -> String {
     let value = Self.percent(of: basisPoints, fractionDigits: fractionDigits)
@@ -115,27 +118,15 @@ public struct MoneyFormatter: Sendable {
   }
 
   private static func sign(of value: Decimal) -> String {
-    value > 0 ? "+" : value < 0 ? "\u{2212}" : ""
+    value > 0 ? "+" : value < 0 ? NumberText.minus : ""
   }
 
-  /// The number is rounded already; the formatter only writes it the way the language
-  /// does — the separator, the space before «%» in Russian.
+  /// The number is rounded already; the language only decides the space before «%»: Russian
+  /// writes one, English does not.
   private func percentText(_ percent: Decimal, _ fractionDigits: Int) -> String {
-    let formatter = numberFormatter(.percent)
-    formatter.minimumFractionDigits = fractionDigits
-    formatter.maximumFractionDigits = fractionDigits
-    return formatter.string(from: NSDecimalNumber(decimal: percent / 100)) ?? "\(percent) %"
-  }
-
-  /// A formatter in the language of the interface whose negatives carry the typographic
-  /// minus (U+2212), as `sign(of:)` does: the locales of the app write the hyphen-minus, and a
-  /// day total «-3 400 ₽» beside a change «−3 400 ₽» read as two different signs.
-  private func numberFormatter(_ style: NumberFormatter.Style) -> NumberFormatter {
-    let formatter = NumberFormatter()
-    formatter.locale = locale
-    formatter.numberStyle = style
-    formatter.minusSign = "\u{2212}"
-    return formatter
+    let digits = max(0, fractionDigits)
+    let number = NumberText.decimal(percent, fractionDigits: digits...digits)
+    return isRussian ? "\(number)\u{00A0}%" : "\(number)%"
   }
 
   public func symbol(for currency: CurrencyCode) -> String {
@@ -164,9 +155,9 @@ public enum ChangeDirection: Sendable {
 /// The words of a change: the difference in rubles, and the percent when there is a base.
 public struct ChangeText: Hashable, Sendable {
   public var direction: ChangeDirection
-  /// «+3 400 ₽».
+  /// «+3,400 ₽».
   public var delta: String
-  /// «+8,3 %»; `nil` when the earlier figure was zero.
+  /// «+8.3 %»; `nil` when the earlier figure was zero.
   public var percent: String?
 }
 

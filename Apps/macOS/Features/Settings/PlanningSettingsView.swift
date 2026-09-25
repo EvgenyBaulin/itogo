@@ -27,7 +27,8 @@ struct PlanningSettingsView: View {
         ) {
           Text(
             verbatim: environment.format(
-              "settings.planning.reconcileEvery", table: "Settings", values.reconcileEveryDays))
+              "settings.planning.reconcileEvery", table: "Settings",
+              counts: values.reconcileEveryDays))
         }
         Toggle(
           isOn: Binding(
@@ -51,7 +52,8 @@ struct PlanningSettingsView: View {
         ) {
           Text(
             verbatim: environment.format(
-              "settings.planning.savingsTarget", table: "Settings", values.savingsTargetBp / 100))
+              "settings.planning.savingsTarget", table: "Settings",
+              counts: values.savingsTargetBp / 100))
         }
         Toggle(
           isOn: Binding(get: { values.reserveGoalPlan }, set: { save(\.reserveGoalPlan, $0) })

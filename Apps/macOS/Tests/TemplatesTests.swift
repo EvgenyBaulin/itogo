@@ -76,6 +76,20 @@ final class TemplatesTests: XCTestCase {
     XCTAssertEqual(parse(line).kind, .expense)
   }
 
+  /// A chip writes its amount the way the app writes numbers. «1500.5» would still read right,
+  /// but the line then shows a hint above it asking whether that is what was meant.
+  func testAnAmountWithKopecksIsWrittenTheWayTheAppWritesNumbers() throws {
+    let template = Template(
+      text: "обед", categoryId: groceries.id,
+      amountE4: try AmountE4(decimal: Decimal(string: "1500.5")!), currency: .rub)
+
+    let line = Templates.line(for: template, categories: [salary, groceries])
+
+    XCTAssertEqual(line, "обед 1,500.50")
+    XCTAssertEqual(parse(line).amount, Decimal(string: "1500.5"))
+    XCTAssertNil(parse(line).amountToPreview)
+  }
+
   // MARK: What is remembered
 
   /// A chip can say an expense, an income filed under an income category («+»), the amount

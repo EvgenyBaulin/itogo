@@ -24,7 +24,11 @@ struct ReimbursementSheet: View {
 
   @State private var owed: [OwedPart] = []
   @State private var selected: Set<UUID> = []
-  @State private var amountText = ""
+  /// The money that came back, in rubles. Zero is nothing typed yet.
+  @State private var received: AmountE4 = .zero
+  /// Whether the text of «Received» reads: while it does not, `received` is the amount it read
+  /// before, which the field no longer shows.
+  @State private var receivedReads = true
   @State private var people: [Person] = []
   @State private var personId: UUID?
   @State private var errorText: String?
@@ -40,7 +44,7 @@ struct ReimbursementSheet: View {
     self.recorded = recorded
     // Set before the first draw, so the change of person does not fire and tick over it.
     _personId = State(initialValue: prefill?.personId)
-    _amountText = State(initialValue: prefill.map { "\($0.received.decimal)" } ?? "")
+    _received = State(initialValue: prefill?.received ?? .zero)
     _receivedIsGiven = State(initialValue: prefill != nil)
   }
 
@@ -82,10 +86,8 @@ struct ReimbursementSheet: View {
             .toggleStyle(.checkbox)
             .disabled(part.rateProvisional)
             if selected.contains(part.partId) {
-              AmountField(
-                amount: allocationBinding(for: part), locale: environment.language.locale
-              )
-              .frame(width: 110)
+              AmountField(amount: allocationBinding(for: part))
+                .frame(width: 110)
             }
             // Giving up on the money: the part stops waiting and becomes my spending.
             Button(environment.language("owed.writeOff", table: "Entry")) {
@@ -100,12 +102,13 @@ struct ReimbursementSheet: View {
 
       HStack {
         Text(verbatim: environment.language("reimbursement.received", table: "Entry"))
-        TextField(text: $amountText) { Text(verbatim: "0") }
+        // Typed like every amount: «1,500» is 1 500, a formula comes to its result.
+        AmountField(amount: $received, reads: $receivedReads)
           .frame(width: 120)
-          .font(.body.monospacedDigit())
           // Typing less than the parts cost is how a shortfall is recorded: the shares
           // follow the amount, or they would stay larger than the money that came back.
-          .onChange(of: amountText) { _, _ in spreadAutomatically() }
+          .onChange(of: received) { _, _ in spreadAutomatically() }
+          .onChange(of: receivedReads) { _, _ in spreadAutomatically() }
         Spacer()
         Text(verbatim: environment.money.exact(selectedTotal))
           .foregroundStyle(.secondary)
@@ -173,9 +176,13 @@ struct ReimbursementSheet: View {
 
   private func t(_ key: String) -> String { environment.language(key, table: "Entry") }
 
-  private var amountValue: AmountE4? {
-    guard let decimal = DecimalMath.parse(amountText) else { return nil }
-    return try? AmountE4(decimal: decimal)
+  private var amountValue: AmountE4? { Self.received(received, reads: receivedReads) }
+
+  /// The money that came back, once there is some and the field reads: nothing is not an
+  /// amount to record, and neither is the amount left over from text that no longer reads
+  /// («1,700» turned into «1,700+»).
+  static func received(_ amount: AmountE4, reads: Bool) -> AmountE4? {
+    reads && amount.raw > 0 ? amount : nil
   }
 
   private func binding(for id: UUID) -> Binding<Bool> {
@@ -183,7 +190,7 @@ struct ReimbursementSheet: View {
       get: { selected.contains(id) },
       set: { isOn in
         if isOn { selected.insert(id) } else { selected.remove(id) }
-        if !receivedIsGiven { amountText = "\(selectedTotal.decimal)" }
+        if !receivedIsGiven { received = selectedTotal }
         spreadAutomatically()
       })
   }
@@ -270,7 +277,7 @@ struct ReimbursementSheet: View {
 
   private func selectAllOfPerson() {
     selected = Set(filteredOwed.filter { !$0.rateProvisional }.map(\.partId))
-    if !receivedIsGiven { amountText = "\(selectedTotal.decimal)" }
+    if !receivedIsGiven { received = selectedTotal }
     spreadAutomatically()
   }
 

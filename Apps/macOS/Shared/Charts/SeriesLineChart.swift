@@ -18,7 +18,7 @@ struct ChartLineSeries: Identifiable, Hashable {
   var label: String
   var style: ChartSeriesStyle
   var points: [ChartLinePoint]
-  /// The words at the end of the line — its figure, «48 200 ₽», or its name, «Партнёр» —
+  /// The words at the end of the line — its figure, «48,200 ₽», or its name, «Партнёр» —
   /// so it is named where it ends and not only in the legend.
   var endText: String?
 }

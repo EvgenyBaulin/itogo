@@ -58,7 +58,7 @@ struct DebtsView: View {
       if !overview.withoutRate.isEmpty {
         Text(
           verbatim: environment.language.format(
-            "debts.withoutRateCount", table: "Debts", overview.withoutRate.count)
+            "debts.withoutRateCount", table: "Debts", counts: overview.withoutRate.count)
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -316,8 +316,7 @@ private struct DebtDetail: View {
     if let rate = debt.interestRate {
       pieces.append(
         environment.format(
-          "debts.rate", table: "Debts",
-          rate.formatted(.number.locale(environment.language.locale))))
+          "debts.rate", table: "Debts", environment.money.rate(rate)))
     }
     if let payment = debt.monthlyPaymentE4 {
       pieces.append(
@@ -328,7 +327,7 @@ private struct DebtDetail: View {
     return pieces.joined(separator: " · ")
   }
 
-  /// «Досрочно +2 000 ₽ в месяц — закроется на 7 мес. раньше».
+  /// «Досрочно +2,000 ₽ в месяц — закроется на 7 мес. раньше».
   private var payoff: String? {
     let debt = line.debt
     guard let payment = debt.monthlyPaymentE4, payment.raw > 0, line.balance.raw > 0 else {
@@ -345,7 +344,7 @@ private struct DebtDetail: View {
     }
     return environment.format(
       "debts.payoff", table: "Debts", environment.money.rounded(extra, currency: debt.currency),
-      environment.language.format("advice.months", table: "Planning", saved))
+      environment.language.format("advice.months", table: "Planning", counts: saved))
   }
 
   @ViewBuilder
@@ -428,8 +427,8 @@ private struct DebtDetail: View {
                 .lineLimit(1)
               if let full = entry.fullAmountE4, let share = entry.share {
                 Text(
-                  verbatim:
-                    "\(environment.money.rounded(full, currency: line.debt.currency)) × \(share.formatted(.number.locale(environment.language.locale).precision(.fractionLength(0...4))))"
+                  verbatim: environment.money.rounded(full, currency: line.debt.currency) + " × "
+                    + environment.money.number(share)
                 )
                 .font(.caption).foregroundStyle(.secondary)
               }

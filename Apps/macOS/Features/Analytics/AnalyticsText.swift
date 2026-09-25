@@ -21,6 +21,11 @@ enum AnalyticsText {
       format: t(key, environment), locale: environment.language.locale, arguments: arguments)
   }
 
+  /// A string with one count in it, the count grouped like every number: «1,250 покупок».
+  static func format(_ key: String, _ environment: AppEnvironment, count: Int) -> String {
+    environment.language.format(key, table: "Analytics", counts: count)
+  }
+
   // MARK: - Names
 
   /// The name of a scheduled payment, «(архив)» when it is no longer active. Not a
@@ -100,7 +105,7 @@ enum AnalyticsText {
     case .slowReimbursement:
       // The days are a plural of their own: «ждут 31 день», «32 дня», «35 дней».
       let days = format(
-        "analytics.anomaly.slowReimbursement.days", environment, anomaly.days ?? 0)
+        "analytics.anomaly.slowReimbursement.days", environment, count: anomaly.days ?? 0)
       return format(key, environment, amount, person, days)
     case .eventOverBudget:
       return format(key, environment, amount, event, reference)
@@ -170,7 +175,7 @@ enum AnalyticsText {
 
   // MARK: - Figures
 
-  /// «12 400 ₽ · 26 %»; a line without a share — a negative one — has its amount alone.
+  /// «12,400 ₽ · 26 %»; a line without a share — a negative one — has its amount alone.
   static func amountAndShare(
     _ value: Int64, share: Int?, _ environment: AppEnvironment
   ) -> String {
@@ -210,7 +215,7 @@ enum AnalyticsText {
   ) -> RankedBar {
     let caption =
       counts
-      ? format("analytics.purchases", environment, Int(clamping: value.value))
+      ? format("analytics.purchases", environment, count: Int(clamping: value.value))
       : amountAndShare(value.value, share: value.share, environment)
     return RankedBar(
       id: id, label: name(of: value.key, names, environment), value: value.value,
@@ -401,7 +406,7 @@ enum AnalyticsText {
     }
   }
 
-  /// The change of spending or income under the comparison chart: «+1 200 ₽ · +8 %»; with
+  /// The change of spending or income under the comparison chart: «+1,200 ₽ · +8 %»; with
   /// nothing in the period before, the difference and which period had nothing — the month,
   /// the year or the twelve months before, never «last month» for a year.
   static func changeWords(

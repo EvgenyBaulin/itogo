@@ -202,7 +202,10 @@ public final class EntryDraftModel {
     }
     draft.amount = amount
     followTheAmountInTheCreditPlan()
-    draft.amountExpression = parsed.amountExpression
+    // Kept with its numbers written the way the app writes them: «1500,5+2» is «1,500.5+2».
+    draft.amountExpression = parsed.amountExpression.map {
+      ExpressionEvaluator.canonical($0) ?? $0
+    }
     draft.currency = parsed.currency ?? draft.currency
     // A name the dictionaries do not know leaves the note like every word the parser read,
     // but nothing else keeps it: it goes back into the note as typed, and Enter no longer
@@ -1267,8 +1270,10 @@ public final class EntryDraftModel {
     followTheAmountInTheCreditPlan()
   }
 
-  /// The formula behind `amount`: the one typed, when the text is one; otherwise the one kept,
-  /// while it still comes to the amount.
+  /// The formula behind `amount`: the one typed, when the text is one, its numbers written the
+  /// way the app writes them; otherwise the one kept, while it still comes to the amount. The
+  /// one kept stays exactly as it is: the field writes back the amount it shows as soon as an
+  /// operation is opened, and that is not an edit to save (the editor rewrites it on save).
   private static func formula(
     typed text: String?, keeping kept: String?, for amount: AmountE4
   )
@@ -1277,7 +1282,7 @@ public final class EntryDraftModel {
     if let typed = text?.trimmingCharacters(in: .whitespaces),
       ExpressionEvaluator.isFormula(typed), comes(typed, to: amount)
     {
-      return typed
+      return ExpressionEvaluator.canonical(typed) ?? typed
     }
     guard let kept, comes(kept, to: amount) else { return nil }
     return kept

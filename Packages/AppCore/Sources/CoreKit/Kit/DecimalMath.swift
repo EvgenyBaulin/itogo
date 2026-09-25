@@ -26,11 +26,13 @@ public enum DecimalMath {
   }
 
   /// Parses a decimal written with either decimal separator, ignoring spaces used
-  /// as thousand separators: "1 250,50" and "1,250.50" both mean 1250.5.
+  /// as thousand separators: "1 250,50" and "1,250.50" both mean 1250.5. This is the reading
+  /// of rates, interest, shares and of what the Bank of Russia sends; an amount of money typed
+  /// by hand is read by `TypedNumber`, where «1,500» is 1 500.
   ///
   /// A space inside the number is a thousand separator only: a digit before it, exactly
   /// three digits after it, and the decimal part not started yet — the rule the entry line
-  /// follows too (`ExpressionLexer`). Any other space is a typo and the text is refused:
+  /// follows too (`TypedNumber`). Any other space is a typo and the text is refused:
   /// "1 5" typed into a field is not 15, and "1,5 120" is not 1.512. Spaces around the
   /// number are trimmed.
   ///
@@ -78,24 +80,6 @@ public enum DecimalMath {
     }
     guard digits > 0, dots <= 1 else { return nil }
     return Decimal(string: pointed, locale: Locale(identifier: "en_US_POSIX"))
-  }
-
-  /// A number written with one separator followed by exactly three digits — "1,250",
-  /// "12.500" — which `parse` reads as the decimal one (1.25, 12.5) while a reader used to
-  /// grouped thousands sees 1250. A leading zero ("0,250") or a first part longer than a
-  /// group of thousands ("1250,500") leaves no doubt. The entry line shows what such a number
-  /// comes to before Enter.
-  public static func hasAmbiguousSeparator(_ text: String) -> Bool {
-    var characters = Array(text.trimmingCharacters(in: .whitespacesAndNewlines))
-    if let sign = characters.first, sign == "-" || sign == "+" { characters.removeFirst() }
-    guard let separator = characters.firstIndex(where: isSeparator),
-      characters.lastIndex(where: isSeparator) == separator,
-      (1...3).contains(separator), characters[0] != "0",
-      characters[..<separator].allSatisfy(isASCIIDigit),
-      characters.count == separator + 4,
-      characters[(separator + 1)...].allSatisfy(isASCIIDigit)
-    else { return false }
-    return true
   }
 
   /// The number with its thousand separators dropped and its decimal separator turned into a

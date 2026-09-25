@@ -568,10 +568,10 @@ enum BulkConfirmationText {
     switch confirmation {
     case .edit(_, _, let plan):
       guard !plan.changed.isEmpty else { return language("bulk.nothingToChange", table: table) }
-      return language.format("bulk.confirmEdit", table: table, plan.changed.count)
+      return language.format("bulk.confirmEdit", table: table, counts: plan.changed.count)
     case .delete(let ids, _, _):
       guard !ids.isEmpty else { return language("bulk.nothingToDelete", table: table) }
-      return language.format("bulk.confirmDelete", table: table, ids.count)
+      return language.format("bulk.confirmDelete", table: table, counts: ids.count)
     }
   }
 
@@ -581,7 +581,7 @@ enum BulkConfirmationText {
     switch confirmation {
     case .edit(_, _, let plan):
       if plan.splitCount > 0 {
-        lines.append(language.format("bulk.splitWarning", table: table, plan.splitCount))
+        lines.append(language.format("bulk.splitWarning", table: table, counts: plan.splitCount))
       }
       lines += skipLines(plan, language: language)
     case .delete(let ids, let plan, let totals):
@@ -610,13 +610,13 @@ enum BulkConfirmationText {
     let whole = plan.fullySkipped
     if !whole.isEmpty {
       lines.append(
-        language.format("bulk.skipped", table: table, whole.count) + " "
+        language.format("bulk.skipped", table: table, counts: whole.count) + " "
           + reasons(whole, language: language))
     }
     let partly = plan.partlySkipped
     if !partly.isEmpty {
       lines.append(
-        language.format("bulk.partlySkipped", table: table, partly.count) + " "
+        language.format("bulk.partlySkipped", table: table, counts: partly.count) + " "
           + reasons(partly, language: language))
     }
     return lines

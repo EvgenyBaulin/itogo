@@ -17,14 +17,20 @@ struct ExpressionToken: Equatable {
 
   let kind: Kind
   let position: Int
+  /// The offset just past the token.
+  let end: Int
+  /// A number written the way the app writes numbers, its `k` kept as typed: «1500,5» is
+  /// «1,500.5», «2,5к» is «2.5к». Empty for everything but a number.
+  var canonical = ""
 }
 
 /// Turns the characters of an expression into tokens.
 ///
 /// Numbers accept both decimal separators and every thousand separator a person may type:
 /// a plain space, a non-breaking space, a thin space, `.` or `,`. Which separator is the
-/// decimal one is decided by `DecimalMath.parse`, so `1,250.50` and `1.250,50` both mean
-/// 1250.5. A trailing `k` / `к` multiplies by a thousand: `2k` and `2к` are 2000.
+/// decimal one is decided by `TypedNumber`, the rule of amounts typed by hand: `1,250.50` and
+/// `1.250,50` both mean 1250.5, `1,500` is 1500 and `1,5` is 1.5. A trailing `k` / `к`
+/// multiplies by a thousand: `2k` and `2к` are 2000.
 enum ExpressionLexer {
   /// Spaces that may sit inside a number as a thousand separator.
   static let spaces: Set<Character> = [
@@ -70,23 +76,27 @@ enum ExpressionLexer {
           && isDigit(characters[index + 1]))
       if startsNumber {
         let scanned = try scanNumber(characters, from: index)
-        tokens.append(ExpressionToken(kind: .number(scanned.value), position: index))
+        tokens.append(
+          ExpressionToken(
+            kind: .number(scanned.value), position: index, end: scanned.end,
+            canonical: scanned.canonical))
         index = scanned.end
         continue
       }
       guard let kind = operatorKind(character) else {
         throw CoreError.malformedExpression(position: index)
       }
-      tokens.append(ExpressionToken(kind: kind, position: index))
+      tokens.append(ExpressionToken(kind: kind, position: index, end: index + 1))
       index += 1
     }
     return tokens
   }
 
-  /// Reads one number starting at `start` and returns it with the offset just past it.
+  /// Reads one number starting at `start` and returns it with the offset just past it and
+  /// its canonical text.
   private static func scanNumber(
     _ characters: [Character], from start: Int
-  ) throws -> (value: Decimal, end: Int) {
+  ) throws -> (value: Decimal, end: Int, canonical: String) {
     var index = start
     var digits = ""
     // Spaces group thousands before the decimal part only. Once a `.` or `,` has been read,
@@ -113,19 +123,23 @@ enum ExpressionLexer {
     }
 
     var multiplier = Decimal(1)
+    var suffix = ""
     if index < characters.count, thousandSuffixes.contains(characters[index]) {
       let next = index + 1 < characters.count ? characters[index + 1] : nil
       let glued = next.map { $0.isLetter || isDigit($0) } ?? false
       if !glued {
         multiplier = Decimal(1000)
+        suffix = String(characters[index])
         index += 1
       }
     }
 
-    guard let value = DecimalMath.parse(digits) else {
+    guard let reading = TypedNumber.read(digits) else {
+      // Hundreds of digits are a number too large to be an amount, not a typo.
+      if TypedNumber.isTooLarge(digits) { throw CoreError.amountOutOfRange }
       throw CoreError.malformedExpression(position: start)
     }
-    return (value * multiplier, index)
+    return (reading.value * multiplier, index, reading.canonical + suffix)
   }
 
   /// A space belongs to a number only when exactly three digits follow it, the way

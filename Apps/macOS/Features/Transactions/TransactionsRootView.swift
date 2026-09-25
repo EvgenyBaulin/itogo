@@ -270,7 +270,7 @@ struct TransactionsRootView: View {
       HStack(spacing: 12) {
         Text(
           verbatim: environment.language.format(
-            "transactions.olderHidden", table: "Transactions", hidden)
+            "transactions.olderHidden", table: "Transactions", counts: hidden)
         )
         .foregroundStyle(.secondary)
         .lineLimit(1)

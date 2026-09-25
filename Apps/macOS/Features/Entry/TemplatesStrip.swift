@@ -117,7 +117,7 @@ enum Templates {
     var words: [String] = []
     if isIncome(template.categoryId, among: categories) { words.append("+") }
     words.append(template.text)
-    if let amount = template.amountE4 { words.append("\(amount.decimal)") }
+    if let amount = template.amountE4 { words.append(FieldNumber.text(amount)) }
     if let currency = template.currency, currency != .rub { words.append(currency.code) }
     return words.joined(separator: " ")
   }

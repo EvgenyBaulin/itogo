@@ -23,6 +23,11 @@ and both move forward only.
   quarterly, every half year, yearly, once, other…), «On the last day of the month» for
   payments, expected income and the debt payment day.
 - **Wording.** «Для кого» is «На кого» in Russian; the person who gives money back is «От кого».
+- **Numbers.** Every number is written the same way in both languages: comma for thousands, dot
+  for the fraction — «1,234.56 ₽», «33.3 %». Typed amounts follow one rule: «1,500» is one
+  thousand five hundred, «1500,5» and «1.5» have a fraction; rates keep reading «83,125» as
+  83.125. Amount fields rewrite what was typed into that form when you leave them.
+- **README** is in Russian.
 
 ### Fixed
 
@@ -30,6 +35,8 @@ and both move forward only.
 - Editing a payment due on the 31st moved it to the 30th for good when its next date fell on a
   shorter month.
 - The currency caption of a payment method in Settings showed an internal key.
+- A number too long to hold was silently read as zero; it is refused now.
+- A template chip wrote its amount as «1500.5».
 
 ## [1.0.0] — 2026-09-25
 

@@ -148,7 +148,7 @@ enum ReportsText {
 
   // MARK: - Figures
 
-  /// «12 400 ₽»; a month still to come is a dash.
+  /// «12,400 ₽»; a month still to come is a dash.
   static func amount(_ value: Int64?, _ environment: AppEnvironment) -> String {
     value.map { environment.money.rubles($0) } ?? "—"
   }
@@ -174,8 +174,8 @@ enum ReportsText {
       : (t("reports.month.incomplete", environment), "circle.dashed")
   }
 
-  /// «25,73 %» — two decimals, exactly the basis points of the core, so the column adds up
-  /// to 100,00 %. A line without a share has none.
+  /// «25.73 %» — two decimals, exactly the basis points of the core, so the column adds up
+  /// to 100.00 %. A line without a share has none.
   static func share(_ basisPoints: Int?, _ environment: AppEnvironment) -> String {
     basisPoints.map { environment.money.percent(basisPoints: $0, fractionDigits: 2) } ?? ""
   }

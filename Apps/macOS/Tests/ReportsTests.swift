@@ -349,7 +349,7 @@ final class ReportsExportTests: XCTestCase {
     let spending = model(.expensesByCategory)
     XCTAssertEqual(
       ReportsText.name(of: try XCTUnwrap(spending.lines.last), in: spending, environment), "Итого")
-    XCTAssertEqual(ReportsText.share(2573, environment), "25,73\u{00A0}%")
+    XCTAssertEqual(ReportsText.share(2573, environment), "25.73\u{00A0}%")
     XCTAssertEqual(ReportsText.amount(nil, environment), "—")
 
     environment.language.choice = .english

@@ -258,8 +258,6 @@ final class EntryDraftModelTests: XCTestCase {
 @MainActor
 final class ForeignCurrencyTests: XCTestCase {
   private let usd = CurrencyCode("USD")
-  private let english = Locale(identifier: "en_US")
-  private let russian = Locale(identifier: "ru_RU")
   private let day = DateOnly(year: 2026, month: 9, day: 18)
 
   private func draft(rate: Decimal? = nil, source: RateSource? = nil) -> TransactionDraft {
@@ -467,7 +465,7 @@ final class ForeignCurrencyTests: XCTestCase {
       for key in typing {
         let typed = shown + String(key)
         model.setManualRate(typed)
-        shown = RateField.text(afterTyping: typed, rate: model.draft.rate, locale: english)
+        shown = RateField.text(afterTyping: typed, rate: model.draft.rate)
       }
       XCTAssertEqual(shown, typing)
       XCTAssertEqual(model.draft.rate, Decimal(string: "81.43")!, typing)
@@ -479,29 +477,31 @@ final class ForeignCurrencyTests: XCTestCase {
   /// typed by hand; other text is.
   func testShowingARateIsNotTypingIt() {
     let rate = Decimal(string: "81.4321")!
-    XCTAssertEqual(RateField.text(afterTyping: "", rate: rate, locale: english), "81.4321")
+    XCTAssertEqual(RateField.text(afterTyping: "", rate: rate), "81.4321")
     XCTAssertTrue(RateField.reads("81.4321", as: rate))
     XCTAssertTrue(RateField.reads("81,43210", as: rate))
     XCTAssertFalse(RateField.reads("81,43", as: rate))
     XCTAssertFalse(RateField.reads("", as: rate))
     XCTAssertTrue(RateField.reads(" ", as: nil))
     // Cleared elsewhere, the field is cleared too.
-    XCTAssertEqual(RateField.text(afterTyping: "81,43", rate: nil, locale: english), "")
+    XCTAssertEqual(RateField.text(afterTyping: "81,43", rate: nil), "")
   }
 
-  /// A field of a Russian panel shows «1500,5», not the «1500.5» a `Decimal` prints — and
-  /// what it shows reads back as the same amount.
-  func testAnAmountIsShownWithTheSeparatorOfTheInterfaceLanguage() {
+  /// A field shows an amount the one way the app writes numbers, in every language —
+  /// «1,500.50», not «1500,5» — and what it shows reads back as the same amount.
+  func testAnAmountIsShownTheOneWayTheAppWritesNumbers() {
     let amount = AmountE4(raw: 15_005_000)
-    XCTAssertEqual(AmountField.text(for: amount, locale: russian), "1500,5")
-    XCTAssertEqual(AmountField.text(for: amount, locale: english), "1500.5")
-    XCTAssertEqual(AmountField.text(for: -amount, locale: russian), "-1500,5")
-    XCTAssertEqual(AmountField.text(for: .zero, locale: russian), "")
-    XCTAssertEqual(AmountField.amount(from: AmountField.text(for: amount, locale: russian)), amount)
+    XCTAssertEqual(AmountField.text(for: amount), "1,500.50")
+    XCTAssertEqual(AmountField.text(for: -amount), "-1,500.50")
+    XCTAssertEqual(AmountField.text(for: .zero), "")
+    XCTAssertEqual(AmountField.amount(from: AmountField.text(for: amount)), amount)
+    XCTAssertEqual(AmountField.amount(from: AmountField.text(for: -amount)), -amount)
 
+    // A rate keeps every digit and no grouping: a lone comma of a rate is decimal.
     let rate = Decimal(string: "81.4321")!
-    XCTAssertEqual(RateField.text(afterTyping: "", rate: rate, locale: russian), "81,4321")
-    XCTAssertEqual(RateField.text(afterTyping: "81,43", rate: rate, locale: russian), "81,4321")
+    XCTAssertEqual(RateField.text(afterTyping: "", rate: rate), "81.4321")
+    XCTAssertEqual(RateField.text(afterTyping: "81,43", rate: rate), "81.4321")
+    XCTAssertEqual(RateField.text(afterTyping: "", rate: Decimal(1_234)), "1234")
   }
 
   func testARateOfZeroIsRefused() throws {
@@ -763,16 +763,17 @@ extension EntryDraftModelTests {
   /// `amount_expr` is the formula the amount was worked out from in the entry line.
   /// Corrected in the panel or the inspector, the amount no longer comes from it: the formula
   /// goes, instead of standing in the table over another amount. The field writing back the
-  /// amount it shows is not a correction.
+  /// amount it shows is not a correction. The formula is kept with its numbers written the way
+  /// the app writes them.
   func testCorrectingTheTotalDropsAStaleFormula() throws {
     let model = makeModel()
     let parsed = InputLineParser(vocabulary: .empty, calendar: .utc)
       .parse("такси (1000+600)/2", today: today)
     model.apply(parsed, amount: try AmountE4(decimal: XCTUnwrap(parsed.amount)), today: today)
-    XCTAssertEqual(model.draft.amountExpression, "(1000+600)/2")
+    XCTAssertEqual(model.draft.amountExpression, "(1,000+600)/2")
 
     model.setTotal(AmountE4(whole: 800), typed: "800")
-    XCTAssertEqual(model.draft.amountExpression, "(1000+600)/2")
+    XCTAssertEqual(model.draft.amountExpression, "(1,000+600)/2")
 
     model.setTotal(AmountE4(whole: 900), typed: "900")
     XCTAssertEqual(model.draft.amount, AmountE4(whole: 900))
@@ -783,11 +784,18 @@ extension EntryDraftModelTests {
     XCTAssertNil(model.draft.amountExpression)
   }
 
-  /// The amount field takes a formula as the line does, and keeps it the same way.
+  /// The amount field takes a formula as the line does, and keeps it the same way: its numbers
+  /// written the way the app writes them.
   func testAFormulaTypedInTheAmountFieldIsKept() {
     let model = makeModel()
     model.setTotal(AmountE4(whole: 500), typed: " (900+100)/2 ")
     XCTAssertEqual(model.draft.amountExpression, "(900+100)/2")
+
+    model.setTotal(AmountE4(raw: 15_025_000), typed: "1500,5+2")
+    XCTAssertEqual(model.draft.amountExpression, "1,500.5+2")
+    // The field writes back what the formula comes to: not a correction, the formula stays.
+    model.setTotal(AmountE4(raw: 15_025_000), typed: "1,502.50")
+    XCTAssertEqual(model.draft.amountExpression, "1,500.5+2")
 
     model.setTotal(AmountE4(whole: 700), typed: "700")
     XCTAssertNil(model.draft.amountExpression)

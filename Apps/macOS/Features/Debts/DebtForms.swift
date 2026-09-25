@@ -242,7 +242,7 @@ struct DebtSheetView: View {
 
   private func amountField(_ value: Binding<AmountE4>, currency: CurrencyCode? = nil) -> some View {
     HStack {
-      AmountField(amount: value, locale: environment.language.locale)
+      AmountField(amount: value)
       if let currency { Text(verbatim: currency.code).foregroundStyle(.secondary) }
     }
   }
@@ -377,7 +377,7 @@ struct DebtSheetView: View {
     return language.format("form.paymentDay", table: "Debts", shown)
   }
 
-  /// The payment on the card of a debt: «платёж 5 000 ₽, 10-го числа», and at 31 «…, в
+  /// The payment on the card of a debt: «платёж 5,000 ₽, 10-го числа», and at 31 «…, в
   /// последний день месяца» — the day the stepper calls «последний день». `amount` is the
   /// payment as the card writes money.
   static func cardPaymentText(_ amount: String, day: Int?, language: AppLanguage) -> String {

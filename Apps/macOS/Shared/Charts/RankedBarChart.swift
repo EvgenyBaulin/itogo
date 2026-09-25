@@ -11,7 +11,7 @@ struct RankedBar: Identifiable, Hashable {
   /// Whole rubles or a count. A negative bucket — refunds outweighed the spending — keeps
   /// its figure in the words but has no length.
   var value: Int64
-  /// What stands at the end of the bar: «12 400 ₽ · 26 %».
+  /// What stands at the end of the bar: «12,400 ₽ · 26 %».
   var caption: String
   /// What VoiceOver says after the name.
   var spokenValue: String

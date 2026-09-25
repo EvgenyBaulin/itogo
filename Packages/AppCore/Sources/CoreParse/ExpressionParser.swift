@@ -38,6 +38,23 @@ public enum ExpressionEvaluator: Sendable {
     return rounded
   }
 
+  /// The text with every number in it written the way the app writes numbers, and everything
+  /// else — signs, brackets, spaces, the `k` of thousands — as typed: «1500,5+2,50» becomes
+  /// «1,500.5+2.50», «(1 000+600)/2» becomes «(1,000+600)/2», «2,5k» becomes «2.5k». It comes
+  /// to the same value as the text. Nil for text that is not made of numbers and signs.
+  public static func canonical(_ text: String) -> String? {
+    let characters = Array(text)
+    guard let tokens = try? ExpressionLexer.tokenize(characters) else { return nil }
+    var result = ""
+    var cursor = 0
+    for token in tokens {
+      guard case .number = token.kind else { continue }
+      result += String(characters[cursor..<token.position]) + token.canonical
+      cursor = token.end
+    }
+    return result + String(characters[cursor...])
+  }
+
   /// True when the text is a formula rather than a plain number, so the entry keeps it in
   /// `amount_expr`. A single leading sign does not make a formula: `+50000` marks income.
   public static func isFormula(_ text: String) -> Bool {

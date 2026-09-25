@@ -453,7 +453,7 @@ private struct AnomaliesCard: View {
           if all.count > recent.count {
             Text(
               verbatim: environment.language.format(
-                "overview.anomaliesMore", table: "Overview", all.count - recent.count)
+                "overview.anomaliesMore", table: "Overview", counts: all.count - recent.count)
             )
             .font(.caption)
             .foregroundStyle(.secondary)

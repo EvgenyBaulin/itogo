@@ -155,12 +155,19 @@ final class TransactionEditorModel {
   /// operation was created, which import it came from and how far its parts paid for others
   /// have come back stay as they were (`TransactionEntry.rebased(onto:)`); otherwise an
   /// edited bank row would lose the key that stops it from being imported twice.
+  ///
+  /// The formula goes back with its numbers written the way the app writes them: one saved
+  /// when a lone comma was always decimal, «1,5+2», is saved again as «1.5+2».
   nonisolated static func edited(
     _ original: TransactionEntry, with draft: TransactionDraft,
     now: Date = Date(),
     rublesConverter: (AmountE4) throws -> AmountE4
   ) throws -> TransactionEntry {
-    try draft.materialize(updating: original, now: now, rublesConverter: rublesConverter)
+    var draft = draft
+    draft.amountExpression = draft.amountExpression.map {
+      ExpressionEvaluator.canonical($0) ?? $0
+    }
+    return try draft.materialize(updating: original, now: now, rublesConverter: rublesConverter)
   }
 }
 

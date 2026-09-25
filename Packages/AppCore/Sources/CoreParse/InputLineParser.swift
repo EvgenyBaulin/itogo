@@ -569,6 +569,7 @@ private struct ParseSession {
         }
         result.amount = value
         result.amountProblem = nil
+        result.amountCanonicalText = ExpressionEvaluator.canonical(candidate)
         if ExpressionEvaluator.isFormula(candidate) {
           result.amountExpression = candidate
         }

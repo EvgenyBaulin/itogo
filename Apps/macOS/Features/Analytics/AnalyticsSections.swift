@@ -371,7 +371,7 @@ private struct StreaksView: View {
     VStack(alignment: .leading, spacing: 2) {
       Text(verbatim: environment.money.count(Int64(days)))
         .font(.title2.monospacedDigit())
-      Text(verbatim: AnalyticsText.format(key, environment, days))
+      Text(verbatim: AnalyticsText.format(key, environment, count: days))
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -701,9 +701,12 @@ private struct PlacesTableView: View {
       }
       .font(.callout)
       if table.hidden > 0 {
-        Text(verbatim: AnalyticsText.format("analytics.places.more", environment, table.hidden))
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        Text(
+          verbatim: AnalyticsText.format(
+            "analytics.places.more", environment, count: table.hidden)
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
     }
   }

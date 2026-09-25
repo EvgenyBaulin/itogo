@@ -1014,13 +1014,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "10 % of bad spending a month"
+            "value": "10% of bad spending a month"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "10 % плохих трат в месяц"
+            "value": "10 % плохих трат в месяц"
           }
         }
       }
@@ -1031,13 +1031,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "25 % of bad spending a month"
+            "value": "25% of bad spending a month"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "25 % плохих трат в месяц"
+            "value": "25 % плохих трат в месяц"
           }
         }
       }
@@ -1048,13 +1048,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "50 % of bad spending a month"
+            "value": "50% of bad spending a month"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "50 % плохих трат в месяц"
+            "value": "50 % плохих трат в месяц"
           }
         }
       }
@@ -2119,13 +2119,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "10 % less bad spending: sooner by"
+            "value": "10% less bad spending: sooner by"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "−10 % плохих трат: раньше на"
+            "value": "−10 % плохих трат: раньше на"
           }
         }
       }
@@ -2136,13 +2136,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "25 % less bad spending: sooner by"
+            "value": "25% less bad spending: sooner by"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "−25 % плохих трат: раньше на"
+            "value": "−25 % плохих трат: раньше на"
           }
         }
       }
@@ -2153,13 +2153,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "50 % less bad spending: sooner by"
+            "value": "50% less bad spending: sooner by"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "−50 % плохих трат: раньше на"
+            "value": "−50 % плохих трат: раньше на"
           }
         }
       }

@@ -198,6 +198,11 @@ public final class AppEnvironment {
     String(format: language(key, table: table), locale: language.locale, arguments: arguments)
   }
 
+  /// Shortcut for a string of counts, each grouped like every number (`AppLanguage`).
+  public func format(_ key: String, table: String = "Common", counts: Int...) -> String {
+    language.counted(key, table: table, counts)
+  }
+
   /// The caption of a "for whom" value: the custom one when it was set, the translated
   /// default otherwise.
   public func label(for value: ForWhom) -> String {
@@ -620,12 +625,33 @@ public final class AppEnvironment {
         references: references, settings: settings, language: language.resolvedCode,
         isDataSet: AppPaths.dataSet != nil)
     }
+    dropFormulasThatNoLongerAddUp()
     chooseCashbackCategoryIfMissing()
     rolloverYearlyEvents()
     refreshVocabulary()
     refreshForWhomLabels()
     assignsEventAutomatically = (try? settings?.string("events.automatic")) == "1"
     state = .ready
+  }
+
+  /// The formulas kept with operations are read again at every open — a restore and an
+  /// import open the database they staged the same way — by today's rule for amounts typed by
+  /// hand. One saved when a lone comma was always decimal («1,500+2,50» was 4) no longer comes
+  /// to its amount and is dropped; the amount stays, it is what was counted. A failure costs
+  /// nothing but the check: a stale formula is only the words beside an amount.
+  private func dropFormulasThatNoLongerAddUp() {
+    guard let transactions else { return }
+    do {
+      let check = try transactions.dropFormulasThatNoLongerAddUp()
+      guard check.dropped > 0 else { return }
+      AppLog.info(
+        "db.formulasDropped", .db, "formulas that no longer add up were dropped",
+        [LogPair("checked", .count(check.checked)), LogPair("dropped", .count(check.dropped))])
+    } catch {
+      AppLog.error(
+        "db.formulasCheckFailed", .db, "the formulas could not be checked",
+        [LogPair("error", .error(error))])
+    }
   }
 
   public func refreshVocabulary() {

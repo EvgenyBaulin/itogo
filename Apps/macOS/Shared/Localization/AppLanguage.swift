@@ -1,3 +1,4 @@
+import AppCore
 import Foundation
 import Observation
 import SwiftUI
@@ -116,6 +117,18 @@ public final class AppLanguage {
   /// Convenience for interpolated strings: `language.format("transactions.paidFor", name)`.
   public func format(_ key: String, table: String = "Common", _ arguments: CVarArg...) -> String {
     String(format: callAsFunction(key, table: table), locale: locale, arguments: arguments)
+  }
+
+  /// A string whose arguments are all counts (`%lld`): each picks its plural form, and each is
+  /// written the way the app writes numbers, «1,250 операций» — a format writes an integer
+  /// without grouping.
+  public func format(_ key: String, table: String = "Common", counts: Int...) -> String {
+    counted(key, table: table, counts)
+  }
+
+  func counted(_ key: String, table: String, _ counts: [Int]) -> String {
+    let text = String(format: callAsFunction(key, table: table), locale: locale, arguments: counts)
+    return NumberText.groupingCounts(counts.map { Int64($0) }, in: text)
   }
 
   private func rebuild() {

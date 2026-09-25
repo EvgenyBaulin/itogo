@@ -94,6 +94,9 @@ public struct ParsedInput: Hashable, Sendable {
   public var amount: Decimal?
   /// The expression exactly as typed, kept when the amount was a formula.
   public var amountExpression: String?
+  /// The amount as typed with every number in it written the way the app writes numbers:
+  /// «1500,5» is «1,500.5», «1,500+2,50» is «1,500+2.50». Nil without an amount.
+  public var amountCanonicalText: String?
   /// Set only while `amount` is nil: what went wrong with the number that was typed.
   public var amountProblem: AmountProblem?
   public var currency: CurrencyCode?
@@ -122,6 +125,7 @@ public struct ParsedInput: Hashable, Sendable {
     kind: TransactionKind = .expense,
     amount: Decimal? = nil,
     amountExpression: String? = nil,
+    amountCanonicalText: String? = nil,
     amountProblem: AmountProblem? = nil,
     currency: CurrencyCode? = nil,
     date: DateOnly? = nil,
@@ -142,6 +146,7 @@ public struct ParsedInput: Hashable, Sendable {
     self.kind = kind
     self.amount = amount
     self.amountExpression = amountExpression
+    self.amountCanonicalText = amountCanonicalText
     self.amountProblem = amountProblem
     self.currency = currency
     self.date = date
@@ -164,12 +169,13 @@ public struct ParsedInput: Hashable, Sendable {
   public var isSaveable: Bool { amount != nil }
 
   /// The amount as written, when what it comes to is worth showing at once, before Enter:
-  /// a formula, or a number whose lone separator is read as the decimal one although three
-  /// digits follow it — «1,250» is 1,25, not 1 250.
+  /// a formula, a number not written the way the app writes numbers — «1500,5» is shown
+  /// as 1,500.50, «2,5k» as 2,500 — and a number whose point may be taken for one between the
+  /// thousands: «1.500» is 1.50. Any other number reads as itself.
   public var amountToPreview: String? {
     if let amountExpression { return amountExpression }
     guard amount != nil, let written = tokens.first(where: { $0.role == .amount })?.text,
-      DecimalMath.hasAmbiguousSeparator(written)
+      written != amountCanonicalText || TypedNumber.mayBeTakenForThousands(written)
     else { return nil }
     return written
   }

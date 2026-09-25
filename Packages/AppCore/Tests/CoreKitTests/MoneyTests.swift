@@ -99,21 +99,14 @@ struct MoneyTests {
     #expect(DecimalMath.parse(input) == nil)
   }
 
-  // A lone separator is the decimal one, whichever it is: «1,25» and «1.25» are
-  // the same amount, and so are «1,250» and «1.250» — 1.25, not 1 250. That reading is not
-  // obvious to someone used to grouped thousands, so the line shows the value before Enter.
-  @Test func aLoneSeparatorIsDecimalAndTheAmbiguousShapeIsNamed() {
+  // In the rule of rates a lone separator is the decimal one, whichever it is: «1,25» and
+  // «1.25» are the same number, and so are «1,250» and «1.250» — 1.25, not 1 250. An amount
+  // typed by hand reads «1,250» as 1 250 (`TypedNumber`).
+  @Test func aLoneSeparatorIsDecimal() {
     #expect(DecimalMath.parse("1,250") == Decimal(string: "1.25")!)
     #expect(DecimalMath.parse("1.250") == Decimal(string: "1.25")!)
-    for ambiguous in ["1,250", "1.250", "12,500", "250.000", "-1,250"] {
-      #expect(DecimalMath.hasAmbiguousSeparator(ambiguous), "\(ambiguous)")
-    }
-    for plain in [
-      "250", "1,25", "1,2500", "0,250", "1250,500", "1 250,500", "1,250.50", "1,250,000", "1.2",
-      "abc",
-    ] {
-      #expect(!DecimalMath.hasAmbiguousSeparator(plain), "\(plain)")
-    }
+    #expect(DecimalMath.parse("1,25") == Decimal(string: "1.25")!)
+    #expect(DecimalMath.parse("83,125") == Decimal(string: "83.125")!)
   }
 
   // Foundation stops at the first character it cannot read, so anything it would swallow

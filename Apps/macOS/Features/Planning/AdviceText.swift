@@ -44,8 +44,9 @@ enum AdviceText {
     case .moneyIn(let currency, let amount): environment.money.rounded(amount, currency: currency)
     case .basisPoints(let bp): environment.money.percent(basisPoints: bp)
     case .months(let months):
-      environment.language.format("advice.months", table: "Planning", months)
-    case .days(let days): environment.language.format("advice.days", table: "Planning", days)
+      environment.language.format("advice.months", table: "Planning", counts: months)
+    case .days(let days):
+      environment.language.format("advice.days", table: "Planning", counts: days)
     case .count(let count): environment.money.count(Int64(count))
     case .month(let month): environment.dates.monthTitle(month)
     case .date(let day): environment.dates.longDay(day)

@@ -3748,13 +3748,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Target savings share: %lld %%"
+            "value": "Target savings share: %lld%%"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Целевая доля сбережений: %lld %%"
+            "value": "Целевая доля сбережений: %lld %%"
           }
         }
       }

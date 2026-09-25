@@ -69,15 +69,15 @@ struct ProblemReportView: View {
       } else {
         Text(
           verbatim: environment.language.format(
-            "report.contents.journal", table: "Settings", contents.journalFiles,
-            contents.journalDays))
+            "report.contents.journal", table: "Settings",
+            counts: contents.journalFiles, contents.journalDays))
       }
       Text(
         verbatim: environment.language.format(
-          "report.contents.database", table: "Settings", contents.tables, contents.rows))
+          "report.contents.database", table: "Settings", counts: contents.tables, contents.rows))
       Text(
         verbatim: environment.language.format(
-          "report.contents.settings", table: "Settings", contents.settings))
+          "report.contents.settings", table: "Settings", counts: contents.settings))
       Text(verbatim: t(contents.integrityKey))
       if contents.crashReport { Text(verbatim: t("report.contents.crash")) }
     }

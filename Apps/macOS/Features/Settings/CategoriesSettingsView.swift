@@ -702,7 +702,7 @@ enum CategoryQualityText {
 
   /// «Оценка изменится у N операций. Оценки, поставленные вручную, не меняются.»
   static func message(_ count: Int, _ language: AppLanguage) -> String {
-    language.format("categories.pastQuality.message", table: table, count)
+    language.format("categories.pastQuality.message", table: table, counts: count)
   }
 
   static func apply(_ language: AppLanguage) -> String {
@@ -727,7 +727,8 @@ enum CategoryDeletionText {
   ) -> String {
     let name = question.category.name
     func sentence(_ key: String, _ plural: String, _ count: Int) -> String {
-      language.format(key, table: table, name, language.format(plural, table: table, count))
+      language.format(
+        key, table: table, name, language.format(plural, table: table, counts: count))
     }
     if question.blocked {
       return sentence(

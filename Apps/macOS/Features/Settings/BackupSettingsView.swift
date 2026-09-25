@@ -60,7 +60,7 @@ struct BackupSettingsView: View {
           ForEach(listing.recent, id: \.self, content: row)
           if !listing.older.isEmpty {
             DisclosureGroup(
-              environment.format("backups.older", table: "Settings", listing.older.count)
+              environment.format("backups.older", table: "Settings", counts: listing.older.count)
             ) {
               ForEach(listing.older, id: \.self, content: row)
             }

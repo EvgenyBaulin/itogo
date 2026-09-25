@@ -371,10 +371,10 @@ struct InputLineTrapsTests {
     #expect(taxi.note == "такси 400")
   }
 
-  /// Запятая или точка, написанная дважды, группирует тысячи; одинокая — десятичная,
-  /// и тогда «1,250» — это 1,25, а не 1 250. Такое число строка показывает до Enter, как
-  /// формулу, чтобы прочтение не было молчаливым.
-  @Test("Тысячи через запятую читаются, а одинокая запятая показывает своё значение")
+  /// Запятая или точка, написанная дважды, группирует тысячи; одинокая запятая перед ровно
+  /// тремя цифрами — тоже, а иначе она десятичная. Число, написанное не так, как пишет
+  /// приложение, строка показывает до Enter, как формулу, чтобы прочтение не было молчаливым.
+  @Test("Тысячи через запятую читаются, а другая запись показывает своё значение")
   func thousandsGroupedByCommasAreRead() {
     let flat = Fixture.parse("ремонт 1,250,000")
     #expect(flat.amount == dec("1250000"))
@@ -386,12 +386,13 @@ struct InputLineTrapsTests {
     #expect(broken.amountProblem == .malformed)
 
     let lone = Fixture.parse("кофе 1,250р")
-    #expect(lone.amount == dec("1.25"))
-    #expect(lone.amountToPreview == "1,250")
+    #expect(lone.amount == dec("1250"))
+    #expect(lone.amountToPreview == nil)
 
     #expect(Fixture.parse("кофе 250").amountToPreview == nil)
-    #expect(Fixture.parse("кофе 1,5").amountToPreview == nil)
-    #expect(Fixture.parse("кофе 1 250,500").amountToPreview == nil)
+    #expect(Fixture.parse("кофе 1.5").amountToPreview == nil)
+    #expect(Fixture.parse("кофе 1,5").amountToPreview == "1,5")
+    #expect(Fixture.parse("кофе 1 250,500").amountToPreview == "1 250,500")
     #expect(Fixture.parse("такси (1000+600)/2").amountToPreview == "(1000+600)/2")
   }
 

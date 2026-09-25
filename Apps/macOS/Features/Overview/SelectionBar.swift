@@ -75,7 +75,7 @@ struct SelectionBar: View {
     HStack(spacing: 12) {
       Text(
         verbatim: environment.language.format(
-          "selection.count", table: "Transactions", actions.selection.count)
+          "selection.count", table: "Transactions", counts: actions.selection.count)
       )
       .font(.callout.weight(.semibold))
       .monospacedDigit()

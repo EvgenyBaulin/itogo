@@ -37,7 +37,7 @@ struct TemplatesSettingsView: View {
 
             Text(
               verbatim: environment.format(
-                "templates.used", table: "Settings", template.useCount)
+                "templates.used", table: "Settings", counts: template.useCount)
             )
             .font(.caption)
             .foregroundStyle(.secondary)

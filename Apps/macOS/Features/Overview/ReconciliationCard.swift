@@ -20,7 +20,7 @@ struct ReconciliationCard: View {
           Text(
             verbatim: environment.language.format(
               "overview.reconciliationAgo", table: "Planning",
-              max(0, last.date.days(to: snapshot.today)))
+              counts: max(0, last.date.days(to: snapshot.today)))
           )
           .font(.caption)
           .foregroundStyle(.secondary)

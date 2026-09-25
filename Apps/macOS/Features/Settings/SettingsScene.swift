@@ -396,8 +396,8 @@ struct CurrenciesSettingsView: View {
       } footer: {
         Text(
           verbatim: environment.format(
-            "settings.currencies.count", table: "Settings", enabled.count,
-            CurrencyCode.maxEnabled)
+            "settings.currencies.count", table: "Settings",
+            counts: enabled.count, CurrencyCode.maxEnabled)
         )
         .foregroundStyle(.secondary)
       }

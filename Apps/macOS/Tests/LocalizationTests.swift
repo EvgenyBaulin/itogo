@@ -55,10 +55,10 @@ final class LocalizationTests: XCTestCase {
     XCTAssertEqual(language.resolvedCode, "ru")
 
     let money = MoneyFormatter(locale: language.locale)
-    // A Russian locale groups thousands with a space and uses a comma for the fraction.
-    let formatted = money.exact(AmountE4(raw: 12_345_500))
-    XCTAssertTrue(formatted.contains("234"), formatted)
-    XCTAssertTrue(formatted.contains("₽"), formatted)
+    // Numbers are written one way in every language: comma thousands, a point before the
+    // fraction. The words around them follow the language.
+    XCTAssertEqual(money.exact(AmountE4(raw: 12_345_500)), "1,234.55\u{00A0}₽")
+    XCTAssertEqual(money.percent(basisPoints: 3_333), "33.3\u{00A0}%")
   }
 
   /// «Системный» after an explicit choice follows the Mac again. Every choice wrote

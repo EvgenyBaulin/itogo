@@ -9,7 +9,7 @@ struct ChartSegment: Identifiable, Hashable {
   var style: SegmentStyle
   var start: Int64
   var end: Int64
-  /// «23 %», «12 400 ₽»: written on the segment when it is wide enough.
+  /// «23 %», «12,400 ₽»: written on the segment when it is wide enough.
   var text: String
   var spokenValue: String
 }

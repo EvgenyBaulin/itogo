@@ -25,9 +25,9 @@ struct ForecastChart: View {
   let band: [BandPoint]
   let dayCount: Int
   let xLabels: [Int: String]
-  /// «≈ 48 200 ₽» at the diamond.
+  /// «≈ 48,200 ₽» at the diamond.
   let middleText: String
-  /// «от 44 000 до 53 000 ₽» at the end of the band; `nil` when the interval is a point.
+  /// «от 44,000 до 53,000 ₽» at the end of the band; `nil` when the interval is a point.
   let rangeText: String?
   let legend: [ChartLegend.Item]
 

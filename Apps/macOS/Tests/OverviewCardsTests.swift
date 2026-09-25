@@ -5,12 +5,14 @@ import XCTest
 
 /// How the cards of Overview put the core's numbers into words: percents from
 /// basis points, differences with their sign, whole rubles rounded half away from zero, and
-/// no percent where there was nothing to compare with. The formatter is a plain value, so
-/// these run off the main actor.
+/// no percent where there was nothing to compare with. Numbers are written one way in both
+/// languages — comma thousands, a point before the fraction; only the words around them and
+/// the space before «%» follow the language. The formatter is a plain value, so these run off
+/// the main actor.
 final class MoneyWordsTests: XCTestCase {
   private let russian = MoneyFormatter(locale: Locale(identifier: "ru"))
   private let english = MoneyFormatter(locale: Locale(identifier: "en"))
-  /// The space Russian puts between thousands and before «%» and «₽».
+  /// The space before «₽» in both languages, and before «%» in Russian.
   private let space = "\u{00A0}"
   private let minus = "\u{2212}"
 
@@ -20,9 +22,9 @@ final class MoneyWordsTests: XCTestCase {
   }
 
   func testASharePrintsWithOneDecimalInTheWindowsLanguage() {
-    XCTAssertEqual(russian.percent(basisPoints: 3_333), "33,3\(space)%")
+    XCTAssertEqual(russian.percent(basisPoints: 3_333), "33.3\(space)%")
     XCTAssertEqual(english.percent(basisPoints: 3_333), "33.3%")
-    XCTAssertEqual(russian.percent(basisPoints: 10_000), "100,0\(space)%")
+    XCTAssertEqual(russian.percent(basisPoints: 10_000), "100.0\(space)%")
     XCTAssertEqual(english.percent(basisPoints: 4), "0.0%")
     XCTAssertEqual(english.percent(basisPoints: 2_573, fractionDigits: 2), "25.73%")
     XCTAssertEqual(english.percent(basisPoints: 2_573, fractionDigits: 0), "26%")
@@ -35,7 +37,7 @@ final class MoneyWordsTests: XCTestCase {
     XCTAssertEqual(english.rounded(rubles("2.5")), "3\(space)₽")
     XCTAssertEqual(english.signedRounded(rubles("1234.5")), "+1,235\(space)₽")
     XCTAssertEqual(english.signedRounded(rubles("-1234.5")), "\(minus)1,235\(space)₽")
-    XCTAssertEqual(russian.signedRounded(rubles("-3400")), "\(minus)3\(space)400\(space)₽")
+    XCTAssertEqual(russian.signedRounded(rubles("-3400")), "\(minus)3,400\(space)₽")
   }
 
   /// The sign is that of the figure as it is shown: forty kopecks down read as no change.
@@ -43,7 +45,7 @@ final class MoneyWordsTests: XCTestCase {
     XCTAssertEqual(english.signedRounded(rubles("-0.4")), "0\(space)₽")
     XCTAssertEqual(english.signedRounded(.zero), "0\(space)₽")
     XCTAssertEqual(english.signedPercent(basisPoints: 834), "+8.3%")
-    XCTAssertEqual(russian.signedPercent(basisPoints: -5_340), "\(minus)53,4\(space)%")
+    XCTAssertEqual(russian.signedPercent(basisPoints: -5_340), "\(minus)53.4\(space)%")
     XCTAssertEqual(english.signedPercent(basisPoints: 0), "0.0%")
     XCTAssertEqual(english.signedPercent(basisPoints: -4), "0.0%")
   }
@@ -51,8 +53,8 @@ final class MoneyWordsTests: XCTestCase {
   func testAChangeWithABaseHasBothHalves() {
     let text = russian.change(Change(current: rubles("19200"), previous: rubles("41200")))
     XCTAssertEqual(text.direction, .down)
-    XCTAssertEqual(text.delta, "\(minus)22\(space)000\(space)₽")
-    XCTAssertEqual(text.percent, "\(minus)53,4\(space)%")
+    XCTAssertEqual(text.delta, "\(minus)22,000\(space)₽")
+    XCTAssertEqual(text.percent, "\(minus)53.4\(space)%")
   }
 
   /// Nothing the period before: no percent at all, only the rubles.
@@ -74,12 +76,12 @@ final class MoneyWordsTests: XCTestCase {
   /// exact amount, a bar, an axis — the same «−» as `signedRounded`, never the hyphen of the
   /// locale beside it.
   func testANegativeFigureHasTheTypographicMinusEverywhere() {
-    XCTAssertEqual(russian.rounded(rubles("-3400")), "\(minus)3\(space)400\(space)₽")
+    XCTAssertEqual(russian.rounded(rubles("-3400")), "\(minus)3,400\(space)₽")
     XCTAssertEqual(english.rounded(rubles("-2.5")), "\(minus)3\(space)₽")
     XCTAssertEqual(russian.exact(rubles("-250")), "\(minus)250\(space)₽")
     XCTAssertEqual(english.rubles(-50), "\(minus)50\(space)₽")
     XCTAssertEqual(english.axis(-2_500_000), "\(minus)2.5M\(space)₽")
-    XCTAssertEqual(russian.axis(-1_234_567), "\(minus)1,2\(space)млн\(space)₽")
+    XCTAssertEqual(russian.axis(-1_234_567), "\(minus)1.2\(space)млн\(space)₽")
     XCTAssertEqual(english.percent(basisPoints: -250), "\(minus)2.5%")
   }
 
@@ -98,10 +100,10 @@ final class MoneyWordsTests: XCTestCase {
   /// as two digits, and the third and fourth digit of E4 only when there are any.
   func testAnExactAmountHasNoFractionOrAtLeastTwoDigits() {
     XCTAssertEqual(russian.exact(rubles("250")), "250\(space)₽")
-    XCTAssertEqual(russian.exact(rubles("1234.5")), "1\(space)234,50\(space)₽")
+    XCTAssertEqual(russian.exact(rubles("1234.5")), "1,234.50\(space)₽")
     XCTAssertEqual(english.exact(rubles("1234.5")), "1,234.50\(space)₽")
-    XCTAssertEqual(russian.exact(rubles("0.07")), "0,07\(space)₽")
-    XCTAssertEqual(russian.exact(rubles("12.345")), "12,345\(space)₽")
+    XCTAssertEqual(russian.exact(rubles("0.07")), "0.07\(space)₽")
+    XCTAssertEqual(russian.exact(rubles("12.345")), "12.345\(space)₽")
     XCTAssertEqual(english.exact(rubles("-0.0001")), "\(minus)0.0001\(space)₽")
     XCTAssertEqual(english.exact(rubles("-99.9"), currency: .usd), "\(minus)99.90\(space)$")
   }
@@ -116,7 +118,7 @@ final class MoneyWordsTests: XCTestCase {
     XCTAssertEqual(english.rubles(-largest), "\(minus)922,337,203,685,478\(space)₽")
     XCTAssertEqual(english.signedRubles(largest), "+922,337,203,685,478\(space)₽")
     XCTAssertEqual(english.signedRubles(-largest), "\(minus)922,337,203,685,478\(space)₽")
-    XCTAssertEqual(russian.signedRubles(-3_400), "\(minus)3\(space)400\(space)₽")
+    XCTAssertEqual(russian.signedRubles(-3_400), "\(minus)3,400\(space)₽")
     XCTAssertEqual(english.signedRubles(0), "0\(space)₽")
     XCTAssertEqual(english.axis(.min), "\(minus)9,223,372,036.9B\(space)₽")
   }
@@ -198,7 +200,7 @@ final class OverviewCardsTests: XCTestCase {
     XCTAssertTrue(russian.hasSuffix("в прошлом месяце данных нет"), russian)
     let russianBoth = OverviewText.comparison(
       environment.money.change(fromSomething), span: span, environment)
-    XCTAssertTrue(russianBoth.contains("+10,0\u{00A0}%"), russianBoth)
+    XCTAssertTrue(russianBoth.contains("+10.0\u{00A0}%"), russianBoth)
     XCTAssertTrue(russianBoth.contains("авг"), russianBoth)
   }
 

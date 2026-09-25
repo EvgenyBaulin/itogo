@@ -191,8 +191,8 @@ enum TransactionColumnWidths {
   /// time read «1…» (the live run of 19 September).
   static let time: CGFloat = 64
   static let timeInset: CGFloat = 26
-  /// The amount column: «1 234 567,89 ₽» or «1,234,567.89 ₽» in the monospaced digits of the
-  /// body font and the insets of the cell.
+  /// The amount column: «1,234,567.89 ₽» in the monospaced digits of the body font and the
+  /// insets of the cell.
   static let amount: CGFloat = 104
   static let amountInset: CGFloat = 4
 }
@@ -264,7 +264,8 @@ private struct DescriptionCell: View {
   private var title: some View {
     if let number = item.partNumber, !item.title.isNote {
       Text(
-        verbatim: environment.language.format("transactions.part", table: "Transactions", number)
+        verbatim: environment.language.format(
+          "transactions.part", table: "Transactions", counts: number)
       )
       .foregroundStyle(.secondary)
     } else {

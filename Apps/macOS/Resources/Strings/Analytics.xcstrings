@@ -1624,13 +1624,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Little history yet: a straight line with an interval of ±50 %"
+            "value": "Little history yet: a straight line with an interval of ±50%"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Истории пока мало: прямая с интервалом ±50 %"
+            "value": "Истории пока мало: прямая с интервалом ±50 %"
           }
         }
       }

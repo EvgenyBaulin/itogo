@@ -67,7 +67,7 @@ enum PlanningText {
         "planning.eventUntil", table: "Planning", environment.dates.dayAndMonth(plan.event.endDate))
     }
     return environment.language.format(
-      "planning.eventIn", table: "Planning", plan.daysUntilStart) + " · " + span
+      "planning.eventIn", table: "Planning", counts: plan.daysUntilStart) + " · " + span
   }
 
   // MARK: Formulas

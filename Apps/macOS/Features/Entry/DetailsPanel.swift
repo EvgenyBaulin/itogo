@@ -81,15 +81,17 @@ struct DetailsPanel: View {
         fieldLabel("entry.amount")
         HStack(spacing: 8) {
           AmountField(
-            amount: totalBinding, locale: environment.language.locale,
+            amount: totalBinding,
             // The text goes along: a formula typed here is kept in `amount_expr`.
             onTyped: { model.setTotal($0, typed: $1) }
           )
           .frame(width: 140)
           // One part is the whole operation: its amount is the total.
           .disabled(!model.isSplit && model.hasClosedPart)
+          // The formula the amount was worked out from, its numbers written the way the app
+          // writes them.
           if let expression = model.draft.amountExpression {
-            Text(verbatim: expression)
+            Text(verbatim: ExpressionEvaluator.canonical(expression) ?? expression)
               .font(.caption.monospaced())
               .foregroundStyle(.secondary)
           }
@@ -281,7 +283,7 @@ struct DetailsPanel: View {
             .frame(maxWidth: 200)
             // Each part has a quality of its own, so it sits next to the amount.
             VStack(alignment: .leading, spacing: 4) {
-              AmountField(amount: partBinding(index).amount, locale: environment.language.locale)
+              AmountField(amount: partBinding(index).amount)
                 .frame(width: 120)
                 .disabled(model.isClosedPart(id: part.id))
               if model.hasQuality {
@@ -450,8 +452,7 @@ struct DetailsPanel: View {
           fieldLabel("entry.monthlyPayment")
           AmountField(
             amount: Binding(
-              get: { plan.wrappedValue.monthlyAmount }, set: { model.setCreditMonthly($0) }),
-            locale: environment.language.locale
+              get: { plan.wrappedValue.monthlyAmount }, set: { model.setCreditMonthly($0) })
           )
           .frame(width: 120)
         }
@@ -689,7 +690,7 @@ struct DetailsPanel: View {
 
   private var rateField: some View {
     HStack(spacing: 8) {
-      RateField(model: model, title: t("entry.rate"), locale: environment.language.locale)
+      RateField(model: model, title: t("entry.rate"))
         .labelsHidden()
         .frame(width: 120)
       if model.draft.rateSource == .manual {
@@ -755,14 +756,37 @@ struct DetailsPanel: View {
 /// An amount that can be typed as an expression: "1500×3−2000" is evaluated as you type.
 /// The field also follows the amount when something else changes it — splitting evenly,
 /// for example — so what is shown is always what will be saved.
+///
+/// The text stays exactly as typed while the owner types: rewritten on every keystroke, it
+/// would move under the cursor. Enter, Tab and leaving the field write it back the one way the
+/// app writes amounts — «1500,5» becomes «1,500.50», a formula becomes what it comes to (the
+/// total of an operation keeps the formula itself beside the field). What the field writes it
+/// also reads back as the same amount: an equal split of 37 in eight is «4.625», never a text
+/// that reads as 4 625.
+///
+/// Text that does not read — «1700+», «abc» — leaves the amount as it was. A form that must not
+/// save that amount under such text passes `reads`: false while the text does not read.
 struct AmountField: View {
   @Binding var amount: AmountE4
-  let locale: Locale
   /// Given, it is told every amount typed together with the text behind it, and writes the
   /// amount itself: the total of an operation keeps a formula typed in it (`amount_expr`).
-  var onTyped: ((AmountE4, String) -> Void)? = nil
+  var onTyped: ((AmountE4, String) -> Void)?
+  private var reads: Binding<Bool>?
   @State private var text: String = ""
   @State private var lastShown: AmountE4 = .zero
+  /// The text the field has just written back itself: its amount was told when it was typed.
+  @State private var writtenBack: String?
+  @FocusState private var isFocused: Bool
+
+  /// `locale` is accepted and not needed: amounts are written the same way in every language.
+  init(
+    amount: Binding<AmountE4>, locale _: Locale? = nil, reads: Binding<Bool>? = nil,
+    onTyped: ((AmountE4, String) -> Void)? = nil
+  ) {
+    self._amount = amount
+    self.reads = reads
+    self.onTyped = onTyped
+  }
 
   var body: some View {
     TextField(text: $text) {
@@ -770,15 +794,28 @@ struct AmountField: View {
     }
     .labelsHidden()
     .font(.body.monospacedDigit())
+    .focused($isFocused)
     .onAppear { show(amount) }
     .onChange(of: amount) { _, newValue in
       guard newValue != lastShown else { return }
       show(newValue)
     }
     .onChange(of: text) { _, newValue in
-      guard let parsed = Self.amount(from: newValue) else { return }
+      // Told again, the amount would land a second time — after Enter has already saved the
+      // form and emptied it for the next operation.
+      let isWrittenBack = newValue == writtenBack
+      writtenBack = nil
+      guard !isWrittenBack else { return }
+      let parsed = Self.amount(from: newValue)
+      if let reads, reads.wrappedValue != (parsed != nil) { reads.wrappedValue = parsed != nil }
+      guard let parsed else { return }
       lastShown = parsed
       if let onTyped { onTyped(parsed, newValue) } else { amount = parsed }
+    }
+    // Submit actions add up along the hierarchy: Enter still reaches the form around the field.
+    .onSubmit { settle() }
+    .onChange(of: isFocused) { _, focused in
+      if !focused { settle() }
     }
   }
 
@@ -791,35 +828,55 @@ struct AmountField: View {
     return try? AmountE4(decimal: value)
   }
 
-  private func show(_ value: AmountE4) {
-    lastShown = value
-    text = Self.text(for: value, locale: locale)
+  /// The text once the owner is done with the field: the amount it reads as, written the way
+  /// the app writes amounts. Nil leaves the text alone — nothing typed, or text that does not
+  /// read yet and is left for the owner to finish.
+  static func settledText(_ text: String) -> String? {
+    guard !text.trimmingCharacters(in: .whitespaces).isEmpty,
+      let value = amount(from: text)
+    else { return nil }
+    return Self.text(for: value)
   }
 
-  /// What the field shows for an amount: nothing for zero, otherwise the number as the
-  /// interface language writes it — «1500,5» in Russian — without grouping, so it reads back
-  /// as the same amount (the evaluator takes either separator).
-  static func text(for value: AmountE4, locale: Locale) -> String {
-    value.isZero ? "" : FieldNumber.text(value.decimal, locale: locale)
+  private func settle() {
+    guard let settled = Self.settledText(text), settled != text else { return }
+    writtenBack = settled
+    text = settled
+  }
+
+  private func show(_ value: AmountE4) {
+    lastShown = value
+    text = Self.text(for: value)
+  }
+
+  /// What the field shows for an amount: nothing for zero, otherwise the amount the way the
+  /// app writes amounts — «1,500.50», «4.625» — which reads back as the same amount.
+  static func text(for value: AmountE4) -> String {
+    value.isZero ? "" : FieldNumber.text(value)
   }
 }
 
 /// The rate typed by hand. The text stays as it is typed — «81,» is 81 half-typed, «81,40»
 /// is 81.4 — and is rewritten only when the rate becomes one the text does not read: cleared,
-/// or put there by something else. Bound straight to the rate, the field showed every
-/// keystroke back as the number it made, so the separator vanished under the cursor and
-/// «81,43» came out as 8143. `AmountField` keeps its text the same way.
+/// or put there by something else, and once the owner is done with the field (Enter, Tab,
+/// leaving it), when it is written back the way the app writes rates: «81,40» becomes «81.4».
+/// Bound straight to the rate, the field showed every keystroke back as the number it made, so
+/// the separator vanished under the cursor and «81,43» came out as 8143. `AmountField` keeps its
+/// text the same way.
+///
+/// A rate keeps the rule of rates: a lone separator is the decimal one, «83,125» is 83.125.
 struct RateField: View {
   let model: EntryDraftModel
   let title: String
-  let locale: Locale
   @State private var text = ""
+  @FocusState private var isFocused: Bool
 
   var body: some View {
     TextField(text: $text) {
       Text(verbatim: title)
     }
-    .onAppear { text = Self.text(afterTyping: text, rate: model.draft.rate, locale: locale) }
+    .focused($isFocused)
+    .onAppear { text = Self.text(afterTyping: text, rate: model.draft.rate) }
     // Half-typed text must not clear the rate and claim the owner chose it: that combination
     // is what converts a foreign amount one to one (see the model). Text that already reads as
     // the rate is the rate being shown, not typed: passed on, it would make a bank rate manual.
@@ -828,14 +885,30 @@ struct RateField: View {
       model.setManualRate(typed)
     }
     .onChange(of: model.draft.rate) { _, rate in
-      text = Self.text(afterTyping: text, rate: rate, locale: locale)
+      text = Self.text(afterTyping: text, rate: rate)
     }
+    .onSubmit { settle() }
+    .onChange(of: isFocused) { _, focused in
+      if !focused { settle() }
+    }
+  }
+
+  private func settle() {
+    let settled = Self.settledText(text, rate: model.draft.rate)
+    if settled != text { text = settled }
   }
 
   /// What the field shows once the model has taken `typed`: the text as typed while it reads
   /// as the rate, otherwise the rate itself.
-  static func text(afterTyping typed: String, rate: Decimal?, locale: Locale) -> String {
-    reads(typed, as: rate) ? typed : (rate.map { FieldNumber.text($0, locale: locale) } ?? "")
+  static func text(afterTyping typed: String, rate: Decimal?) -> String {
+    reads(typed, as: rate) ? typed : (rate.map { FieldNumber.text($0) } ?? "")
+  }
+
+  /// The text once the owner is done with the field: the rate the way the app writes rates,
+  /// or nothing for no rate. Text that does not read as the rate stays as it is.
+  static func settledText(_ typed: String, rate: Decimal?) -> String {
+    guard reads(typed, as: rate) else { return typed }
+    return rate.map { FieldNumber.text($0) } ?? ""
   }
 
   /// Whether `text` says `rate`: the same number however it is typed, or nothing for no rate.
@@ -846,13 +919,20 @@ struct RateField: View {
   }
 }
 
-/// A number put into a text field for editing: the decimal separator of the interface
-/// language, no grouping. `Decimal` itself always prints a dot.
+/// A number put into a text field for editing, written the one way the app writes numbers, in
+/// every language, so that it reads back as the same number.
 enum FieldNumber {
-  static func text(_ value: Decimal, locale: Locale) -> String {
-    let separator = locale.decimalSeparator ?? "."
-    let plain = "\(value)"
-    return separator == "." ? plain : plain.replacingOccurrences(of: ".", with: separator)
+  /// An amount: thousands grouped by commas, a point before at least two decimals — «1,500.50»,
+  /// «4.625», «250». Amounts typed by hand read a lone comma before three digits as thousands,
+  /// so a fraction is never written with a comma.
+  static func text(_ value: AmountE4) -> String {
+    NumberText.amount(value, minus: "-")
+  }
+
+  /// A rate: every digit it has, a point, no grouping — «81.4321». Rates read a lone separator
+  /// as the decimal one, so a comma between thousands would turn 1,234 into 1.234.
+  static func text(_ value: Decimal) -> String {
+    NumberText.plain(value)
   }
 }
 
