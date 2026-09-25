@@ -10,7 +10,12 @@ import Observation
 @MainActor
 @Observable
 public final class EntryDraftModel {
-  public var draft = TransactionDraft()
+  public var draft = TransactionDraft() {
+    didSet {
+      guard draft.creditDebtId != oldValue.creditDebtId else { return }
+      kindWithTheCredit = draft.creditDebtId == nil ? nil : draft.kind
+    }
+  }
   /// Categories that can be chosen: the archived ones are left out.
   public var categories: [CoreKit.Category] = []
   /// Categories retired since. They are never offered, but an operation saved under one of
@@ -53,6 +58,9 @@ public final class EntryDraftModel {
   /// The draft is a saved operation in the editor — the sheet or the inspector — not the
   /// entry line's new one.
   private let editsSavedOperation: Bool
+  /// The kind the draft had when its debt «on credit» came with it. In the editor the debt
+  /// only ever comes with the saved operation, so this is the kind it was saved with.
+  private var kindWithTheCredit: TransactionKind?
   /// Off by default, as the specification requires: an event covering the day is only
   /// offered, and the panel shows it as a suggestion until it is picked.
   private let assignsEventAutomatically: Bool
@@ -236,6 +244,7 @@ public final class EntryDraftModel {
   public func applyDefaults(today: DateOnly) {
     guard !draft.parts.isEmpty else { return }
     reloadQualityRules()
+    dropTheCreditTheKindCannotCarry()
 
     // A category of the other kind is dropped first: after switching an expense to income
     // it would match nothing the picker offers and file the money on the wrong side.
@@ -1117,6 +1126,9 @@ public final class EntryDraftModel {
   public var saveRefusalKey: String? {
     guard !draft.amount.isZero else { return "entry.error.amountMissing" }
     guard !draft.amount.isNegative else { return "entry.error.amountNotPositive" }
+    guard !isOnCredit || draft.kind.canBeBoughtOnCredit || keepsTheSavedCredit else {
+      return "entry.error.creditNotPurchase"
+    }
     for problem in SplitValidator.validate(draft, categories: categoryTree).problems {
       switch problem {
       case .noParts, .unbalanced: return "entry.error.notBalanced"
@@ -1136,7 +1148,7 @@ public final class EntryDraftModel {
   public var shownRefusalKey: String? {
     switch saveRefusalKey {
     case "entry.error.amountNotPositive", "entry.error.debtorMissing", "entry.error.goalMissing",
-      "entry.error.goalCategoryMismatch":
+      "entry.error.goalCategoryMismatch", "entry.error.creditNotPurchase":
       saveRefusalKey
     default: nil
     }
@@ -1185,6 +1197,27 @@ public final class EntryDraftModel {
   /// deletable, though a purchase that moved a debt is never deleted from the list — so a
   /// saved purchase is changed in Debts.
   public var canChangeCredit: Bool { !editsSavedOperation }
+
+  /// Only a purchase is bought on credit: an income or a refund on credit opened an instalment
+  /// debt that nothing bought. The switch is offered for a purchase in the entry line.
+  public var offersCredit: Bool { canChangeCredit && draft.kind.canBeBoughtOnCredit }
+
+  /// An income or a refund saved on credit before only a purchase could be — such rows exist —
+  /// is edited as it is: its note or category changes, and the debt stays as it was saved.
+  /// What is refused is turning an operation on credit into another kind that is never bought
+  /// on credit.
+  private var keepsTheSavedCredit: Bool {
+    editsSavedOperation && creditPlan == nil && draft.kind == kindWithTheCredit
+  }
+
+  /// A kind that cannot be bought on credit drops the plan made for the purchase it was — in
+  /// the panel and by a line that says «+» alike. A saved operation keeps its debt: the editor
+  /// refuses the change instead (`saveRefusalKey`).
+  private func dropTheCreditTheKindCannotCarry() {
+    guard canChangeCredit, !draft.kind.canBeBoughtOnCredit else { return }
+    creditPlan = nil
+    draft.creditDebtId = nil
+  }
 
   /// The link of income to an expected one is written by the line with the income. An income
   /// already saved is tied to what was expected in Planning.
@@ -1276,7 +1309,7 @@ public final class EntryDraftModel {
 
   /// Turns the plan on with a sensible instalment: the whole amount split evenly.
   public func startCreditPlan() {
-    guard canChangeCredit, creditPlan == nil else { return }
+    guard offersCredit, creditPlan == nil else { return }
     let payments = 12
     creditPlan = CreditPlan(
       debtId: nil, payments: payments,
@@ -1312,4 +1345,10 @@ public final class EntryDraftModel {
     expectedIncomeId = nil
     creationFailureKey = nil
   }
+}
+
+extension TransactionKind {
+  /// Only a purchase is bought on credit: an income, a refund or money back buys nothing, and a
+  /// debt opened for one would be paid off by nothing.
+  var canBeBoughtOnCredit: Bool { self == .expense }
 }

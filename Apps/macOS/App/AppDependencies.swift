@@ -125,10 +125,15 @@ extension View {
   }
 }
 
-/// The SwiftUI half of the theme: the light or dark the owner chose, the accent for everything
-/// `.tint(_:)` reaches, and the same accent as a value for the charts. A modifier and not three
-/// lines in `appDependencies(_:)`: the theme is read here, inside a `body`, so a change to it
-/// redraws what it paints instead of waiting for the next window.
+/// The SwiftUI half of the theme: the accent for everything `.tint(_:)` reaches, and the same
+/// accent as a value for the charts. A modifier and not two lines in `appDependencies(_:)`: the
+/// theme is read here, inside a `body`, so a change to it redraws what it paints instead of
+/// waiting for the next window.
+///
+/// Light or dark is not set here: it reaches every window through `NSApp.appearance` alone
+/// (`AppTheme.applyAppearance`). `preferredColorScheme` pinned the AppKit controls inside a form
+/// to the scheme it named, and taking it back to «system» left them pinned — the theme picker
+/// stayed white on a dark Mac.
 private struct AppTheming: ViewModifier {
   let theme: AppTheme
 
@@ -136,7 +141,6 @@ private struct AppTheming: ViewModifier {
     content
       .environment(\.appAccent, theme.accentColor)
       .tint(theme.tint)
-      .preferredColorScheme(theme.colorScheme)
   }
 }
 

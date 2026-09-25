@@ -560,7 +560,7 @@ final class MainWindowLayoutTests: XCTestCase {
   // MARK: - The toolbar
 
   /// «На панели инструментов: Add, Recompute, Reconcile, Analytics, Transactions, Reports,
-  /// Export, Reload & Update». The last two lived in the menus only.
+  /// Export, Check for Updates». The last two lived in the menus only.
   func testTheToolbarOffersEveryActionOfTheSpecification() throws {
     let window = makeWindow()
     try waitForList(window)

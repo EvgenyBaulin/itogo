@@ -64,6 +64,9 @@ enum AppLaunch {
         // «…и приложение предлагает собрать отчёт»: the main window asks (ProblemReportOffer).
         environment.offersProblemReport = true
       }
+      // A relaunch that opened this instance, or one before it that never brought the app
+      // back, now that the journal is open to say so (`RelaunchMark`).
+      RelaunchMark.writeArrival()
       // The language of the menus of the next launch agrees with the choice.
       if let domain = Bundle.main.bundleIdentifier {
         AppLanguage.settle(in: .standard, domain: domain)

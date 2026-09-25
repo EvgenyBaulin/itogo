@@ -79,7 +79,7 @@ jobs:
       # No implicitly unwrapped optional, warnings of our own code and stale files in the logs
       # of the steps above, a portable core, no trapping environment, no measured height fed
       # back, scripts that parse, no personal data, one name in the history, no web view,
-      # glass where it belongs.
+      # glass where it belongs, every literal key in the String Catalog it is looked up in.
       - name: Run the checks of make verify
         run: make ci-checks
 

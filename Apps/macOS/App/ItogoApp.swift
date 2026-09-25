@@ -86,6 +86,10 @@ struct ItogoApp: App {
       // past through the store, one step of ⌘Z, after counting over the pipeline's ledger.
       AppScenes.root(deps, window: .settings) { SettingsView(deps: $0) }
     }
+    // Never smaller than its tabs are laid out for (`SettingsView.minimumSize`). The corner to
+    // drag it larger is given from inside the window: the scene itself gives it none
+    // (`ResizableSettingsWindow`).
+    .windowResizability(.contentMinSize)
   }
 }
 
@@ -134,12 +138,12 @@ struct AppCommands: Commands {
       Button(environment.language("action.recompute")) { compute.run() }
         .keyboardShortcut("r", modifiers: .command)
 
-      // «Reload & Update» where an update can arrive, «Reload» where it cannot; in the store
-      // build the page of the app is where updates come from.
+      // «Проверить обновления…» where an update can arrive, «Перезапустить» where it cannot; in
+      // the store build the page of the app is where updates come from.
       //
       // No shortcut: ⌘⇧R opens Reports, and restarting the application is not something to
       // put one keystroke away from ⌘R anyway.
-      Button(UpdateService.title(environment)) { UpdateService.reload() }
+      Button(UpdateService.title(environment)) { UpdateService.press() }
       if UpdateService.kind == .restartAndStorePage {
         Button(environment.language("action.openStorePage")) { UpdateService.openStorePage() }
       }
@@ -573,8 +577,8 @@ struct MainWindow: View {
       }
 
       // The last two actions of the specification's toolbar. Each runs the flow of its menu item —
-      // the warning about personal data first for the export, Sparkle or a plain restart by the
-      // build for the other — rather than a copy of it.
+      // the warning about personal data first for the export, Sparkle's check or a plain restart
+      // by the build for the other — rather than a copy of it.
       Button {
         FileCommands(environment: environment, store: store).exportCSV()
       } label: {
@@ -586,15 +590,15 @@ struct MainWindow: View {
       }
 
       Button {
-        UpdateService.reload()
+        UpdateService.press()
       } label: {
         Label {
           Text(verbatim: UpdateService.title(environment))
         } icon: {
-          Image(
-            systemName: UpdateService.kind == .updateAndRestart ? "arrow.down.circle" : "restart")
+          Image(systemName: UpdateService.symbol)
         }
       }
+      .help(UpdateService.title(environment))
 
       // ⌘, opens the settings from the menu bar and always did; the owner asked for a way in
       // that can be seen without opening a menu (21.09). It rides in the same group as the

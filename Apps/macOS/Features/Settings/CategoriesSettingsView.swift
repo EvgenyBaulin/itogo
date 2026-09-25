@@ -2,11 +2,14 @@ import AppCore
 import AppDatabase
 import SwiftUI
 
-/// Categories, their subcategories and their quality. System categories (Goals, Loans,
-/// Unknown, Surcharges) — and everything under them, a goal's subcategory and a debt's —
-/// cannot be renamed, archived or deleted, and a goal contribution is always good: the
-/// quality picker of Goals and of every goal's subcategory is disabled rather than silently
-/// ignored. Among the income categories the owner also says which one is cashback.
+/// Categories, their subcategories and their quality, as one flat list: a category in bold, its
+/// subcategories indented under it, every row alike — no heading sticks to the top of the list.
+///
+/// System categories (Goals, Loans, Unknown, Surcharges) — and everything under them, a goal's
+/// subcategory and a debt's — can be renamed, but not archived or deleted: the app finds them
+/// by their role and their place in the tree, never by name. A goal contribution is always
+/// good: the quality picker of Goals and of every goal's subcategory is disabled rather than
+/// silently ignored. Among the income categories the owner also says which one is cashback.
 ///
 /// A new quality counts for the operations to come at once; whether the past follows is a
 /// question, asked when there is something to change.
@@ -68,30 +71,25 @@ struct CategoriesSettingsView: View {
         .onChange(of: showsArchived) { _, _ in reload() }
       }
 
+      // Rows, not sections: the header of a section stuck to the top of the list while its
+      // subcategories scrolled under it, with a background of its own.
       List {
-        ForEach(roots, id: \.id) { parent in
-          Section {
-            ForEach(children(of: parent), id: \.id) { child in
-              row(child, isChild: true)
-            }
-          } header: {
-            row(parent, isChild: false)
-          }
-        }
-        // A live subcategory whose parent is in the archive has no row to hang on while the
-        // archive is hidden — and it is still the category of its own past operations. It
-        // gets a section of its own rather than disappearing from the only screen that can
-        // rename, archive or delete it.
-        if !orphans.isEmpty {
-          Section {
-            ForEach(orphans, id: \.id) { child in
-              row(child, isChild: true)
-            }
-          } header: {
+        ForEach(Self.rows(roots: roots, children: children(of:), orphans: orphans)) { line in
+          switch line {
+          case .category(let category, let isChild):
+            row(category, isChild: isChild)
+          case .orphansCaption:
+            // A live subcategory whose parent is in the archive has no row to hang on while
+            // the archive is hidden — and it is still the category of its own past operations.
+            // It is listed after this line rather than disappearing from the only screen that
+            // can rename, archive or delete it.
             Text(verbatim: environment.language("categories.orphans", table: "Settings"))
+              .font(.caption)
+              .foregroundStyle(.secondary)
           }
         }
       }
+      .listStyle(.inset)
       .frame(minHeight: 220)
 
       HStack {
@@ -222,27 +220,62 @@ struct CategoriesSettingsView: View {
       })
   }
 
+  /// One line of the list: a category, flush left or indented under its parent, or the caption
+  /// before the subcategories whose parent is in the archive.
+  enum Line: Identifiable, Equatable {
+    case category(CoreKit.Category, isChild: Bool)
+    case orphansCaption
+
+    var id: String {
+      switch self {
+      case .category(let category, _): category.id.uuidString
+      case .orphansCaption: "orphans"
+      }
+    }
+  }
+
+  /// The list in the order it is read: each category followed by its subcategories, then — when
+  /// there are any — the caption and the subcategories whose parent is not listed.
+  static func rows(
+    roots: [CoreKit.Category], children: (CoreKit.Category) -> [CoreKit.Category],
+    orphans: [CoreKit.Category]
+  ) -> [Line] {
+    var lines: [Line] = []
+    for parent in roots {
+      lines.append(.category(parent, isChild: false))
+      lines += children(parent).map { .category($0, isChild: true) }
+    }
+    if !orphans.isEmpty {
+      lines.append(.orphansCaption)
+      lines += orphans.map { .category($0, isChild: true) }
+    }
+    return lines
+  }
+
   private func row(_ category: CoreKit.Category, isChild: Bool) -> some View {
-    // Read once for the row: both the lock and the quality picker ask it.
+    // Read once for the row: both the caption of a system category and the quality picker ask.
     let tree = wholeTree()
+    let isSystem = tree.systemRole(of: category.id) != nil
     return HStack {
-      // A system category cannot be renamed, archived or deleted — and neither can a
-      // subcategory of one: the role is handed down by the tree, and a goal's subcategory
-      // taken away would be made again by the next contribution.
-      if tree.systemRole(of: category.id) != nil {
-        Text(verbatim: category.name)
-          .padding(.leading, isChild ? 14 : 0)
-        Image(systemName: "lock")
+      TextField(text: nameBinding(for: category)) { EmptyView() }
+        .labelsHidden()
+        .textFieldStyle(.plain)
+        .fontWeight(isChild ? .regular : .semibold)
+        .focused($editingName, equals: category.id)
+        .onSubmit { commitName(of: category.id) }
+        .padding(.leading, isChild ? 18 : 0)
+        .frame(maxWidth: 240, alignment: .leading)
+      // A system category can be renamed, but not archived or deleted — and neither can a
+      // subcategory of one: the role is handed down by the tree, and a goal's subcategory taken
+      // away would be made again by the next contribution. Said in a word, with the reason on
+      // hover, rather than by a bare lock.
+      if isSystem {
+        Text(verbatim: environment.language("categories.system", table: "Settings"))
           .font(.caption)
           .foregroundStyle(.secondary)
+          .help(environment.language("categories.system.help", table: "Settings"))
+          .accessibilityIdentifier("categories.row.system")
       } else {
-        TextField(text: nameBinding(for: category)) { EmptyView() }
-          .labelsHidden()
-          .textFieldStyle(.plain)
-          .focused($editingName, equals: category.id)
-          .onSubmit { commitName(of: category.id) }
-          .padding(.leading, isChild ? 14 : 0)
-          .frame(maxWidth: 220, alignment: .leading)
         if category.archived {
           Text(verbatim: environment.language("categories.archived", table: "Settings"))
             .font(.caption)
@@ -269,7 +302,7 @@ struct CategoriesSettingsView: View {
         .fixedSize()
         .accessibilityIdentifier("categories.row.menu")
       }
-      Spacer()
+      Spacer(minLength: 8)
       if kind == .expense {
         Picker(selection: qualityBinding(for: category)) {
           Text(verbatim: "—").tag(Quality?.none)
@@ -416,11 +449,16 @@ struct CategoriesSettingsView: View {
   /// (`AppEnvironment.attempt`).
   private func commitName(of id: UUID) {
     guard let index = categories.firstIndex(where: { $0.id == id }),
-      let stored = try? environment.references?.categories(includeArchived: true)
-        .first(where: { $0.id == id })
+      let all = try? environment.references?.categories(includeArchived: true),
+      let stored = all.first(where: { $0.id == id })
     else { return }
     guard let renamed = Self.renamed(stored, to: categories[index].name) else {
       categories[index].name = stored.name
+      return
+    }
+    guard !Self.nameIsTaken(renamed.name, by: stored, among: all) else {
+      categories[index].name = stored.name
+      refusalKey = "categories.rename.taken"
       return
     }
     guard
@@ -441,6 +479,30 @@ struct CategoriesSettingsView: View {
     var renamed = stored
     renamed.name = name
     return renamed
+  }
+
+  /// Whether `name` would make `category` one of two alike: the pickers and the entry line know
+  /// a category by its name, and two of one kind under one parent — or a subcategory named as a
+  /// category — could not be told apart there. Only the live ones are asked, as the pickers and
+  /// the entry line know only those, and as the other books of the settings ask: a name refused
+  /// for a row nobody can see is a refusal nobody can read.
+  /// Case, «ё» and spaces make no difference.
+  static func nameIsTaken(
+    _ name: String, by category: CoreKit.Category, among all: [CoreKit.Category]
+  ) -> Bool {
+    let folded = fold(name)
+    return all.contains { other in
+      other.id != category.id && !other.archived && other.kind == category.kind
+        && (other.parentId == category.parentId || other.parentId == nil
+          || category.parentId == nil)
+        && fold(other.name) == folded
+    }
+  }
+
+  /// A name as the owner reads it: lower case, «ё» as «е», one space between words.
+  private static func fold(_ name: String) -> String {
+    name.lowercased().replacingOccurrences(of: "ё", with: "е")
+      .split(whereSeparator: \.isWhitespace).joined(separator: " ")
   }
 
   private func setArchived(_ category: CoreKit.Category, _ archived: Bool) {

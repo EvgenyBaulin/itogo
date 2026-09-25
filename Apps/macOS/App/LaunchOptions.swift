@@ -77,8 +77,13 @@ struct LaunchOptions: Equatable, Sendable {
   var measures = false
   var measureRuns: Int?
 
-  /// The options of this process, read once.
-  static let current = LaunchOptions(arguments: ProcessInfo.processInfo.arguments, debug: isDebug)
+  /// The options of this process, read once — with what a relaunch carried over from the
+  /// instance before it (`RelaunchCarry`), which the arguments of the command line outrank. Not
+  /// in the test host: the defaults there are the owner's Debug ones.
+  static let current = LaunchOptions(
+    arguments: ProcessInfo.processInfo.arguments
+      + (AppEnvironment.isTestHost ? [] : RelaunchCarry.take()),
+    debug: isDebug)
 
   static var isDebug: Bool {
     #if DEBUG

@@ -1,8 +1,10 @@
 # Updates
 
-`UpdateService` is the whole of it: «Обновить и перезапустить» in the Direct build,
-«Перезапустить» in the store build, and the thin layer over Sparkle that makes the first of
-those true.
+`UpdateService` is the whole of it: «Проверить обновления…» in the Direct build,
+«Перезапустить» in the store build and in a build that cannot verify an update, and the thin
+layer over Sparkle behind the first of those. Sparkle answers a check in its own windows — an
+update to install, or «Установлена последняя версия» — and only an installed update restarts
+the app.
 
 Three facts worth knowing before changing anything here:
 

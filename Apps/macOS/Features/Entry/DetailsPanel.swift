@@ -122,7 +122,7 @@ struct DetailsPanel: View {
         }
       }
       GridRow {
-        fieldLabel("entry.forWhom")
+        fieldLabel(forWhomKey)
         forWhomPicker(forPartAt: 0)
       }
       GridRow {
@@ -340,7 +340,7 @@ struct DetailsPanel: View {
 
   @ViewBuilder
   private func partForWhom(_ index: Int) -> some View {
-    partLabel("entry.forWhom")
+    partLabel(forWhomKey)
     forWhomPicker(forPartAt: index)
   }
 
@@ -388,8 +388,9 @@ struct DetailsPanel: View {
 
         // In the editor the box only says what the purchase is: a saved purchase is put on
         // credit or taken off it in Debts, never by a plan the editor would not write. A plain
-        // one does not show it at all.
-        if model.canChangeCredit || model.isOnCredit {
+        // one does not show it at all, and neither does an income or a refund: only a purchase
+        // is bought on credit.
+        if model.offersCredit || model.isOnCredit {
           Toggle(isOn: onCreditBinding) {
             Text(verbatim: t("entry.onCredit"))
           }
@@ -702,6 +703,13 @@ struct DetailsPanel: View {
   // MARK: Helpers
 
   private func t(_ key: String) -> String { environment.language(key, table: "Entry") }
+
+  /// Money back names the person it came from; everything else, whom it was spent on.
+  private var forWhomKey: String { Self.forWhomKey(of: model.draft.kind) }
+
+  static func forWhomKey(of kind: TransactionKind) -> String {
+    kind == .reimbursement ? "entry.fromWhom" : "entry.forWhom"
+  }
 
   /// A retired category is only ever shown for what is already filed under it, and says so.
   private func optionTitle(_ category: CoreKit.Category) -> String {

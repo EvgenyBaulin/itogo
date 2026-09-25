@@ -7,6 +7,30 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [Unreleased]
+
+### Changed
+
+- **Updates.** The toolbar button and the View-menu item are now **Check for Updates…**: when
+  there is no new version Sparkle says so and the app keeps running instead of restarting.
+- **Restarting** after a language change, a backup restore or an archive import no longer
+  leaves a second icon in the Dock: the new copy opens only after the old one has quit.
+- **Appearance.** The accent colours are a row of colour circles. Switching the theme back to
+  «System» now changes every window, including Settings. The Settings window can be resized.
+- **Categories.** The list is flat, with no header sticking to the top while scrolling; system
+  categories can be renamed.
+- **Scheduled payments.** One frequency menu (weekly, every 2 weeks, monthly, every 2 months,
+  quarterly, every half year, yearly, once, other…), «On the last day of the month» for
+  payments, expected income and the debt payment day.
+- **Wording.** «Для кого» is «На кого» in Russian; the person who gives money back is «От кого».
+
+### Fixed
+
+- «Buy on credit» could be set on income or a refund and opened an instalment debt.
+- Editing a payment due on the 31st moved it to the 30th for good when its next date fell on a
+  shorter month.
+- The currency caption of a payment method in Settings showed an internal key.
+
 ## [1.0.0] — 2026-09-25
 
 The first public version.

@@ -149,7 +149,7 @@ struct TransactionsTable<MenuItems: View>: View {
     .customizationID("category")
 
     TableColumn(title("forWhom")) { item in
-      ForWhomCell(cell: item.forWhom).appDependencies(deps)
+      ForWhomCell(cell: item.forWhom, kind: item.kind).appDependencies(deps)
     }
     .width(min: 60, ideal: 76)
     .customizationID("forWhom")
@@ -298,6 +298,9 @@ private struct CategoryCell: View {
 private struct ForWhomCell: View {
   @Dependency(\.environment) private var environment
   let cell: RowCell<ForWhomValue>
+  /// Money back keeps its payer in the same column, so the kind decides whether the name is
+  /// who the money was spent on or who gave it back.
+  let kind: TransactionKind
 
   var body: some View {
     switch cell {
@@ -309,7 +312,7 @@ private struct ForWhomCell: View {
       Text(verbatim: environment.label(for: value))
         .foregroundStyle(value == .me ? .secondary : .primary)
     case .one(.person(let name)):
-      Text(verbatim: name)
+      Text(verbatim: ForWhomValue.personText(name, kind: kind, language: environment.language))
     case .one(.owed(let name, let status)):
       let words = ForWhomText.owed(by: name, status, language: environment.language)
       Label {

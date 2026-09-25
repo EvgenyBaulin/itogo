@@ -72,7 +72,7 @@ PYENV_PYTHON := $(PYENV)/bin/python
 PYENV_MARKER := $(PYENV)/pandas.ok
 
 .PHONY: all generate build-dir build run test test-core test-db test-ui fmt lint verify test-one eval-model \
-	    check-core-purity check-toolchain check-warnings check-scripts check-chart-double check-privacy check-environment check-geometry check-stale check-attribution check-native check-glass check-ci check-log-names ci-checks hooks clean install \
+	    check-core-purity check-toolchain check-warnings check-scripts check-chart-double check-privacy check-environment check-geometry check-stale check-attribution check-native check-glass check-ci check-log-names check-strings ci-checks hooks clean install \
 	    archive-appstore build-appstore check-appstore-clean release-local sample sample-large \
 	    bench bench-app pyenv
 
@@ -563,10 +563,19 @@ check-ci:
 	@scripts/check-ci.sh --self-test > /dev/null || scripts/check-ci.sh --self-test
 	@scripts/check-ci.sh
 
+# A key looked up in a table that does not have it comes back as itself and is shown raw — the
+# currency caption of the payment methods said «entry.currency» that way. Every literal key a
+# lookup of a fixed table is given must be in that table's String Catalog. The check proves on
+# two small samples that it catches a wrong table before it reads the sources.
+check-strings:
+	@scripts/check-strings.sh --self-test > /dev/null || scripts/check-strings.sh --self-test
+	@scripts/check-strings.sh
+
 # The checks of `make verify` that read what the builds and tests left behind and change
 # nothing. CI runs them after its own builds and tests (.github/workflows/build.yml).
 ci-checks: lint check-warnings check-stale check-core-purity check-environment check-geometry \
-	    check-scripts check-privacy check-attribution check-native check-glass check-ci check-log-names
+	    check-scripts check-privacy check-attribution check-native check-glass check-ci check-log-names \
+	    check-strings
 
 # `check-appstore-clean` comes before `check-warnings` on purpose: it is what builds the store
 # configuration, and `check-warnings` reads that build's log with the others.

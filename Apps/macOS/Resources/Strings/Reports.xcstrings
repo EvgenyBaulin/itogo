@@ -64,7 +64,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "по «для кого»"
+            "value": "по «на кого»"
           }
         }
       }
@@ -455,7 +455,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Для кого"
+            "value": "На кого"
           }
         }
       }

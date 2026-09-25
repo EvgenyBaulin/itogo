@@ -321,10 +321,9 @@ private struct DebtDetail: View {
     }
     if let payment = debt.monthlyPaymentE4 {
       pieces.append(
-        environment.format(
-          "debts.payment", table: "Debts",
-          environment.money.rounded(payment, currency: debt.currency),
-          debt.paymentDay.map(String.init) ?? "—"))
+        DebtSheetView.cardPaymentText(
+          environment.money.rounded(payment, currency: debt.currency), day: debt.paymentDay,
+          language: environment.language))
     }
     return pieces.joined(separator: " · ")
   }

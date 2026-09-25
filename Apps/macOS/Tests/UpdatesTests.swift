@@ -130,8 +130,8 @@ final class UpdatesTests: XCTestCase {
   }
 }
 
-/// «Reload & Update» and «Reload»: which of the two this build offers, and that the words
-/// match what pressing it will actually do.
+/// «Проверить обновления…» and «Перезапустить»: which of the two this build offers, and that
+/// the words match what pressing it will actually do.
 @MainActor
 final class UpdateServiceTests: XCTestCase {
   /// The tests run in a Direct build — the test host is the app itself — so the store
@@ -140,19 +140,23 @@ final class UpdateServiceTests: XCTestCase {
     XCTAssertNotEqual(UpdateService.kind, .restartAndStorePage)
   }
 
-  /// The word on the item promises exactly what the build can do: «Обновить и перезапустить»
-  /// only where an update can actually arrive.
+  /// The word on the item promises exactly what the build can do: «Проверить обновления…» only
+  /// where an update can actually arrive, and nothing about a restart there — a check that
+  /// finds nothing leaves the windows as they are.
   func testTheTitlePromisesOnlyWhatTheBuildCanDo() {
     let environment = AppEnvironment()
     environment.language.choice = .english
-    let title = UpdateService.title(environment)
+    XCTAssertEqual(UpdateService.title(of: .checkForUpdates, environment), "Check for Updates…")
+    XCTAssertEqual(UpdateService.title(of: .restartOnly, environment), "Restart")
+    XCTAssertEqual(UpdateService.title(of: .restartAndStorePage, environment), "Restart")
 
-    switch UpdateService.kind {
-    case .updateAndRestart: XCTAssertEqual(title, "Reload & Update")
-    case .restartOnly, .restartAndStorePage: XCTAssertEqual(title, "Restart")
-    }
-    XCTAssertNotEqual(title, "action.reload")
-    XCTAssertNotEqual(title, "action.reloadAndUpdate")
+    environment.language.choice = .russian
+    XCTAssertEqual(
+      UpdateService.title(of: .checkForUpdates, environment), "Проверить обновления…")
+    XCTAssertEqual(UpdateService.title(of: .restartOnly, environment), "Перезапустить")
+
+    XCTAssertEqual(
+      UpdateService.title(environment), UpdateService.title(of: UpdateService.kind, environment))
   }
 
   /// The address of the store page parses; nothing opens it outside the store build.
@@ -178,28 +182,26 @@ final class UpdateServiceTests: XCTestCase {
     XCTAssertFalse(UpdateService.startIfPossible(isTestHost: true))
   }
 
-  /// Sparkle ignores a check asked for while a session of its own runs in the background, and
-  /// says «nothing found» for its scheduled checks as well. A press then must neither vanish
-  /// nor restart the application a day later, when a scheduled check finds nothing: it waits
-  /// for the running session to end and makes the owner's check then.
+  /// Sparkle ignores a check asked for while a session of its own runs in the background. A
+  /// press then must not vanish: it waits for the running session to end and makes the owner's
+  /// check then — once.
   func testAPressDuringABackgroundSessionWaitsForItsEndAndThenChecks() {
     var ask = UpdateAsk()
 
     XCTAssertEqual(ask.pressed(canCheck: false, sessionInProgress: true), .wait)
-    XCTAssertFalse(ask.nothingFound(userInitiated: false), "the background check is not his")
     XCTAssertTrue(ask.cycleEnded(userInitiated: false), "his check starts when that one ends")
-    XCTAssertTrue(ask.nothingFound(userInitiated: true), "and restarts, as the button says")
+    XCTAssertFalse(ask.cycleEnded(userInitiated: true), "his own check is not waited for")
+    XCTAssertFalse(ask.cycleEnded(userInitiated: false), "the press outlived its check")
   }
 
-  /// A check Sparkle makes by its own schedule never restarts the application — neither with
-  /// nobody asking, nor after the owner's own check has ended.
-  func testACheckOfTheScheduleThatFindsNothingNeverRestarts() {
+  /// A session of Sparkle's own schedule, with nobody waiting for it, starts no check when it
+  /// ends — nor after the owner's own check is over.
+  func testASessionOfTheScheduleStartsNoCheckOfItsOwn() {
     var ask = UpdateAsk()
-    XCTAssertFalse(ask.nothingFound(userInitiated: false))
+    XCTAssertFalse(ask.cycleEnded(userInitiated: false))
 
     XCTAssertEqual(ask.pressed(canCheck: true, sessionInProgress: false), .check)
     XCTAssertFalse(ask.cycleEnded(userInitiated: true), "his check failed: no network")
-    XCTAssertFalse(ask.nothingFound(userInitiated: false))
     XCTAssertFalse(ask.cycleEnded(userInitiated: false))
   }
 
@@ -209,25 +211,51 @@ final class UpdateServiceTests: XCTestCase {
     var ask = UpdateAsk()
     XCTAssertEqual(ask.pressed(canCheck: true, sessionInProgress: true), .check)
     XCTAssertFalse(ask.cycleEnded(userInitiated: false), "the shown update was dismissed")
-    XCTAssertFalse(ask.nothingFound(userInitiated: true), "a later check is not that press")
   }
 
-  /// An updater that can neither check nor is busy has not started: the button keeps the half
-  /// of its word it can, and restarts.
-  func testAnUpdaterThatCannotCheckAtAllOnlyRestarts() {
+  /// An updater that can neither check nor is busy has not started: the owner is told so, and
+  /// the application is not restarted in place of a check.
+  func testAnUpdaterThatCannotCheckAtAllSaysSo() {
     var ask = UpdateAsk()
-    XCTAssertEqual(ask.pressed(canCheck: false, sessionInProgress: false), .restart)
+    XCTAssertEqual(ask.pressed(canCheck: false, sessionInProgress: false), .unavailable)
     XCTAssertFalse(ask.cycleEnded(userInitiated: false))
   }
 
-  func testBothWordsAreTranslated() {
+  func testEveryWordIsTranslated() {
     let environment = AppEnvironment()
     for choice in [AppLanguage.Choice.english, .russian] {
       environment.language.choice = choice
-      for key in ["action.reload", "action.reloadAndUpdate", "action.openStorePage"] {
+      for key in [
+        "action.reload", "action.checkForUpdates", "action.openStorePage",
+        "update.unavailable.title", "update.unavailable.message",
+      ] {
         XCTAssertNotEqual(environment.language(key), key, "\(key), \(choice)")
       }
     }
+  }
+
+  /// The button that checked, installed and restarted is gone, and so is its name: a hint that
+  /// sends the owner to «Обновить и перезапустить» sends them to a command there is none of.
+  /// Every table the app ships, in both languages.
+  func testNoWordNamesTheCommandThatIsGone() throws {
+    let gone = ["Обновить и перезапустить", "Reload & Update", "Reload and Update"]
+    var read = 0
+    for code in ["en", "ru"] {
+      let folder = try XCTUnwrap(Bundle.main.url(forResource: code, withExtension: "lproj"))
+      for table in try FileManager.default.contentsOfDirectory(atPath: folder.path)
+      where table.hasSuffix(".strings") {
+        let values = try XCTUnwrap(
+          NSDictionary(contentsOf: folder.appendingPathComponent(table)) as? [String: String],
+          table)
+        read += values.count
+        for (key, value) in values {
+          for name in gone {
+            XCTAssertFalse(value.contains(name), "\(code)/\(table): \(key) says «\(name)»")
+          }
+        }
+      }
+    }
+    XCTAssertGreaterThan(read, 100, "the tables of the app were not found")
   }
 }
 
@@ -276,7 +304,7 @@ final class AutomaticUpdatesTests: XCTestCase {
   /// The switch changes something only where an update can arrive; elsewhere it stays in
   /// view, greyed, with the reason under it.
   func testTheSwitchIsLiveOnlyWhereAnUpdateCanArrive() {
-    XCTAssertEqual(AutomaticUpdates.isChangeable, UpdateService.kind == .updateAndRestart)
+    XCTAssertEqual(AutomaticUpdates.isChangeable, UpdateService.kind == .checkForUpdates)
   }
 
   func testTheWordsOfTheSwitchAreTranslated() {
@@ -296,28 +324,30 @@ final class AutomaticUpdatesTests: XCTestCase {
 #if canImport(Sparkle)
   import Sparkle
 
-  /// «Reload & Update: … если нет — просто перезапустить» — and only then.
+  /// «Проверить обновления…»: whatever Sparkle answers, the application is not restarted by
+  /// the answer — Sparkle restarts it itself only to install an update.
   ///
   /// Sparkle's answers are delivered here the way Sparkle itself delivers them: through the
   /// delegate protocol, each one only when the delegate has it (`respondsToSelector`), in the
   /// order `SPUUpdater` and `SPUBasicUpdateDriver` use, «nothing found» marked user-initiated
-  /// only for the check a user asked for (`SPUNoUpdateFoundUserInitiatedKey`). The restart is
-  /// a counter: no test may restart its host. The rules themselves are `UpdateAsk`'s
-  /// (`UpdateServiceTests`); these hold the delegate that carries them out.
+  /// only for the check a user asked for (`SPUNoUpdateFoundUserInitiatedKey`). A restart would
+  /// be counted by `AppRestart`, which in the test host counts instead of quitting. The rules
+  /// themselves are `UpdateAsk`'s (`UpdateServiceTests`); these hold the delegate.
   @MainActor
   final class UpdateAnswersTests: XCTestCase {
-    @MainActor private final class Count { var value = 0 }
-
-    private let restarts = Count()
     private var answers: UpdateService.Answers!
     /// Never started: the delegate methods are only handed it. Starting one would schedule
     /// checks and reach the network from a test.
     private var updater: SPUUpdater!
+    private var restartsBefore = 0
+
+    /// Relaunches asked for since the test began.
+    private var restarts: Int { AppRestart.askedInTestHost - restartsBefore }
 
     override func setUp() async throws {
       UpdateService.Answers.ask = UpdateAsk()
-      restarts.value = 0
-      answers = UpdateService.Answers(relaunch: { [restarts] in restarts.value += 1 })
+      restartsBefore = AppRestart.askedInTestHost
+      answers = UpdateService.Answers()
       updater = SPUUpdater(
         hostBundle: .main, applicationBundle: .main,
         userDriver: SPUStandardUserDriver(hostBundle: .main, delegate: nil), delegate: nil)
@@ -339,7 +369,7 @@ final class AutomaticUpdatesTests: XCTestCase {
 
     /// What the menu item does before Sparkle starts its check, with no session of Sparkle's
     /// own running.
-    private func ownerPressesReloadAndUpdate() {
+    private func ownerPressesCheckForUpdates() {
       XCTAssertEqual(
         UpdateService.Answers.ask.pressed(canCheck: true, sessionInProgress: false), .check)
     }
@@ -366,37 +396,35 @@ final class AutomaticUpdatesTests: XCTestCase {
     /// version and reports «nothing new» — and must not restart the app under the owner's
     /// hands.
     func testAScheduledCheckAfterADeclinedOneNeverRestarts() {
-      ownerPressesReloadAndUpdate()
+      ownerPressesCheckForUpdates()
       sparkleEnds(.updates, with: nil)
       sparkleEnds(.updatesInBackground, with: nothingNew(.updatesInBackground))
-      XCTAssertEqual(restarts.value, 0, "a scheduled check restarted the application")
+      XCTAssertEqual(restarts, 0, "a scheduled check restarted the application")
     }
 
     /// The same after a check the owner asked for that could not be made.
     func testAScheduledCheckAfterAFailedOneNeverRestarts() {
-      ownerPressesReloadAndUpdate()
+      ownerPressesCheckForUpdates()
       sparkleEnds(.updates, with: offline)
       sparkleEnds(.updatesInBackground, with: nothingNew(.updatesInBackground))
-      XCTAssertEqual(restarts.value, 0)
+      XCTAssertEqual(restarts, 0)
     }
 
-    /// The promise of the button: nothing to install — restart, once.
-    func testTheCheckTheOwnerAskedForRestartsWhenThereIsNothingNew() {
-      ownerPressesReloadAndUpdate()
+    /// Nothing to install: Sparkle says «Установлена последняя версия» itself, and the windows
+    /// the owner was working in stay where they are.
+    func testTheCheckTheOwnerAskedForNeverRestartsWhenThereIsNothingNew() {
+      ownerPressesCheckForUpdates()
       sparkleEnds(.updates, with: nothingNew(.updates))
-      XCTAssertEqual(restarts.value, 1)
-
-      sparkleEnds(.updatesInBackground, with: nothingNew(.updatesInBackground))
-      XCTAssertEqual(restarts.value, 1, "the mark of the press outlived its check")
+      XCTAssertEqual(restarts, 0, "a check that found nothing restarted the application")
     }
 
     /// A check Sparkle made on its own schedule never restarts anything; nor does a check by
-    /// hand that the menu item did not begin — only that item promises a restart.
+    /// hand that the menu item did not begin.
     func testAScheduledCheckAloneNeverRestarts() {
       sparkleEnds(.updatesInBackground, with: nothingNew(.updatesInBackground))
       sparkleEnds(.updatesInBackground, with: nil)
       sparkleEnds(.updates, with: nothingNew(.updates))
-      XCTAssertEqual(restarts.value, 0)
+      XCTAssertEqual(restarts, 0)
     }
   }
 #endif

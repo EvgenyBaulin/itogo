@@ -2,9 +2,8 @@ import SwiftUI
 
 /// Settings → Appearance: light, dark or the system's, and the one accent colour of the app.
 ///
-/// No restart hint here, unlike the language next door: both halves of the theme apply at
-/// once — `NSApp.appearance` for the alerts and the panels, the SwiftUI environment for
-/// everything else.
+/// No restart hint here, unlike the language next door: the theme applies at once —
+/// `NSApp.appearance` for every window, alert and panel, the SwiftUI environment for the accent.
 struct AppearanceSettingsView: View {
   @Dependency(\.environment) private var environment
 
@@ -27,26 +26,17 @@ struct AppearanceSettingsView: View {
       }
 
       Section {
-        Picker(selection: $theme.accent) {
-          ForEach(AppTheme.Accent.allCases, id: \.self) { accent in
-            // The swatch never speaks alone: the name of the colour stands beside it, which
-            // is what keeps the row readable with a colour filter and with «Увеличить
-            // контраст».
-            Label {
-              Text(verbatim: environment.language(accent.settingsKey, table: "Settings"))
-            } icon: {
-              Image(systemName: "circle.fill")
-                .foregroundStyle(accent.color)
-            }
-            .labelStyle(.titleAndIcon)
-            .tag(accent)
+        // A row of circles, as in System Settings. The chosen one is ringed, and its name
+        // stands under the title of the row, so nothing is told by the colour alone.
+        LabeledContent {
+          AccentSwatches(selection: $theme.accent) { accent in
+            environment.language(accent.settingsKey, table: "Settings")
           }
         } label: {
           Text(verbatim: environment.language("settings.appearance.accent", table: "Settings"))
+          Text(verbatim: environment.language(theme.accent.settingsKey, table: "Settings"))
+            .accessibilityIdentifier("settings.appearance.accent.chosen")
         }
-        // The pop-up rather than a list of nine rows: the window of the settings is 420 pt
-        // tall and the theme above already takes three. The closed button shows the chosen
-        // colour with its name, so nothing is told by the swatch alone either way.
       } footer: {
         Text(verbatim: environment.language("settings.appearance.accentHint", table: "Settings"))
           .foregroundStyle(.secondary)
@@ -55,5 +45,44 @@ struct AppearanceSettingsView: View {
     .formStyle(.grouped)
     .padding()
     .accessibilityIdentifier("settings.appearance")
+  }
+}
+
+/// The accents as circles of their colours. Each says its name on hover and to VoiceOver; the
+/// chosen one wears a ring, which reads with a colour filter and with «Увеличить контраст».
+/// «Системный» is painted in the accent the Mac has now.
+struct AccentSwatches: View {
+  @Binding var selection: AppTheme.Accent
+  let name: (AppTheme.Accent) -> String
+
+  static let diameter: CGFloat = 18
+
+  var body: some View {
+    HStack(spacing: 10) {
+      ForEach(AppTheme.Accent.allCases, id: \.self) { accent in
+        let chosen = accent == selection
+        Button {
+          selection = accent
+        } label: {
+          Circle()
+            .fill(accent.swatch)
+            .overlay(Circle().strokeBorder(.separator, lineWidth: 1))
+            .frame(width: Self.diameter, height: Self.diameter)
+            .padding(3)
+            .overlay {
+              if chosen {
+                Circle().strokeBorder(.primary, lineWidth: 2)
+              }
+            }
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(name(accent))
+        .accessibilityLabel(Text(verbatim: name(accent)))
+        .accessibilityAddTraits(chosen ? [.isSelected] : [])
+        .accessibilityIdentifier("settings.appearance.accent.\(accent.rawValue)")
+      }
+    }
+    .accessibilityElement(children: .contain)
   }
 }

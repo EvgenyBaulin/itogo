@@ -5,10 +5,11 @@ import SwiftUI
 
 /// How the interface looks: light or dark, and the one accent colour of the app.
 ///
-/// Unlike the language this needs no restart: both halves — the AppKit appearance and the SwiftUI
-/// environment — take effect at once. It lives in `UserDefaults` and not in the `settings` table
-/// for the same reason the language does: the first window is on screen before the database is open
-/// (`AppEnvironment.start`), so there is nothing to read a theme from for the first frame.
+/// Unlike the language this needs no restart: light or dark goes through `NSApp.appearance`, the
+/// accent through the SwiftUI environment, and both take effect at once. It lives in
+/// `UserDefaults` and not in the `settings` table for the same reason the language does: the
+/// first window is on screen before the database is open (`AppEnvironment.start`), so there is
+/// nothing to read a theme from for the first frame.
 @MainActor
 @Observable
 public final class AppTheme {
@@ -20,17 +21,8 @@ public final class AppTheme {
 
     public var settingsKey: String { "settings.appearance.scheme.\(rawValue)" }
 
-    /// `nil` means «do not override», for both halves below.
-    public var colorScheme: ColorScheme? {
-      switch self {
-      case .system: nil
-      case .light: .light
-      case .dark: .dark
-      }
-    }
-
-    /// What the AppKit half is set to: the alerts and the open/save panels the app puts up
-    /// itself read `NSApp.effectiveAppearance` and nothing else.
+    /// What `NSApp.appearance` is set to — the one way the theme reaches the windows, the
+    /// alerts and the open/save panels the app puts up itself. `nil` means «do not override».
     public var appearance: NSAppearance? {
       switch self {
       case .system: nil
@@ -75,6 +67,13 @@ public final class AppTheme {
     /// The same colour for `.tint(_:)`, where `nil` means «leave the system's alone»: a
     /// choice of `system` must not pin today's system accent into the view tree.
     public var tint: Color? { self == .system ? nil : color }
+
+    /// The colour of the choice's circle in Settings. «Системный» is the accent chosen in System
+    /// Settings as it is now, read from AppKit, so the circle shows what the choice will paint
+    /// whatever the tint of the view that draws it.
+    public var swatch: Color {
+      self == .system ? Color(nsColor: .controlAccentColor) : color
+    }
   }
 
   /// The two keys of `UserDefaults`. `nonisolated`, because an archive being imported writes
@@ -104,19 +103,28 @@ public final class AppTheme {
     accent = defaults.string(forKey: Self.accentKey).flatMap(Accent.init(rawValue:)) ?? .system
   }
 
-  /// The AppKit half. It reaches the alerts and the open/save panels the app puts up itself
-  /// (`FileCommands`, `ArchiveImportFlow`), the menu bar and every window at once;
-  /// `preferredColorScheme` alone leaves a dark app with a light save panel.
+  /// Light or dark, for the whole application. It reaches the alerts and the open/save panels
+  /// the app puts up itself (`FileCommands`, `ArchiveImportFlow`), the menu bar and every window
+  /// at once, and «system» gives all of them back to the Mac. Nothing in SwiftUI sets a scheme
+  /// of its own on top: `preferredColorScheme` pinned the controls of a form and kept them
+  /// pinned after «system».
   ///
   /// Not in the test host: there the app is somebody else's process to borrow, and a test
-  /// that painted it dark would leave it dark (`AppEnvironment.isTestHost`).
+  /// that painted it dark would leave it dark (`AppEnvironment.isTestHost`). A test hands a
+  /// window of its own to `applyAppearance(to:)` instead — the same step the app takes.
   public func applyAppearance() {
-    guard !AppEnvironment.isTestHost else { return }
-    NSApp?.appearance = scheme.appearance
+    guard !AppEnvironment.isTestHost, let application = NSApp else { return }
+    applyAppearance(to: application)
   }
 
-  /// The SwiftUI half, handed down in `appDependencies(_:)`.
-  public var colorScheme: ColorScheme? { scheme.colorScheme }
+  /// Light or dark for `target` — the application in the app — and `nil` for «system», which
+  /// hands it back to what is above it: the Mac for the application, the application for a
+  /// window.
+  public func applyAppearance(to target: any NSAppearanceCustomization) {
+    target.appearance = scheme.appearance
+  }
+
+  /// The accent, handed down in `appDependencies(_:)`.
   public var accentColor: Color { accent.color }
   public var tint: Color? { accent.tint }
 }

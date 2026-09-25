@@ -12,6 +12,10 @@ enum EntryCommit {
   /// units, and rubles are never taken for dollars (review of the app, 19.09).
   struct CurrencyMismatch: Error {}
 
+  /// A debt opened «on credit» for anything but a purchase: an income or a refund buys
+  /// nothing, and a debt for it would be paid off by nothing.
+  struct CreditNotPurchase: Error {}
+
   /// What the entry line says when saving threw. The line has been read and its expression
   /// calculated by then, so nothing thrown here is «the expression cannot be calculated»: an
   /// amount too large for rubles says so, and a failure nobody foresaw says the operation was
@@ -19,6 +23,7 @@ enum EntryCommit {
   static func errorKey(of error: any Error) -> String {
     switch error {
     case is CurrencyMismatch: return "entry.error.debtCurrency"
+    case is CreditNotPurchase: return "entry.error.creditNotPurchase"
     case MoneyConversionError.rateMissing: return "entry.error.rateMissing"
     case CoreError.divisionByZero: return "entry.error.divisionByZero"
     case CoreError.amountOutOfRange: return "entry.error.amountTooLarge"
@@ -37,6 +42,7 @@ enum EntryCommit {
     var rows = PlanningRows.empty
     let note = entry.transaction.note
     if let debt = openedCredit {
+      guard entry.transaction.kind.canBeBoughtOnCredit else { throw CreditNotPurchase() }
       guard debt.currency == entry.transaction.currency else { throw CurrencyMismatch() }
       if creditIsNew { rows.debts = [debt] }
       rows.debtEntries.append(

@@ -401,6 +401,11 @@ struct EntryBar<Accessory: View>: View {
 
   /// "On credit" means the expense is recorded once, now, and the debt grows by the same
   /// amount; later payments only reduce the debt, so nothing is counted twice.
+  ///
+  /// Only a purchase has a plan to open with (`EntryDraftModel.offersCredit`). A plan left on
+  /// an income or a refund is refused before this (`saveRefusalKey`), and is handed on all the
+  /// same should it get here: `EntryCommit` refuses it with a reason rather than saving the
+  /// operation without the debt the owner asked for, or with one nothing bought.
   private func openCreditIfNeeded(_ model: EntryDraftModel) -> (debt: Debt, isNew: Bool)? {
     guard let plan = model.creditPlan else { return nil }
 

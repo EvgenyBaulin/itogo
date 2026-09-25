@@ -1320,6 +1320,23 @@
         }
       }
     },
+    "categories.rename.taken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There is already a category with this name. The name stays as it was — choose another."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Категория с таким названием уже есть. Название осталось прежним — выберите другое."
+          }
+        }
+      }
+    },
     "categories.showArchived": {
       "extractionState": "manual",
       "localizations": {
@@ -1333,6 +1350,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Показывать архивные"
+          }
+        }
+      }
+    },
+    "categories.system": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "system"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "системная"
+          }
+        }
+      }
+    },
+    "categories.system.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The app keeps this category for its own records. It can be renamed, but not archived or deleted."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эту категорию приложение ведёт само. Её можно переименовать, но нельзя архивировать или удалить."
           }
         }
       }
@@ -1830,6 +1881,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Бюджет"
+          }
+        }
+      }
+    },
+    "references.currency": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Currency"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Валюта"
           }
         }
       }
@@ -3327,7 +3395,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Человека можно указать у любой операции вместо одного из пяти значений, и в «Для кого» аналитики он считается отдельно. Отношение, псевдонимы и слияние — в «Справочниках»."
+            "value": "Человека можно указать у любой операции вместо одного из пяти значений, и в «На кого» аналитики он считается отдельно. Отношение, псевдонимы и слияние — в «Справочниках»."
           }
         }
       }
@@ -3361,7 +3429,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Подписи «для кого»"
+            "value": "Подписи «на кого»"
           }
         }
       }
@@ -3884,13 +3952,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Once a day the app looks for a new version, downloads it in the background and installs it on quit. Off: an update comes only through “Reload & Update”."
+            "value": "Once a day the app looks for a new version, downloads it in the background and installs it on quit. Off: an update comes only through “Check for Updates…”."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Раз в день приложение ищет новую версию, скачивает её в фоне и ставит при выходе. Выключено: обновление придёт только по «Обновить и перезапустить»."
+            "value": "Раз в день приложение ищет новую версию, скачивает её в фоне и ставит при выходе. Выключено: обновление придёт только по «Проверить обновления…»."
           }
         }
       }

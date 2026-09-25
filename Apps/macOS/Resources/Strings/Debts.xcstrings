@@ -494,6 +494,23 @@
         }
       }
     },
+    "debts.payment.lastDay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "payment %@ on the last day of the month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "платёж %@, в последний день месяца"
+          }
+        }
+      }
+    },
     "debts.paymentsAreExpenses": {
       "extractionState": "manual",
       "localizations": {
@@ -1359,6 +1376,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "День платежа: %@"
+          }
+        }
+      }
+    },
+    "form.paymentDay.last": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "last day"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "последний день"
           }
         }
       }

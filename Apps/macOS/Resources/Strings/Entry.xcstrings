@@ -477,6 +477,23 @@
         }
       }
     },
+    "entry.error.creditNotPurchase": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only an expense can be bought on credit"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В кредит можно записать только расход"
+          }
+        }
+      }
+    },
     "entry.error.debtCurrency": {
       "extractionState": "manual",
       "localizations": {
@@ -812,7 +829,24 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Для кого"
+            "value": "На кого"
+          }
+        }
+      }
+    },
+    "entry.fromWhom": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "От кого"
           }
         }
       }

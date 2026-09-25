@@ -72,6 +72,32 @@ final class CategoriesSettingsTests: XCTestCase {
       CategoriesSettingsView.renamed(home, to: " Home "), "the same name, padded, was written")
   }
 
+  /// The list was made of sections, a category as the header of its own: the header stuck to
+  /// the top while its subcategories scrolled under it, with a background of its own. One flat
+  /// list now — each category, its subcategories right after it, then the subcategories whose
+  /// parent is in the archive after a caption.
+  func testTheListIsFlatEachCategoryFollowedByItsSubcategories() {
+    let food = CoreKit.Category(kind: .expense, name: "Food")
+    let groceries = CoreKit.Category(parentId: food.id, kind: .expense, name: "Groceries")
+    let stray = CoreKit.Category(parentId: old.id, kind: .expense, name: "Stray")
+    let subcategories = [rent, groceries]
+    let children: (CoreKit.Category) -> [CoreKit.Category] = { parent in
+      subcategories.filter { $0.parentId == parent.id }
+    }
+
+    XCTAssertEqual(
+      CategoriesSettingsView.rows(roots: [home, food], children: children, orphans: [stray]),
+      [
+        .category(home, isChild: false), .category(rent, isChild: true),
+        .category(food, isChild: false), .category(groceries, isChild: true),
+        .orphansCaption, .category(stray, isChild: true),
+      ])
+    XCTAssertEqual(
+      CategoriesSettingsView.rows(roots: [home], children: children, orphans: []),
+      [.category(home, isChild: false), .category(rent, isChild: true)],
+      "a caption with nothing under it")
+  }
+
   func testTheRefusalIsSaidInBothLanguages() {
     let environment = AppEnvironment()
     for choice in [AppLanguage.Choice.english, .russian] {

@@ -35,6 +35,23 @@
         }
       }
     },
+    "action.checkForUpdates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Updates…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверить обновления…"
+          }
+        }
+      }
+    },
     "action.close": {
       "extractionState": "manual",
       "localizations": {
@@ -218,23 +235,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Перезапустить"
-          }
-        }
-      }
-    },
-    "action.reloadAndUpdate": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reload & Update"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Обновить и перезапустить"
           }
         }
       }
@@ -1401,36 +1401,19 @@
         }
       }
     },
-    "relaunch.failed.open": {
+    "relaunch.failed.helper": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "macOS did not start Itogo again. The app will now quit: open it again from the Dock or the Applications folder."
+            "value": "Itogo could not prepare its restart: %@. Nothing was closed, and the app keeps working. To restart it, quit it and open it again."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "macOS не запустила Итого заново. Приложение сейчас закроется — откройте его снова из Dock или папки «Программы»."
-          }
-        }
-      }
-    },
-    "relaunch.failed.stop": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Itogo did not finish its work in time to restart. The app will now quit: open it again from the Dock or the Applications folder."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Итого не успело завершить работу, чтобы перезапуститься. Приложение сейчас закроется — откройте его снова из Dock или папки «Программы»."
+            "value": "Итого не смогло подготовить перезапуск: %@. Ничего не закрыто, приложение продолжает работать. Чтобы перезапустить его, закройте и откройте снова."
           }
         }
       }
@@ -1584,6 +1567,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Планирование"
+          }
+        }
+      }
+    },
+    "update.unavailable.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The updater did not start. Try again later: the app keeps working as it is."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модуль обновлений не запустился. Попробуйте позже — приложение работает как прежде."
+          }
+        }
+      }
+    },
+    "update.unavailable.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates can't be checked right now"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверить обновления сейчас нельзя"
           }
         }
       }

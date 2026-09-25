@@ -70,6 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// keys of `UserDefaults`, so they cannot disagree.
   func applicationWillFinishLaunching(_ notification: Notification) {
     AppTheme().applyAppearance()
+    // First thing, before any window: the helper of a relaunch opens the app until this
+    // instance takes its mark away. Not in the test host, whose folders are the tests' own.
+    if !AppEnvironment.isTestHost {
+      RelaunchMark.arrival = RelaunchMark.take(in: AppPaths.logsDirectory)
+    }
   }
 
   /// What quitting asks and does. The app's own answers stand here; a test hands in its

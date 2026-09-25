@@ -87,6 +87,16 @@ enum ForWhomValue: Hashable, Sendable {
   case value(ForWhom)
   case person(String)
   case owed(by: String?, ReimbursementStatus)
+
+  /// The words of a `person` cell in a row of `kind`. Money back names the person it came
+  /// from — «от: Аня» — so it is not read as money spent on them; any other row names the
+  /// person as they are. The colon keeps the name as it is stored: «от» would want it
+  /// declined, and no rule declines every name right.
+  @MainActor
+  static func personText(_ name: String, kind: TransactionKind, language: AppLanguage) -> String {
+    guard kind == .reimbursement else { return name }
+    return language.format("transactions.moneyBackFrom", table: "Transactions", name)
+  }
 }
 
 /// One row of the table: an operation, or a part of a split under it. Everything a cell

@@ -137,8 +137,7 @@ struct DebtSheetView: View {
           value: Binding(get: { debt.paymentDay ?? 1 }, set: { debt.paymentDay = $0 }), in: 1...31
         ) {
           Text(
-            verbatim: environment.format(
-              "form.paymentDay", table: "Debts", String(debt.paymentDay ?? 1)))
+            verbatim: Self.paymentDayText(debt.paymentDay ?? 1, language: environment.language))
         }
       }
       if debt.direction == .iOwe {
@@ -369,6 +368,23 @@ struct DebtSheetView: View {
   /// when it has a monthly payment, none without one.
   static func savedPaymentDay(monthly: AmountE4?, day: Int?) -> Int? {
     monthly == nil ? nil : (day ?? 1)
+  }
+
+  /// The caption of the day stepper: «День платежа: 5», and at 31 «последний день» — a debt due
+  /// on the 31st is due on the last day of every shorter month.
+  static func paymentDayText(_ day: Int, language: AppLanguage) -> String {
+    let shown = day >= 31 ? language("form.paymentDay.last", table: "Debts") : String(day)
+    return language.format("form.paymentDay", table: "Debts", shown)
+  }
+
+  /// The payment on the card of a debt: «платёж 5 000 ₽, 10-го числа», and at 31 «…, в
+  /// последний день месяца» — the day the stepper calls «последний день». `amount` is the
+  /// payment as the card writes money.
+  static func cardPaymentText(_ amount: String, day: Int?, language: AppLanguage) -> String {
+    if let day, day >= 31 {
+      return language.format("debts.payment.lastDay", table: "Debts", amount)
+    }
+    return language.format("debts.payment", table: "Debts", amount, day.map(String.init) ?? "—")
   }
 
   private func load() {

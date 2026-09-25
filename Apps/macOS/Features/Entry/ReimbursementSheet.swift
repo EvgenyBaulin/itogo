@@ -55,7 +55,8 @@ struct ReimbursementSheet: View {
           Text(verbatim: person.name).tag(UUID?.some(person.id))
         }
       } label: {
-        Text(verbatim: environment.language("entry.forWhom", table: "Entry"))
+        // Who gave the money back, not whom it was spent on.
+        Text(verbatim: environment.language("entry.fromWhom", table: "Entry"))
       }
       .onChange(of: personId) { _, _ in selectAllOfPerson() }
 

@@ -90,9 +90,10 @@ no updater at all and talks to the Bank of Russia only.
 
 Itogo updates itself with [Sparkle](https://sparkle-project.org). Once a day it reads
 <https://EvgenyBaulin.github.io/itogo/appcast.xml>, downloads a new version in the background and
-installs it when you quit. **Reload & Update** — in the View menu and in the toolbar of the main
-window — checks at once and restarts. Automatic updates can be turned off in Settings; then a new
-version arrives only through that command.
+installs it when you quit. **Check for Updates…** — in the View menu and in the toolbar of the
+main window — checks at once: a new version is offered in Sparkle's window, and when there is none
+Sparkle says so and the app keeps running. Automatic updates can be turned off in Settings; then a
+new version arrives only through that command.
 
 Every archive is signed with an EdDSA key, and the app refuses an update whose signature does not
 match the public key it carries. Nothing about your Mac is sent with the check.

@@ -204,7 +204,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Для кого"
+            "value": "На кого"
           }
         }
       }
@@ -1436,7 +1436,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Для кого"
+            "value": "На кого"
           }
         }
       }
@@ -1607,6 +1607,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Доходы"
+          }
+        }
+      }
+    },
+    "transactions.moneyBackFrom": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "from %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "от: %@"
           }
         }
       }

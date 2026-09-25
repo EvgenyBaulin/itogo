@@ -1,4 +1,5 @@
 import AppCore
+import AppKit
 import SwiftUI
 
 /// ⌘, — settings, a tab for each part of them.
@@ -10,6 +11,11 @@ struct SettingsView: View {
   }
 
   private var environment: AppEnvironment { deps.environment }
+
+  /// The smallest the window may be made: the eight tabs of the toolbar in either language.
+  static let minimumSize = CGSize(width: 680, height: 460)
+  /// The size it opens at.
+  static let idealSize = CGSize(width: 760, height: 620)
 
   var body: some View {
     TabView {
@@ -78,7 +84,15 @@ struct SettingsView: View {
           }
         }
     }
-    .frame(width: 620, height: 420)
+    // Room for what the tabs hold now — the row of accent circles, a category per row with its
+    // quality — and a window that can be made larger still: the tabs scroll, but a list of
+    // categories read through a slot of 420 points is a list nobody reads.
+    .frame(
+      minWidth: Self.minimumSize.width, idealWidth: Self.idealSize.width, maxWidth: .infinity,
+      minHeight: Self.minimumSize.height, idealHeight: Self.idealSize.height,
+      maxHeight: .infinity
+    )
+    .background(ResizableSettingsWindow(minimum: Self.minimumSize))
     // So a UI test can say the settings really opened when the gear of the toolbar is pressed.
     .accessibilityIdentifier("settings.window")
     // «Справка» → «Собрать отчёт о проблеме…»: the report itself, not a tab to look for it
@@ -89,6 +103,53 @@ struct SettingsView: View {
         set: { environment.showsProblemReport = $0 })
     ) {
       ProblemReportSheet(height: 380).appDependencies(deps)
+    }
+  }
+}
+
+/// The corner of the settings window, to drag it larger. The Settings scene gives its window no
+/// resizable frame, whatever `windowResizability` says — the window keeps the size of the tab
+/// it opened on — so the window is reached from a view inside it and given one, with the
+/// smallest size the tabs are laid out for. Nothing is measured and nothing is fed back into
+/// the layout: the frame of the tabs follows the window, as in any other window.
+private struct ResizableSettingsWindow: NSViewRepresentable {
+  let minimum: CGSize
+
+  func makeNSView(context: Context) -> NSView { Anchor(minimum: minimum) }
+  func updateNSView(_ view: NSView, context: Context) {}
+
+  private final class Anchor: NSView {
+    let minimum: CGSize
+    /// SwiftUI sets the frame of its settings window again whenever it updates the scene, and
+    /// takes the corner away each time; it is given back at once.
+    private var watch: NSKeyValueObservation?
+
+    init(minimum: CGSize) {
+      self.minimum = minimum
+      super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      watch = nil
+      guard let window else { return }
+      Self.resizable(window, minimum: minimum)
+      let minimum = minimum
+      watch = window.observe(\.styleMask) { window, _ in
+        MainActor.assumeIsolated { Self.resizable(window, minimum: minimum) }
+      }
+    }
+
+    private static func resizable(_ window: NSWindow, minimum: CGSize) {
+      if !window.styleMask.contains(.resizable) { window.styleMask.insert(.resizable) }
+      let floor = window.contentMinSize
+      if floor.width < minimum.width || floor.height < minimum.height {
+        window.contentMinSize = CGSize(
+          width: max(floor.width, minimum.width), height: max(floor.height, minimum.height))
+      }
     }
   }
 }

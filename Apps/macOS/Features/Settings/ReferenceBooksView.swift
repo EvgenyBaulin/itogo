@@ -267,7 +267,7 @@ struct ReferenceBooksView: View {
           Text(verbatim: currency.code).tag(CurrencyCode?.some(currency))
         }
       } label: {
-        label("entry.currency")
+        label("references.currency")
       }
       Toggle(isOn: defaultBinding(index)) { label("references.default") }
       aliasesField(

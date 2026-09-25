@@ -118,10 +118,12 @@ private struct ScheduledPaymentForm: View {
   let original: ScheduledPayment?
   /// What the form starts with: `original`, or a new payment filled in from a candidate.
   let start: ScheduledPayment?
-  @State private var payment = ScheduledPayment(name: "", amountE4: .zero)
+  /// The payment and the choices of its schedule: «How often» as a preset, «Once», or
+  /// «Other…» with the unit and interval shown for editing; the last-day switch; the end and
+  /// the trial.
+  @State private var draft = ScheduledPaymentDraft(
+    opening: ScheduledPayment(name: "", amountE4: .zero))
   @State private var loaded = false
-  @State private var hasEnd = false
-  @State private var hasTrial = false
 
   var body: some View {
     let choices = PlanningChoices(compute, environment)
@@ -129,16 +131,16 @@ private struct ScheduledPaymentForm: View {
       Text(verbatim: t(original == nil ? "form.payment.new" : "form.payment.edit"))
         .font(.headline)
       Form {
-        TextField(t("form.name"), text: $payment.name)
-        Picker(t("form.kind"), selection: $payment.kind) {
+        TextField(t("form.name"), text: $draft.payment.name)
+        Picker(t("form.kind"), selection: $draft.payment.kind) {
           Text(verbatim: t("form.kind.bill")).tag(ScheduledKind.bill)
           Text(verbatim: t("form.kind.subscription")).tag(ScheduledKind.subscription)
         }
         .pickerStyle(.segmented)
         LabeledContent(t("form.amount")) {
           HStack {
-            AmountField(amount: $payment.amountE4, locale: environment.language.locale)
-            Picker(selection: $payment.currency) {
+            AmountField(amount: $draft.payment.amountE4, locale: environment.language.locale)
+            Picker(selection: $draft.payment.currency) {
               ForEach(choices.currencies, id: \.self) { Text(verbatim: $0.code).tag($0) }
             } label: {
               EmptyView()
@@ -147,86 +149,104 @@ private struct ScheduledPaymentForm: View {
             .fixedSize()
           }
         }
-        Picker(t("form.category"), selection: $payment.categoryId) {
+        Picker(t("form.category"), selection: $draft.payment.categoryId) {
           Text(verbatim: "—").tag(UUID?.none)
           ForEach(choices.options(.expense)) {
             Text(verbatim: choices.label($0)).tag(Optional($0.id))
           }
         }
-        Picker(t("form.method"), selection: $payment.paymentMethodId) {
+        Picker(t("form.method"), selection: $draft.payment.paymentMethodId) {
           Text(verbatim: "—").tag(UUID?.none)
           ForEach(choices.methods) { Text(verbatim: $0.name).tag(Optional($0.id)) }
         }
-        Picker(t("form.freq"), selection: $payment.freq) {
-          ForEach(Frequency.allCases, id: \.self) {
-            Text(verbatim: t("form.freq.\($0.rawValue)")).tag($0)
+        Picker(t("form.freq"), selection: presetBinding) {
+          ForEach(FrequencyPreset.allCases, id: \.self) { preset in
+            if preset == .once || preset == .other { Divider() }
+            Text(verbatim: t(preset.key)).tag(preset)
           }
         }
-        Stepper(value: $payment.interval, in: 1...24) {
-          Text(
-            verbatim: environment.language.format(
-              "form.interval", table: "Planning", payment.interval))
+        if draft.preset == .other {
+          Picker(t("form.unit"), selection: unitBinding) {
+            ForEach(Frequency.allCases, id: \.self) {
+              Text(verbatim: t("form.unit.\($0.rawValue)")).tag($0)
+            }
+          }
+          .pickerStyle(.segmented)
+          Stepper(value: $draft.payment.interval, in: FrequencyPreset.intervals) {
+            Text(
+              verbatim: FrequencyPreset.everyText(
+                draft.payment.freq, interval: draft.payment.interval,
+                language: environment.language))
+          }
         }
         DatePicker(
-          t("form.nextDate"),
-          selection: day($payment.nextDate, fallback: environment.today), displayedComponents: .date
+          t(draft.preset == .once ? "form.date" : "form.nextDate"),
+          selection: nextDateBinding, displayedComponents: .date
         )
-        Toggle(t("form.hasEnd"), isOn: $hasEnd)
-          .onChange(of: hasEnd) { _, on in
-            if on, payment.endDate == nil { payment.endDate = environment.today }
+        if draft.offersLastDay {
+          Toggle(t("form.lastDay"), isOn: lastDayBinding)
+        }
+        if draft.offersEnd {
+          Toggle(
+            t("form.hasEnd"),
+            isOn: Binding(
+              get: { draft.hasEnd }, set: { draft.setHasEnd($0, today: environment.today) }))
+          if draft.hasEnd {
+            DatePicker(
+              t("form.endDate"),
+              selection: day($draft.payment.endDate, fallback: environment.today),
+              displayedComponents: .date)
           }
-        if hasEnd {
-          DatePicker(
-            t("form.endDate"), selection: day($payment.endDate, fallback: environment.today),
-            displayedComponents: .date)
         }
         Section {
-          Picker(t("form.forWhom"), selection: $payment.forWhom) {
+          Picker(t("form.forWhom"), selection: $draft.payment.forWhom) {
             ForEach(ForWhom.allCases, id: \.self) {
               Text(verbatim: environment.label(for: $0)).tag($0)
             }
           }
-          Toggle(t("form.reimbursable"), isOn: $payment.reimbursable)
-          if payment.reimbursable {
-            Picker(t("form.debtor"), selection: $payment.debtorPersonId) {
+          Toggle(t("form.reimbursable"), isOn: $draft.payment.reimbursable)
+          if draft.payment.reimbursable {
+            Picker(t("form.debtor"), selection: $draft.payment.debtorPersonId) {
               Text(verbatim: "—").tag(UUID?.none)
               ForEach(choices.people) { Text(verbatim: $0.name).tag(Optional($0.id)) }
             }
             LabeledContent(t("form.returns")) {
               AmountField(
                 amount: Binding(
-                  get: { payment.reimbursementAmountE4 ?? payment.amountE4 },
-                  set: { payment.reimbursementAmountE4 = $0 }),
+                  get: { draft.payment.reimbursementAmountE4 ?? draft.payment.amountE4 },
+                  set: { draft.payment.reimbursementAmountE4 = $0 }),
                 locale: environment.language.locale)
             }
           }
         }
-        if payment.kind == .subscription {
+        if draft.payment.kind == .subscription {
           Section {
-            Toggle(t("form.hasTrial"), isOn: $hasTrial)
-              .onChange(of: hasTrial) { _, on in
-                if on, payment.trialEnd == nil { payment.trialEnd = environment.today }
-              }
-            if hasTrial {
+            Toggle(
+              t("form.hasTrial"),
+              isOn: Binding(
+                get: { draft.hasTrial }, set: { draft.setHasTrial($0, today: environment.today) }))
+            if draft.hasTrial {
               DatePicker(
-                t("form.trialEnd"), selection: day($payment.trialEnd, fallback: environment.today),
+                t("form.trialEnd"),
+                selection: day($draft.payment.trialEnd, fallback: environment.today),
                 displayedComponents: .date)
             }
             TextField(
               t("form.cancelURL"),
               text: Binding(
-                get: { payment.cancelURL ?? "" }, set: { payment.cancelURL = $0.isEmpty ? nil : $0 }
-              ))
+                get: { draft.payment.cancelURL ?? "" },
+                set: { draft.payment.cancelURL = $0.isEmpty ? nil : $0 }))
           }
         }
         Stepper(
           value: Binding(
-            get: { payment.remindDaysBefore ?? 3 }, set: { payment.remindDaysBefore = $0 }),
+            get: { draft.payment.remindDaysBefore ?? 3 },
+            set: { draft.payment.remindDaysBefore = $0 }),
           in: 0...30
         ) {
           Text(
             verbatim: environment.language.format(
-              "form.remind", table: "Planning", payment.remindDaysBefore ?? 3))
+              "form.remind", table: "Planning", draft.payment.remindDaysBefore ?? 3))
         }
         if let issue = issue(choices) {
           Text(verbatim: t(issue.key)).font(.caption).foregroundStyle(.secondary)
@@ -235,17 +255,8 @@ private struct ScheduledPaymentForm: View {
       .formStyle(.grouped)
       FormButtons(title: environment.language("action.save"), enabled: issue(choices) == nil) {
         guard let dependencies else { return false }
-        var saved = payment
-        if !hasEnd { saved.endDate = nil }
-        if !hasTrial { saved.trialEnd = nil }
-        // The rule's day follows the due date and the frequency: a weekday for a weekly
-        // payment, a day of the month, and the month too for a yearly one.
-        if let next = saved.nextDate {
-          let anchor = Recurrence.anchor(of: next, freq: saved.freq)
-          saved.day = anchor.day
-          saved.month = anchor.month
-        }
-        return PlanningActions(dependencies).save(saved, previous: original)
+        return PlanningActions(dependencies).save(
+          draft.saved(original: original, today: environment.today), previous: original)
       }
     }
     .padding(20)
@@ -253,16 +264,34 @@ private struct ScheduledPaymentForm: View {
     .onAppear {
       guard !loaded else { return }
       loaded = true
-      payment = start ?? ScheduledPayment(name: "", amountE4: .zero, nextDate: environment.today)
-      hasEnd = payment.endDate != nil
-      hasTrial = payment.trialEnd != nil
-      if payment.remindDaysBefore == nil { payment.remindDaysBefore = 3 }
+      var opened =
+        start ?? ScheduledPayment(name: "", amountE4: .zero, nextDate: environment.today)
+      if opened.remindDaysBefore == nil { opened.remindDaysBefore = 3 }
+      draft = ScheduledPaymentDraft(opening: opened)
     }
+  }
+
+  private var presetBinding: Binding<FrequencyPreset> {
+    Binding(get: { draft.preset }, set: { draft.choose($0, today: environment.today) })
+  }
+
+  private var unitBinding: Binding<Frequency> {
+    Binding(get: { draft.payment.freq }, set: { draft.setUnit($0, today: environment.today) })
+  }
+
+  private var lastDayBinding: Binding<Bool> {
+    Binding(get: { draft.lastDay }, set: { draft.setLastDay($0, today: environment.today) })
+  }
+
+  private var nextDateBinding: Binding<Date> {
+    Binding(
+      get: { environment.calendar.startOfDay(draft.payment.nextDate ?? environment.today) },
+      set: { draft.setNextDate(environment.calendar.day(of: $0), today: environment.today) })
   }
 
   private func issue(_ choices: PlanningChoices) -> ScheduledIssue? {
     guard let tree = choices.tree else { return nil }
-    return ScheduledRules.validate(payment, tree: tree)
+    return draft.issue(original: original, tree: tree, today: environment.today)
   }
 
   private func day(_ value: Binding<DateOnly?>, fallback: DateOnly) -> Binding<Date> {
@@ -592,6 +621,8 @@ private struct ExpectedIncomeForm: View {
   let original: ExpectedIncome?
   @State private var income = ExpectedIncome(name: "", totalE4: .zero)
   @State private var loaded = false
+  /// «On the last day of the month» of a recurring income; read off the stored day.
+  @State private var lastDay = false
 
   var body: some View {
     let choices = PlanningChoices(compute, environment)
@@ -605,6 +636,7 @@ private struct ExpectedIncomeForm: View {
           Text(verbatim: t("form.expected.recurring")).tag(ExpectedIncomeKind.recurring)
         }
         .pickerStyle(.segmented)
+        .onChange(of: income.kind) { followTheLastDay() }
         LabeledContent(t(income.kind == .oneOff ? "form.expected.total" : "form.expected.each")) {
           HStack {
             AmountField(amount: $income.totalE4, locale: environment.language.locale)
@@ -626,12 +658,30 @@ private struct ExpectedIncomeForm: View {
           t("form.expected.due"),
           selection: Binding(
             get: { environment.calendar.startOfDay(income.dueDate ?? environment.today) },
-            set: { income.dueDate = environment.calendar.day(of: $0) }),
+            set: {
+              income.dueDate = environment.calendar.day(of: $0)
+              followTheLastDay()
+            }),
           displayedComponents: .date)
+        if offersLastDay {
+          Toggle(
+            t("form.lastDay"),
+            isOn: Binding(
+              get: { lastDay },
+              set: {
+                lastDay = $0
+                followTheLastDay()
+              }))
+        }
         if income.kind == .recurring {
           Picker(
             t("form.freq"),
-            selection: Binding(get: { income.freq ?? .monthly }, set: { income.freq = $0 })
+            selection: Binding(
+              get: { income.freq ?? .monthly },
+              set: {
+                income.freq = $0
+                followTheLastDay()
+              })
           ) {
             ForEach(Frequency.allCases, id: \.self) {
               Text(verbatim: t("form.freq.\($0.rawValue)")).tag($0)
@@ -662,7 +712,8 @@ private struct ExpectedIncomeForm: View {
             && income.totalE4.raw > 0
         ) {
           guard let dependencies else { return false }
-          return PlanningActions(dependencies).save(income.readyToSave(today: environment.today))
+          return PlanningActions(dependencies).save(
+            income.readyToSave(today: environment.today, lastDay: offersLastDay && lastDay))
         }
       }
     }
@@ -672,23 +723,55 @@ private struct ExpectedIncomeForm: View {
       guard !loaded else { return }
       loaded = true
       income = original ?? ExpectedIncome(name: "", totalE4: .zero, dueDate: environment.today)
+      lastDay = income.isOnLastDay
     }
   }
+
+  private var offersLastDay: Bool { income.offersLastDay }
+
+  private func followTheLastDay() { income.followTheLastDay(&lastDay, today: environment.today) }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
 }
 
 extension ExpectedIncome {
+  /// Only a recurring income by the month or the year comes on a day of the month.
+  var offersLastDay: Bool { kind == .recurring && freq != .weekly }
+
+  /// The income as the last-day switch of its form leaves it: with the switch on, the first due
+  /// date is the last day of its month. A switch the form no longer shows — a one-off income,
+  /// a weekly one — is turned off: out of sight it would move a date picked later.
+  mutating func followTheLastDay(_ lastDay: inout Bool, today: DateOnly) {
+    guard offersLastDay else {
+      lastDay = false
+      return
+    }
+    guard lastDay else { return }
+    dueDate = MonthEnd.lastDay(of: dueDate ?? today)
+  }
+
+  /// Whether a recurring income comes on the last day of the month: its day is the one a rule
+  /// keeps for it (`MonthEnd`).
+  var isOnLastDay: Bool {
+    kind == .recurring
+      && MonthEnd.isLastDay(day: day, freq: freq ?? .monthly, month: dueDate?.month)
+  }
+
   /// The row the form saves: a recurring income keeps its frequency and the day of it, a
   /// one-off one neither, and a due date left empty is today — the day the date field shows.
-  func readyToSave(today: DateOnly) -> ExpectedIncome {
+  /// With `lastDay` a monthly or yearly income keeps the day of the last day of the month, so
+  /// a first due of 30 September is followed by 31 October, not by 30 October.
+  func readyToSave(today: DateOnly, lastDay: Bool = false) -> ExpectedIncome {
     var saved = self
     // The date first: the day of the schedule is read off it.
     if saved.dueDate == nil { saved.dueDate = today }
     if saved.kind == .recurring {
-      saved.freq = saved.freq ?? .monthly
-      saved.day = saved.dueDate.map {
-        Recurrence.anchor(of: $0, freq: saved.freq ?? .monthly).day
+      let freq = saved.freq ?? .monthly
+      saved.freq = freq
+      saved.day = saved.dueDate.map { due in
+        lastDay && freq != .weekly
+          ? MonthEnd.day(freq: freq, month: due.month)
+          : Recurrence.anchor(of: due, freq: freq).day
       }
     } else {
       saved.freq = nil

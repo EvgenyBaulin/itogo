@@ -831,7 +831,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "По «для кого»"
+            "value": "По «на кого»"
           }
         }
       }
@@ -2960,7 +2960,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Для кого"
+            "value": "На кого"
           }
         }
       }
