@@ -166,6 +166,121 @@ struct DraftTests {
   }
 }
 
+@Suite("A leg in rubles is the operation's rubles")
+struct RubleLegTests {
+  private static let rate = Decimal(string: "81.4321")!
+
+  /// A USD purchase on a card that holds rubles only, with what the card was charged.
+  private func purchase(leg: AmountE4?, split: [Int64] = [30, 20]) -> TransactionDraft {
+    var draft = TransactionDraft(
+      kind: .expense, currency: .usd, amount: AmountE4(whole: 50), rate: Self.rate,
+      rateDate: DateOnly(year: 2026, month: 9, day: 16), rateSource: .cbr,
+      rateProvisional: true, paymentMethodId: UUID(), accountCurrency: leg == nil ? nil : .rub,
+      accountAmount: leg)
+    draft.parts = split.map { PartDraft(amount: AmountE4(whole: $0)) }
+    return draft
+  }
+
+  private func converter(_ amount: AmountE4) throws -> AmountE4 {
+    try AmountE4(decimal: amount.decimal * Self.rate)
+  }
+
+  /// Left as the prefill gave it — exactly what the rate gives — the leg keeps the bank's
+  /// rate, its source and whether it is provisional, so the rubles are refined with the rate.
+  @Test func anUntouchedLegKeepsTheBanksRate() throws {
+    let prefill = try converter(AmountE4(whole: 50))
+    let entry = try purchase(leg: prefill).materialize(rublesConverter: converter)
+
+    #expect(entry.transaction.amountRubE4 == prefill)
+    #expect(entry.transaction.rate == Self.rate)
+    #expect(entry.transaction.rateSource == .cbr)
+    #expect(entry.transaction.rateProvisional)
+    #expect(entry.transaction.accountCurrency == .rub)
+    #expect(entry.transaction.accountAmountE4 == prefill)
+    #expect(entry.transaction.movedMoney == Money(amount: prefill, currency: .rub))
+    #expect(AmountE4.sum(entry.parts.map(\.amountRubE4)) == prefill)
+  }
+
+  /// Typed from the statement, the leg is what the purchase cost: the rubles are the leg to
+  /// the unit, split over the parts as always, and the rate becomes the one it implies — a
+  /// manual rate, final, which no refinement touches.
+  @Test func aTypedLegIsTheRublesWithTheRateItImplies() throws {
+    let charged = AmountE4(raw: 41_937_600)  // 4 193.76 ₽: 3 % above the bank's rate
+    let entry = try purchase(leg: charged).materialize(rublesConverter: converter)
+
+    #expect(entry.transaction.amountRubE4 == charged)
+    #expect(entry.transaction.rate == Decimal(string: "83.8752"))
+    #expect(entry.transaction.rateSource == .manual)
+    #expect(entry.transaction.rateProvisional == false)
+    #expect(entry.transaction.rateDate == DateOnly(year: 2026, month: 9, day: 16))
+    #expect(entry.parts.map(\.amountRubE4.raw) == [25_162_560, 16_775_040])
+    #expect(AmountE4.sum(entry.parts.map(\.amountRubE4)) == charged)
+  }
+
+  /// The implied rate is kept to six places.
+  @Test func theImpliedRateIsRoundedToSixPlaces() throws {
+    var draft = purchase(leg: AmountE4(whole: 1_000), split: [3])
+    draft.amount = AmountE4(whole: 3)
+    let entry = try draft.materialize(rublesConverter: converter)
+    #expect(entry.transaction.amountRubE4 == AmountE4(whole: 1_000))
+    #expect(entry.transaction.rate == Decimal(string: "333.333333"))
+  }
+
+  /// With no rate for the day at all, a leg in rubles still gives the operation its rubles:
+  /// nothing has to be converted.
+  @Test func aLegNeedsNoRate() throws {
+    var draft = purchase(leg: AmountE4(whole: 4_100))
+    draft.rate = nil
+    draft.rateSource = nil
+    let entry = try draft.materialize(rublesConverter: { _ in throw CoreError.amountOutOfRange })
+    #expect(entry.transaction.amountRubE4 == AmountE4(whole: 4_100))
+    #expect(entry.transaction.rate == Decimal(82))
+    #expect(entry.transaction.rateSource == .manual)
+  }
+
+  /// A leg in another currency is only the money that moved: the rubles are the bank's.
+  @Test func aLegInAnotherCurrencyLeavesTheRublesToTheRate() throws {
+    var draft = purchase(leg: AmountE4(whole: 23_000))
+    draft.accountCurrency = CurrencyCode("KZT")
+    let entry = try draft.materialize(rublesConverter: converter)
+    #expect(entry.transaction.amountRubE4 == (try converter(AmountE4(whole: 50))))
+    #expect(entry.transaction.rateSource == .cbr)
+    #expect(entry.transaction.accountAmountE4 == AmountE4(whole: 23_000))
+  }
+
+  /// A refund taken back from a purchase keeps the purchase's rate, whatever its leg: a full
+  /// refund then gives back exactly the rubles the purchase cost.
+  @Test func aRefundOfAPurchaseKeepsItsRate() throws {
+    var draft = purchase(leg: AmountE4(whole: 4_300), split: [50])
+    draft.kind = .refund
+    draft.parts[0].refundOfPartId = UUID()
+    let entry = try draft.materialize(rublesConverter: converter)
+    #expect(entry.transaction.amountRubE4 == (try converter(AmountE4(whole: 50))))
+    #expect(entry.transaction.rate == Self.rate)
+    #expect(entry.transaction.rateSource == .cbr)
+    #expect(entry.transaction.accountAmountE4 == AmountE4(whole: 4_300))
+    #expect(entry.parts[0].refundOfPartId == draft.parts[0].refundOfPartId)
+  }
+
+  /// Reopened for editing, the draft carries the leg and the refund link, and so does the
+  /// operation it is saved as.
+  @Test func theLegAndTheRefundLinkSurviveAnEdit() throws {
+    var draft = purchase(leg: AmountE4(whole: 4_300), split: [50])
+    draft.parts[0].refundOfPartId = UUID()
+    let saved = try draft.materialize(rublesConverter: converter)
+    let reopened = TransactionDraft(entry: saved)
+    #expect(reopened.accountCurrency == .rub)
+    #expect(reopened.accountAmount == AmountE4(whole: 4_300))
+    #expect(reopened.parts[0].refundOfPartId == draft.parts[0].refundOfPartId)
+
+    var edited = reopened
+    edited.accountAmount = AmountE4(whole: 4_250)
+    let again = try edited.materialize(updating: saved, rublesConverter: converter)
+    #expect(again.transaction.accountAmountE4 == AmountE4(whole: 4_250))
+    #expect(again.parts[0].refundOfPartId == draft.parts[0].refundOfPartId)
+  }
+}
+
 extension TransactionDraft {
   fileprivate func withSinglePart() -> TransactionDraft {
     var copy = self

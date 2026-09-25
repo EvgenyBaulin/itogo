@@ -327,6 +327,73 @@ final class ProblemReportTests: XCTestCase {
     XCTAssertEqual(LogPrivacy.offences(in: text, forbidding: ["Александра"]), [], text)
   }
 
+  /// The settings of the accounts go in as values — the default currency, how far the setup
+  /// has come, the category of the fees by its id — and so does how many limits the planning
+  /// shows. The operations the owner said do not pay a due date are ids of operations and of
+  /// payments: only their count goes in.
+  @MainActor
+  func testTheSettingsOfTheAccountsGoInAndTheRejectedMatchesAsACount() async throws {
+    let before = ProcessInfo.processInfo.environment["ITOGO_DATA_DIR"]
+    setenv("ITOGO_DATA_DIR", directory.path, 1)
+    defer {
+      if let before { setenv("ITOGO_DATA_DIR", before, 1) } else { unsetenv("ITOGO_DATA_DIR") }
+    }
+    let environment = AppEnvironment()
+    await environment.start(preparing: {
+      try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    })
+    XCTAssertEqual(environment.state, .ready)
+    let settings = try XCTUnwrap(environment.settings)
+    let fees = UUID()
+    let operation = UUID().uuidString.lowercased()
+    let payment = UUID().uuidString.lowercased()
+    try settings.set(AccountSettings.defaultCurrencyKey, to: "KZT")
+    try settings.set(AccountSettings.setupKey, to: "later")
+    try settings.set(AccountSettings.transferFeeCategoryKey, to: fees.uuidString)
+    try settings.set(PlanningSettings.limitsTopNKey, to: "all")
+    try settings.set(
+      PlanningSettings.scheduledMatchRejectionsKey,
+      to: "\(operation):\(payment):2026-09-01\nop-2:\(payment):2026-10-01")
+
+    let report = await ProblemReportService.gather(
+      environment: environment, compute: ComputeStore(calendar: .utc))
+    await environment.close()
+
+    XCTAssertEqual(report.settings[AccountSettings.defaultCurrencyKey], "KZT")
+    XCTAssertEqual(report.settings[AccountSettings.setupKey], "later")
+    XCTAssertEqual(report.settings[AccountSettings.transferFeeCategoryKey], fees.uuidString)
+    XCTAssertEqual(report.settings[PlanningSettings.limitsTopNKey], "all")
+    XCTAssertEqual(report.settings["planning.scheduledMatchRejections.count"], "2")
+    XCTAssertNil(report.settings[PlanningSettings.scheduledMatchRejectionsKey])
+    let files = try ZipReader.files(in: report.zipped())
+    let text = try XCTUnwrap(String(data: try XCTUnwrap(files["settings.txt"]), encoding: .utf8))
+    XCTAssertFalse(text.contains(operation), text)
+    XCTAssertFalse(text.contains(payment), text)
+  }
+
+  /// Nothing set: the defaults are what the report says, and a setup still due says nothing.
+  @MainActor
+  func testTheSettingsOfTheAccountsHaveTheirDefaults() async throws {
+    let before = ProcessInfo.processInfo.environment["ITOGO_DATA_DIR"]
+    setenv("ITOGO_DATA_DIR", directory.path, 1)
+    defer {
+      if let before { setenv("ITOGO_DATA_DIR", before, 1) } else { unsetenv("ITOGO_DATA_DIR") }
+    }
+    let environment = AppEnvironment()
+    await environment.start(preparing: {
+      try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    })
+    let report = await ProblemReportService.gather(
+      environment: environment, compute: ComputeStore(calendar: .utc))
+    await environment.close()
+
+    XCTAssertEqual(report.settings[AccountSettings.defaultCurrencyKey], "RUB")
+    XCTAssertNil(report.settings[AccountSettings.setupKey])
+    XCTAssertNil(report.settings[AccountSettings.transferFeeCategoryKey])
+    XCTAssertEqual(report.settings[PlanningSettings.limitsTopNKey], "5")
+    XCTAssertEqual(report.settings["planning.scheduledMatchRejections.count"], "0")
+  }
+
   /// The list said «Файлов журнала: 2» and the zip held one: a journal that could not be read
   /// when the file was saved — rolled away since the list was gathered, or taken from the
   /// app's reach — was skipped without a word. It leaves a note in its place instead.

@@ -74,19 +74,34 @@ public struct Place: Identifiable, Hashable, Sendable, Codable {
   }
 }
 
+/// An account: a card, cash, a bank account. The table keeps its old name, and so does every
+/// `payment_method_id` that points at it.
+///
+/// An account holds an ordered set of currencies: `currency` is the first, its main one, and
+/// `otherCurrencies` the rest in the owner's order. Money is kept per account and currency.
+/// `isDefault` marks the main account — exactly one live account has it — which comes first
+/// in every list.
 public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
   public var id: UUID
   public var name: String
   public var kind: PaymentMethodKind
+  /// The main currency. `nil` on an account saved without one, which counts as rubles.
   public var currency: CurrencyCode?
   public var aliases: [String]
   public var isDefault: Bool
   public var archived: Bool
+  /// The group the account is filed under, if any.
+  public var groupId: UUID?
+  /// The place the owner dragged it to; 0 everywhere means alphabetical.
+  public var sort: Int
+  /// The currencies after the main one, in the owner's order.
+  public var otherCurrencies: [CurrencyCode]
 
   public init(
     id: UUID = UUID(), name: String, kind: PaymentMethodKind = .card,
     currency: CurrencyCode? = nil, aliases: [String] = [], isDefault: Bool = false,
-    archived: Bool = false
+    archived: Bool = false, groupId: UUID? = nil, sort: Int = 0,
+    otherCurrencies: [CurrencyCode] = []
   ) {
     self.id = id
     self.name = name
@@ -95,6 +110,25 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     self.aliases = aliases
     self.isDefault = isDefault
     self.archived = archived
+    self.groupId = groupId
+    self.sort = sort
+    self.otherCurrencies = otherCurrencies
+  }
+
+  /// The one account every operation without an account of its own belongs to.
+  public var isMain: Bool { isDefault }
+
+  /// The currency the account moves when an operation is in one it does not hold.
+  public var mainCurrency: CurrencyCode { currency ?? .rub }
+
+  /// Every currency the account holds, the main one first, each once.
+  public var currencies: [CurrencyCode] {
+    var seen: Set<CurrencyCode> = []
+    return ([mainCurrency] + otherCurrencies).filter { seen.insert($0).inserted }
+  }
+
+  public func holds(_ currency: CurrencyCode) -> Bool {
+    currency == mainCurrency || otherCurrencies.contains(currency)
   }
 }
 
@@ -140,10 +174,13 @@ public struct Template: Identifiable, Hashable, Sendable, Codable {
   public var currency: CurrencyCode?
   public var pinned: Bool
   public var useCount: Int
+  /// Put away rather than deleted, so it can be brought back.
+  public var archived: Bool
 
   public init(
     id: UUID = UUID(), text: String, categoryId: UUID? = nil, amountE4: AmountE4? = nil,
-    currency: CurrencyCode? = nil, pinned: Bool = false, useCount: Int = 0
+    currency: CurrencyCode? = nil, pinned: Bool = false, useCount: Int = 0,
+    archived: Bool = false
   ) {
     self.id = id
     self.text = text
@@ -152,6 +189,7 @@ public struct Template: Identifiable, Hashable, Sendable, Codable {
     self.currency = currency
     self.pinned = pinned
     self.useCount = useCount
+    self.archived = archived
   }
 }
 
@@ -165,10 +203,13 @@ public struct Goal: Identifiable, Hashable, Sendable, Codable {
   public var monthlyPlanE4: AmountE4?
   public var subcategoryId: UUID?
   public var archived: Bool
+  /// The currency of the target, the plan and the progress.
+  public var currency: CurrencyCode
 
   public init(
     id: UUID = UUID(), name: String, targetE4: AmountE4, targetDate: DateOnly? = nil,
-    monthlyPlanE4: AmountE4? = nil, subcategoryId: UUID? = nil, archived: Bool = false
+    monthlyPlanE4: AmountE4? = nil, subcategoryId: UUID? = nil, archived: Bool = false,
+    currency: CurrencyCode = .rub
   ) {
     self.id = id
     self.name = name
@@ -177,6 +218,7 @@ public struct Goal: Identifiable, Hashable, Sendable, Codable {
     self.monthlyPlanE4 = monthlyPlanE4
     self.subcategoryId = subcategoryId
     self.archived = archived
+    self.currency = currency
   }
 }
 
@@ -236,11 +278,20 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
   public var kind: DebtEntryKind
   public var transactionId: UUID?
   public var note: String?
+  /// Money borrowed or lent through the journal alone, with no operation: the account it went
+  /// into or out of (`nil` — the main account), when, and what moved on that account when it
+  /// does not hold the debt's currency.
+  public var paymentMethodId: UUID?
+  public var occurredAt: Date?
+  public var accountCurrency: CurrencyCode?
+  public var accountAmountE4: AmountE4?
 
   public init(
     id: UUID = UUID(), debtId: UUID, groupName: String? = nil, date: DateOnly? = nil,
     description: String? = nil, fullAmountE4: AmountE4? = nil, share: Decimal? = nil,
-    amountE4: AmountE4, kind: DebtEntryKind, transactionId: UUID? = nil, note: String? = nil
+    amountE4: AmountE4, kind: DebtEntryKind, transactionId: UUID? = nil, note: String? = nil,
+    paymentMethodId: UUID? = nil, occurredAt: Date? = nil, accountCurrency: CurrencyCode? = nil,
+    accountAmountE4: AmountE4? = nil
   ) {
     self.id = id
     self.debtId = debtId
@@ -253,6 +304,10 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
     self.kind = kind
     self.transactionId = transactionId
     self.note = note
+    self.paymentMethodId = paymentMethodId
+    self.occurredAt = occurredAt
+    self.accountCurrency = accountCurrency
+    self.accountAmountE4 = accountAmountE4
   }
 }
 

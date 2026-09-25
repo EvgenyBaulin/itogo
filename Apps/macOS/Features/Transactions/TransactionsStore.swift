@@ -164,8 +164,8 @@ public final class TransactionsStore {
     case editedMany([TransactionEntry])
     /// One deletion, of one operation or many, with everything it took along.
     case deletedMany([UUID], DeletionEffects)
-    /// One action of planning — «Mark as paid», a contribution, a reconciliation, a limit —
-    /// with the operations it wrote.
+    /// One action of planning — «Mark as paid», a contribution, a reconciliation, a limit, a
+    /// transfer — with the operations it created, rewrote and deleted.
     case planned(PlanningUndo)
 
     /// How many operations undoing it writes.
@@ -174,7 +174,11 @@ public final class TransactionsStore {
       case .created, .edited: 1
       case .editedMany(let before): before.count
       case .deletedMany(let ids, let effects): ids.count + effects.companionIds.count
-      case .planned: 1
+      case .planned(let undo):
+        max(
+          1,
+          undo.createdTransactionIds.count + undo.rewrittenBefore.count
+            + undo.deletion.deletedIds.count + undo.deletion.companionIds.count)
       }
     }
   }
@@ -326,8 +330,8 @@ public final class TransactionsStore {
   // MARK: Planning
 
   /// Writes one action of planning in one write and keeps one step of ⌘Z for it: the
-  /// operations it creates, the rows of planning it inserts, changes or deletes, and the
-  /// settings it sets. Returns whether it landed.
+  /// operations it creates, rewrites and deletes, the rows of planning it inserts, changes or
+  /// deletes, and the settings it sets. Returns whether it landed.
   @discardableResult
   public func apply(_ change: PlanningChange, file: String = #fileID) -> Bool {
     guard !refuses("apply(PlanningChange)", file) else { return false }
@@ -335,12 +339,46 @@ public final class TransactionsStore {
     do {
       let undo = try planning.apply(change)
       push(.planned(undo))
-      finishWrite(StoreWrite(upserted: change.created, planningChanged: true))
+      finishWrite(Self.applied(change, undo: undo))
       return true
     } catch {
       failed(.planning, error, file: file)
       return false
     }
+  }
+
+  /// What a change of planning wrote, as the lists lay it over their data: the operations it
+  /// created and rewrote as they were written, the ones it deleted with the surplus and
+  /// shortfalls that went along, and the parts the deletion reopened.
+  nonisolated static func applied(_ change: PlanningChange, undo: PlanningUndo) -> StoreWrite {
+    let rewritten = change.rewritten.map { entry in
+      var written = entry
+      written.transaction.updatedAt = change.at
+      return written
+    }
+    return StoreWrite(
+      upserted: change.created + rewritten,
+      removed: undo.deletion.deletedIds + undo.deletion.companionIds,
+      partStatuses: statuses(undo.deletion.reopenedPartIds, .expected),
+      planningChanged: true)
+  }
+
+  /// What the undo of a change of planning wrote: the operations it created are gone, and the
+  /// ones it rewrote or deleted are back — as they are after the undo, read again, the live
+  /// ones only — with the parts a deletion had reopened closed again.
+  nonisolated static func reverted(
+    _ undo: PlanningUndo, readBack: [TransactionEntry]
+  ) -> StoreWrite {
+    StoreWrite(
+      upserted: readBack.filter { !$0.transaction.isDeleted },
+      removed: undo.createdTransactionIds,
+      partStatuses: statuses(undo.deletion.reopenedPartIds, .returned),
+      planningChanged: true)
+  }
+
+  /// The operations the undo of a change of planning brings back.
+  nonisolated static func broughtBack(by undo: PlanningUndo) -> [UUID] {
+    undo.rewrittenBefore.map(\.id) + undo.deletion.deletedIds + undo.deletion.companionIds
   }
 
   /// What became of the edit of a saved operation.
@@ -632,8 +670,12 @@ public final class TransactionsStore {
     guard let repository, !isWritingInBackground, let step = undoStack.last else { return }
     if Self.writesInBackground(step.size) {
       undoStack.removeLast()
+      let planning = planning
       runInBackground(.undo, file: file, undone: step) {
-        Landed(step: nil, write: try await Self.undoInBackground(step, repository: repository))
+        Landed(
+          step: nil,
+          write: try await Self.undoInBackground(
+            step, repository: repository, planning: planning))
       }
       return
     }
@@ -668,7 +710,10 @@ public final class TransactionsStore {
       case .planned(let undo):
         guard let planning else { return }
         try planning.revert(undo)
-        write = StoreWrite(removed: undo.createdTransactionIds, planningChanged: true)
+        let back = Self.broughtBack(by: undo)
+        var readBack: [TransactionEntry] = []
+        if !back.isEmpty { readBack = try repository.entries(ids: back) }
+        write = Self.reverted(undo, readBack: readBack)
       }
       // Nothing else runs on the main actor meanwhile: the step is still the last one.
       undoStack.removeLast()
@@ -681,7 +726,7 @@ public final class TransactionsStore {
   /// The undo of a bulk step too large for the main thread: the same rules, awaited. Only
   /// the steps of many operations ever get here; the others go the way `undo` takes them.
   private nonisolated static func undoInBackground(
-    _ step: UndoStep, repository: TransactionRepository
+    _ step: UndoStep, repository: TransactionRepository, planning: PlanningRepository?
   ) async throws -> StoreWrite {
     switch step {
     case .created(let id):
@@ -703,11 +748,21 @@ public final class TransactionsStore {
         .filter { !$0.transaction.isDeleted }
       return StoreWrite(
         upserted: restored, partStatuses: statuses(effects.reopenedPartIds, .returned))
-    case .planned:
-      // One action is never large: `undo` takes it on the main thread.
-      return StoreWrite()
+    case .planned(let undo):
+      // A change of planning that deleted or rewrote many operations: taken back off the main
+      // thread like any bulk step.
+      guard let planning else { throw PlanningUndoUnavailable() }
+      try await planning.revertInBackground(undo)
+      let back = broughtBack(by: undo)
+      var readBack: [TransactionEntry] = []
+      if !back.isEmpty { readBack = try await repository.entriesInBackground(ids: back) }
+      return reverted(undo, readBack: readBack)
     }
   }
+
+  /// The planning repository is gone — the store let go of its database — while an undo of
+  /// planning was asked for.
+  private struct PlanningUndoUnavailable: Error {}
 
   // MARK: Helpers
 

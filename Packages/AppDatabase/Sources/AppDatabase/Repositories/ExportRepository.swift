@@ -119,6 +119,12 @@ public struct ExportRepository: Sendable {
       for row in try Budget.fetchAll(db) { csv.append(ExportTables.row(row)) }
     case ExportTables.reconciliations.fileName:
       for row in try Reconciliation.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.accountGroups.fileName:
+      for row in try AccountGroup.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.transfers.fileName:
+      for row in try Transfer.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.reconciliationBalances.fileName:
+      for row in try ReconciledBalance.fetchAll(db) { csv.append(ExportTables.row(row)) }
     default:
       // A table the list gains before its rows are mapped still gets its header row.
       break

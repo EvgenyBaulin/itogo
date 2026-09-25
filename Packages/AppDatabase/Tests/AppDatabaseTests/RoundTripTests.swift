@@ -554,3 +554,179 @@ struct RoundTripTests {
     #expect(loaded.aliases == ["первая вторая", "третья"])
   }
 }
+
+// MARK: - Accounts
+
+extension RoundTripTests {
+  @Test func anAccountKeepsItsGroupItsPlaceAndItsCurrencies() throws {
+    let stack = try TestSupport.makeStack()
+    let references = ReferenceRepository(writer: stack.writer)
+    let group = AccountGroup(name: "Казахстан", inSummary: false, sort: 2, archived: true)
+    try stack.writer.write { db in try group.insert(db) }
+    let original = PaymentMethod(
+      name: "Freedom", kind: .account, currency: .eur, aliases: ["фридом"], isDefault: true,
+      archived: false, groupId: group.id, sort: 7,
+      otherCurrencies: [.usd, .rub, CurrencyCode("KZT")])
+    try references.save(original)
+
+    let loaded = try #require(try references.paymentMethods().first)
+    #expect(loaded == original)
+    #expect(loaded.groupId == group.id)
+    #expect(loaded.sort == 7)
+    #expect(loaded.otherCurrencies == [.usd, .rub, CurrencyCode("KZT")])
+    let row = try stack.writer.read { db in
+      try #require(try Row.fetchOne(db, sql: "SELECT * FROM payment_methods"))
+    }
+    #expect(row["other_currencies"] as String? == "USD,RUB,KZT")
+    #expect(row["group_id"] as String? == group.id.uuidString)
+    #expect(row["sort"] as Int64? == 7)
+
+    let groups = try stack.writer.read { db in try AccountGroup.fetchAll(db) }
+    #expect(groups == [group])
+  }
+
+  /// An older build could leave a card with no currency, an empty one or spaces: all of them
+  /// read as none — which counts as rubles — and the stored text stays as it was.
+  @Test func aBlankCurrencyReadsAsNone() throws {
+    let stack = try TestSupport.makeStack()
+    try stack.writer.write { db in
+      try db.execute(
+        sql: """
+          INSERT INTO payment_methods (id, name, currency, other_currencies)
+          VALUES ('00000000-0000-0000-0000-000000000001', 'Null', NULL, ''),
+                 ('00000000-0000-0000-0000-000000000002', 'Empty', '', ','),
+                 ('00000000-0000-0000-0000-000000000003', 'Spaces', '  ', 'USD,,KZT'),
+                 ('00000000-0000-0000-0000-000000000004', 'Lower', 'usd', '')
+          """)
+    }
+    let methods = try ReferenceRepository(writer: stack.writer).paymentMethods()
+      .sorted { $0.name < $1.name }
+    #expect(methods.map(\.name) == ["Empty", "Lower", "Null", "Spaces"])
+    #expect(methods.map(\.currency) == [nil, .usd, nil, nil])
+    #expect(methods.map(\.mainCurrency) == [.rub, .usd, .rub, .rub])
+    #expect(methods.map(\.otherCurrencies) == [[], [], [], [.usd, CurrencyCode("KZT")]])
+    let stored = try stack.writer.read { db in
+      try String.fetchAll(
+        db,
+        sql: "SELECT currency FROM payment_methods WHERE currency IS NOT NULL ORDER BY name")
+    }
+    #expect(stored == ["", "usd", "  "])
+  }
+
+  @Test func anOperationKeepsItsLegAndARefundThePartItTakesBackFrom() throws {
+    let stack = try TestSupport.makeStack()
+    let fixture = try TestSupport.seedReferences(stack)
+    let repository = TransactionRepository(writer: stack.writer)
+    var draft = TransactionDraft(
+      currency: .usd, amount: AmountE4(whole: 20), rate: 90,
+      paymentMethodId: fixture.paymentMethod.id)
+    draft.normalizeSinglePart()
+    let purchase = try draft.materialize(rublesConverter: { AmountE4(raw: $0.raw * 90) })
+    try repository.save(purchase)
+
+    let refundTransaction = CoreKit.Transaction(
+      kind: .refund, occurredAt: Date(timeIntervalSince1970: 1_700_100_000), currency: .usd,
+      amountE4: AmountE4(whole: 5), rate: 90, amountRubE4: AmountE4(whole: 450),
+      paymentMethodId: fixture.paymentMethod.id, accountCurrency: .rub,
+      accountAmountE4: AmountE4(raw: 4_612_345), createdAt: Date(timeIntervalSince1970: 1),
+      updatedAt: Date(timeIntervalSince1970: 2))
+    let refund = TransactionEntry(
+      transaction: refundTransaction,
+      parts: [
+        TransactionPart(
+          transactionId: refundTransaction.id, amountE4: AmountE4(whole: 5),
+          amountRubE4: AmountE4(whole: 450), refundOfPartId: purchase.parts[0].id)
+      ])
+    try repository.save(refund)
+
+    let loaded = try #require(try repository.entry(id: refund.id))
+    #expect(loaded == refund)
+    #expect(loaded.transaction.accountCurrency == .rub)
+    #expect(loaded.transaction.accountAmountE4 == AmountE4(raw: 4_612_345))
+    #expect(loaded.parts[0].refundOfPartId == purchase.parts[0].id)
+    let row = try stack.writer.read { db in
+      try #require(
+        try Row.fetchOne(
+          db, sql: "SELECT account_currency, account_amount_e4 FROM transactions WHERE id = ?",
+          arguments: [refund.id.uuidString]))
+    }
+    #expect(row["account_currency"] as String? == "RUB")
+    #expect(row["account_amount_e4"] as Int64? == 4_612_345)
+    #expect(try repository.entry(id: purchase.id)?.transaction.accountCurrency == nil)
+  }
+
+  @Test func aTemplateKeepsItsArchiveAndAGoalItsCurrency() throws {
+    let stack = try TestSupport.makeStack()
+    let references = ReferenceRepository(writer: stack.writer)
+    let template = Template(text: "такси 300", archived: true)
+    let goal = Goal(name: "Trip", targetE4: AmountE4(whole: 2_000), currency: .usd)
+    try references.save(template)
+    try references.save(goal)
+    #expect(try references.templates() == [template])
+    #expect(try references.goals() == [goal])
+    let rubles = Goal(name: "Bike", targetE4: AmountE4(whole: 1))
+    try references.save(rubles)
+    #expect(try references.goals().first { $0.id == rubles.id }?.currency == .rub)
+  }
+
+  @Test func aJournalLineKeepsItsAccountItsMomentAndItsLeg() throws {
+    let stack = try TestSupport.makeStack()
+    let fixture = try TestSupport.seedReferences(stack)
+    let references = ReferenceRepository(writer: stack.writer)
+    let original = DebtEntry(
+      debtId: fixture.debt.id, date: DateOnly(year: 2026, month: 9, day: 1),
+      amountE4: AmountE4(whole: 1_000), kind: .borrowed,
+      paymentMethodId: fixture.paymentMethod.id,
+      occurredAt: Date(timeIntervalSince1970: 1_788_246_900), accountCurrency: .usd,
+      accountAmountE4: AmountE4(raw: 110_000))
+    try references.save(original)
+    #expect(try references.debtEntries(debtId: fixture.debt.id) == [original])
+    let row = try stack.writer.read { db in
+      try #require(try Row.fetchOne(db, sql: "SELECT * FROM debt_entries"))
+    }
+    #expect(row["occurred_at"] as String? == "2026-09-01 07:15:00.000")
+    #expect(row["account_amount_e4"] as Int64? == 110_000)
+  }
+
+  @Test func aTransferAndACountedBalanceKeepEveryField() throws {
+    let stack = try TestSupport.makeStack()
+    let fixture = try TestSupport.seedReferences(stack)
+    let cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
+    try ReferenceRepository(writer: stack.writer).save(cash)
+    let entry = try TestSupport.makeEntry()
+    try TransactionRepository(writer: stack.writer).save(entry)
+
+    let transfer = Transfer(
+      occurredAt: Date(timeIntervalSince1970: 1_788_000_000),
+      fromAccountId: fixture.paymentMethod.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(raw: 50_000_000), toAccountId: cash.id,
+      toCurrency: .usd, toAmountE4: AmountE4(raw: 5_555_555), note: "обмен",
+      createdAt: Date(timeIntervalSince1970: 1_788_000_001),
+      updatedAt: Date(timeIntervalSince1970: 1_788_000_002))
+    let reconciliation = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 1),
+      reconciledAt: Date(timeIntervalSince1970: 1_788_000_003), actualTotalRubE4: .zero,
+      kind: .accounts)
+    let balance = ReconciledBalance(
+      reconciliationId: reconciliation.id, accountId: cash.id, currency: .rub,
+      actualE4: AmountE4(whole: 9_650), expectedE4: AmountE4(whole: 10_000),
+      differenceE4: AmountE4(whole: -350), transactionId: entry.id)
+    _ = try PlanningRepository(writer: stack.writer).apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [reconciliation], transfers: [transfer],
+          reconciledBalances: [balance])))
+
+    try stack.writer.read { db in
+      #expect(try Transfer.fetchAll(db) == [transfer])
+      #expect(try ReconciledBalance.fetchAll(db) == [balance])
+      #expect(try Reconciliation.fetchAll(db) == [reconciliation])
+      let row = try #require(try Row.fetchOne(db, sql: "SELECT * FROM transfers"))
+      #expect(row["from_payment_method_id"] as String? == fixture.paymentMethod.id.uuidString)
+      #expect(row["to_amount_e4"] as Int64? == 5_555_555)
+      #expect(row["occurred_at"] as String? == "2026-08-29 10:40:00.000")
+      let kind = try String.fetchOne(db, sql: "SELECT kind FROM reconciliations")
+      #expect(kind == "accounts")
+    }
+  }
+}

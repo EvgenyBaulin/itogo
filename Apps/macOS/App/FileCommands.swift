@@ -32,7 +32,7 @@ struct FileCommands: Commands {
     guard let csvExport = environment.csvExport else { return }
     guard Self.confirmPersonalData(environment) else { return }
     guard let directory = chooseDirectory() else { return }
-    // The eighteen names are fixed by the spec; files under them are replaced only once the
+    // The names of the export files are fixed; files under them are replaced only once the
     // owner has said so, as a save panel asks before it replaces one.
     let replaced = csvExport.filesItWouldReplace(in: directory)
     guard replaced.isEmpty || confirmReplacing(replaced.count) else { return }

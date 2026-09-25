@@ -15,7 +15,7 @@ public struct CSVExportService: Sendable {
     self.repository = repository
   }
 
-  /// Writes the eighteen files, whole or not at all. A disk that fills after the third file
+  /// Writes every export file, whole or not at all. A disk that fills after the third file
   /// used to leave three new files among those of an earlier export, and nothing said so; now a
   /// failure leaves the folder as it was, is written in the journal with the error's type, and
   /// is thrown for the File menu to tell the owner.

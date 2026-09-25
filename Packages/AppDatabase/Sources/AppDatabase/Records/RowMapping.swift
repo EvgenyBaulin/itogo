@@ -48,6 +48,22 @@ enum RowMapping {
     return DateOnly(iso: text)
   }
 
+  /// A currency code, or `nil` for NULL and for text that is empty or only spaces.
+  static func currency(_ row: Row, _ column: String) -> CurrencyCode? {
+    guard let text: String = row[column] else { return nil }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : CurrencyCode(trimmed)
+  }
+
+  /// Currency codes joined by commas, in their order; empty entries are dropped.
+  static func currencies(_ row: Row, _ column: String) -> [CurrencyCode] {
+    let text: String = row[column] ?? ""
+    return text.split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      .map(CurrencyCode.init)
+  }
+
   static func month(_ row: Row, _ column: String) -> MonthKey? {
     guard let text: String = row[column] else { return nil }
     return MonthKey(iso: text)

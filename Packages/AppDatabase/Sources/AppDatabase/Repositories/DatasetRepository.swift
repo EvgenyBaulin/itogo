@@ -27,8 +27,10 @@ public struct DatasetRepository: Sendable {
   /// - Reference books come with their archived rows and debts with the closed ones:
   ///   archiving or closing must not change past months.
   /// - The planning book comes in the same read: scheduled payments, prices, expected income
-  ///   and its links, limits, reconciliations oldest first, the journals of every debt and
-  ///   the planning settings (`PlanningRepository.book`).
+  ///   and its links, limits, reconciliations oldest first with the balances they counted,
+  ///   the journals of every debt and the planning settings (`PlanningRepository.book`).
+  /// - So do the transfers between accounts, oldest first, the groups of the accounts in the
+  ///   owner's order, and the settings of the accounts.
   ///
   /// `version` is the caller's mark for the snapshot (the pipeline's count of writes taken
   /// before the read), so a result can be told apart from one built on older data.
@@ -75,6 +77,10 @@ public struct DatasetRepository: Sendable {
     let dismissals = try AnomalyRepository.all(db)
     let feedback = try ModelRepository.feedback(db)
     let planning = try PlanningRepository.book(db)
+    let transfers = try Transfer.order(Column("occurred_at"), Column.rowID).fetchAll(db)
+    let groups = try AccountGroup.order(Column("sort"), Column("name")).fetchAll(db)
+    let accountSettings = AccountSettings(
+      storedValues: try SettingsRepository.values(of: AccountSettings.storageKeys, db: db))
     try Task.checkCancellation()
     return Dataset(
       entries: entries,
@@ -92,6 +98,9 @@ public struct DatasetRepository: Sendable {
       settings: AnalyticsSettings(
         cashbackCategoryId: cashback.flatMap(UUID.init(uuidString:)),
         anomalySensitivity: sensitivity.flatMap(AnomalySensitivity.init(rawValue:)) ?? .standard),
+      transfers: transfers,
+      accountGroups: groups,
+      accountSettings: accountSettings,
       version: version)
   }
 }

@@ -8,16 +8,24 @@ import Foundation
 ///   Surcharges;
 /// * `reimb:<reimbursement>:shortfall:<part>` — a shortfall, my expense;
 /// * `sched:<payment>:<due date>` — «Mark as paid» of a scheduled payment for that due date;
-/// * `reconcile:<reconciliation>` — the difference a reconciliation recorded, in the
-///   category the app keeps for it, «Сверка».
+/// * `reconcile:<reconciliation>` — the difference a reconciliation of one total recorded, in
+///   the category the app keeps for it, «Сверка»;
+/// * `reconcile:<reconciliation>:<balance>` — the difference of one counted balance of an
+///   account (`ReconciledBalance`), in that balance's currency;
+/// * `transfer:<transfer>:fee` — the fee of a transfer, an ordinary expense;
+/// * `writeoff:<part>:<operation>` — what is left of a part paid for somebody else, written
+///   off after only some of it came back.
 ///
 /// Ids are kept as they are written (lowercased UUIDs in the app, short numbers in the
-/// golden fixture), so a reimbursement is compared by text.
+/// golden fixture), so a reimbursement and a write-off are compared by text.
 public enum OperationLink: Hashable, Sendable {
   case surplus(reimbursement: String)
   case shortfall(reimbursement: String, part: String)
   case scheduled(paymentId: UUID, due: DateOnly)
   case reconciliation(UUID)
+  case reconciledBalance(reconciliation: UUID, balance: UUID)
+  case transferFee(UUID)
+  case remainderWriteOff(part: String, operation: String)
 
   public init?(externalId: String?) {
     guard let externalId else { return nil }
@@ -35,6 +43,16 @@ public enum OperationLink: Hashable, Sendable {
     case "reconcile" where fields.count == 2:
       guard let id = UUID(uuidString: fields[1]) else { return nil }
       self = .reconciliation(id)
+    case "reconcile" where fields.count == 3:
+      guard let id = UUID(uuidString: fields[1]), let balance = UUID(uuidString: fields[2]) else {
+        return nil
+      }
+      self = .reconciledBalance(reconciliation: id, balance: balance)
+    case "transfer" where fields.count == 3 && fields[2] == "fee":
+      guard let id = UUID(uuidString: fields[1]) else { return nil }
+      self = .transferFee(id)
+    case "writeoff" where fields.count == 3 && !fields[1].isEmpty && !fields[2].isEmpty:
+      self = .remainderWriteOff(part: fields[1], operation: fields[2])
     default:
       return nil
     }
@@ -46,6 +64,10 @@ public enum OperationLink: Hashable, Sendable {
     case .shortfall(let reimbursement, let part): "reimb:\(reimbursement):shortfall:\(part)"
     case .scheduled(let paymentId, let due): "sched:\(paymentId.uuidString.lowercased()):\(due.iso)"
     case .reconciliation(let id): "reconcile:\(id.uuidString.lowercased())"
+    case .reconciledBalance(let id, let balance):
+      "reconcile:\(id.uuidString.lowercased()):\(balance.uuidString.lowercased())"
+    case .transferFee(let id): "transfer:\(id.uuidString.lowercased()):fee"
+    case .remainderWriteOff(let part, let operation): "writeoff:\(part):\(operation)"
     }
   }
 
@@ -61,10 +83,14 @@ public enum OperationLink: Hashable, Sendable {
     // The difference used to be excluded by its category — it went to «Не помню», which is
     // a system one — and when it moved to «Сверка», an ordinary category, that exclusion went
     // with it. It is named here now, where it belongs.
-    case .surplus, .shortfall, .reconciliation: true
+    //
+    // The difference of one counted balance is inside that count, like the difference of a
+    // total; what is written off of a part is money that left at the purchase, like a
+    // shortfall.
+    case .surplus, .shortfall, .reconciliation, .reconciledBalance, .remainderWriteOff: true
     // A charge «Mark as paid» wrote is real spending; it is only counted as planned rather
-    // than as variable.
-    case .scheduled: false
+    // than as variable. The fee of a transfer is money the bank took.
+    case .scheduled, .transferFee: false
     }
   }
 }

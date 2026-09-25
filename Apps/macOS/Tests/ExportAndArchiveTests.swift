@@ -53,7 +53,10 @@ final class ExportAndArchiveTests: XCTestCase {
     let target = directory.appendingPathComponent("export")
     let written = try service.export(to: target)
 
-    XCTAssertEqual(written.count, 18)
+    XCTAssertEqual(written.count, 21)
+    XCTAssertEqual(
+      Array(written.map(\.lastPathComponent).suffix(3)),
+      ["account_groups.csv", "transfers.csv", "reconciliation_balances.csv"])
     for url in written {
       let text = try String(contentsOf: url, encoding: .utf8)
       let rows = try CSVReader.rows(from: Data(text.utf8))
@@ -91,7 +94,7 @@ final class ExportAndArchiveTests: XCTestCase {
   }
 
   /// The owner was warned the files carry names and amounts, chose a folder, and walks away
-  /// believing the export is there. One that stops after three of the eighteen files used to
+  /// believing the export is there. One that stops after three of the files used to
   /// leave those three — over the files of an earlier export — with nothing on screen and
   /// only `export.started` in the journal. It now leaves the folder as it was, says why in the
   /// journal («экспорт: начало, результат»), and the File menu tells the owner.
@@ -140,9 +143,9 @@ final class ExportAndArchiveTests: XCTestCase {
   func testAnExportThatFinishesSaysHowManyFilesItWrote() throws {
     let service = CSVExportService(repository: ExportRepository(writer: stack.writer))
     let target = directory.appendingPathComponent("export")
-    XCTAssertEqual(FileCommands.exportCSV(with: service, to: target), .written(files: 18))
+    XCTAssertEqual(FileCommands.exportCSV(with: service, to: target), .written(files: 21))
     let names = try FileManager.default.contentsOfDirectory(atPath: target.path)
-    XCTAssertEqual(names.count, 18, "\(names)")
+    XCTAssertEqual(names.count, 21, "\(names)")
     XCTAssertTrue(names.allSatisfy { $0.hasSuffix(".csv") }, "\(names)")
   }
 
@@ -162,11 +165,11 @@ final class ExportAndArchiveTests: XCTestCase {
     XCTAssertTrue(done)
     let lines = Logbook.shared.lines()
     let line = try XCTUnwrap(lines.first { $0.contains("export.done") })
-    XCTAssertTrue(line.contains("files=18"), line)
+    XCTAssertTrue(line.contains("files=21"), line)
     XCTAssertTrue(line.contains("rows=\(records)"), line)
   }
 
-  /// The eighteen names are fixed by the spec, so an export into a folder that has them
+  /// The names of the files are fixed, so an export into a folder that has them
   /// replaced those files without a word — an earlier export's, or a `people.csv` of the
   /// owner's own. The File menu now asks first, naming how many would be replaced; only files
   /// count (anything else under such a name is left alone and fails the export).
@@ -184,7 +187,20 @@ final class ExportAndArchiveTests: XCTestCase {
 
     try FileManager.default.removeItem(at: target.appendingPathComponent("rates.csv"))
     try service.export(to: target)
-    XCTAssertEqual(service.filesItWouldReplace(in: target).count, 18)
+    XCTAssertEqual(service.filesItWouldReplace(in: target).count, 21)
+  }
+
+  /// The three files the accounts brought are asked about like the other eighteen: an export
+  /// over a folder that has only them names them.
+  func testTheQuestionBeforeReplacingKnowsTheFilesOfTheAccounts() throws {
+    let service = CSVExportService(repository: ExportRepository(writer: stack.writer))
+    let target = directory.appendingPathComponent("export")
+    try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+    let files = ["account_groups.csv", "transfers.csv", "reconciliation_balances.csv"]
+    for name in files {
+      try Data("id\n".utf8).write(to: target.appendingPathComponent(name))
+    }
+    XCTAssertEqual(service.filesItWouldReplace(in: target).sorted(), files.sorted())
   }
 
   /// The question before replacing, in both languages.
@@ -204,7 +220,7 @@ final class ExportAndArchiveTests: XCTestCase {
   func testTheOutcomeOfTheExportHasWordsInBothLanguages() {
     let language = AppLanguage()
     let keys = [
-      FileCommands.CSVExportOutcome.written(files: 18).messageKey,
+      FileCommands.CSVExportOutcome.written(files: 21).messageKey,
       FileCommands.CSVExportOutcome.failed.messageKey, "export.failed.body",
     ]
     for choice in [AppLanguage.Choice.english, .russian] {
@@ -256,6 +272,27 @@ final class ExportAndArchiveTests: XCTestCase {
       }
       XCTAssertEqual(FileCommands.messageKey(for: error), "archive.error.newerSchema")
     }
+  }
+
+  /// With the accounts the schema has four migrations: an archive says 4, this build opens an
+  /// archive of schema 4 — and of the three before it — and refuses one of schema 5.
+  func testAnArchiveOfSchemaFourOpensWhereFourIsSupported() throws {
+    XCTAssertEqual(stack.applied.onDisk, 4)
+    let service = ArchiveService(stack: stack, appVersion: "1.1.0")
+    let url = directory.appendingPathComponent("four.itogoarchive")
+    _ = try service.exportArchive(to: url)
+    let data = try Data(contentsOf: url)
+
+    let opened = try ArchiveOpener.open(data, supportedSchemaVersion: 4)
+    XCTAssertEqual(opened.manifest.schemaVersion, 4)
+    XCTAssertEqual(opened.csvTables.count, 21)
+    XCTAssertTrue(opened.csvTables.contains("reconciliation_balances"))
+    XCTAssertThrowsError(try ArchiveOpener.open(data, supportedSchemaVersion: 3))
+
+    let older = ArchiveService(stack: stack, appVersion: "1.0.0", schemaVersion: 3)
+    let olderURL = directory.appendingPathComponent("three.itogoarchive")
+    _ = try older.exportArchive(to: olderURL)
+    XCTAssertEqual(try service.openArchive(at: olderURL).manifest.schemaVersion, 3)
   }
 
   func testEncryptedArchiveRefusesTheWrongPassword() throws {

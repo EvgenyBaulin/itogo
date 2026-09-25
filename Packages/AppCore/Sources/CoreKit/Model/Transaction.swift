@@ -19,7 +19,13 @@ public struct Transaction: Identifiable, Hashable, Sendable, Codable {
 
   public var note: String?
   public var placeId: UUID?
+  /// The account the money moved on.
   public var paymentMethodId: UUID?
+  /// What the account moved when it does not hold `currency`: its main currency and the
+  /// amount the bank showed, never estimated. Both `nil` when the account holds `currency`
+  /// and moved by `amountE4` itself.
+  public var accountCurrency: CurrencyCode?
+  public var accountAmountE4: AmountE4?
   /// Income only: which month the money is for. Defaults to the month of the date.
   public var periodMonth: MonthKey?
   /// Payment against a debt.
@@ -49,6 +55,8 @@ public struct Transaction: Identifiable, Hashable, Sendable, Codable {
     note: String? = nil,
     placeId: UUID? = nil,
     paymentMethodId: UUID? = nil,
+    accountCurrency: CurrencyCode? = nil,
+    accountAmountE4: AmountE4? = nil,
     periodMonth: MonthKey? = nil,
     debtId: UUID? = nil,
     creditDebtId: UUID? = nil,
@@ -72,6 +80,8 @@ public struct Transaction: Identifiable, Hashable, Sendable, Codable {
     self.note = note
     self.placeId = placeId
     self.paymentMethodId = paymentMethodId
+    self.accountCurrency = accountCurrency
+    self.accountAmountE4 = accountAmountE4
     self.periodMonth = periodMonth
     self.debtId = debtId
     self.creditDebtId = creditDebtId
@@ -83,6 +93,15 @@ public struct Transaction: Identifiable, Hashable, Sendable, Codable {
   }
 
   public var isDeleted: Bool { deletedAt != nil }
+
+  /// What moved on the account: the stored leg when there is one, the operation's own amount
+  /// otherwise.
+  public var movedMoney: Money {
+    if let accountCurrency, let accountAmountE4 {
+      return Money(amount: accountAmountE4, currency: accountCurrency)
+    }
+    return Money(amount: amountE4, currency: currency)
+  }
 }
 
 /// A part of an operation. Every operation has at least one; parts add up to the total.
@@ -109,6 +128,8 @@ public struct TransactionPart: Identifiable, Hashable, Sendable, Codable {
   public var eventId: UUID?
   public var goalId: UUID?
   public var note: String?
+  /// A refund part: the part of a purchase it takes money back from.
+  public var refundOfPartId: UUID?
 
   public init(
     id: UUID = UUID(),
@@ -126,7 +147,8 @@ public struct TransactionPart: Identifiable, Hashable, Sendable, Codable {
     reimbursementStatus: ReimbursementStatus? = nil,
     eventId: UUID? = nil,
     goalId: UUID? = nil,
-    note: String? = nil
+    note: String? = nil,
+    refundOfPartId: UUID? = nil
   ) {
     self.id = id
     self.transactionId = transactionId
@@ -144,6 +166,7 @@ public struct TransactionPart: Identifiable, Hashable, Sendable, Codable {
     self.eventId = eventId
     self.goalId = goalId
     self.note = note
+    self.refundOfPartId = refundOfPartId
   }
 }
 

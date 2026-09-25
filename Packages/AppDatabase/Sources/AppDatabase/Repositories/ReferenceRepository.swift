@@ -90,8 +90,18 @@ public struct ReferenceRepository: Sendable {
 
   public func save(_ person: Person) throws { try writer.write { db in try person.save(db) } }
   public func save(_ place: Place) throws { try writer.write { db in try place.save(db) } }
+  /// Saves an account. Saved as the main one, it takes the flag from every other account in
+  /// the same write: there is never a moment with two main accounts, nor one with none.
   public func save(_ method: PaymentMethod) throws {
-    try writer.write { db in try method.save(db) }
+    try writer.write { db in try Self.save(method, db: db) }
+  }
+
+  static func save(_ method: PaymentMethod, db: Database) throws {
+    try method.save(db)
+    guard method.isDefault else { return }
+    try db.execute(
+      sql: "UPDATE payment_methods SET is_default = 0 WHERE is_default = 1 AND id <> ?",
+      arguments: [method.id.uuidString])
   }
   public func save(_ event: Event) throws { try writer.write { db in try event.save(db) } }
   public func save(_ goal: Goal) throws { try writer.write { db in try goal.save(db) } }
@@ -127,8 +137,8 @@ public struct ReferenceRepository: Sendable {
   /// points at. Operations are not the only thing that does: a scheduled payment names the
   /// person it is for and the card it is paid with, and the charge it writes next month
   /// takes them from there — a merge that left it behind would undo itself one payment at a
-  /// time. `MergeTests` holds this list against the foreign keys of the schema, so a column a
-  /// later migration adds cannot be forgotten here.
+  /// time. `MergeTests` holds this list, with `keptOnMerge`, against the foreign keys of the
+  /// schema, so a column a later migration adds cannot be forgotten here.
   static let mergedColumns: [String: [(table: String, column: String)]] = [
     "people": [
       ("transaction_parts", "for_person_id"), ("transaction_parts", "debtor_person_id"),
@@ -139,9 +149,16 @@ public struct ReferenceRepository: Sendable {
     "places": [("transactions", "place_id")],
     "payment_methods": [
       ("transactions", "payment_method_id"), ("scheduled_payments", "payment_method_id"),
+      ("transfers", "from_payment_method_id"), ("transfers", "to_payment_method_id"),
+      ("debt_entries", "payment_method_id"),
     ],
     "events": [("transaction_parts", "event_id"), ("import_mappings", "target_event_id")],
   ]
+
+  /// Columns that point at a row being merged and are left where they are, as its history:
+  /// the balances counted on an account are what that account held at the time, and they stay
+  /// with the account merged away.
+  static let keptOnMerge = ["reconciliation_balances.payment_method_id"]
 
   /// Moves everything that points at one row of a dictionary — operations, debts, the
   /// planning book — to another and archives the one that was merged away. Nothing is
@@ -166,14 +183,36 @@ public struct ReferenceRepository: Sendable {
     }
   }
 
+  /// The merge of one account into another as the settings have made it so far: what points
+  /// at the source moves to the target, the name becomes an alias, the source goes to the
+  /// archive — and when it was the main account, the target becomes the only main one, so the
+  /// archive never holds the only main account. It works out no balances; a transfer between
+  /// the two in one currency would become one from an account to itself, and the schema
+  /// refuses the whole merge then.
   public func mergePaymentMethod(_ source: UUID, into target: UUID) throws {
     guard source != target else { return }
     try writer.write { db in
       try Self.repoint("payment_methods", from: source, to: target, db: db)
       try Self.mergeAliases(PaymentMethod.self, source: source, into: target, db: db)
+      let wasMain =
+        try Bool.fetchOne(
+          db,
+          sql: """
+            SELECT EXISTS (
+              SELECT 1 FROM payment_methods WHERE id = ? AND is_default = 1 AND archived = 0)
+            """,
+          arguments: [source.uuidString]) ?? false
       try db.execute(
-        sql: "UPDATE payment_methods SET archived = 1 WHERE id = ?",
+        sql: "UPDATE payment_methods SET archived = 1, is_default = 0 WHERE id = ?",
         arguments: [source.uuidString])
+      if wasMain {
+        try db.execute(
+          sql: "UPDATE payment_methods SET is_default = 0 WHERE is_default = 1 AND id <> ?",
+          arguments: [target.uuidString])
+        try db.execute(
+          sql: "UPDATE payment_methods SET is_default = 1 WHERE id = ?",
+          arguments: [target.uuidString])
+      }
     }
   }
 
@@ -186,7 +225,8 @@ public struct ReferenceRepository: Sendable {
     }
   }
 
-  private static func repoint(
+  /// Moves every column of `mergedColumns[dictionary]` from `source` to `target`.
+  static func repoint(
     _ dictionary: String, from source: UUID, to target: UUID, db: Database
   ) throws {
     for (table, column) in mergedColumns[dictionary] ?? [] {

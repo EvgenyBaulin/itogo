@@ -30,4 +30,21 @@ public struct ReconciliationRepository: Sendable {
   static func all(_ db: Database) throws -> [Reconciliation] {
     try Reconciliation.order(Column("date"), Column("reconciled_at"), Column.rowID).fetchAll(db)
   }
+
+  /// Every counted balance of an account, in the order of `all` — by the day, the moment and
+  /// the order of their reconciliations — and within one reconciliation in the order they
+  /// were written. The last one of an account and currency is its latest count.
+  public func balances() throws -> [ReconciledBalance] {
+    try writer.read { db in try Self.balances(db) }
+  }
+
+  static func balances(_ db: Database) throws -> [ReconciledBalance] {
+    try ReconciledBalance.fetchAll(
+      db,
+      sql: """
+        SELECT b.* FROM reconciliation_balances b
+        JOIN reconciliations r ON r.id = b.reconciliation_id
+        ORDER BY r.date, r.reconciled_at, r.rowid, b.rowid
+        """)
+  }
 }

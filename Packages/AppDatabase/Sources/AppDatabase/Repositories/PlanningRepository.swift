@@ -5,8 +5,11 @@ import GRDB
 
 /// Rows of the tables an action of the planning writes, one list per table. The reference
 /// books are here because the planning makes rows of them too: the subcategory of a new goal,
-/// of a new debt.
+/// of a new debt. So are the accounts and their groups, the transfers between them and the
+/// balances counted on them.
 public struct PlanningRows: Sendable, Hashable {
+  public var accountGroups: [AccountGroup]
+  public var paymentMethods: [PaymentMethod]
   public var categories: [CoreKit.Category]
   public var events: [Event]
   public var goals: [Goal]
@@ -18,13 +21,21 @@ public struct PlanningRows: Sendable, Hashable {
   public var budgets: [Budget]
   public var debtEntries: [DebtEntry]
   public var reconciliations: [Reconciliation]
+  public var transfers: [Transfer]
+  public var reconciledBalances: [ReconciledBalance]
 
   public init(
     categories: [CoreKit.Category] = [], events: [Event] = [], goals: [Goal] = [],
     debts: [Debt] = [], scheduled: [ScheduledPayment] = [], prices: [SubscriptionPrice] = [],
     expected: [ExpectedIncome] = [], expectedLinks: [ExpectedIncomeLink] = [],
-    budgets: [Budget] = [], debtEntries: [DebtEntry] = [], reconciliations: [Reconciliation] = []
+    budgets: [Budget] = [], debtEntries: [DebtEntry] = [], reconciliations: [Reconciliation] = [],
+    accountGroups: [AccountGroup] = [], paymentMethods: [PaymentMethod] = [],
+    transfers: [Transfer] = [], reconciledBalances: [ReconciledBalance] = []
   ) {
+    self.accountGroups = accountGroups
+    self.paymentMethods = paymentMethods
+    self.transfers = transfers
+    self.reconciledBalances = reconciledBalances
     self.categories = categories
     self.events = events
     self.goals = goals
@@ -43,6 +54,8 @@ public struct PlanningRows: Sendable, Hashable {
 
 /// Ids of rows of the same tables as `PlanningRows`, one list per table.
 public struct PlanningRowIDs: Sendable, Hashable {
+  public var accountGroups: [UUID]
+  public var paymentMethods: [UUID]
   public var categories: [UUID]
   public var events: [UUID]
   public var goals: [UUID]
@@ -54,13 +67,20 @@ public struct PlanningRowIDs: Sendable, Hashable {
   public var budgets: [UUID]
   public var debtEntries: [UUID]
   public var reconciliations: [UUID]
+  public var transfers: [UUID]
+  public var reconciledBalances: [UUID]
 
   public init(
     categories: [UUID] = [], events: [UUID] = [], goals: [UUID] = [], debts: [UUID] = [],
     scheduled: [UUID] = [], prices: [UUID] = [], expected: [UUID] = [],
     expectedLinks: [UUID] = [], budgets: [UUID] = [], debtEntries: [UUID] = [],
-    reconciliations: [UUID] = []
+    reconciliations: [UUID] = [], accountGroups: [UUID] = [], paymentMethods: [UUID] = [],
+    transfers: [UUID] = [], reconciledBalances: [UUID] = []
   ) {
+    self.accountGroups = accountGroups
+    self.paymentMethods = paymentMethods
+    self.transfers = transfers
+    self.reconciledBalances = reconciledBalances
     self.categories = categories
     self.events = events
     self.goals = goals
@@ -78,7 +98,8 @@ public struct PlanningRowIDs: Sendable, Hashable {
 }
 
 /// One action of the planning, written whole or not at all: «Mark as paid»,
-/// a contribution to a goal, a reconciliation, a debt payment, or an edit of a definition.
+/// a contribution to a goal, a reconciliation, a debt payment, a transfer, an edit of a
+/// definition or of an account.
 public struct PlanningChange: Sendable, Hashable {
   /// New operations with their parts.
   public var created: [TransactionEntry]
@@ -88,15 +109,32 @@ public struct PlanningChange: Sendable, Hashable {
   /// Keys of `settings` to set; a key whose value is `nil` is deleted. A dictionary drops a
   /// key assigned `nil`, so a deletion goes in as `.some(nil)` or through `updateValue`.
   public var settings: [String: String?]
+  /// Live operations written over as they are given, stamped as updated at `at`. Only the
+  /// operation and its parts are written: a debt payment's journal line does not follow its
+  /// operation here, so a change that rewrites one gives the line in `upsert.debtEntries`.
+  /// A part the rewrite drops takes its money-back links along, and ⌘Z gives them back.
+  public var rewritten: [TransactionEntry]
+  /// Operations deleted softly, with everything a deletion takes along
+  /// (`TransactionRepository.softDelete(ids:at:)`), at `at`. They go after `created` is
+  /// written, so a key one of them lets go — a due date, a transfer's fee — cannot be taken
+  /// by a new operation of the same change; an operation of `rewritten` can move it.
+  public var softDeleted: [UUID]
+  /// The instant of the change: `updated_at` of what it rewrites, `deleted_at` of what it
+  /// deletes.
+  public var at: Date
 
   public init(
     created: [TransactionEntry] = [], upsert: PlanningRows = .empty,
-    delete: PlanningRowIDs = .empty, settings: [String: String?] = [:]
+    delete: PlanningRowIDs = .empty, settings: [String: String?] = [:],
+    rewritten: [TransactionEntry] = [], softDeleted: [UUID] = [], at: Date = Date()
   ) {
     self.created = created
     self.upsert = upsert
     self.delete = delete
     self.settings = settings
+    self.rewritten = rewritten
+    self.softDeleted = softDeleted
+    self.at = at
   }
 }
 
@@ -116,11 +154,21 @@ public struct PlanningUndo: Sendable, Hashable {
   /// Links to a deleted category the schema cleared in tables the planning does not write —
   /// templates, import mappings, the model's corrections — set back once the category is.
   public var cleared: [ClearedReference]
+  /// The operations the change rewrote, as they were before it.
+  public var rewrittenBefore: [TransactionEntry]
+  /// Links of money back to the parts a rewrite dropped: a link goes with its part
+  /// (`ON DELETE CASCADE`), and the part ⌘Z gives back needs it, or deleting that money back
+  /// would never open the part again.
+  public var removedLinks: [ReimbursementLink]
+  /// What deleting the operations of `PlanningChange.softDeleted` did, for `restore`.
+  public var deletion: DeletionEffects
 
   public init(
     createdTransactionIds: [UUID] = [], inserted: PlanningRowIDs = .empty,
     before: PlanningRows = .empty, settingsBefore: [String: String?] = [:],
-    rowIDs: [UUID: Int64] = [:], cleared: [ClearedReference] = []
+    rowIDs: [UUID: Int64] = [:], cleared: [ClearedReference] = [],
+    rewrittenBefore: [TransactionEntry] = [], removedLinks: [ReimbursementLink] = [],
+    deletion: DeletionEffects = .none
   ) {
     self.createdTransactionIds = createdTransactionIds
     self.inserted = inserted
@@ -128,6 +176,9 @@ public struct PlanningUndo: Sendable, Hashable {
     self.settingsBefore = settingsBefore
     self.rowIDs = rowIDs
     self.cleared = cleared
+    self.rewrittenBefore = rewrittenBefore
+    self.removedLinks = removedLinks
+    self.deletion = deletion
   }
 }
 
@@ -144,7 +195,8 @@ public enum PlanningWriteError: Error, Equatable, Sendable {
   /// An event, a goal or a debt that operations point at is archived or closed, never
   /// deleted (the schema's rule). Deleting it would quietly clear the operations' references
   /// — a contribution would stop counting towards its goal — and undo could not put them
-  /// back, since operations are not rows of the planning.
+  /// back, since operations are not rows of the planning. The same holds for an account that
+  /// operations, transfers, scheduled payments or debt journal lines point at.
   case referencedByOperations(UUID)
 }
 
@@ -164,144 +216,306 @@ public struct PlanningRepository: Sendable {
   /// Each row is read right before it is first written or deleted: a row that is there goes
   /// to `before`, a new one to `inserted`. A deletion also reads the rows of the planning the
   /// schema cascades it to or clears — the prices of a payment, the links of an expected
-  /// income, the journal of a debt, the limits and definitions filed under a category — so
-  /// undo gives them back as well.
+  /// income, the journal of a debt, the limits and definitions filed under a category, the
+  /// balances counted on an account or in a reconciliation — so undo gives them back as well.
   ///
-  /// Rows go in the order their foreign keys need: categories (parents first), events, goals,
-  /// debts, scheduled payments, prices, expected income, limits, then the operations with
-  /// their parts, and after them the debt journal, the income links and the reconciliations,
-  /// which may point at those operations. Deletions come last, in the reverse order, and the
-  /// settings after everything.
+  /// Rows go in the order their foreign keys need: groups of accounts, accounts, categories
+  /// (parents first), events, goals, debts, scheduled payments, prices, expected income,
+  /// limits, then the new operations with their parts and the operations rewritten, and after
+  /// them the debt journal, the income links, the transfers, the reconciliations and the
+  /// balances they counted, which may point at those operations. Deletions come after, in the
+  /// reverse order; then the operations deleted softly, with what their deletion takes along;
+  /// and the settings after everything.
+  ///
+  /// The accounts keep one main account: one written as main takes the flag from every other,
+  /// and a main account is deleted only while another live account is main. An account
+  /// deleted takes along a reconciliation of accounts it leaves with no count, as
+  /// `AccountRepository.delete` does.
   ///
   /// Throws `DatabaseError.unbalancedParts` before writing anything when an operation does
-  /// not add up, and `PlanningWriteError.referencedByOperations` when an event, a goal or a
-  /// debt to delete has operations. Any failure rolls the whole change back — among them the
+  /// not add up, `DatabaseError.notFound` when an operation to rewrite is not there or is
+  /// deleted, `PlanningWriteError.referencedByOperations` when an event, a goal, a debt or
+  /// an account to delete is still used, and `AccountWriteError.isMain` when the main account
+  /// to delete is the only one. Any failure rolls the whole change back — among them the
   /// unique `external_id`, which keeps one due date from being paid twice.
   public func apply(_ change: PlanningChange) throws -> PlanningUndo {
-    guard change.created.allSatisfy(\.isBalanced) else { throw DatabaseError.unbalancedParts }
-    return try writer.write { db in
-      var journal = UndoJournal()
-      let rows = change.upsert
-      try journal.upsert(Self.parentsFirst(rows.categories), db: db)
-      try journal.upsert(rows.events, db: db)
-      try journal.upsert(rows.goals, db: db)
-      try journal.upsert(rows.debts, db: db)
-      try journal.upsert(rows.scheduled, db: db)
-      try journal.upsert(rows.prices, db: db)
-      try journal.upsert(rows.expected, db: db)
-      try journal.upsert(rows.budgets, db: db)
-      // New operations are written the way `TransactionRepository.insert` writes them: as new
-      // rows, so an id or an `external_id` that is already there fails the change.
-      for entry in change.created {
-        try entry.transaction.insert(db)
-        for part in entry.parts { try part.insert(db) }
-      }
-      try journal.upsert(rows.debtEntries, db: db)
-      try journal.upsert(rows.expectedLinks, db: db)
-      try journal.upsert(rows.reconciliations, db: db)
+    try Self.refuseUnbalanced(change)
+    return try writer.write { db in try Self.apply(change, db: db) }
+  }
 
-      let gone = change.delete
-      try journal.delete(Reconciliation.self, ids: gone.reconciliations, db: db)
-      try journal.delete(ExpectedIncomeLink.self, ids: gone.expectedLinks, db: db)
-      try journal.delete(DebtEntry.self, ids: gone.debtEntries, db: db)
-      try journal.delete(Budget.self, ids: gone.budgets, db: db)
-      try journal.delete(ExpectedIncome.self, ids: gone.expected, db: db)
-      try journal.delete(SubscriptionPrice.self, ids: gone.prices, db: db)
-      try journal.delete(ScheduledPayment.self, ids: gone.scheduled, db: db)
-      try journal.delete(Debt.self, ids: gone.debts, db: db)
-      try journal.delete(Goal.self, ids: gone.goals, db: db)
-      try journal.delete(Event.self, ids: gone.events, db: db)
-      try journal.delete(
-        CoreKit.Category.self, ids: Self.childrenFirst(gone.categories, db: db), db: db)
+  /// `apply` off the calling thread: the same write, awaited — for a change of many
+  /// operations, which would otherwise freeze the window.
+  public func applyInBackground(_ change: PlanningChange) async throws -> PlanningUndo {
+    try Self.refuseUnbalanced(change)
+    return try await writer.write { db in try Self.apply(change, db: db) }
+  }
 
-      var settingsBefore: [String: String?] = [:]
-      for (key, value) in change.settings.sorted(by: { $0.key < $1.key }) {
-        settingsBefore.updateValue(try Self.setting(key, db: db), forKey: key)
-        try Self.setSetting(key, to: value, db: db)
-      }
-      return PlanningUndo(
-        createdTransactionIds: change.created.map(\.id), inserted: journal.inserted,
-        before: journal.before, settingsBefore: settingsBefore, rowIDs: journal.rowIDs,
-        cleared: journal.cleared)
+  private static func refuseUnbalanced(_ change: PlanningChange) throws {
+    guard change.created.allSatisfy(\.isBalanced), change.rewritten.allSatisfy(\.isBalanced)
+    else { throw DatabaseError.unbalancedParts }
+  }
+
+  static func apply(_ change: PlanningChange, db: Database) throws -> PlanningUndo {
+    var journal = UndoJournal()
+    let rows = change.upsert
+    try journal.upsert(rows.accountGroups, db: db)
+    try journal.upsert(rows.paymentMethods, db: db)
+    // An account written as the main one takes the flag from every other, as a save of it
+    // does (`ReferenceRepository.save`); of two written as main, the later one keeps it.
+    if let main = rows.paymentMethods.last(where: \.isDefault) {
+      try journal.takeMainFlag(for: main.id, db: db)
     }
+    try journal.upsert(Self.parentsFirst(rows.categories), db: db)
+    try journal.upsert(rows.events, db: db)
+    try journal.upsert(rows.goals, db: db)
+    try journal.upsert(rows.debts, db: db)
+    try journal.upsert(rows.scheduled, db: db)
+    try journal.upsert(rows.prices, db: db)
+    try journal.upsert(rows.expected, db: db)
+    try journal.upsert(rows.budgets, db: db)
+    // New operations are written the way `TransactionRepository.insert` writes them: as new
+    // rows, so an id or an `external_id` that is already there fails the change.
+    for entry in change.created {
+      try entry.transaction.insert(db)
+      for part in entry.parts { try part.insert(db) }
+    }
+    let (rewrittenBefore, removedLinks) = try rewrite(change.rewritten, at: change.at, db: db)
+    try journal.upsert(rows.debtEntries, db: db)
+    try journal.upsert(rows.expectedLinks, db: db)
+    try journal.upsert(rows.transfers, db: db)
+    try journal.upsert(rows.reconciliations, db: db)
+    try journal.upsert(rows.reconciledBalances, db: db)
+
+    let gone = change.delete
+    try journal.delete(ReconciledBalance.self, ids: gone.reconciledBalances, db: db)
+    try journal.delete(Reconciliation.self, ids: gone.reconciliations, db: db)
+    try journal.delete(Transfer.self, ids: gone.transfers, db: db)
+    try journal.delete(ExpectedIncomeLink.self, ids: gone.expectedLinks, db: db)
+    try journal.delete(DebtEntry.self, ids: gone.debtEntries, db: db)
+    try journal.delete(Budget.self, ids: gone.budgets, db: db)
+    try journal.delete(ExpectedIncome.self, ids: gone.expected, db: db)
+    try journal.delete(SubscriptionPrice.self, ids: gone.prices, db: db)
+    try journal.delete(ScheduledPayment.self, ids: gone.scheduled, db: db)
+    try journal.delete(Debt.self, ids: gone.debts, db: db)
+    try journal.delete(Goal.self, ids: gone.goals, db: db)
+    try journal.delete(Event.self, ids: gone.events, db: db)
+    try journal.delete(
+      CoreKit.Category.self, ids: Self.childrenFirst(gone.categories, db: db), db: db)
+    try Self.deleteAccounts(gone.paymentMethods, journal: &journal, db: db)
+    try journal.delete(AccountGroup.self, ids: gone.accountGroups, db: db)
+
+    let deletion =
+      change.softDeleted.isEmpty
+      ? DeletionEffects.none
+      : try TransactionRepository.softDelete(ids: change.softDeleted, at: change.at, db: db)
+
+    var settingsBefore: [String: String?] = [:]
+    for (key, value) in change.settings.sorted(by: { $0.key < $1.key }) {
+      settingsBefore.updateValue(try Self.setting(key, db: db), forKey: key)
+      try Self.setSetting(key, to: value, db: db)
+    }
+    return PlanningUndo(
+      createdTransactionIds: change.created.map(\.id), inserted: journal.inserted,
+      before: journal.before, settingsBefore: settingsBefore, rowIDs: journal.rowIDs,
+      cleared: journal.cleared, rewrittenBefore: rewrittenBefore, removedLinks: removedLinks,
+      deletion: deletion)
+  }
+
+  /// Writes each operation over the live row with its id, stamped as updated at `instant`,
+  /// and returns the rows as they were — each one once, as it was before its first rewrite —
+  /// with the money-back links of the parts the rewrites dropped, read before they go.
+  private static func rewrite(
+    _ entries: [TransactionEntry], at instant: Date, db: Database
+  ) throws -> (before: [TransactionEntry], removedLinks: [ReimbursementLink]) {
+    var before: [TransactionEntry] = []
+    var removedLinks: [ReimbursementLink] = []
+    var seen: Set<UUID> = []
+    for var entry in entries {
+      guard let current = try TransactionRepository.entry(id: entry.id, db: db),
+        !current.transaction.isDeleted,
+        entry.parts.allSatisfy({ $0.transactionId == entry.id })
+      else { throw DatabaseError.notFound }
+      let kept = Set(entry.parts.map(\.id))
+      let dropped = current.parts.map(\.id).filter { !kept.contains($0) }
+      if !dropped.isEmpty {
+        removedLinks +=
+          try ReimbursementLink
+          .filter(dropped.map(\.uuidString).contains(Column("part_id")))
+          .order(Column.rowID)
+          .fetchAll(db)
+      }
+      entry.transaction.updatedAt = instant
+      try TransactionRepository.write(entry, over: current, db: db)
+      if seen.insert(entry.id).inserted { before.append(current) }
+    }
+    return (before, removedLinks)
+  }
+
+  /// Deletes accounts under the rules `AccountRepository.delete` keeps: the main account goes
+  /// only while another live account is main, and a reconciliation of accounts its deletion
+  /// leaves with no count at all goes with it — kept in the journal, so ⌘Z brings it back.
+  private static func deleteAccounts(
+    _ ids: [UUID], journal: inout UndoJournal, db: Database
+  ) throws {
+    guard !ids.isEmpty else { return }
+    try AccountRepository.refuseDeletingTheMain(Set(ids), db: db)
+    let marks = databaseQuestionMarks(count: ids.count)
+    let counted = try String.fetchAll(
+      db,
+      sql: """
+        SELECT DISTINCT reconciliation_id FROM reconciliation_balances
+        WHERE payment_method_id IN (\(marks)) ORDER BY reconciliation_id
+        """,
+      arguments: StatementArguments(ids.map(\.uuidString)))
+    try journal.delete(PaymentMethod.self, ids: ids, db: db)
+    guard !counted.isEmpty else { return }
+    let emptied = try String.fetchAll(
+      db,
+      sql: """
+        SELECT id FROM reconciliations
+        WHERE id IN (\(databaseQuestionMarks(count: counted.count))) AND kind <> ?
+          AND NOT EXISTS (
+            SELECT 1 FROM reconciliation_balances WHERE reconciliation_id = reconciliations.id)
+        ORDER BY rowid
+        """,
+      arguments: StatementArguments(counted) + [ReconciliationKind.total.rawValue])
+    try journal.delete(Reconciliation.self, ids: emptied.compactMap(UUID.init(uuidString:)), db: db)
   }
 
   /// Takes a change back in one transaction.
   ///
-  /// The operations it created go for good, with the journal lines and income links that
-  /// point at them — deleted first, as `TransactionRepository.purge` does, since the foreign
-  /// key would only clear a line's `transaction_id` and leave the debt moved by a payment
-  /// that never happened. Then the rows it added go, in the reverse order of the foreign
-  /// keys, and the rows it changed or removed are written back as they were, in the forward
-  /// order, each at the rowid it had (`PlanningUndo.rowIDs`). The settings come last.
+  /// The operations it deleted come back first, with everything their deletion took along
+  /// (`TransactionRepository.restore(ids:at:effects:)`), and the operations it rewrote are
+  /// written back as they were — their keys let go first, since the change may have moved one
+  /// from one of them to another —, with the money-back links of the parts it dropped. The
+  /// operations it created go for good, with the journal lines
+  /// and income links that point at them — deleted first, as `TransactionRepository.purge`
+  /// does, since the foreign key would only clear a line's `transaction_id` and leave the debt
+  /// moved by a payment that never happened. Then the rows it added go, in the reverse order
+  /// of the foreign keys, and the rows it changed or removed are written back as they were, in
+  /// the forward order, each at the rowid it had (`PlanningUndo.rowIDs`). The accounts and
+  /// groups it added go only after that: a payment, a transfer or a journal line it moved onto
+  /// a new account points at it until written back. The settings come last. `instant` stamps
+  /// the operations brought back.
   ///
   /// A row changed elsewhere between the change and its undo is written back all the same.
   /// An operation made since that points at a row the change added — filed
-  /// under a goal's new subcategory, tagged with a new event — makes the undo fail and roll
-  /// back (`PlanningWriteError.referencedByOperations`, or the schema's `RESTRICT`).
-  public func revert(_ undo: PlanningUndo) throws {
-    try writer.write { db in
-      for chunk in undo.createdTransactionIds.map(\.uuidString)
-        .chunked(by: TransactionRepository.chunkSize)
-      {
-        let ids = StatementArguments(Array(chunk))
-        let marks = databaseQuestionMarks(count: chunk.count)
-        try db.execute(
-          sql: "DELETE FROM debt_entries WHERE transaction_id IN (\(marks))", arguments: ids)
-        try db.execute(
-          sql: "DELETE FROM expected_income_links WHERE transaction_id IN (\(marks))",
-          arguments: ids)
-        try db.execute(sql: "DELETE FROM transactions WHERE id IN (\(marks))", arguments: ids)
-      }
+  /// under a goal's new subcategory, tagged with a new event, paid from a new account — makes
+  /// the undo fail and roll back (`PlanningWriteError.referencedByOperations`, or the schema's
+  /// `RESTRICT`).
+  public func revert(_ undo: PlanningUndo, at instant: Date = Date()) throws {
+    try writer.write { db in try Self.revert(undo, at: instant, db: db) }
+  }
 
-      let added = undo.inserted
-      try Self.deleteAll(Reconciliation.self, ids: added.reconciliations, db: db)
-      try Self.deleteAll(ExpectedIncomeLink.self, ids: added.expectedLinks, db: db)
-      try Self.deleteAll(DebtEntry.self, ids: added.debtEntries, db: db)
-      try Self.deleteAll(Budget.self, ids: added.budgets, db: db)
-      try Self.deleteAll(ExpectedIncome.self, ids: added.expected, db: db)
-      try Self.deleteAll(SubscriptionPrice.self, ids: added.prices, db: db)
-      try Self.deleteAll(ScheduledPayment.self, ids: added.scheduled, db: db)
-      try Self.deleteAll(Debt.self, ids: added.debts, db: db)
-      try Self.deleteAll(Goal.self, ids: added.goals, db: db)
-      try Self.deleteAll(Event.self, ids: added.events, db: db)
-      for id in try Self.childrenFirst(added.categories, db: db) {
-        _ = try CoreKit.Category.deleteOne(db, key: id.uuidString)
-      }
+  /// `revert` off the calling thread, awaited.
+  public func revertInBackground(_ undo: PlanningUndo, at instant: Date = Date()) async throws {
+    try await writer.write { db in try Self.revert(undo, at: instant, db: db) }
+  }
 
-      let before = undo.before
-      for category in Self.parentsFirst(before.categories) { try category.save(db) }
-      // Only where the link is still empty: the deletion did nothing else to these rows, and
-      // a category given to one of them since is the owner's, not the deletion's.
-      for reference in undo.cleared {
-        try db.execute(
-          sql: """
-            UPDATE \(reference.table) SET \(reference.column) = ?
-            WHERE id = ? AND \(reference.column) IS NULL
-            """,
-          arguments: [reference.categoryId.uuidString, reference.rowId])
+  static func revert(_ undo: PlanningUndo, at instant: Date, db: Database) throws {
+    if !undo.deletion.deletedIds.isEmpty {
+      try TransactionRepository.restore(
+        ids: undo.deletion.deletedIds, at: instant, effects: undo.deletion, db: db)
+    }
+    for chunk in undo.rewrittenBefore.map(\.id.uuidString)
+      .chunked(by: TransactionRepository.chunkSize)
+    {
+      try db.execute(
+        sql: """
+          UPDATE transactions SET external_id = NULL
+          WHERE external_id IS NOT NULL AND id IN (\(databaseQuestionMarks(count: chunk.count)))
+          """,
+        arguments: StatementArguments(Array(chunk)))
+    }
+    for before in undo.rewrittenBefore {
+      // An operation purged since has nothing left to be written over.
+      guard let current = try TransactionRepository.entry(id: before.id, db: db) else {
+        continue
       }
-      for row in before.events { try row.save(db) }
-      for row in before.goals { try row.save(db) }
-      for row in before.debts { try row.save(db) }
-      for row in before.scheduled { try row.save(db) }
-      for row in before.prices { try row.save(db) }
-      for row in before.expected { try row.save(db) }
-      for row in before.budgets { try row.save(db) }
-      for row in before.debtEntries { try row.save(db) }
-      for row in before.expectedLinks { try row.save(db) }
-      for row in before.reconciliations { try row.save(db) }
-      try Self.restoreRowIDs(before.budgets, undo.rowIDs, db: db)
-      try Self.restoreRowIDs(before.debtEntries, undo.rowIDs, db: db)
-      try Self.restoreRowIDs(before.expectedLinks, undo.rowIDs, db: db)
-      try Self.restoreRowIDs(before.prices, undo.rowIDs, db: db)
-      try Self.restoreRowIDs(before.reconciliations, undo.rowIDs, db: db)
-      try Self.restoreRowIDs(before.scheduled, undo.rowIDs, db: db)
-      try Self.restoreRowIDs(before.expected, undo.rowIDs, db: db)
+      try TransactionRepository.write(before, over: current, db: db)
+    }
+    for link in undo.removedLinks {
+      // A link whose money back or part is gone since has nothing to come back to.
+      guard try CoreKit.Transaction.exists(db, key: link.reimbursementTxId.uuidString),
+        try TransactionPart.exists(db, key: link.partId.uuidString)
+      else { continue }
+      try link.save(db)
+    }
 
-      for (key, value) in undo.settingsBefore.sorted(by: { $0.key < $1.key }) {
-        try Self.setSetting(key, to: value, db: db)
-      }
+    for chunk in undo.createdTransactionIds.map(\.uuidString)
+      .chunked(by: TransactionRepository.chunkSize)
+    {
+      let ids = StatementArguments(Array(chunk))
+      let marks = databaseQuestionMarks(count: chunk.count)
+      try db.execute(
+        sql: "DELETE FROM debt_entries WHERE transaction_id IN (\(marks))", arguments: ids)
+      try db.execute(
+        sql: "DELETE FROM expected_income_links WHERE transaction_id IN (\(marks))",
+        arguments: ids)
+      try db.execute(sql: "DELETE FROM transactions WHERE id IN (\(marks))", arguments: ids)
+    }
+
+    let added = undo.inserted
+    try Self.deleteAll(ReconciledBalance.self, ids: added.reconciledBalances, db: db)
+    try Self.deleteAll(Reconciliation.self, ids: added.reconciliations, db: db)
+    try Self.deleteAll(Transfer.self, ids: added.transfers, db: db)
+    try Self.deleteAll(ExpectedIncomeLink.self, ids: added.expectedLinks, db: db)
+    try Self.deleteAll(DebtEntry.self, ids: added.debtEntries, db: db)
+    try Self.deleteAll(Budget.self, ids: added.budgets, db: db)
+    try Self.deleteAll(ExpectedIncome.self, ids: added.expected, db: db)
+    try Self.deleteAll(SubscriptionPrice.self, ids: added.prices, db: db)
+    try Self.deleteAll(ScheduledPayment.self, ids: added.scheduled, db: db)
+    try Self.deleteAll(Debt.self, ids: added.debts, db: db)
+    try Self.deleteAll(Goal.self, ids: added.goals, db: db)
+    try Self.deleteAll(Event.self, ids: added.events, db: db)
+    for id in try Self.childrenFirst(added.categories, db: db) {
+      _ = try CoreKit.Category.deleteOne(db, key: id.uuidString)
+    }
+
+    let before = undo.before
+    for row in before.accountGroups { try row.save(db) }
+    for row in before.paymentMethods { try row.save(db) }
+    for category in Self.parentsFirst(before.categories) { try category.save(db) }
+    // Only where the link is still empty: the deletion did nothing else to these rows, and
+    // a category given to one of them since is the owner's, not the deletion's.
+    for reference in undo.cleared {
+      try db.execute(
+        sql: """
+          UPDATE \(reference.table) SET \(reference.column) = ?
+          WHERE id = ? AND \(reference.column) IS NULL
+          """,
+        arguments: [reference.categoryId.uuidString, reference.rowId])
+    }
+    for row in before.events { try row.save(db) }
+    for row in before.goals { try row.save(db) }
+    for row in before.debts { try row.save(db) }
+    for row in before.scheduled { try row.save(db) }
+    for row in before.prices { try row.save(db) }
+    for row in before.expected { try row.save(db) }
+    for row in before.budgets { try row.save(db) }
+    for row in before.debtEntries { try row.save(db) }
+    for row in before.expectedLinks { try row.save(db) }
+    for row in before.transfers { try row.save(db) }
+    for row in before.reconciliations { try row.save(db) }
+    for row in before.reconciledBalances { try row.save(db) }
+    // Nothing written back points at an account or a group the change added, while rows it
+    // moved onto them did until now: they go here, still under the refusal of `apply`, and
+    // before the rowids are put back, so a removed account gets back a rowid a new one took.
+    try Self.deleteAll(PaymentMethod.self, ids: added.paymentMethods, db: db)
+    try Self.deleteAll(AccountGroup.self, ids: added.accountGroups, db: db)
+    try Self.restoreRowIDs(before.paymentMethods, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.budgets, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.debtEntries, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.expectedLinks, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.prices, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.reconciliations, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.reconciledBalances, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.transfers, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.scheduled, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.expected, undo.rowIDs, db: db)
+
+    for (key, value) in undo.settingsBefore.sorted(by: { $0.key < $1.key }) {
+      try Self.setSetting(key, to: value, db: db)
     }
   }
 
@@ -348,7 +562,8 @@ public struct PlanningRepository: Sendable {
   }
 
   /// The planning book inside a read the caller already holds. Debt journals come for every
-  /// debt, the closed ones included, like the debts themselves.
+  /// debt, the closed ones included, like the debts themselves; the balances counted on the
+  /// accounts come in the order of their reconciliations.
   static func book(_ db: Database) throws -> PlanningBook {
     PlanningBook(
       scheduled: try scheduled(db),
@@ -358,7 +573,8 @@ public struct PlanningRepository: Sendable {
       budgets: try budgets(db),
       reconciliations: try ReconciliationRepository.all(db),
       debtEntries: try debtEntries(db),
-      settings: try settings(db))
+      settings: try settings(db),
+      reconciledBalances: try ReconciliationRepository.balances(db))
   }
 
   /// Each payment's prices by day.
@@ -527,6 +743,24 @@ struct UndoJournal {
     }
   }
 
+  /// Takes the main flag from every account but `id`, the archived ones included, keeping
+  /// each as it was, so ⌘Z gives the flag back to where it was.
+  mutating func takeMainFlag(for id: UUID, db: Database) throws {
+    let others =
+      try PaymentMethod
+      .filter(Column("is_default") == true && Column("id") != id.uuidString)
+      .order(Column.rowID)
+      .fetchAll(db)
+    guard !others.isEmpty else { return }
+    for row in others {
+      try keepRowID(of: row, db: db)
+      keep(row)
+    }
+    try db.execute(
+      sql: "UPDATE payment_methods SET is_default = 0 WHERE is_default = 1 AND id <> ?",
+      arguments: [id.uuidString])
+  }
+
   private mutating func keepRowID<Record: PlanningRow>(of row: Record, db: Database) throws {
     guard rowIDs[row.id] == nil else { return }
     rowIDs[row.id] = try Int64.fetchOne(
@@ -668,4 +902,52 @@ extension DebtEntry: PlanningRow {
 extension Reconciliation: PlanningRow {
   static var rows: WritableKeyPath<PlanningRows, [Self]> { \.reconciliations }
   static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.reconciliations }
+
+  /// The balances it counted go with it.
+  static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
+    try journal.keepRows(ReconciledBalance.self, where: "reconciliation_id", is: id, db: db)
+  }
+}
+
+extension ReconciledBalance: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.reconciledBalances }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.reconciledBalances }
+}
+
+extension AccountGroup: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.accountGroups }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.accountGroups }
+
+  /// The accounts filed under it lose the group (`ON DELETE SET NULL`); they are kept whole.
+  static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
+    try journal.keepRows(PaymentMethod.self, where: "group_id", is: id, db: db)
+  }
+}
+
+extension PaymentMethod: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.paymentMethods }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.paymentMethods }
+
+  /// An account anything has moved money on, or will, is archived, never deleted: operations,
+  /// deleted ones included, transfers, scheduled payments and lines of a debt journal.
+  static func refuseDeletion(of id: UUID, db: Database) throws {
+    try refuseIfOperations(
+      """
+      SELECT 1 FROM transactions WHERE payment_method_id = :id
+      UNION ALL SELECT 1 FROM transfers
+        WHERE from_payment_method_id = :id OR to_payment_method_id = :id
+      UNION ALL SELECT 1 FROM scheduled_payments WHERE payment_method_id = :id
+      UNION ALL SELECT 1 FROM debt_entries WHERE payment_method_id = :id
+      """, point: id, db: db)
+  }
+
+  /// The balances counted on it go with it (`ON DELETE CASCADE`).
+  static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
+    try journal.keepRows(ReconciledBalance.self, where: "payment_method_id", is: id, db: db)
+  }
+}
+
+extension Transfer: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.transfers }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.transfers }
 }

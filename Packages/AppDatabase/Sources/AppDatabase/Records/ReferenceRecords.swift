@@ -69,6 +69,10 @@ extension Place: @retroactive FetchableRecord, @retroactive PersistableRecord {
   }
 }
 
+/// An account. A main currency left NULL, empty or blank by an older build reads as none —
+/// which counts as rubles (`PaymentMethod.mainCurrency`) — and is written back only when the
+/// owner saves the account. `other_currencies` is the codes after the main one, joined by
+/// commas.
 extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "payment_methods"
 
@@ -77,10 +81,13 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
       id: try RowMapping.uuid(row, "id"),
       name: row["name"] ?? "",
       kind: PaymentMethodKind(rawValue: row["kind"] ?? "card") ?? .card,
-      currency: (row["currency"] as String?).map(CurrencyCode.init),
+      currency: RowMapping.currency(row, "currency"),
       aliases: RowMapping.aliases(row, "aliases"),
       isDefault: row["is_default"] ?? false,
-      archived: row["archived"] ?? false)
+      archived: row["archived"] ?? false,
+      groupId: RowMapping.optionalUUID(row, "group_id"),
+      sort: row["sort"] ?? 0,
+      otherCurrencies: RowMapping.currencies(row, "other_currencies"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -91,6 +98,9 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
     container["aliases"] = RowMapping.join(aliases)
     container["is_default"] = isDefault
     container["archived"] = archived
+    container["group_id"] = groupId?.uuidString
+    container["sort"] = sort
+    container["other_currencies"] = otherCurrencies.map(\.code).joined(separator: ",")
   }
 }
 
@@ -134,7 +144,8 @@ extension Template: @retroactive FetchableRecord, @retroactive PersistableRecord
       amountE4: RowMapping.optionalAmount(row, "amount_e4"),
       currency: (row["currency"] as String?).map(CurrencyCode.init),
       pinned: row["pinned"] ?? false,
-      useCount: row["use_count"] ?? 0)
+      useCount: row["use_count"] ?? 0,
+      archived: row["archived"] ?? false)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -145,6 +156,7 @@ extension Template: @retroactive FetchableRecord, @retroactive PersistableRecord
     container["currency"] = currency?.code
     container["pinned"] = pinned
     container["use_count"] = useCount
+    container["archived"] = archived
   }
 }
 
@@ -159,7 +171,8 @@ extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
       targetDate: RowMapping.day(row, "target_date"),
       monthlyPlanE4: RowMapping.optionalAmount(row, "monthly_plan_e4"),
       subcategoryId: RowMapping.optionalUUID(row, "subcategory_id"),
-      archived: row["archived"] ?? false)
+      archived: row["archived"] ?? false,
+      currency: CurrencyCode(row["currency"] ?? "RUB"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -170,6 +183,7 @@ extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
     container["monthly_plan_e4"] = monthlyPlanE4?.raw
     container["subcategory_id"] = subcategoryId?.uuidString
     container["archived"] = archived
+    container["currency"] = currency.code
   }
 }
 

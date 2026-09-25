@@ -751,7 +751,8 @@ struct SettingsOrderTests {
   @Test func onlyTheFirstTenAreKeptAndTheRestAreTurnedOff() throws {
     let stack = try TestSupport.makeStack()
     let settings = SettingsRepository(writer: stack.writer)
-    let twelve = (1...12).map { CurrencyCode("C\($0)") }
+    // The ruble is the default currency, which stays on.
+    let twelve = [CurrencyCode.rub] + (1...11).map { CurrencyCode("C\($0)") }
     try settings.setEnabledCurrencies(twelve)
     #expect(try settings.enabledCurrencies() == Array(twelve.prefix(10)))
   }

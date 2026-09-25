@@ -97,15 +97,23 @@ enum ProblemReportService {
     AnalyticsSettings.cashbackCategoryKey,
     PlanningSettings.reconcileExpenseCategoryKey,
     PlanningSettings.reconcileIncomeCategoryKey,
+    AccountSettings.transferFeeCategoryKey,
+  ]
+
+  /// Planning settings that are lists of ids of what they are about — reminders put off,
+  /// operations said not to pay a due date — and go in as a count only.
+  private static let countedOnly: Set = [
+    PlanningSettings.dismissedRemindersKey, PlanningSettings.scheduledMatchRejectionsKey,
   ]
 
   /// The settings of a report («настройки без личных данных: язык, валюты, пороги,
   /// флаги»): what the archive carries — language, theme, currencies — and the thresholds and
   /// switches the numbers are computed with, as the application uses them, defaults included.
   ///
-  /// Every value added here is a number, a switch, a level or the id of a category. The
-  /// captions of «для кого» are the owner's own words and stay out; the dismissed reminders
-  /// are ids of what they were about, and go in as a count.
+  /// Every value added here is a number, a switch, a level, a currency code, a state or the id
+  /// of a category. The captions of «для кого» are the owner's own words and stay out; the
+  /// dismissed reminders and the operations said not to pay a due date are ids of what they
+  /// were about, and go in as a count.
   static func settings(of environment: AppEnvironment) -> [String: String] {
     var values = environment.portableSettings()
     guard let settings = environment.settings else { return values }
@@ -115,10 +123,17 @@ enum ProblemReportService {
     var rows: [String: String] = [:]
     for key in PlanningSettings.storageKeys { rows[key] = stored(key) }
     let planning = PlanningSettings(storedValues: rows)
-    for (key, value) in planning.storedValues where key != PlanningSettings.dismissedRemindersKey {
+    for (key, value) in planning.storedValues where !countedOnly.contains(key) {
       values[key] = value
     }
     values["reminders.dismissed.count"] = String(planning.dismissedReminders.count)
+    values["planning.scheduledMatchRejections.count"] = String(
+      planning.scheduledMatchRejections.count)
+    var accountRows: [String: String] = [:]
+    for key in AccountSettings.storageKeys { accountRows[key] = stored(key) }
+    let accounts = AccountSettings(storedValues: accountRows)
+    values[AccountSettings.defaultCurrencyKey] = accounts.defaultCurrency.code
+    if let setup = accounts.setup { values[AccountSettings.setupKey] = setup.rawValue }
     let sensitivity =
       stored(AnalyticsSettings.anomalySensitivityKey).flatMap(AnomalySensitivity.init(rawValue:))
       ?? .standard

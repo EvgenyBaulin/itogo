@@ -15,6 +15,10 @@ public struct TransactionDraft: Hashable, Sendable {
   public var note: String?
   public var placeId: UUID?
   public var paymentMethodId: UUID?
+  /// «Списано со счёта»: what the account moved when it does not hold `currency` — its main
+  /// currency and the amount the bank showed. Both `nil` otherwise.
+  public var accountCurrency: CurrencyCode?
+  public var accountAmount: AmountE4?
   public var periodMonth: MonthKey?
   public var debtId: UUID?
   public var creditDebtId: UUID?
@@ -33,6 +37,8 @@ public struct TransactionDraft: Hashable, Sendable {
     note: String? = nil,
     placeId: UUID? = nil,
     paymentMethodId: UUID? = nil,
+    accountCurrency: CurrencyCode? = nil,
+    accountAmount: AmountE4? = nil,
     periodMonth: MonthKey? = nil,
     debtId: UUID? = nil,
     creditDebtId: UUID? = nil,
@@ -50,6 +56,8 @@ public struct TransactionDraft: Hashable, Sendable {
     self.note = note
     self.placeId = placeId
     self.paymentMethodId = paymentMethodId
+    self.accountCurrency = accountCurrency
+    self.accountAmount = accountAmount
     self.periodMonth = periodMonth
     self.debtId = debtId
     self.creditDebtId = creditDebtId
@@ -72,6 +80,8 @@ public struct TransactionDraft: Hashable, Sendable {
       note: transaction.note,
       placeId: transaction.placeId,
       paymentMethodId: transaction.paymentMethodId,
+      accountCurrency: transaction.accountCurrency,
+      accountAmount: transaction.accountAmountE4,
       periodMonth: transaction.periodMonth,
       debtId: transaction.debtId,
       creditDebtId: transaction.creditDebtId,
@@ -97,12 +107,34 @@ public struct TransactionDraft: Hashable, Sendable {
   }
 
   /// Materializes the draft into records ready for the repository.
+  ///
+  /// A leg in rubles is the operation's rubles: what the bank charged the ruble account is
+  /// what the operation cost, markup included. When it is not what the rate gives
+  /// (`round(amount × rate)`), it was typed from the statement, and the rate becomes the one it
+  /// implies — `leg ÷ amount` to six places, a manual rate the refinement of the bank's rates
+  /// leaves alone. A leg that is exactly the rate's figure keeps the bank's rate, and is
+  /// refined with it. A refund taken back from a purchase keeps the purchase's rate whatever
+  /// its leg says: the leg is only the money that moved.
   public func materialize(
     id: UUID = UUID(),
     now: Date = Date(),
     rublesConverter: (AmountE4) throws -> AmountE4 = { $0 }
   ) throws -> TransactionEntry {
-    let totalRub = try rublesConverter(amount)
+    var rate = rate
+    var rateSource = rateSource
+    var rateProvisional = rateProvisional
+    let totalRub: AmountE4
+    if let leg = rubleLeg {
+      totalRub = leg
+      let prefill = rate.flatMap { try? AmountE4(decimal: amount.decimal * $0) }
+      if prefill != leg, !amount.isZero {
+        rate = DecimalMath.round(leg.decimal / amount.decimal, scale: 6)
+        rateSource = .manual
+        rateProvisional = false
+      }
+    } else {
+      totalRub = try rublesConverter(amount)
+    }
     let transaction = Transaction(
       id: id,
       kind: kind,
@@ -118,6 +150,8 @@ public struct TransactionDraft: Hashable, Sendable {
       note: note,
       placeId: placeId,
       paymentMethodId: paymentMethodId,
+      accountCurrency: accountCurrency,
+      accountAmountE4: accountAmount,
       periodMonth: periodMonth,
       debtId: debtId,
       creditDebtId: creditDebtId,
@@ -130,6 +164,15 @@ public struct TransactionDraft: Hashable, Sendable {
       part.materialize(transactionId: id, amountRub: rubles)
     }
     return TransactionEntry(transaction: transaction, parts: parts)
+  }
+
+  /// The leg that sets the operation's rubles: one in rubles, on an operation in another
+  /// currency that takes nothing back from a purchase.
+  private var rubleLeg: AmountE4? {
+    guard accountCurrency == .rub, currency != .rub, let accountAmount,
+      !parts.contains(where: { $0.refundOfPartId != nil })
+    else { return nil }
+    return accountAmount
   }
 
   /// Materializes the draft over the saved operation it was opened from. Only what the
@@ -159,6 +202,9 @@ extension TransactionEntry {
   ///   would list the part as owed again while its link says the money came. Parts are
   ///   matched by id; one `current` has no status for — new, or paid for nobody before —
   ///   keeps what the draft gave it.
+  ///
+  /// The account and what moved on it (`accountCurrency`, `accountAmountE4`), and the purchase
+  /// part a refund takes back from, are the panel's: they come from the edit.
   public func rebased(onto current: TransactionEntry) -> TransactionEntry {
     var rebased = self
     rebased.transaction.createdAt = current.transaction.createdAt
@@ -194,6 +240,8 @@ public struct PartDraft: Hashable, Sendable, Identifiable {
   public var eventId: UUID?
   public var goalId: UUID?
   public var note: String?
+  /// A refund part: the part of a purchase it takes money back from.
+  public var refundOfPartId: UUID?
 
   public init(
     id: UUID = UUID(),
@@ -210,7 +258,8 @@ public struct PartDraft: Hashable, Sendable, Identifiable {
     reimbursementStatus: ReimbursementStatus? = nil,
     eventId: UUID? = nil,
     goalId: UUID? = nil,
-    note: String? = nil
+    note: String? = nil,
+    refundOfPartId: UUID? = nil
   ) {
     self.id = id
     self.categoryId = categoryId
@@ -227,6 +276,7 @@ public struct PartDraft: Hashable, Sendable, Identifiable {
     self.eventId = eventId
     self.goalId = goalId
     self.note = note
+    self.refundOfPartId = refundOfPartId
   }
 
   public init(part: TransactionPart) {
@@ -244,7 +294,8 @@ public struct PartDraft: Hashable, Sendable, Identifiable {
       reimbursementStatus: part.reimbursementStatus,
       eventId: part.eventId,
       goalId: part.goalId,
-      note: part.note)
+      note: part.note,
+      refundOfPartId: part.refundOfPartId)
   }
 
   public func materialize(transactionId: UUID, amountRub: AmountE4) -> TransactionPart {
@@ -264,6 +315,7 @@ public struct PartDraft: Hashable, Sendable, Identifiable {
       reimbursementStatus: reimbursable ? (reimbursementStatus ?? .expected) : nil,
       eventId: eventId,
       goalId: goalId,
-      note: note)
+      note: note,
+      refundOfPartId: refundOfPartId)
   }
 }

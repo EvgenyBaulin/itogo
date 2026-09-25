@@ -132,6 +132,53 @@ struct ChangeStreamTests {
     #expect(Set(read).subtracting(DatabaseStack.ledgerTables).sorted() == [])
   }
 
+  /// The tables of the accounts are ledger tables: balances are made of the transfers and the
+  /// counts, and the groups decide what the total shows.
+  @Test func theTablesOfTheAccountsAreWatched() throws {
+    for table in ["account_groups", "transfers", "reconciliation_balances"] {
+      #expect(DatabaseStack.ledgerTables.contains(table), "\(table) is not watched")
+    }
+    #expect(DatabaseStack.ledgerTables.count == 24)
+    #expect(Set(DatabaseStack.ledgerTables).count == DatabaseStack.ledgerTables.count)
+  }
+
+  /// A write to any of them is announced, whoever makes it.
+  @Test func aWriteToTheTablesOfTheAccountsIsAnnounced() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card")
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    try ReferenceRepository(writer: stack.writer).save(card)
+    try ReferenceRepository(writer: stack.writer).save(cash)
+    let seen = Tally()
+    let changes = stack.ledgerChanges(onChange: { seen.increment() })
+    let at = Date(timeIntervalSince1970: 1_789_000_000)
+
+    try stack.writer.write { db in
+      try AccountGroup(name: "Russia").insert(db)
+    }
+    #expect(seen.value >= 1, "a group was not announced")
+    try stack.writer.write { db in
+      try Transfer(
+        occurredAt: at, fromAccountId: card.id, fromCurrency: .rub,
+        fromAmountE4: AmountE4(whole: 1), toAccountId: cash.id, toCurrency: .rub,
+        toAmountE4: AmountE4(whole: 1)
+      ).insert(db)
+    }
+    #expect(seen.value >= 2, "a transfer was not announced")
+    let sheet = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 1), reconciledAt: at, actualTotalRubE4: .zero,
+      kind: .accounts)
+    try stack.writer.write { db in try sheet.insert(db) }
+    let before = seen.value
+    try stack.writer.write { db in
+      try ReconciledBalance(
+        reconciliationId: sheet.id, accountId: card.id, currency: .rub, actualE4: .zero
+      ).insert(db)
+    }
+    #expect(seen.value > before, "a count was not announced")
+    withExtendedLifetime(changes) {}
+  }
+
   /// «Это нормально» writes a row the anomalies are rebuilt from; the stream announces it
   /// like any other write the numbers depend on.
   @Test func aDismissedAnomalyIsAnnounced() throws {

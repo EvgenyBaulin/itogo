@@ -129,6 +129,9 @@ struct PlanningSnapshot: Equatable {
   var events: [Event]
   var goals: [Goal]
   var debts: [Debt]
+  var accounts: [PaymentMethod]
+  var groups: [AccountGroup]
+  var transfers: [Transfer]
   var book: PlanningBook
   var entries: [TransactionEntry]
   var settings: [String: String]
@@ -139,6 +142,10 @@ struct PlanningSnapshot: Equatable {
     events = Self.byId(try references.events(includeArchived: true))
     goals = Self.byId(try references.goals(includeArchived: true))
     debts = Self.byId(try references.debts(includeClosed: true))
+    let accountRepository = AccountRepository(writer: stack.writer)
+    accounts = Self.byId(try accountRepository.accounts(includeArchived: true))
+    groups = Self.byId(try accountRepository.groups(includeArchived: true))
+    transfers = Self.byId(try stack.writer.read { db in try Transfer.fetchAll(db) })
     var book = try PlanningRepository(writer: stack.writer).book()
     book.scheduled = Self.byId(book.scheduled)
     book.prices = Self.byId(book.prices)
@@ -770,5 +777,749 @@ struct PlanningExportTests {
     }
     // The links travel in the archive's database only.
     #expect(tables["expected_income_links"] == nil)
+  }
+}
+
+// MARK: - Accounts, transfers and counts
+
+/// A money back of 700 for a dinner with 600 of it for a friend: the part closes and 100 is a
+/// surplus, a companion income found by its key. What the tests of a deletion need.
+struct MoneyBackFixture {
+  var reimbursementId: UUID
+  var surplusId: UUID
+  var partId: UUID
+  var dinnerId: UUID
+
+  init(_ stack: DatabaseStack) throws {
+    let references = ReferenceRepository(writer: stack.writer)
+    let repository = TransactionRepository(writer: stack.writer)
+    let groceries = CoreKit.Category(kind: .expense, name: "Groceries", quality: .neutral)
+    let surcharges = CoreKit.Category(kind: .income, name: "Surcharges", systemRole: .surcharges)
+    try references.save(groceries)
+    try references.save(surcharges)
+    var dinner = TransactionDraft(amount: AmountE4(whole: 1_000), note: "dinner")
+    dinner.parts = [
+      PartDraft(categoryId: groceries.id, amount: AmountE4(whole: 400)),
+      PartDraft(categoryId: groceries.id, amount: AmountE4(whole: 600), reimbursable: true),
+    ]
+    let dinnerEntry = try dinner.materialize()
+    try repository.save(dinnerEntry)
+    let owed = try repository.owedParts()
+
+    let reimbursementId = UUID()
+    let outcome = try ReimbursementResolver.resolve(
+      reimbursementTxId: reimbursementId, amountE4: AmountE4(whole: 700),
+      closing: owed.map(\.inRubles))
+    var draft = TransactionDraft(kind: .reimbursement, amount: AmountE4(whole: 700))
+    draft.normalizeSinglePart()
+    let surplus = try #require(outcome.surplus)
+    var income = TransactionDraft(kind: .income, amount: surplus.amountE4)
+    income.parts = [PartDraft(categoryId: surcharges.id, amount: surplus.amountE4)]
+    var surplusEntry = try income.materialize()
+    surplusEntry.transaction.externalId = ReimbursementCompanions.surplusKey(of: reimbursementId)
+    try repository.apply(
+      outcome, reimbursement: try draft.materialize(id: reimbursementId), extra: [surplusEntry])
+    self.reimbursementId = reimbursementId
+    self.surplusId = surplusEntry.id
+    self.partId = owed[0].partId
+    self.dinnerId = dinnerEntry.id
+  }
+}
+
+@Suite("Accounts, transfers and counts are rows of the planning, one ⌘Z each")
+struct AccountPlanningTests {
+  /// Groups, accounts, a transfer, a reconciliation of accounts and its counts go in together;
+  /// undo takes every one of them back.
+  @Test func theRowsOfTheAccountsGoInAndUndoTakesThemOut() throws {
+    let stack = try TestSupport.makeStack()
+    let untouched = try PlanningSnapshot(stack)
+    let group = AccountGroup(name: "Kazakhstan", inSummary: false)
+    let freedom = PaymentMethod(
+      name: "Freedom", kind: .account, currency: .eur, groupId: group.id,
+      otherCurrencies: [.usd, CurrencyCode("KZT")])
+    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
+    let transfer = Transfer(
+      occurredAt: PlanningTests.instant(hour: 10), fromAccountId: card.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(whole: 10_000), toAccountId: freedom.id,
+      toCurrency: CurrencyCode("KZT"), toAmountE4: AmountE4(whole: 56_000),
+      createdAt: PlanningTests.instant(hour: 10), updatedAt: PlanningTests.instant(hour: 10))
+    let sheet = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 17), reconciledAt: PlanningTests.instant(hour: 11),
+      actualTotalRubE4: .zero, kind: .accounts)
+    let counts = [
+      ReconciledBalance(
+        reconciliationId: sheet.id, accountId: card.id, currency: .rub,
+        actualE4: AmountE4(whole: 90_000)),
+      ReconciledBalance(
+        reconciliationId: sheet.id, accountId: freedom.id, currency: CurrencyCode("KZT"),
+        actualE4: AmountE4(whole: 56_000)),
+    ]
+    let repository = PlanningRepository(writer: stack.writer)
+
+    let undo = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [sheet], accountGroups: [group], paymentMethods: [card, freedom],
+          transfers: [transfer], reconciledBalances: counts)))
+
+    #expect(undo.inserted.accountGroups == [group.id])
+    #expect(undo.inserted.paymentMethods == [card.id, freedom.id])
+    #expect(undo.inserted.transfers == [transfer.id])
+    #expect(undo.inserted.reconciliations == [sheet.id])
+    #expect(undo.inserted.reconciledBalances == counts.map(\.id))
+    let book = try repository.book()
+    #expect(book.reconciledBalances == counts)
+    #expect(book.reconciliations == [sheet])
+    let dataset = try stack.writer.read { db in try DatasetRepository.dataset(db, version: 1) }
+    #expect(dataset.transfers == [transfer])
+    #expect(dataset.accountGroups == [group])
+    #expect(Set(dataset.paymentMethods) == [card, freedom])
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == untouched)
+    #expect(try AccountRepository(writer: stack.writer).accounts(includeArchived: true).isEmpty)
+    #expect(try AccountRepository(writer: stack.writer).groups(includeArchived: true).isEmpty)
+  }
+
+  /// The main account passes from one account to another in one change: the flag moves, and
+  /// ⌘Z moves it back.
+  @Test func theMainAccountMovesAndUndoMovesItBack() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card", isDefault: true)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    let repository = PlanningRepository(writer: stack.writer)
+    _ = try repository.apply(PlanningChange(upsert: PlanningRows(paymentMethods: [card, cash])))
+    func mains() throws -> [UUID] {
+      try AccountRepository(writer: stack.writer).accounts().filter(\.isMain).map(\.id)
+    }
+
+    var newMain = cash
+    newMain.isDefault = true
+    var oldMain = card
+    oldMain.isDefault = false
+    let undo = try repository.apply(
+      PlanningChange(upsert: PlanningRows(paymentMethods: [newMain, oldMain])))
+    #expect(try mains() == [cash.id])
+    #expect(Set(undo.before.paymentMethods) == [card, cash])
+
+    try repository.revert(undo)
+    #expect(try mains() == [card.id])
+  }
+
+  /// A change that makes an account main takes the flag from every other account in the same
+  /// write — the archived ones included — so no change leaves two main accounts; ⌘Z gives
+  /// the flag back to where it was.
+  @Test func aNewMainAccountTakesTheFlagFromTheOthersAndUndoGivesItBack() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card", isDefault: true)
+    let old = PaymentMethod(name: "Old", isDefault: true, archived: true)
+    try stack.writer.write { db in
+      for method in [card, old] { try method.insert(db) }
+    }
+    let before = try PlanningSnapshot(stack)
+    let repository = PlanningRepository(writer: stack.writer)
+
+    let cash = PaymentMethod(name: "Cash", kind: .cash, isDefault: true)
+    let undo = try repository.apply(PlanningChange(upsert: PlanningRows(paymentMethods: [cash])))
+    let accounts = AccountRepository(writer: stack.writer)
+    #expect(try accounts.accounts(includeArchived: true).filter(\.isMain).map(\.id) == [cash.id])
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+  }
+
+  /// A new account and what the same change moved onto it — a scheduled payment, a transfer,
+  /// a line of a debt journal, an account filed under a new group — all go back on ⌘Z. The
+  /// rows moved still point at the new account and group until they are written back, so
+  /// those go only after them.
+  @Test func undoOfANewAccountPutsBackWhatTheChangeMovedOntoIt() throws {
+    let stack = try TestSupport.makeStack()
+    let fixture = try TestSupport.seedReferences(stack)
+    let repository = PlanningRepository(writer: stack.writer)
+    let card = fixture.paymentMethod
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    let rent = ScheduledPayment(
+      name: "Rent", amountE4: AmountE4(whole: 1), paymentMethodId: card.id)
+    let line = DebtEntry(
+      debtId: fixture.debt.id, amountE4: AmountE4(whole: 1), kind: .borrowed,
+      paymentMethodId: card.id)
+    let transfer = Transfer(
+      occurredAt: PlanningTests.instant(hour: 8), fromAccountId: card.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(whole: 1), toAccountId: cash.id, toCurrency: .rub,
+      toAmountE4: AmountE4(whole: 1))
+    _ = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          scheduled: [rent], debtEntries: [line], paymentMethods: [cash],
+          transfers: [transfer])))
+    let before = try PlanningSnapshot(stack)
+
+    let group = AccountGroup(name: "Kazakhstan")
+    let kaspi = PaymentMethod(name: "Kaspi", groupId: group.id)
+    var filed = cash
+    filed.groupId = group.id
+    var movedRent = rent
+    movedRent.paymentMethodId = kaspi.id
+    var movedLine = line
+    movedLine.paymentMethodId = kaspi.id
+    var movedTransfer = transfer
+    movedTransfer.fromAccountId = kaspi.id
+    let undo = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          scheduled: [movedRent], debtEntries: [movedLine], accountGroups: [group],
+          paymentMethods: [kaspi, filed], transfers: [movedTransfer])))
+    #expect(undo.inserted.paymentMethods == [kaspi.id])
+    #expect(undo.inserted.accountGroups == [group.id])
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+  }
+
+  /// The main account is not deleted by a change while no other live account is main, and
+  /// nothing of the change is written then; a change that makes another account main may
+  /// delete it, and ⌘Z brings it back as the main one.
+  @Test func aChangeDeletesTheMainAccountOnlyOnceAnotherIsMain() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card", isDefault: true)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    let repository = PlanningRepository(writer: stack.writer)
+    _ = try repository.apply(PlanningChange(upsert: PlanningRows(paymentMethods: [card, cash])))
+    let before = try PlanningSnapshot(stack)
+
+    #expect(throws: AccountWriteError.isMain) {
+      _ = try repository.apply(
+        PlanningChange(delete: PlanningRowIDs(paymentMethods: [card.id])))
+    }
+    #expect(try PlanningSnapshot(stack) == before)
+
+    var chosen = cash
+    chosen.isDefault = true
+    let undo = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(paymentMethods: [chosen]),
+        delete: PlanningRowIDs(paymentMethods: [card.id])))
+    let accounts = AccountRepository(writer: stack.writer)
+    #expect(try accounts.accounts(includeArchived: true) == [chosen])
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+  }
+
+  /// Deleted by a change, an account takes along a reconciliation of accounts left with no
+  /// count at all — an empty one would read as a total of nothing —, as
+  /// `AccountRepository.delete` does. ⌘Z brings the reconciliation back with its counts.
+  @Test func aChangeThatDeletesAnAccountTakesTheReconciliationsLeftEmpty() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card")
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    let alone = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 16), reconciledAt: PlanningTests.instant(hour: 8),
+      actualTotalRubE4: .zero, kind: .opening)
+    let shared = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 17), reconciledAt: PlanningTests.instant(hour: 9),
+      actualTotalRubE4: .zero, kind: .accounts)
+    let counts = [
+      ReconciledBalance(
+        reconciliationId: alone.id, accountId: card.id, currency: .rub, actualE4: .zero),
+      ReconciledBalance(
+        reconciliationId: shared.id, accountId: card.id, currency: .rub, actualE4: .zero),
+      ReconciledBalance(
+        reconciliationId: shared.id, accountId: cash.id, currency: .rub, actualE4: .zero),
+    ]
+    let repository = PlanningRepository(writer: stack.writer)
+    _ = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [alone, shared], paymentMethods: [card, cash],
+          reconciledBalances: counts)))
+    let before = try PlanningSnapshot(stack)
+
+    let undo = try repository.apply(
+      PlanningChange(delete: PlanningRowIDs(paymentMethods: [card.id])))
+    let book = try repository.book()
+    #expect(book.reconciliations.map(\.id) == [shared.id])
+    #expect(book.reconciledBalances == [counts[2]])
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+    #expect(try repository.book().reconciledBalances == counts)
+  }
+
+  /// A group deleted takes nothing with it: its accounts lose the group and keep the rest;
+  /// ⌘Z files them back under it.
+  @Test func deletingAGroupKeepsItsAccountsAndUndoFilesThemBack() throws {
+    let stack = try TestSupport.makeStack()
+    let group = AccountGroup(name: "Russia")
+    let card = PaymentMethod(name: "Card", groupId: group.id, sort: 3)
+    let repository = PlanningRepository(writer: stack.writer)
+    _ = try repository.apply(
+      PlanningChange(upsert: PlanningRows(accountGroups: [group], paymentMethods: [card])))
+
+    let undo = try repository.apply(
+      PlanningChange(delete: PlanningRowIDs(accountGroups: [group.id])))
+    let accounts = AccountRepository(writer: stack.writer)
+    #expect(try accounts.groups().isEmpty)
+    #expect(try accounts.accounts().first?.groupId == nil)
+    #expect(try accounts.accounts().first?.sort == 3)
+
+    try repository.revert(undo)
+    #expect(try accounts.groups() == [group])
+    #expect(try accounts.accounts() == [card])
+  }
+
+  /// An account anything moved money on stays: an operation — deleted ones included —, a
+  /// transfer, a scheduled payment, a line of a debt journal. One that only was counted can go,
+  /// its counts with it, and ⌘Z brings them all back in their place.
+  @Test func anAccountInUseIsNotDeletedAndACountedOneComesBackWithItsCounts() throws {
+    let stack = try TestSupport.makeStack()
+    let fixture = try TestSupport.seedReferences(stack)
+    let repository = PlanningRepository(writer: stack.writer)
+    let transactions = TransactionRepository(writer: stack.writer)
+    var draft = TransactionDraft(
+      amount: AmountE4(whole: 10), paymentMethodId: fixture.paymentMethod.id)
+    draft.normalizeSinglePart()
+    let entry = try draft.materialize()
+    try transactions.save(entry)
+    try transactions.softDelete(id: entry.id)
+
+    #expect(throws: PlanningWriteError.referencedByOperations(fixture.paymentMethod.id)) {
+      _ = try repository.apply(
+        PlanningChange(delete: PlanningRowIDs(paymentMethods: [fixture.paymentMethod.id])))
+    }
+
+    let others = (0..<3).map { PaymentMethod(name: "Other \($0)") }
+    let target = PaymentMethod(name: "Target")
+    _ = try repository.apply(
+      PlanningChange(upsert: PlanningRows(paymentMethods: others + [target])))
+    _ = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          scheduled: [
+            ScheduledPayment(
+              name: "Rent", amountE4: AmountE4(whole: 1), paymentMethodId: others[0].id)
+          ],
+          debtEntries: [
+            DebtEntry(
+              debtId: fixture.debt.id, amountE4: AmountE4(whole: 1), kind: .borrowed,
+              paymentMethodId: others[1].id)
+          ],
+          transfers: [
+            Transfer(
+              occurredAt: PlanningTests.instant(hour: 8), fromAccountId: others[2].id,
+              fromCurrency: .rub, fromAmountE4: AmountE4(whole: 1), toAccountId: target.id,
+              toCurrency: .rub, toAmountE4: AmountE4(whole: 1))
+          ])))
+    for account in others {
+      #expect(throws: PlanningWriteError.referencedByOperations(account.id)) {
+        _ = try repository.apply(
+          PlanningChange(delete: PlanningRowIDs(paymentMethods: [account.id])))
+      }
+    }
+
+    let counted = PaymentMethod(name: "Counted")
+    let sheet = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 17), reconciledAt: PlanningTests.instant(hour: 12),
+      actualTotalRubE4: .zero, kind: .accounts)
+    let counts = [CurrencyCode.rub, .usd].map {
+      ReconciledBalance(
+        reconciliationId: sheet.id, accountId: counted.id, currency: $0, actualE4: .zero)
+    }
+    _ = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [sheet], paymentMethods: [counted], reconciledBalances: counts)))
+    let before = try PlanningSnapshot(stack)
+    let undo = try repository.apply(
+      PlanningChange(delete: PlanningRowIDs(paymentMethods: [counted.id])))
+    #expect(try repository.book().reconciledBalances.isEmpty)
+    #expect(undo.before.reconciledBalances == counts)
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+    #expect(try repository.book().reconciledBalances == counts)
+  }
+
+  /// A reconciliation deleted takes its counts; ⌘Z brings both back.
+  @Test func deletingAReconciliationTakesItsCountsAndUndoBringsThemBack() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card")
+    let sheet = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 17), reconciledAt: PlanningTests.instant(hour: 12),
+      actualTotalRubE4: .zero, kind: .accounts)
+    let count = ReconciledBalance(
+      reconciliationId: sheet.id, accountId: card.id, currency: .rub,
+      actualE4: AmountE4(whole: 5))
+    let repository = PlanningRepository(writer: stack.writer)
+    _ = try repository.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [sheet], paymentMethods: [card], reconciledBalances: [count])))
+
+    let undo = try repository.apply(
+      PlanningChange(delete: PlanningRowIDs(reconciliations: [sheet.id])))
+    #expect(try repository.book().reconciledBalances.isEmpty)
+    try repository.revert(undo)
+    #expect(try repository.book().reconciledBalances == [count])
+    #expect(try repository.book().reconciliations == [sheet])
+  }
+}
+
+@Suite("A planning change rewrites and deletes operations, and ⌘Z puts them back")
+struct PlanningOperationsTests {
+  private let at = PlanningTests.instant(hour: 15)
+
+  /// Operations written over as they are given, stamped with the moment of the change; ⌘Z
+  /// writes each back exactly as it was.
+  @Test func rewrittenOperationsComeBackAsTheyWere() throws {
+    let stack = try TestSupport.makeStack()
+    let fixture = try TestSupport.seedReferences(stack)
+    let transactions = TransactionRepository(writer: stack.writer)
+    let first = try TestSupport.makeEntry(note: "first")
+    let second = try TestSupport.makeEntry(note: "second")
+    try transactions.save(first)
+    try transactions.save(second)
+    let stored = try [first, second].map { try #require(try transactions.entry(id: $0.id)) }
+    let before = try PlanningSnapshot(stack)
+
+    var paid = first
+    paid.transaction.paymentMethodId = fixture.paymentMethod.id
+    paid.transaction.externalId = "sched:x:2026-09-01"
+    var split = second
+    split.parts = [
+      TransactionPart(transactionId: second.id, amountE4: AmountE4(raw: 1_000_000)),
+      TransactionPart(transactionId: second.id, amountE4: AmountE4(raw: 1_500_000)),
+    ]
+    let repository = PlanningRepository(writer: stack.writer)
+    let undo = try repository.apply(PlanningChange(rewritten: [paid, split], at: at))
+
+    #expect(undo.rewrittenBefore == stored)
+    let written = try #require(try transactions.entry(id: first.id))
+    #expect(written.transaction.paymentMethodId == fixture.paymentMethod.id)
+    #expect(written.transaction.externalId == "sched:x:2026-09-01")
+    #expect(written.transaction.updatedAt == at)
+    #expect(try transactions.entry(id: second.id)?.parts.count == 2)
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+  }
+
+  /// Only a live operation is written over: one in the bin, or one that is not there, fails
+  /// the whole change, and nothing of it is written.
+  @Test func rewritingAnOperationThatIsNotLiveWritesNothing() throws {
+    let stack = try TestSupport.makeStack()
+    let transactions = TransactionRepository(writer: stack.writer)
+    let binned = try TestSupport.makeEntry(note: "binned")
+    try transactions.save(binned)
+    try transactions.softDelete(id: binned.id)
+    let before = try PlanningSnapshot(stack)
+    let repository = PlanningRepository(writer: stack.writer)
+    let limit = Budget(scope: .badTotal, amountE4: AmountE4(whole: 1))
+
+    for rewritten in [binned, try TestSupport.makeEntry(note: "never saved")] {
+      #expect(throws: DatabaseError.notFound) {
+        _ = try repository.apply(
+          PlanningChange(upsert: PlanningRows(budgets: [limit]), rewritten: [rewritten]))
+      }
+    }
+    var unbalanced = binned
+    unbalanced.parts = []
+    #expect(throws: DatabaseError.unbalancedParts) {
+      _ = try repository.apply(PlanningChange(rewritten: [unbalanced]))
+    }
+    #expect(try PlanningSnapshot(stack) == before)
+  }
+
+  /// Operations deleted by a change take along what a deletion takes — the surplus of a money
+  /// back, the part it closed back to waiting, a payment's line off its debt, a fee's key — and
+  /// ⌘Z brings every piece back, the transfer the fee belonged to with it.
+  @Test func deletedOperationsComeBackWithEverythingTheyTookAlong() throws {
+    let stack = try TestSupport.makeStack()
+    let fixture = try TestSupport.seedReferences(stack)
+    let money = try MoneyBackFixture(stack)
+    let transactions = TransactionRepository(writer: stack.writer)
+    let repository = PlanningRepository(writer: stack.writer)
+
+    var payment = TransactionDraft(amount: AmountE4(whole: 300), debtId: fixture.debt.id)
+    payment.normalizeSinglePart()
+    let paymentEntry = try payment.materialize()
+    let line = DebtEntry(
+      debtId: fixture.debt.id, amountE4: AmountE4(whole: -300), kind: .payment,
+      transactionId: paymentEntry.id)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    let transfer = Transfer(
+      occurredAt: PlanningTests.instant(hour: 9), fromAccountId: fixture.paymentMethod.id,
+      fromCurrency: .rub, fromAmountE4: AmountE4(whole: 1_000), toAccountId: cash.id,
+      toCurrency: .rub, toAmountE4: AmountE4(whole: 1_000),
+      createdAt: PlanningTests.instant(hour: 9), updatedAt: PlanningTests.instant(hour: 9))
+    var fee = TransactionDraft(amount: AmountE4(whole: 10), paymentMethodId: transfer.fromAccountId)
+    fee.normalizeSinglePart()
+    var feeEntry = try fee.materialize()
+    feeEntry.transaction.externalId = OperationLink.transferFee(transfer.id).externalId
+    _ = try repository.apply(
+      PlanningChange(
+        created: [paymentEntry, feeEntry],
+        upsert: PlanningRows(debtEntries: [line], paymentMethods: [cash], transfers: [transfer])))
+    let before = try PlanningSnapshot(stack)
+
+    let undo = try repository.apply(
+      PlanningChange(
+        delete: PlanningRowIDs(transfers: [transfer.id]),
+        softDeleted: [money.reimbursementId, paymentEntry.id, feeEntry.id], at: at))
+
+    let deletion = undo.deletion
+    #expect(Set(deletion.deletedIds) == [money.reimbursementId, paymentEntry.id, feeEntry.id])
+    #expect(deletion.companionIds == [money.surplusId])
+    #expect(deletion.reopenedPartIds == [money.partId])
+    #expect(deletion.removedDebtEntries == [line])
+    #expect(deletion.releasedExternalIds == [feeEntry.id: feeEntry.transaction.externalId!])
+    let gone = try transactions.entries(
+      ids: [money.reimbursementId, money.surplusId, paymentEntry.id, feeEntry.id])
+    #expect(gone.allSatisfy { $0.transaction.deletedAt == at })
+    #expect(try transactions.entry(id: feeEntry.id)?.transaction.externalId == nil)
+    #expect(try transactions.owedParts().map(\.partId) == [money.partId])
+    #expect(try repository.book().debtEntries.isEmpty)
+
+    try repository.revert(undo, at: at.addingTimeInterval(60))
+    let after = try PlanningSnapshot(stack)
+    #expect(after.book == before.book)
+    #expect(try transactions.owedParts().isEmpty)
+    #expect(
+      try transactions.entry(id: feeEntry.id)?.transaction.externalId
+        == feeEntry.transaction.externalId)
+    let back = try transactions.entries(
+      ids: [money.reimbursementId, money.surplusId, paymentEntry.id, feeEntry.id])
+    #expect(back.allSatisfy { !$0.transaction.isDeleted })
+    #expect(try stack.writer.read { db in try Transfer.fetchAll(db) } == [transfer])
+  }
+
+  /// A rewrite that drops a part loses, by the schema's cascade, the links of the money back
+  /// that closed it. ⌘Z brings the part back with its links, so deleting that money back later
+  /// still opens the part again.
+  @Test func aPartDroppedByARewriteComesBackWithItsMoneyBackLinks() throws {
+    let stack = try TestSupport.makeStack()
+    let money = try MoneyBackFixture(stack)
+    let transactions = TransactionRepository(writer: stack.writer)
+    let repository = PlanningRepository(writer: stack.writer)
+    func links() throws -> [ReimbursementLink] {
+      try stack.writer.read { db in try ReimbursementLink.order(Column.rowID).fetchAll(db) }
+    }
+    let linked = try links()
+    #expect(linked.map(\.partId) == [money.partId])
+    let before = try PlanningSnapshot(stack)
+
+    var dinner = try #require(try transactions.entry(id: money.dinnerId))
+    dinner.parts = [
+      TransactionPart(
+        transactionId: dinner.id, categoryId: dinner.parts[0].categoryId,
+        amountE4: dinner.transaction.amountE4, amountRubE4: dinner.transaction.amountRubE4)
+    ]
+    let undo = try repository.apply(PlanningChange(rewritten: [dinner], at: at))
+    #expect(try links().isEmpty)
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+    #expect(try links() == linked)
+    let effects = try transactions.softDelete(ids: [money.reimbursementId])
+    #expect(effects.reopenedPartIds == [money.partId])
+  }
+
+  /// A key that one change moved from one rewritten operation to another goes back to the
+  /// first on ⌘Z. The keys of the rewritten operations are let go before any of them is
+  /// written back; otherwise the unique index would refuse the first one, and ⌘Z would stay
+  /// stuck on that step.
+  @Test func aKeyMovedBetweenRewrittenOperationsGoesBackOnUndo() throws {
+    let stack = try TestSupport.makeStack()
+    let transactions = TransactionRepository(writer: stack.writer)
+    var first = try TestSupport.makeEntry(note: "first")
+    first.transaction.externalId = "sched:\(UUID().uuidString):2026-09-01"
+    let second = try TestSupport.makeEntry(note: "second")
+    try transactions.save(first)
+    try transactions.save(second)
+    let before = try PlanningSnapshot(stack)
+
+    var released = try #require(try transactions.entry(id: first.id))
+    released.transaction.externalId = nil
+    var taken = try #require(try transactions.entry(id: second.id))
+    taken.transaction.externalId = first.transaction.externalId
+    let repository = PlanningRepository(writer: stack.writer)
+    let undo = try repository.apply(PlanningChange(rewritten: [released, taken], at: at))
+    #expect(
+      try transactions.entry(id: second.id)?.transaction.externalId
+        == first.transaction.externalId)
+
+    try repository.revert(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+  }
+
+  /// The same change and its undo off the calling thread.
+  @Test func aChangeAndItsUndoRunInTheBackgroundAlike() async throws {
+    let stack = try TestSupport.makeStack()
+    let transactions = TransactionRepository(writer: stack.writer)
+    let entry = try TestSupport.makeEntry(note: "one")
+    try transactions.save(entry)
+    let before = try PlanningSnapshot(stack)
+    let repository = PlanningRepository(writer: stack.writer)
+    var renamed = entry
+    renamed.transaction.note = "renamed"
+
+    let undo = try await repository.applyInBackground(
+      PlanningChange(rewritten: [renamed], softDeleted: [], at: at))
+    #expect(try transactions.entry(id: entry.id)?.transaction.note == "renamed")
+    try await repository.revertInBackground(undo)
+    #expect(try PlanningSnapshot(stack) == before)
+  }
+}
+
+@Suite("A merge of accounts starts the merged-away account from zero")
+struct AccountMergeStorageTests {
+  /// Merged into the card, the wallet's operations, transfers and journal lines follow it, a
+  /// transfer between the two in one currency goes, and the wallet is counted at zero from
+  /// the moment of the merge — so bringing it back from the archive counts nothing twice.
+  @Test func theMergedAwayAccountIsCountedAtZero() throws {
+    let stack = try TestSupport.makeStack()
+    _ = try TestSupport.seedReferences(stack)
+    let card = PaymentMethod(name: "Card", currency: .rub)
+    let wallet = PaymentMethod(
+      name: "Wallet", kind: .cash, currency: .rub, isDefault: true,
+      otherCurrencies: [.usd])
+    let repository = PlanningRepository(writer: stack.writer)
+    let within = Transfer(
+      occurredAt: PlanningTests.instant(hour: 8), fromAccountId: wallet.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(whole: 100), toAccountId: card.id, toCurrency: .rub,
+      toAmountE4: AmountE4(whole: 100))
+    let exchange = Transfer(
+      occurredAt: PlanningTests.instant(hour: 9), fromAccountId: wallet.id, fromCurrency: .usd,
+      fromAmountE4: AmountE4(whole: 10), toAccountId: card.id, toCurrency: .rub,
+      toAmountE4: AmountE4(whole: 900))
+    let firstCount = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 16), reconciledAt: PlanningTests.instant(hour: 7),
+      actualTotalRubE4: .zero, kind: .opening)
+    let walletCount = ReconciledBalance(
+      reconciliationId: firstCount.id, accountId: wallet.id, currency: .rub,
+      actualE4: AmountE4(whole: 500))
+    var draft = TransactionDraft(amount: AmountE4(whole: 20), paymentMethodId: wallet.id)
+    draft.normalizeSinglePart()
+    let coffee = try draft.materialize()
+    _ = try repository.apply(
+      PlanningChange(
+        created: [coffee],
+        upsert: PlanningRows(
+          reconciliations: [firstCount], paymentMethods: [card, wallet],
+          transfers: [within, exchange], reconciledBalances: [walletCount])))
+
+    var target = card
+    target.otherCurrencies = [.usd]
+    target.isDefault = true
+    let at = PlanningTests.instant(hour: 16)
+    let rub = BalanceKey(accountId: card.id, currency: .rub)
+    let usd = BalanceKey(accountId: card.id, currency: .usd)
+    let walletRub = BalanceKey(accountId: wallet.id, currency: .rub)
+    let walletUsd = BalanceKey(accountId: wallet.id, currency: .usd)
+    try AccountRepository(writer: stack.writer).merge(
+      AccountMergePlan(
+        sourceId: wallet.id, target: target, deletedTransferIds: [within.id],
+        opening: [rub: AmountE4(whole: 1_380), usd: AmountE4(whole: 5)], at: at,
+        sourceZero: [walletRub, walletUsd], hadAnchor: [walletRub]),
+      calendar: .utc)
+
+    let accounts = try AccountRepository(writer: stack.writer).accounts(includeArchived: true)
+    let merged = try #require(accounts.first { $0.id == card.id })
+    let archived = try #require(accounts.first { $0.id == wallet.id })
+    #expect(merged == target)
+    #expect(archived.archived && !archived.isMain)
+    #expect(accounts.filter(\.isMain).map(\.id) == [card.id])
+    let moved = try TransactionRepository(writer: stack.writer).entry(id: coffee.id)
+    #expect(moved?.transaction.paymentMethodId == card.id)
+    let transfers = try stack.writer.read { db in try Transfer.fetchAll(db) }
+    #expect(transfers.map(\.id) == [exchange.id])
+    #expect(transfers.first?.fromAccountId == card.id)
+
+    let book = try repository.book()
+    let opening = try #require(book.reconciliations.last)
+    #expect(opening.kind == .opening)
+    #expect(opening.reconciledAt == at)
+    #expect(opening.date == DateOnly(year: 2026, month: 9, day: 17))
+    let counts = book.reconciledBalances.filter { $0.reconciliationId == opening.id }
+    #expect(counts.map(\.key) == [rub, usd, walletRub, walletUsd])
+    let byKey = Dictionary(uniqueKeysWithValues: counts.map { ($0.key, $0) })
+    #expect(byKey[rub]?.actualE4 == AmountE4(whole: 1_380))
+    #expect(byKey[rub]?.isStartingPoint == true)
+    #expect(byKey[walletRub]?.actualE4 == .zero)
+    #expect(byKey[walletRub]?.expectedE4 == .zero)
+    #expect(byKey[walletRub]?.differenceE4 == .zero)
+    #expect(byKey[walletUsd]?.isStartingPoint == true)
+    // The wallet's own history stays its own.
+    #expect(book.reconciledBalances.contains(walletCount))
+  }
+
+  /// Merged away, the main account leaves the target main, whatever flag the plan's target
+  /// carries, and no other account is; a target that was main stays main. The archive never
+  /// keeps the only main account.
+  @Test func aMergeNeverLeavesTheAccountsWithoutAMainOne() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card")
+    let wallet = PaymentMethod(name: "Wallet", kind: .cash, isDefault: true)
+    let old = PaymentMethod(name: "Old", isDefault: true, archived: true)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    try stack.writer.write { db in
+      for method in [card, wallet, old, cash] { try method.insert(db) }
+    }
+    let accounts = AccountRepository(writer: stack.writer)
+    func mains() throws -> [UUID] {
+      try accounts.accounts(includeArchived: true).filter(\.isMain).map(\.id)
+    }
+
+    try accounts.merge(
+      AccountMergePlan(
+        sourceId: wallet.id, target: card, deletedTransferIds: [], opening: [:],
+        at: PlanningTests.instant(hour: 10),
+        sourceZero: [BalanceKey(accountId: wallet.id, currency: .rub)]),
+      calendar: .utc)
+    #expect(try mains() == [card.id])
+
+    try accounts.merge(
+      AccountMergePlan(
+        sourceId: cash.id, target: card, deletedTransferIds: [], opening: [:],
+        at: PlanningTests.instant(hour: 11),
+        sourceZero: [BalanceKey(accountId: cash.id, currency: .rub)]),
+      calendar: .utc)
+    #expect(try mains() == [card.id])
+  }
+
+  /// A merge with nothing to count writes no reconciliation: an empty one would read as a
+  /// total of nothing. The fees of the transfers it deletes stay as ordinary expenses, no
+  /// longer pointing at a transfer that is gone.
+  @Test func aMergeWritesNoEmptyReconciliationAndLetsTheFeesOfDeletedTransfersGo() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
+    let wallet = PaymentMethod(name: "Wallet", kind: .cash, currency: .rub)
+    let within = Transfer(
+      occurredAt: PlanningTests.instant(hour: 8), fromAccountId: wallet.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(whole: 100), toAccountId: card.id, toCurrency: .rub,
+      toAmountE4: AmountE4(whole: 100))
+    var draft = TransactionDraft(amount: AmountE4(whole: 1), paymentMethodId: wallet.id)
+    draft.normalizeSinglePart()
+    var fee = try draft.materialize()
+    fee.transaction.externalId = OperationLink.transferFee(within.id).externalId
+    let repository = PlanningRepository(writer: stack.writer)
+    _ = try repository.apply(
+      PlanningChange(
+        created: [fee],
+        upsert: PlanningRows(paymentMethods: [card, wallet], transfers: [within])))
+
+    try AccountRepository(writer: stack.writer).merge(
+      AccountMergePlan(
+        sourceId: wallet.id, target: card, deletedTransferIds: [within.id], opening: [:],
+        at: PlanningTests.instant(hour: 9)),
+      calendar: .utc)
+
+    let book = try repository.book()
+    #expect(book.reconciliations.isEmpty)
+    #expect(book.reconciledBalances.isEmpty)
+    let kept = try #require(try TransactionRepository(writer: stack.writer).entry(id: fee.id))
+    #expect(kept.transaction.externalId == nil)
+    #expect(!kept.transaction.isDeleted)
+    #expect(kept.transaction.paymentMethodId == card.id)
+    #expect(try stack.writer.read { db in try Transfer.fetchCount(db) } == 0)
   }
 }

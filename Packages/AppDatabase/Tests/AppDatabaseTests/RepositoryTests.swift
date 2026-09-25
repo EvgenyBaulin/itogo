@@ -133,7 +133,8 @@ struct RepositoryTests {
   @Test func currenciesAreCappedAtTen() throws {
     let stack = try TestSupport.makeStack()
     let settings = SettingsRepository(writer: stack.writer)
-    let twelve = (1...12).map { CurrencyCode("C\($0)") }
+    // The ruble is the default currency, which stays on.
+    let twelve = [CurrencyCode.rub] + (1...11).map { CurrencyCode("C\($0)") }
 
     try settings.setEnabledCurrencies(twelve)
     #expect(try settings.enabledCurrencies().count == CurrencyCode.maxEnabled)
@@ -289,9 +290,10 @@ struct MergeTests {
     #expect(mapping?["target_event_id"] == trip.id.uuidString)
   }
 
-  /// A merge moves what the list names; the schema is what points. A foreign key a later
-  /// migration adds to people, places, cards or events must join the list, or the merge
-  /// leaves it on the archived duplicate.
+  /// A merge moves what the list names, or leaves it where it is on purpose
+  /// (`keptOnMerge`); the schema is what points. A foreign key a later migration adds to
+  /// people, places, accounts or events must join one of the lists, or the merge leaves it on
+  /// the archived duplicate without anybody having decided so.
   @Test func theMergeKnowsEveryColumnThatPointsAtADictionary() throws {
     let stack = try TestSupport.makeStack()
     let dictionaries = Set(ReferenceRepository.mergedColumns.keys)
@@ -309,10 +311,127 @@ struct MergeTests {
       return found
     }
 
+    let kept = Set(ReferenceRepository.keptOnMerge)
     let listed = ReferenceRepository.mergedColumns.mapValues {
       Set($0.map { "\($0.table).\($0.column)" })
     }
-    #expect(listed == pointing)
+    #expect(Set(listed.keys) == Set(pointing.keys))
+    for (dictionary, columns) in pointing {
+      let moved = listed[dictionary] ?? []
+      #expect(moved.isDisjoint(with: kept), "\(dictionary) both moves and keeps a column")
+      #expect(moved.union(kept.intersection(columns)) == columns, "\(dictionary)")
+    }
+    #expect(kept.isSubset(of: pointing.values.reduce(Set<String>()) { $0.union($1) }))
+    #expect(
+      listed["payment_methods"]?.isSuperset(of: [
+        "transfers.from_payment_method_id", "transfers.to_payment_method_id",
+        "debt_entries.payment_method_id",
+      ]) == true)
+    #expect(kept == ["reconciliation_balances.payment_method_id"])
+  }
+
+  /// The archive never holds the only main account: merged away, the main account hands the
+  /// flag to the account it went into. Until 25.09 the flag stayed on the archived account and
+  /// no live account was main.
+  @Test func mergingTheMainAccountMakesTheTargetMain() throws {
+    let stack = try TestSupport.makeStack()
+    let references = ReferenceRepository(writer: stack.writer)
+    let main = PaymentMethod(name: "Card", isDefault: true)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    let other = PaymentMethod(name: "Other", kind: .other)
+    for method in [main, cash, other] { try references.save(method) }
+
+    try references.mergePaymentMethod(main.id, into: cash.id)
+
+    let all = try references.paymentMethods(includeArchived: true)
+    #expect(all.filter(\.isDefault).map(\.id) == [cash.id])
+    #expect(all.first { $0.id == main.id }?.archived == true)
+
+    // An account that was not main hands nothing over.
+    try references.mergePaymentMethod(other.id, into: cash.id)
+    #expect(
+      try references.paymentMethods(includeArchived: true).filter(\.isDefault).map(\.id)
+        == [cash.id])
+  }
+
+  /// An older file can hold two main accounts. Merging one of them away leaves the target the
+  /// only main account: the flag is handed over the way a save of the main account hands it,
+  /// taken from every other account.
+  @Test func mergingAMainAccountAwayLeavesOneMain() throws {
+    let stack = try TestSupport.makeStack()
+    let main = PaymentMethod(name: "Card", isDefault: true)
+    let second = PaymentMethod(name: "Second", isDefault: true)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    try stack.writer.write { db in
+      for method in [main, second, cash] { try method.insert(db) }
+    }
+    let references = ReferenceRepository(writer: stack.writer)
+
+    try references.mergePaymentMethod(main.id, into: cash.id)
+
+    #expect(
+      try references.paymentMethods(includeArchived: true).filter(\.isDefault).map(\.id)
+        == [cash.id])
+  }
+
+  /// Journal lines and transfers move with the account too.
+  @Test func mergingAnAccountMovesItsTransfersAndJournalLines() throws {
+    let stack = try TestSupport.makeStack()
+    let references = ReferenceRepository(writer: stack.writer)
+    let keep = PaymentMethod(name: "Card", currency: .rub)
+    let duplicate = PaymentMethod(name: "Card 2", currency: .rub)
+    let wallet = PaymentMethod(name: "Wallet", kind: .cash, currency: .rub)
+    for method in [keep, duplicate, wallet] { try references.save(method) }
+    let debt = Debt(direction: .iOwe, type: .personal, name: "Loan from Sam")
+    try references.save(debt)
+    let line = DebtEntry(
+      debtId: debt.id, amountE4: AmountE4(whole: 1_000), kind: .borrowed,
+      paymentMethodId: duplicate.id, occurredAt: PlanningTests.instant(hour: 9))
+    let transfer = Transfer(
+      occurredAt: PlanningTests.instant(hour: 10), fromAccountId: duplicate.id,
+      fromCurrency: .rub, fromAmountE4: AmountE4(whole: 500), toAccountId: wallet.id,
+      toCurrency: .rub, toAmountE4: AmountE4(whole: 500))
+    _ = try PlanningRepository(writer: stack.writer).apply(
+      PlanningChange(upsert: PlanningRows(debtEntries: [line], transfers: [transfer])))
+
+    try references.mergePaymentMethod(duplicate.id, into: keep.id)
+
+    let book = try PlanningRepository(writer: stack.writer).book()
+    #expect(book.debtEntries.first?.paymentMethodId == keep.id)
+    let moved = try stack.writer.read { db in
+      try Transfer.fetchOne(db, key: transfer.id.uuidString)
+    }
+    #expect(moved?.fromAccountId == keep.id)
+    #expect(moved?.toAccountId == wallet.id)
+  }
+
+  /// Saved as the main account, an account takes the flag from every other one in the same
+  /// write — the archived ones included.
+  @Test func savingTheMainAccountTakesTheFlagFromEveryOther() throws {
+    let stack = try TestSupport.makeStack()
+    let references = ReferenceRepository(writer: stack.writer)
+    let card = PaymentMethod(name: "Card", isDefault: true)
+    let old = PaymentMethod(name: "Old", isDefault: true, archived: true)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    try stack.writer.write { db in
+      for method in [card, old, cash] { try method.insert(db) }
+    }
+
+    var chosen = cash
+    chosen.isDefault = true
+    try references.save(chosen)
+    #expect(
+      try references.paymentMethods(includeArchived: true).filter(\.isDefault).map(\.id)
+        == [cash.id])
+
+    // Saving an account that is not main leaves the flag where it is.
+    var renamed = card
+    renamed.isDefault = false
+    renamed.name = "Main card"
+    try references.save(renamed)
+    #expect(
+      try references.paymentMethods(includeArchived: true).filter(\.isDefault).map(\.id)
+        == [cash.id])
   }
 
   @Test func mergingIntoItselfDoesNothing() throws {

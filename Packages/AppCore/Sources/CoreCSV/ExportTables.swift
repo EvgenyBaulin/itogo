@@ -10,7 +10,8 @@ import Foundation
 /// for both the Export feature and the `data/csv/` folder of the transfer archive, so
 /// column order must never change once a table ships — old exports and old archives must
 /// keep meaning the same thing. Column names are the field names of the SQL schema
-/// (`Schema/0001_initial.sql`) in snake_case, in the order the schema declares them.
+/// (`Schema/0001_initial.sql`) in snake_case, in the order the schema declares them; a column
+/// a later migration adds goes last, and a table it adds goes at the end of the list.
 public struct ExportTable: Hashable, Sendable {
   public let fileName: String
   public let columns: [String]
@@ -21,23 +22,29 @@ public struct ExportTable: Hashable, Sendable {
   }
 }
 
-/// The 18 files of Export, always in the same order.
+/// The 21 files of Export, always in the same order.
 public enum ExportTables {
+  /// `account_currency` and `account_amount` came with `Schema/0004_accounts.sql`: what the
+  /// account moved when it does not hold the operation's currency.
   public static let transactions = ExportTable(
     fileName: "transactions.csv",
     columns: [
       "id", "kind", "occurred_at", "currency", "amount", "amount_expr", "rate",
       "rate_date", "rate_source", "rate_provisional", "amount_rub", "note", "place_id",
       "payment_method_id", "period_month", "debt_id", "credit_debt_id", "import_batch_id",
-      "external_id", "created_at", "updated_at", "deleted_at",
+      "external_id", "created_at", "updated_at", "deleted_at", "account_currency",
+      "account_amount",
     ])
 
+  /// `refund_of_part_id` came with `Schema/0004_accounts.sql`: the purchase part a refund
+  /// takes money back from.
   public static let transactionParts = ExportTable(
     fileName: "transaction_parts.csv",
     columns: [
       "id", "transaction_id", "category_id", "category_source", "quality", "quality_source",
       "amount", "amount_rub", "for_whom", "for_person_id", "reimbursable",
       "debtor_person_id", "reimbursement_status", "event_id", "goal_id", "note",
+      "refund_of_part_id",
     ])
 
   public static let reimbursementLinks = ExportTable(
@@ -48,9 +55,15 @@ public enum ExportTables {
     fileName: "people.csv",
     columns: ["id", "name", "relation", "aliases", "archived"])
 
+  /// The accounts. `group_id`, `sort` and `other_currencies` came with
+  /// `Schema/0004_accounts.sql`; `other_currencies` holds the codes after the main one,
+  /// joined by commas as the database keeps them (`USD,RUB,KZT`).
   public static let paymentMethods = ExportTable(
     fileName: "payment_methods.csv",
-    columns: ["id", "name", "kind", "currency", "aliases", "is_default", "archived"])
+    columns: [
+      "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
+      "other_currencies",
+    ])
 
   public static let places = ExportTable(
     fileName: "places.csv",
@@ -67,9 +80,12 @@ public enum ExportTables {
     fileName: "categories.csv",
     columns: ["id", "parent_id", "kind", "name", "sort", "archived", "quality", "system_role"])
 
+  /// `archived` came with `Schema/0004_accounts.sql`.
   public static let templates = ExportTable(
     fileName: "templates.csv",
-    columns: ["id", "text", "category_id", "amount", "currency", "pinned", "use_count"])
+    columns: [
+      "id", "text", "category_id", "amount", "currency", "pinned", "use_count", "archived",
+    ])
 
   /// Columns match `Schema/0001_initial.sql`.
   public static let scheduledPayments = ExportTable(
@@ -102,11 +118,13 @@ public enum ExportTables {
     fileName: "budgets.csv",
     columns: ["id", "scope", "category_id", "for_whom", "amount", "rollover", "start_month"])
 
+  /// `currency` came with `Schema/0004_accounts.sql`: the target, the plan and the progress
+  /// are in it.
   public static let goals = ExportTable(
     fileName: "goals.csv",
     columns: [
       "id", "name", "target", "target_date", "monthly_plan", "subcategory_id",
-      "archived",
+      "archived", "currency",
     ])
 
   public static let debts = ExportTable(
@@ -117,21 +135,26 @@ public enum ExportTables {
       "origin", "note", "closed", "loans_subcategory_id",
     ])
 
+  /// `payment_method_id`, `occurred_at`, `account_currency` and `account_amount` came with
+  /// `Schema/0004_accounts.sql`: the account money borrowed or lent through the journal alone
+  /// went into or out of, when, and what moved on it.
   public static let debtEntries = ExportTable(
     fileName: "debt_entries.csv",
     columns: [
       "id", "debt_id", "group_name", "date", "description", "full_amount", "share",
-      "amount", "kind", "transaction_id", "note",
+      "amount", "kind", "transaction_id", "note", "payment_method_id", "occurred_at",
+      "account_currency", "account_amount",
     ])
 
   /// Columns match `Schema/0001_initial.sql`; `reconciled_at` and `breakdown` came with
   /// `Schema/0002_planning.sql` and go last, so every older column keeps its place. The
-  /// breakdown is the JSON text of the database column (`ReconciliationBreakdown`).
+  /// breakdown is the JSON text of the database column (`ReconciliationBreakdown`). `kind`
+  /// came with `Schema/0004_accounts.sql`.
   public static let reconciliations = ExportTable(
     fileName: "reconciliations.csv",
     columns: [
       "id", "date", "actual_total_rub", "expected_total_rub", "difference",
-      "transaction_id", "reconciled_at", "breakdown",
+      "transaction_id", "reconciled_at", "breakdown", "kind",
     ])
 
   /// No `id` column: the schema's primary key is `(date, currency, source)`. `rub_per_unit`
@@ -141,11 +164,35 @@ public enum ExportTables {
     fileName: "rates.csv",
     columns: ["date", "currency", "rub_per_unit", "nominal", "source", "fetched_at"])
 
-  /// All 18 tables, in the fixed order of the export.
+  /// Columns match `Schema/0004_accounts.sql`.
+  public static let accountGroups = ExportTable(
+    fileName: "account_groups.csv",
+    columns: ["id", "name", "in_summary", "sort", "archived"])
+
+  /// Columns match `Schema/0004_accounts.sql`.
+  public static let transfers = ExportTable(
+    fileName: "transfers.csv",
+    columns: [
+      "id", "occurred_at", "from_payment_method_id", "from_currency", "from_amount",
+      "to_payment_method_id", "to_currency", "to_amount", "note", "created_at", "updated_at",
+    ])
+
+  /// Columns match `Schema/0004_accounts.sql`. Amounts are in the row's currency; an empty
+  /// `expected` marks the first count of the account and currency.
+  public static let reconciliationBalances = ExportTable(
+    fileName: "reconciliation_balances.csv",
+    columns: [
+      "id", "reconciliation_id", "payment_method_id", "currency", "actual", "expected",
+      "difference", "transaction_id",
+    ])
+
+  /// All 21 tables, in the fixed order of the export: the 18 of the first schema, then the
+  /// three the accounts brought.
   public static let all: [ExportTable] = [
     transactions, transactionParts, reimbursementLinks, people, paymentMethods, places,
     events, categories, templates, scheduledPayments, subscriptionPrices, expectedIncome,
-    budgets, goals, debts, debtEntries, reconciliations, rates,
+    budgets, goals, debts, debtEntries, reconciliations, rates, accountGroups, transfers,
+    reconciliationBalances,
   ]
 }
 
@@ -177,6 +224,8 @@ extension ExportTables {
       CSVValue.string(instant: transaction.createdAt),
       CSVValue.string(instant: transaction.updatedAt),
       CSVValue.string(instant: transaction.deletedAt),
+      CSVValue.string(transaction.accountCurrency?.code),
+      CSVValue.string(amount: transaction.accountAmountE4),
     ]
   }
 
@@ -198,6 +247,7 @@ extension ExportTables {
       CSVValue.string(part.eventId),
       CSVValue.string(part.goalId),
       CSVValue.string(part.note),
+      CSVValue.string(part.refundOfPartId),
     ]
   }
 
@@ -229,6 +279,9 @@ extension ExportTables {
       CSVValue.string(joining: method.aliases),
       CSVValue.string(bool: method.isDefault),
       CSVValue.string(bool: method.archived),
+      CSVValue.string(method.groupId),
+      String(method.sort),
+      method.otherCurrencies.map(\.code).joined(separator: ","),
     ]
   }
 
@@ -277,6 +330,7 @@ extension ExportTables {
       CSVValue.string(template.currency?.code),
       CSVValue.string(bool: template.pinned),
       String(template.useCount),
+      CSVValue.string(bool: template.archived),
     ]
   }
 
@@ -289,6 +343,7 @@ extension ExportTables {
       CSVValue.string(amount: goal.monthlyPlanE4),
       CSVValue.string(goal.subcategoryId),
       CSVValue.string(bool: goal.archived),
+      goal.currency.code,
     ]
   }
 
@@ -325,6 +380,10 @@ extension ExportTables {
       entry.kind.rawValue,
       CSVValue.string(entry.transactionId),
       CSVValue.string(entry.note),
+      CSVValue.string(entry.paymentMethodId),
+      CSVValue.string(instant: entry.occurredAt),
+      CSVValue.string(entry.accountCurrency?.code),
+      CSVValue.string(amount: entry.accountAmountE4),
     ]
   }
 
@@ -404,6 +463,7 @@ extension ExportTables {
       CSVValue.string(reconciliation.transactionId),
       CSVValue.string(instant: reconciliation.reconciledAt),
       CSVValue.string(ReconciliationBreakdown.json(reconciliation.breakdown)),
+      reconciliation.kind.rawValue,
     ]
   }
 
@@ -415,6 +475,45 @@ extension ExportTables {
       String(rate.nominal),
       rate.source.rawValue,
       CSVValue.string(instant: rate.fetchedAt),
+    ]
+  }
+
+  public static func row(_ group: AccountGroup) -> [String] {
+    [
+      group.id.uuidString,
+      group.name,
+      CSVValue.string(bool: group.inSummary),
+      String(group.sort),
+      CSVValue.string(bool: group.archived),
+    ]
+  }
+
+  public static func row(_ transfer: Transfer) -> [String] {
+    [
+      transfer.id.uuidString,
+      CSVValue.string(instant: transfer.occurredAt),
+      transfer.fromAccountId.uuidString,
+      transfer.fromCurrency.code,
+      CSVValue.string(amount: transfer.fromAmountE4),
+      transfer.toAccountId.uuidString,
+      transfer.toCurrency.code,
+      CSVValue.string(amount: transfer.toAmountE4),
+      CSVValue.string(transfer.note),
+      CSVValue.string(instant: transfer.createdAt),
+      CSVValue.string(instant: transfer.updatedAt),
+    ]
+  }
+
+  public static func row(_ balance: ReconciledBalance) -> [String] {
+    [
+      balance.id.uuidString,
+      balance.reconciliationId.uuidString,
+      balance.accountId.uuidString,
+      balance.currency.code,
+      CSVValue.string(amount: balance.actualE4),
+      CSVValue.string(amount: balance.expectedE4),
+      CSVValue.string(amount: balance.differenceE4),
+      CSVValue.string(balance.transactionId),
     ]
   }
 }

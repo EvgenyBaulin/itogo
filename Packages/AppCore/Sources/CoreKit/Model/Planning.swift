@@ -179,8 +179,23 @@ public struct ReconciliationAmount: Hashable, Sendable, Codable {
   }
 }
 
+/// What a reconciliation counted.
+public enum ReconciliationKind: String, Hashable, Sendable, Codable, CaseIterable {
+  /// One total in rubles, as reconciliations were made before accounts: kept as history, it
+  /// anchors no balance.
+  case total
+  /// The sheet of every account and currency; its counts are in `ReconciledBalance`.
+  case accounts
+  /// Starting balances given outside the sheet: the setup of the accounts, a new account, a
+  /// merge.
+  case opening
+}
+
 /// «How much money do I have in total» at a moment (`reconciliations`). The first one is the
 /// starting point; each next one compares the actual total with the expected.
+///
+/// One of `kind` `.accounts` or `.opening` counts accounts one by one
+/// (`ReconciledBalance`), and its moment is required; its ruble columns are for display only.
 public struct Reconciliation: Identifiable, Hashable, Sendable, Codable {
   public var id: UUID
   public var date: DateOnly
@@ -193,11 +208,13 @@ public struct Reconciliation: Identifiable, Hashable, Sendable, Codable {
   /// The operation that recorded the difference, if one was written.
   public var transactionId: UUID?
   public var breakdown: [ReconciliationAmount]
+  public var kind: ReconciliationKind
 
   public init(
     id: UUID = UUID(), date: DateOnly, reconciledAt: Date? = nil, actualTotalRubE4: AmountE4,
     expectedTotalRubE4: AmountE4? = nil, differenceE4: AmountE4? = nil,
-    transactionId: UUID? = nil, breakdown: [ReconciliationAmount] = []
+    transactionId: UUID? = nil, breakdown: [ReconciliationAmount] = [],
+    kind: ReconciliationKind = .total
   ) {
     self.id = id
     self.date = date
@@ -207,7 +224,42 @@ public struct Reconciliation: Identifiable, Hashable, Sendable, Codable {
     self.differenceE4 = differenceE4
     self.transactionId = transactionId
     self.breakdown = breakdown
+    self.kind = kind
   }
+}
+
+/// One counted balance of one account in one currency, at the moment of its reconciliation
+/// (`reconciliation_balances`), in that currency. The first count of a pair is its starting
+/// point: nothing is compared, so it has no expected balance and no difference.
+public struct ReconciledBalance: Identifiable, Hashable, Sendable, Codable {
+  public var id: UUID
+  public var reconciliationId: UUID
+  public var accountId: UUID
+  public var currency: CurrencyCode
+  public var actualE4: AmountE4
+  public var expectedE4: AmountE4?
+  /// actual − expected; `nil` exactly when `expectedE4` is.
+  public var differenceE4: AmountE4?
+  /// The operation that recorded the difference, if one was written.
+  public var transactionId: UUID?
+
+  public init(
+    id: UUID = UUID(), reconciliationId: UUID, accountId: UUID, currency: CurrencyCode,
+    actualE4: AmountE4, expectedE4: AmountE4? = nil, differenceE4: AmountE4? = nil,
+    transactionId: UUID? = nil
+  ) {
+    self.id = id
+    self.reconciliationId = reconciliationId
+    self.accountId = accountId
+    self.currency = currency
+    self.actualE4 = actualE4
+    self.expectedE4 = expectedE4
+    self.differenceE4 = differenceE4
+    self.transactionId = transactionId
+  }
+
+  public var key: BalanceKey { BalanceKey(accountId: accountId, currency: currency) }
+  public var isStartingPoint: Bool { expectedE4 == nil }
 }
 
 /// Settings the planning reads, kept in `settings` under these keys and passed in by the app.
@@ -222,6 +274,8 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
   /// remembered here by id, the way the cashback category is.
   public static let reconcileExpenseCategoryKey = "planning.reconcileExpenseCategory"
   public static let reconcileIncomeCategoryKey = "planning.reconcileIncomeCategory"
+  public static let limitsTopNKey = "planning.limitsTopN"
+  public static let scheduledMatchRejectionsKey = "planning.scheduledMatchRejections"
 
   /// Remind to reconcile when the last one is older than this (default 14).
   public var reconcileEveryDays: Int
@@ -233,16 +287,24 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
   public var reconcileIncludesGoalSavings: Bool
   /// Ids of reminders put off until they change (`Reminder.id`).
   public var dismissedReminders: Set<String>
+  /// How many limits the lists of limits running out show (default 5); `nil` — all of them.
+  public var limitsTopN: Int?
+  /// Pairs of an ordinary operation and a due date of a scheduled payment the owner said are
+  /// not the same thing, one `<operation>:<payment>:<YYYY-MM-DD>` each.
+  public var scheduledMatchRejections: Set<String>
 
   public init(
     reconcileEveryDays: Int = 14, savingsTargetBp: Int = 1_000, reserveGoalPlan: Bool = true,
-    reconcileIncludesGoalSavings: Bool = true, dismissedReminders: Set<String> = []
+    reconcileIncludesGoalSavings: Bool = true, dismissedReminders: Set<String> = [],
+    limitsTopN: Int? = 5, scheduledMatchRejections: Set<String> = []
   ) {
     self.reconcileEveryDays = reconcileEveryDays
     self.savingsTargetBp = savingsTargetBp
     self.reserveGoalPlan = reserveGoalPlan
     self.reconcileIncludesGoalSavings = reconcileIncludesGoalSavings
     self.dismissedReminders = dismissedReminders
+    self.limitsTopN = limitsTopN
+    self.scheduledMatchRejections = scheduledMatchRejections
   }
 }
 
@@ -258,12 +320,16 @@ public struct PlanningBook: Hashable, Sendable, Codable {
   public var reconciliations: [Reconciliation]
   public var debtEntries: [DebtEntry]
   public var settings: PlanningSettings
+  /// The counts of accounts, in the order of their reconciliations — by day, moment and the
+  /// order they were made — and within one reconciliation in the order they were written.
+  public var reconciledBalances: [ReconciledBalance]
 
   public init(
     scheduled: [ScheduledPayment] = [], prices: [SubscriptionPrice] = [],
     expected: [ExpectedIncome] = [], expectedLinks: [ExpectedIncomeLink] = [],
     budgets: [Budget] = [], reconciliations: [Reconciliation] = [],
-    debtEntries: [DebtEntry] = [], settings: PlanningSettings = PlanningSettings()
+    debtEntries: [DebtEntry] = [], settings: PlanningSettings = PlanningSettings(),
+    reconciledBalances: [ReconciledBalance] = []
   ) {
     self.scheduled = scheduled
     self.prices = prices
@@ -273,6 +339,7 @@ public struct PlanningBook: Hashable, Sendable, Codable {
     self.reconciliations = reconciliations
     self.debtEntries = debtEntries
     self.settings = settings
+    self.reconciledBalances = reconciledBalances
   }
 
   public static let empty = PlanningBook()

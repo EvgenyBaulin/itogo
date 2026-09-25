@@ -15,9 +15,10 @@ public struct DeletionEffects: Hashable, Sendable {
   public var reopenedPartIds: [UUID]
   /// The debt movements of deleted debt payments, taken off the debt.
   public var removedDebtEntries: [DebtEntry]
-  /// The `sched:<payment>:<due>` keys of deleted «Mark as paid» operations, by operation. A
-  /// deleted operation pays nothing, so its key is cleared: the unique index would
-  /// otherwise refuse to pay that due date again.
+  /// The `sched:<payment>:<due>` keys of deleted «Mark as paid» operations, and the
+  /// `transfer:<transfer>:fee` keys of deleted fees, by operation. A deleted operation pays
+  /// nothing, so its key is cleared: the unique index would otherwise refuse to pay that due
+  /// date again, or to give the transfer a fee again.
   public var releasedExternalIds: [UUID: String]
   /// Scheduled payments whose `next_date` went back to the due date a deleted operation
   /// had paid (`ScheduledRules.reopened`), as they were before.
@@ -249,15 +250,26 @@ extension TransactionRepository {
   /// `sched:<payment>:<due>` is cleared, so the date can be paid anew (the unique index
   /// counts deleted rows too), and the payment's `next_date` goes back to that date when it
   /// was the latest one paid (`ScheduledRules.reopened`).
+  ///
+  /// The key `transfer:<transfer>:fee` of a deleted fee is cleared the same way, so the
+  /// transfer can be given a fee again.
   private static func releaseScheduledLinks(
     of deleted: [CoreKit.Transaction], effects: inout DeletionEffects, db: Database
   ) throws {
     var paid: [(transaction: CoreKit.Transaction, key: String, payment: UUID, due: DateOnly)] = []
     for transaction in deleted {
-      guard let key = transaction.externalId,
-        case .scheduled(let paymentId, let due) = OperationLink(externalId: key)
-      else { continue }
-      paid.append((transaction, key, paymentId, due))
+      guard let key = transaction.externalId else { continue }
+      switch OperationLink(externalId: key) {
+      case .scheduled(let paymentId, let due):
+        paid.append((transaction, key, paymentId, due))
+      case .transferFee:
+        try db.execute(
+          sql: "UPDATE transactions SET external_id = NULL WHERE id = ?",
+          arguments: [transaction.id.uuidString])
+        effects.releasedExternalIds[transaction.id] = key
+      default:
+        continue
+      }
     }
     // The latest date first: each one goes back only from the date right after it.
     paid.sort { $0.due > $1.due }

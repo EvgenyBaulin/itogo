@@ -51,6 +51,12 @@ public struct Dataset: Sendable {
   /// oldest first.
   public var feedback: [CategoryFeedback]
   public var settings: AnalyticsSettings
+  /// Money moved between accounts, oldest first: never income, never spending.
+  public var transfers: [Transfer]
+  /// The groups of the accounts, archived ones included, in the owner's order.
+  public var accountGroups: [AccountGroup]
+  /// The default currency and the state of the setup of the accounts.
+  public var accountSettings: AccountSettings
   /// Grows with every change, so a result cached for one version is never shown for another.
   public var version: Int
 
@@ -68,6 +74,9 @@ public struct Dataset: Sendable {
     dismissals: [AnomalyDismissal] = [],
     feedback: [CategoryFeedback] = [],
     settings: AnalyticsSettings = AnalyticsSettings(),
+    transfers: [Transfer] = [],
+    accountGroups: [AccountGroup] = [],
+    accountSettings: AccountSettings = AccountSettings(storedValues: [:]),
     version: Int = 0
   ) {
     self.entries = entries
@@ -83,6 +92,9 @@ public struct Dataset: Sendable {
     self.dismissals = dismissals
     self.feedback = feedback
     self.settings = settings
+    self.transfers = transfers
+    self.accountGroups = accountGroups
+    self.accountSettings = accountSettings
     self.version = version
   }
 

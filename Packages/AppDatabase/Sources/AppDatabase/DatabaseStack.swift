@@ -163,14 +163,15 @@ public final class DatabaseStack: Sendable {
   /// of the book: they move with every debt payment and hold the balances the debt figures
   /// are made of. The anomalies waved away come with the data too, so «Это нормально» is a
   /// change like any other, whoever writes it; so do the owner's choices of a category
-  /// against the model, which «Качество модели» counts. A test holds this
+  /// against the model, which «Качество модели» counts; and so do the groups of the accounts,
+  /// the transfers between them and the balances counted on them. A test holds this
   /// list against the statements the load runs.
   static let ledgerTables = [
     "transactions", "transaction_parts", "reimbursement_links", "categories", "people",
     "places", "events", "payment_methods", "goals", "debts", "debt_entries", "rates",
     "settings", "scheduled_payments", "subscription_prices", "expected_income",
     "expected_income_links", "budgets", "reconciliations", "anomaly_dismissals",
-    "category_feedback",
+    "category_feedback", "account_groups", "transfers", "reconciliation_balances",
   ]
 
   /// One element after every committed transaction that changed one of `ledgerTables` —

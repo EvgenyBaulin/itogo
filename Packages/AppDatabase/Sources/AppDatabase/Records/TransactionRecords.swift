@@ -21,6 +21,8 @@ extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive Persis
       note: row["note"],
       placeId: RowMapping.optionalUUID(row, "place_id"),
       paymentMethodId: RowMapping.optionalUUID(row, "payment_method_id"),
+      accountCurrency: RowMapping.currency(row, "account_currency"),
+      accountAmountE4: RowMapping.optionalAmount(row, "account_amount_e4"),
       periodMonth: RowMapping.month(row, "period_month"),
       debtId: RowMapping.optionalUUID(row, "debt_id"),
       creditDebtId: RowMapping.optionalUUID(row, "credit_debt_id"),
@@ -46,6 +48,8 @@ extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive Persis
     container["note"] = note
     container["place_id"] = placeId?.uuidString
     container["payment_method_id"] = paymentMethodId?.uuidString
+    container["account_currency"] = accountCurrency?.code
+    container["account_amount_e4"] = accountAmountE4?.raw
     container["period_month"] = periodMonth?.iso
     container["debt_id"] = debtId?.uuidString
     container["credit_debt_id"] = creditDebtId?.uuidString
@@ -78,7 +82,8 @@ extension TransactionPart: @retroactive FetchableRecord, @retroactive Persistabl
         .flatMap(ReimbursementStatus.init(rawValue:)),
       eventId: RowMapping.optionalUUID(row, "event_id"),
       goalId: RowMapping.optionalUUID(row, "goal_id"),
-      note: row["note"])
+      note: row["note"],
+      refundOfPartId: RowMapping.optionalUUID(row, "refund_of_part_id"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -98,6 +103,7 @@ extension TransactionPart: @retroactive FetchableRecord, @retroactive Persistabl
     container["event_id"] = eventId?.uuidString
     container["goal_id"] = goalId?.uuidString
     container["note"] = note
+    container["refund_of_part_id"] = refundOfPartId?.uuidString
   }
 }
 
@@ -176,7 +182,11 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
       amountE4: RowMapping.amount(row, "amount_e4"),
       kind: DebtEntryKind(rawValue: row["kind"] ?? "adjustment") ?? .adjustment,
       transactionId: RowMapping.optionalUUID(row, "transaction_id"),
-      note: row["note"])
+      note: row["note"],
+      paymentMethodId: RowMapping.optionalUUID(row, "payment_method_id"),
+      occurredAt: row["occurred_at"],
+      accountCurrency: RowMapping.currency(row, "account_currency"),
+      accountAmountE4: RowMapping.optionalAmount(row, "account_amount_e4"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -191,5 +201,9 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
     container["kind"] = kind.rawValue
     container["transaction_id"] = transactionId?.uuidString
     container["note"] = note
+    container["payment_method_id"] = paymentMethodId?.uuidString
+    container["occurred_at"] = occurredAt
+    container["account_currency"] = accountCurrency?.code
+    container["account_amount_e4"] = accountAmountE4?.raw
   }
 }

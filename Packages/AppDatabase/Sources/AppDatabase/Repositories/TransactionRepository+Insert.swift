@@ -7,6 +7,8 @@ import GRDB
 /// synthetic sample of the Debug menu, the data sets and the benchmark with its
 /// planning, later an import. Each list may be empty.
 public struct HistoryBatch: Sendable {
+  /// The groups the accounts among `paymentMethods` are filed under.
+  public var accountGroups: [AccountGroup]
   public var categories: [CoreKit.Category]
   public var people: [Person]
   public var places: [Place]
@@ -28,6 +30,12 @@ public struct HistoryBatch: Sendable {
   public var expectedLinks: [ExpectedIncomeLink]
   /// Monthly limits.
   public var budgets: [Budget]
+  /// Transfers between the accounts; a fee among `entries` points at one of them.
+  public var transfers: [Transfer]
+  /// Reconciliations, and the balances of the accounts they counted; a balance may point at
+  /// the operation among `entries` that recorded its difference.
+  public var reconciliations: [Reconciliation]
+  public var reconciledBalances: [ReconciledBalance]
   /// Settings that point into the batch — the cashback category of Analytics — set in the
   /// same write, so a history never lands without them. Always written over.
   public var settings: [String: String]
@@ -49,8 +57,16 @@ public struct HistoryBatch: Sendable {
     expected: [ExpectedIncome] = [],
     expectedLinks: [ExpectedIncomeLink] = [],
     budgets: [Budget] = [],
-    settings: [String: String] = [:]
+    settings: [String: String] = [:],
+    accountGroups: [AccountGroup] = [],
+    transfers: [Transfer] = [],
+    reconciliations: [Reconciliation] = [],
+    reconciledBalances: [ReconciledBalance] = []
   ) {
+    self.accountGroups = accountGroups
+    self.transfers = transfers
+    self.reconciliations = reconciliations
+    self.reconciledBalances = reconciledBalances
     self.categories = categories
     self.people = people
     self.places = places
@@ -114,11 +130,12 @@ extension TransactionRepository {
     try write(batch, overExistingRows: true)
   }
 
-  /// Rows go in the order their foreign keys need: the reference books (parents before
-  /// their subcategories, since the table refers to itself), debts after the people and
-  /// categories they name, the planning after the categories, people and cards it names,
-  /// operations after everything they point at, and the journals and links after the
-  /// operations they point at.
+  /// Rows go in the order their foreign keys need: the groups of the accounts before the
+  /// accounts, the reference books (parents before their subcategories, since the table
+  /// refers to itself), debts after the people and categories they name, the planning after
+  /// the categories, people and cards it names, operations after everything they point at,
+  /// the journals and links after the operations they point at, then the transfers, the
+  /// reconciliations and the balances they counted, and the settings last.
   ///
   /// A limit is unique to its target (`idx_budgets_target`). Written over existing rows, a
   /// limit whose target another limit already holds — one the owner set on bad spending,
@@ -129,6 +146,7 @@ extension TransactionRepository {
       func put(_ record: some PersistableRecord) throws {
         if overExistingRows { try record.save(db) } else { try record.insert(db) }
       }
+      for group in batch.accountGroups { try put(group) }
       for category in batch.categories where category.parentId == nil { try put(category) }
       for category in batch.categories where category.parentId != nil { try put(category) }
       for person in batch.people { try put(person) }
@@ -158,6 +176,9 @@ extension TransactionRepository {
       for line in batch.debtEntries { try put(line) }
       for link in batch.links { try put(link) }
       for link in batch.expectedLinks { try put(link) }
+      for transfer in batch.transfers { try put(transfer) }
+      for reconciliation in batch.reconciliations { try put(reconciliation) }
+      for balance in batch.reconciledBalances { try put(balance) }
       for (key, value) in batch.settings.sorted(by: { $0.key < $1.key }) {
         try SettingsRepository.set(key, to: value, in: db)
       }

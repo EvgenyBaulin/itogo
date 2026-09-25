@@ -162,7 +162,7 @@ extension Budget: @retroactive FetchableRecord, @retroactive PersistableRecord {
 /// `reconciled_at` is an instant like `created_at` of an operation, so GRDB writes it the same
 /// way — UTC text `YYYY-MM-DD HH:MM:SS.SSS`. The breakdown is one JSON text, spelled by
 /// `ReconciliationBreakdown` so the database and the export files agree; NULL when there is
-/// none.
+/// none. A `kind` this build does not know reads as a total, which anchors nothing.
 extension Reconciliation: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "reconciliations"
 
@@ -175,7 +175,8 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
       expectedTotalRubE4: RowMapping.optionalAmount(row, "expected_total_rub_e4"),
       differenceE4: RowMapping.optionalAmount(row, "difference_e4"),
       transactionId: RowMapping.optionalUUID(row, "transaction_id"),
-      breakdown: ReconciliationBreakdown.amounts(fromJSON: row["breakdown"]))
+      breakdown: ReconciliationBreakdown.amounts(fromJSON: row["breakdown"]),
+      kind: ReconciliationKind(rawValue: row["kind"] ?? "total") ?? .total)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -187,18 +188,21 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
     container["difference_e4"] = differenceE4?.raw
     container["transaction_id"] = transactionId?.uuidString
     container["breakdown"] = ReconciliationBreakdown.json(breakdown)
+    container["kind"] = kind.rawValue
   }
 }
 
 // MARK: Settings of the planning
 
 /// `PlanningSettings` as rows of `settings`: numbers in decimal digits, switches as `1`/`0`
-/// like the other switches of the table, the dismissed reminders one id per line.
+/// like the other switches of the table, the dismissed reminders one id per line, and so the
+/// operations said not to pay a due date. How many limits to show is a number or `all`.
 extension PlanningSettings {
   /// Every key the planning settings live under.
   public static let storageKeys = [
     reconcileEveryDaysKey, savingsTargetKey, reserveGoalPlanKey,
-    reconcileIncludesGoalSavingsKey, dismissedRemindersKey,
+    reconcileIncludesGoalSavingsKey, dismissedRemindersKey, limitsTopNKey,
+    scheduledMatchRejectionsKey,
   ]
 
   /// The settings the rows give. A key that is missing, or whose value does not read — or
@@ -215,7 +219,10 @@ extension PlanningSettings {
         ?? defaults.reserveGoalPlan,
       reconcileIncludesGoalSavings: values[Self.reconcileIncludesGoalSavingsKey]
         .flatMap(Self.switchValue) ?? defaults.reconcileIncludesGoalSavings,
-      dismissedReminders: Set(RowMapping.split(values[Self.dismissedRemindersKey] ?? "")))
+      dismissedReminders: Set(RowMapping.split(values[Self.dismissedRemindersKey] ?? "")),
+      limitsTopN: Self.limitsTopN(values[Self.limitsTopNKey], default: defaults.limitsTopN),
+      scheduledMatchRejections: Set(
+        RowMapping.split(values[Self.scheduledMatchRejectionsKey] ?? "")))
   }
 
   /// The rows to write, ready for `PlanningChange.settings`. No dismissed reminder deletes
@@ -223,13 +230,30 @@ extension PlanningSettings {
   /// always the same text.
   public var storedValues: [String: String?] {
     let dismissed = dismissedReminders.map(Self.singleLine).filter { !$0.isEmpty }.sorted()
+    let rejections = scheduledMatchRejections.map(Self.singleLine).filter { !$0.isEmpty }
+      .sorted()
     return [
       Self.reconcileEveryDaysKey: String(reconcileEveryDays),
       Self.savingsTargetKey: String(savingsTargetBp),
       Self.reserveGoalPlanKey: reserveGoalPlan ? "1" : "0",
       Self.reconcileIncludesGoalSavingsKey: reconcileIncludesGoalSavings ? "1" : "0",
       Self.dismissedRemindersKey: dismissed.isEmpty ? nil : dismissed.joined(separator: "\n"),
+      Self.limitsTopNKey: limitsTopN.map { String($0) } ?? Self.allLimits,
+      Self.scheduledMatchRejectionsKey: rejections.isEmpty
+        ? nil : rejections.joined(separator: "\n"),
     ]
+  }
+
+  /// The value of `limitsTopNKey` that shows every limit.
+  private static let allLimits = "all"
+
+  /// A number above zero, or `all` for every limit (`nil`); anything else keeps the default.
+  private static func limitsTopN(_ text: String?, default fallback: Int?) -> Int? {
+    guard let text else { return fallback }
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    if trimmed.lowercased() == allLimits { return nil }
+    guard let count = number(trimmed), count > 0 else { return fallback }
+    return count
   }
 
   private static func number(_ text: String) -> Int? {
