@@ -3,7 +3,7 @@
 # appcast.xml on Pages. The tests run in a job of their own, without the key.
 #
 # This is the spare path. Releases are made by hand on the author's Mac with
-# `make release-local` and `gh release create` (README.md, «Releasing»); such a release creates
+# `make release-local` and `gh release create` (README.md, «Выпуск»); such a release creates
 # its tag, the tag starts this workflow, and the first job below sees the release already out
 # and stops. Both paths read the version with scripts/release-version.sh and write the entry of
 # the feed with scripts/release-entry.sh, and `make check-scripts` tests those two. A tag pushed
@@ -134,7 +134,7 @@ jobs:
           SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
         run: |
           test -n "$SPARKLE_PUBLIC_KEY" || {
-            echo "SPARKLE_PUBLIC_KEY is not set; see README.md, Releasing"; exit 1; }
+            echo "SPARKLE_PUBLIC_KEY is not set; see README.md, «Выпуск»"; exit 1; }
           version="${GITHUB_REF_NAME#v}"
           build="$(scripts/release-version.sh build)"
           xcodebuild -project Itogo.xcodeproj -scheme Itogo -configuration Release \
@@ -160,7 +160,7 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           test -n "$SPARKLE_PRIVATE_KEY" || {
-            echo "SPARKLE_PRIVATE_KEY is not set; see README.md, Releasing"; exit 1; }
+            echo "SPARKLE_PRIVATE_KEY is not set; see README.md, «Выпуск»"; exit 1; }
           version="${GITHUB_REF_NAME#v}"
           ditto -c -k --sequesterRsrc --keepParent \
             build/Build/Products/Release/Itogo.app "Itogo-${version}.zip"

@@ -1,289 +1,289 @@
 # Itogo
 
-**По-русски.** Итого — нативное приложение для учёта личных финансов на macOS: одна строка
-ввода («кофе 250», «такси (1000+600)/2»), планирование, долги, аналитика и отчёты. Все данные
-остаются на вашем Mac: в сеть приложение ходит только за курсами Банка России и за
-обновлениями, телеметрии нет. Интерфейс — на русском и английском, по языку системы.
+Нативное приложение для учёта личных финансов на macOS: напишите строку — получите учёт, план
+и цифры, а данные не покинут ваш Mac.
 
-Установка: скачайте `Itogo-<версия>.zip` из [Releases](https://github.com/EvgenyBaulin/itogo/releases),
-распакуйте и перенесите `Itogo.app` в «Программы». Приложение подписано собственным
-сертификатом автора и не нотаризовано: при первом запуске откройте «Системные настройки» →
-«Конфиденциальность и безопасность» → «Всё равно открыть». Дальше обновления приходят сами.
-Нужна macOS 26 или новее.
+В «Итого» — одна строка ввода (`кофе 250`, `такси (1000+600)/2`), планирование, долги,
+аналитика и отчёты. В сеть приложение ходит только за курсами Банка России и за обновлениями,
+телеметрии нет. Интерфейс — на русском и английском, по языку системы.
 
----
+[![Сборка](https://github.com/EvgenyBaulin/itogo/actions/workflows/build.yml/badge.svg)](https://github.com/EvgenyBaulin/itogo/actions/workflows/build.yml)
+[![Ядро на Linux](https://github.com/EvgenyBaulin/itogo/actions/workflows/core-linux.yml/badge.svg)](https://github.com/EvgenyBaulin/itogo/actions/workflows/core-linux.yml)
 
-A native macOS app for personal finance: type a line, get a ledger, a plan and the numbers —
-and nothing leaves your Mac.
+## Возможности
 
-[![Build](https://github.com/EvgenyBaulin/itogo/actions/workflows/build.yml/badge.svg)](https://github.com/EvgenyBaulin/itogo/actions/workflows/build.yml)
-[![Core on Linux](https://github.com/EvgenyBaulin/itogo/actions/workflows/core-linux.yml/badge.svg)](https://github.com/EvgenyBaulin/itogo/actions/workflows/core-linux.yml)
+- **Одна строка ввода.** Напишите `coffee 250` или `такси (1000+600)/2` и нажмите Enter. Сумма
+  может быть выражением; английский и русский понимаются одновременно, на каком бы языке ни был
+  интерфейс. Когда строки мало, панель ↓ показывает все поля операции.
+- **Добавление из любого списка.** Каждый список выбора в панели ↓, в окне правки и в инспекторе
+  заканчивается пунктом «Добавить…»: в открывшемся окне создаётся категория, человек, место,
+  событие или способ оплаты, и новая запись сразу выбирается.
+- **Операции по частям.** Один чек можно разделить между категориями, отметить как оплаченный за
+  другого и позже записать возврат денег, привязать к событию, месту, способу оплаты или цели.
+  Возвраты покупок, покупки в кредит и шаблоны вводятся той же строкой.
+- **Валюты.** Десять валют по курсам Банка России.
+- **Планирование.** Плановые платежи и подписки (в том числе те, что вы оплачиваете за других, и
+  сколько денег должно лежать на каждой карте), ожидаемые поступления, лимиты по категориям, по
+  плохим тратам и по «на кого», события с бюджетом, цели, свободная сумма (сколько можно
+  потратить), подсказки и сверка с фактическим остатком.
+- **Долги.** Журнал того, кто кому должен, — с долями, платежами, переносами, итогами и
+  напоминаниями.
+- **Аналитика и отчёты.** Месяц и год, хорошие и плохие траты, траты за других, места, события и
+  способы оплаты, прогноз с интервалом, аномалии и качество модели категорий в цифрах; модель
+  учится на вашем собственном выборе. Помесячные и годовые таблицы с долями, с выгрузкой в CSV.
+- **Честные деньги.** Суммы — целые числа в единицах 1/10000, каждый расчёт идёт через
+  `Decimal`, и деньги никогда не считаются в числах с плавающей точкой.
+- **Два языка, две темы.** Русский на русском Mac, английский на любом другом; в настройках можно
+  выбрать любой из них. Тема — светлая, тёмная или системная, основной цвет — на ваш выбор.
+  Liquid Glass — в слое навигации и больше нигде.
+- **Ваши данные — на вашем Mac.** База SQLite в контейнере приложения, бэкап после каждого
+  изменения, папка для копий на ваш выбор, восстановление в два щелчка и один файл архива,
+  который переносит всё на другой Mac.
 
-## Features
+## Приватность и сеть
 
-- **One line of input.** Type `coffee 250` or `такси (1000+600)/2` and press Enter. Amounts
-  can be expressions; English and Russian are understood at the same time, whatever the
-  language of the interface. The ↓ panel shows every field of the operation when the line is
-  not enough.
-- **Add from any list.** Every picker of the entry panel, the edit sheet and the inspector ends
-  with «Add…»: a sheet creates the category, person, place, event or payment method and selects
-  it at once.
-- **Operations in parts.** One receipt can be split between categories, marked as paid for
-  somebody else and got back later, tied to an event, a place, a payment method or a goal.
-  Refunds, purchases on credit and templates are part of the same line.
-- **Currencies.** Ten currencies at the Bank of Russia's rates.
-- **Planning.** Scheduled payments and subscriptions (including those paid for others, and what
-  each card has to hold), expected income, limits by category, by «bad» spending and by «for
-  whom», events with budgets, goals, how much is free to spend, suggestions and reconciliation
-  with the real balance.
-- **Debts.** A journal of who owes whom, with shares, payments, transfers, totals and
-  reminders.
-- **Analytics and reports.** The month and the year, the quality of spending, spending for
-  others, places, events and payment methods, a forecast with its interval, anomalies, and the
-  measured quality of the category model that learns from your own choices. Monthly and yearly
-  tables with shares, exported as CSV.
-- **Honest money.** Amounts are integers in units of 1/10000, every calculation goes through
-  `Decimal`, and floating point never touches money.
-- **Two languages, two appearances.** Russian on a Russian Mac, English on any other; Settings
-  can force either. Light, dark or the system's, with an accent colour of your choice. Liquid
-  Glass in the navigation layer and nowhere else.
-- **Your data, your machine.** SQLite in the app's container, a backup after every change, a
-  mirror folder of your choosing, restore in two clicks, and one archive file that moves
-  everything to another Mac.
+«Итого» обращается ровно к трём адресам и только по этим причинам:
 
-## Privacy and the network
+| Хост | Зачем |
+| ---- | ----- |
+| `www.cbr.ru` | курсы валют Банка России на нужный день |
+| `www.cbr-xml-daily.ru` | зеркало тех же курсов — когда банк не отвечает |
+| `EvgenyBaulin.github.io`, `github.com` | лента обновлений и архивы новых версий |
 
-Itogo talks to exactly three places, and only for these reasons:
+Телеметрии, SDK аналитики и учётной записи нет. Собственный журнал приложения (для отчёта о
+проблеме, который вы решите отправить) хранит идентификаторы, счётчики и типы ошибок и никогда
+не хранит сумм, заметок, людей, мест или названий категорий; если что-то из этого туда попадёт,
+упадёт тест. Сборка для App Store вовсе не содержит модуля обновлений и обращается только к
+Банку России.
 
-| Host | Why |
-| ---- | --- |
-| `www.cbr.ru` | the Bank of Russia's exchange rates for a day |
-| `www.cbr-xml-daily.ru` | a mirror of the same rates, used when the bank does not answer |
-| `EvgenyBaulin.github.io`, `github.com` | the update feed and the archives of new versions |
+## Требования
 
-There is no telemetry, no analytics SDK and no account. The app's own journal (for a problem
-report you choose to send) holds identifiers, counts and error types — never amounts, notes,
-people, places or category names; a test fails if one ever gets in. The App Store build carries
-no updater at all and talks to the Bank of Russia only.
+- macOS 26 (Tahoe) или новее: интерфейс построен на API Liquid Glass.
 
-## Requirements
+## Установка
 
-- macOS 26 (Tahoe) or newer: the interface is built on the Liquid Glass APIs.
+1. Скачайте `Itogo-<version>.zip` из
+   [последнего выпуска](https://github.com/EvgenyBaulin/itogo/releases/latest). Все выпуски — на
+   странице [Releases](https://github.com/EvgenyBaulin/itogo/releases).
+2. Распакуйте его и перенесите `Itogo.app` в **Программы** (/Applications). Не запускайте его из
+   «Загрузок»: оттуда macOS запускает приложение из копии только для чтения, и модуль обновлений
+   не может его заменить.
+3. Откройте его. Выпуск подписан собственным сертификатом автора — не Developer ID — и не
+   нотаризован, поэтому первый запуск будет заблокирован. Тогда откройте **Системные настройки →
+   Конфиденциальность и безопасность** и нажмите **Всё равно открыть** рядом с сообщением об
+   «Итого». Достаточно одного раза.
 
-## Installation
-
-1. Download `Itogo-<version>.zip` from the
-   [latest release](https://github.com/EvgenyBaulin/itogo/releases/latest).
-2. Unzip it and move `Itogo.app` to **/Applications**. Do not run it from Downloads: macOS runs
-   an app from there out of a read-only copy, and the updater cannot replace it.
-3. Open it. The release is signed with the author's own certificate — not a Developer ID — and
-   is not notarized, so the first launch is blocked. Then open **System Settings → Privacy &
-   Security** and press **Open Anyway** next to the message about Itogo. Once is enough.
-
-   Or, from Terminal, remove the quarantine flag before the first launch:
+   Или в Терминале снимите флаг карантина до первого запуска:
 
    ```sh
    xattr -dr com.apple.quarantine /Applications/Itogo.app
    ```
 
-## Updates
+## Обновления
 
-Itogo updates itself with [Sparkle](https://sparkle-project.org). Once a day it reads
-<https://EvgenyBaulin.github.io/itogo/appcast.xml>, downloads a new version in the background and
-installs it when you quit. **Check for Updates…** — in the View menu and in the toolbar of the
-main window — checks at once: a new version is offered in Sparkle's window, and when there is none
-Sparkle says so and the app keeps running. Automatic updates can be turned off in Settings; then a
-new version arrives only through that command.
+«Итого» обновляется само с помощью [Sparkle](https://sparkle-project.org). Раз в день оно читает
+<https://EvgenyBaulin.github.io/itogo/appcast.xml>, скачивает новую версию в фоне и ставит её при
+выходе. Команда **Проверить обновления…** (меню «Вид» и панель инструментов главного окна)
+проверяет сразу: новая версия предлагается в окне Sparkle, а если её нет, Sparkle сообщает об
+этом, и приложение продолжает работать. Автоматические обновления можно выключить в настройках;
+тогда новая версия приходит только по этой команде.
 
-Every archive is signed with an EdDSA key, and the app refuses an update whose signature does not
-match the public key it carries. Nothing about your Mac is sent with the check.
+Каждый архив подписан ключом EdDSA, и приложение не устанавливает обновление, подпись которого
+не совпадает с публичным ключом, встроенным в приложение. При проверке ничего о вашем Mac не
+отправляется.
 
-## Your data
+## Ваши данные
 
-Everything lives in the app's sandbox container:
+Всё хранится в контейнере песочницы приложения:
 
 ```text
 ~/Library/Containers/io.github.EvgenyBaulin.itogo/Data/Library/Application Support/Itogo/Release/
-  finance.sqlite     the database (with -wal and -shm beside it while the app runs)
-  backups/           automatic copies of the database
-  models/            the category model, trained again from your data when missing
-  Logs/              the app's journal: 5 files of 2 MB, rotated
+  finance.sqlite     база данных (пока приложение работает, рядом с ней лежат -wal и -shm)
+  backups/           автоматические копии базы
+  models/            модель категорий; если её нет, она заново обучается на ваших данных
+  Logs/              журнал приложения: 5 файлов по 2 МБ, по кругу
 ```
 
-### Backups
+### Бэкапы
 
-- A copy is taken **after every change**, a few seconds later, so a series of edits gives one
-  copy. It is made with SQLite's backup API, checked with `PRAGMA integrity_check` and only then
-  given its name; a copy cut short never looks like a good one.
-- Names carry the local time and its offset from UTC: `finance-2026-09-24T101500+0300.sqlite`.
-  A copy taken right before a restore or an import ends in `-before-restore` or
-  `-before-import`.
-- The **last 50 copies and one per day for 90 days** are kept; older ones are removed, in
-  `backups/` and in the mirror folder alike (only files named like our copies).
-- **Settings → Backups → Choose folder…** adds a mirror folder — iCloud Drive is a good place.
-  The live database never goes to iCloud, only the copies.
-- **Settings → Backups → Restore…** puts any copy back. The current state is copied first, the
-  chosen file is checked, and the app restarts on it.
-- By hand, if the app will not open: quit it, put the copy in place as `finance.sqlite` and
-  delete `finance.sqlite-wal` and `finance.sqlite-shm` beside it.
+- Копия делается **после каждого изменения**, через несколько секунд, так что серия правок даёт
+  одну копию. Она снимается через backup API SQLite, проверяется `PRAGMA integrity_check` и
+  только потом получает своё имя; недописанная копия никогда не выглядит как исправная.
+- В имени — местное время и его смещение от UTC: `finance-2026-09-24T101500+0300.sqlite`.
+  Имя копии, снятой прямо перед восстановлением или загрузкой архива, заканчивается на
+  `-before-restore` или `-before-import`.
+- Хранятся **последние 50 копий и по одной в день за 90 дней**; более старые удаляются — и в
+  `backups/`, и в выбранной вами папке для копий (только файлы, названные так же, как копии
+  приложения).
+- **Настройки → Бэкапы → Выбрать папку…** добавляет папку для копий; хорошее место для неё —
+  iCloud Drive. Рабочая база никогда не попадает в iCloud — только копии.
+- **Настройки → Бэкапы → Восстановить…** восстанавливает данные из любой копии. Сначала
+  копируется текущее состояние, затем выбранный файл проверяется, и приложение перезапускается
+  уже на нём.
+- Вручную, если приложение не открывается: закройте его, положите копию на место под именем
+  `finance.sqlite` и удалите лежащие рядом `finance.sqlite-wal` и `finance.sqlite-shm`.
 
-### Export to CSV
+### Экспорт в CSV
 
-**File → Export** (or the Export button of the main window) writes 18 CSV files into a folder
-you choose: operations, their parts, reimbursements, people, payment methods, places, events,
-categories, templates, scheduled payments, subscription prices, expected income, limits,
-goals, debts, debt entries, reconciliations and rates. UTF-8 with a header row, amounts as
-decimal strings with a dot, dates in ISO 8601. The app warns first: the files hold names and
-amounts.
+**Файл → Экспорт** (или кнопка «Экспорт» главного окна) записывает 18 CSV-файлов в выбранную
+вами папку: операции, их части, возвраты денег, люди, способы оплаты, места, события, категории,
+шаблоны, плановые платежи, цены подписок, ожидаемые поступления, лимиты, цели, долги, записи
+долгов, сверки и курсы. UTF-8 со строкой заголовка, суммы — десятичные строки с точкой, даты — в
+ISO 8601. Сначала приложение предупреждает: в файлах есть имена и суммы.
 
-Every file opens with `pandas.read_csv(path)` and no parameters. One caveat: pandas reads words
-such as `N/A`, `NA`, `None` or `null` as missing values, so a place or a card literally called
-«N/A» comes back empty. To keep such names:
+Каждый файл открывается `pandas.read_csv(path)` без параметров. Одна оговорка: pandas читает
+слова вроде `N/A`, `NA`, `None` или `null` как пропущенные значения, поэтому место или карта,
+которые буквально называются «N/A», прочитаются как пустые. Чтобы сохранить такие имена:
 
 ```python
 pandas.read_csv(path, keep_default_na=False, na_values=[""])
 ```
 
-### Moving to another Mac
+### Переезд на другой Mac
 
-1. **File → Export Archive…** writes one `Itogo-<date>.itogoarchive` file. A password is
-   optional; without one, everything inside is readable, and the app says so. The archive is
-   opened and checked again right after it is written.
-2. Carry it over by AirDrop, a USB stick or any cloud.
-3. On the new Mac, install Itogo, open it once, then **File → Import Archive…** — or double-click
-   the file. The current data is backed up, then replaced; the app restarts.
-4. Choose the backup mirror folder again: folder bookmarks never travel with an archive.
+1. **Файл → Выгрузить архив…** записывает один файл `Itogo-<date>.itogoarchive`. Пароль
+   необязателен; без него всё внутри можно прочитать, и приложение об этом предупреждает. Сразу
+   после записи архив открывается и проверяется ещё раз.
+2. Перенесите его по AirDrop, на флешке или через любое облако.
+3. На новом Mac установите «Итого», откройте его один раз, затем выберите **Файл → Загрузить
+   архив…** — или дважды щёлкните файл. Текущие данные сохраняются в копию, затем заменяются;
+   приложение перезапускается.
+4. Снова выберите папку для копий: закладки папок никогда не переносятся вместе с архивом.
 
-Check afterwards: the number of operations, this month's totals on Overview, the people, places,
-events and payment methods, the language, the appearance and the enabled currencies.
+После этого проверьте: число операций, итоги этого месяца в «Обзоре», людей, места, события и
+способы оплаты, язык, оформление и включённые валюты.
 
-## Appendix: data formats, version 1
+## Приложение: форматы данных, версия 1
 
-The archive is meant to be read by any implementation — a future Windows version included.
+Архив рассчитан на то, чтобы его читала любая реализация, в том числе будущая версия для
+Windows.
 
-**Container.** A zip file without compression (method «stored», no zip64), UTF-8 names with
-flag `0x0800`, entries in a fixed order, so the same data gives the same file:
+**Контейнер.** Zip-файл без сжатия (метод «stored», без zip64), имена в UTF-8 с флагом
+`0x0800`, записи в фиксированном порядке, так что одни и те же данные дают один и тот же файл:
 
 ```text
-manifest.json          what the archive is, with checksums
-data/database.sqlite   a consistent snapshot of the database (SQLite backup API)
-data/csv/<table>.csv   the 18 tables as in the CSV export
-settings.json          portable settings
+manifest.json          что это за архив, с контрольными суммами
+data/database.sqlite   согласованный снимок базы (backup API SQLite)
+data/csv/<table>.csv   18 таблиц, как в экспорте CSV
+settings.json          переносимые настройки
 ```
 
-**manifest.json** has seven required fields: `formatVersion` (1), `appVersion` (the short version
-of the app that wrote it, for people only), `schemaVersion` (the number of migrations applied —
-3 today; an older one is migrated, a newer one refused), `createdAt` (`YYYY-MM-DD`), `platform`,
-`rowCounts` (records per table, checked against the CSV files on import) and `checksums`
-(lowercase hex SHA-256 of every file except the manifest itself). The snapshot, the CSV files and
-the counts are taken in one read transaction.
+**manifest.json** содержит семь обязательных полей: `formatVersion` (1), `appVersion` (короткая
+версия приложения, которое его записало, — справочно, для человека), `schemaVersion` (число
+применённых миграций — сейчас 3; более старая схема обновляется миграциями, более новая
+отклоняется), `createdAt` (`YYYY-MM-DD`), `platform`, `rowCounts` (число записей в каждой
+таблице, при загрузке архива сверяется с CSV-файлами) и `checksums` (SHA-256 каждого файла,
+кроме самого манифеста, шестнадцатеричными цифрами в нижнем регистре). Снимок, CSV-файлы и
+счётчики берутся в одной транзакции чтения.
 
-**settings.json** is a flat string-to-string dictionary: `language` (`system`, `en`, `ru`),
-`theme.scheme` (`system`, `light`, `dark`), `theme.accent` and `currencies` (enabled codes
-separated by commas). A reader skips any key or value it does not know; new keys do not change
-`formatVersion`.
+**settings.json** — плоский словарь «строка → строка»: `language` (`system`, `en`, `ru`),
+`theme.scheme` (`system`, `light`, `dark`), `theme.accent` и `currencies` (включённые коды через
+запятую). Программа, читающая архив, пропускает незнакомые ключи и значения; новые ключи не
+меняют `formatVersion`.
 
-**CSV names.** The database keeps amounts as integers in 1/10000 in columns named `*_e4`. The CSV
-files hold decimal strings instead, so the suffix goes: `amount_e4` → `amount`, `amount_rub_e4`
-→ `amount_rub`. `rates.csv` keeps `rub_per_unit` as the bank publishes it — rubles for `nominal`
-units, so the rate of one unit is `rub_per_unit / nominal`.
+**Имена в CSV.** База хранит суммы целыми числами в 1/10000 в колонках с именами `*_e4`. В
+CSV-файлах вместо них десятичные строки, поэтому суффикс отбрасывается: `amount_e4` → `amount`,
+`amount_rub_e4` → `amount_rub`. `rates.csv` хранит `rub_per_unit` так, как его публикует банк, —
+рубли за `nominal` единиц, поэтому курс одной единицы — `rub_per_unit / nominal`.
 
-**Encryption** (optional). An encrypted archive is `header ‖ ciphertext ‖ tag`, where the
-ciphertext is the whole zip container and the tag is AES-GCM's 16 bytes. The header is 48 bytes,
-numbers little-endian:
+**Шифрование** (необязательно). Зашифрованный архив — это `header ‖ ciphertext ‖ tag`, где
+шифротекст — весь zip-контейнер, а тег — 16 байт AES-GCM. Заголовок занимает 48 байт, числа —
+little-endian:
 
-| Offset | Size | Field |
-| ------ | ---- | ----- |
-| 0 | 8 | magic `ITGOARC1` (ASCII) |
-| 8 | 2 | header version, 1 |
-| 10 | 2 | key derivation: 1 = PBKDF2-HMAC-SHA256 |
-| 12 | 2 | cipher: 1 = AES-256-GCM |
-| 14 | 2 | reserved, zero |
-| 16 | 4 | PBKDF2 iterations (600 000 by default; 1 to 50 000 000 accepted) |
-| 20 | 16 | salt |
+| Смещение | Размер | Поле |
+| -------- | ------ | ---- |
+| 0 | 8 | сигнатура `ITGOARC1` (ASCII) |
+| 8 | 2 | версия заголовка, 1 |
+| 10 | 2 | формирование ключа: 1 = PBKDF2-HMAC-SHA256 |
+| 12 | 2 | шифр: 1 = AES-256-GCM |
+| 14 | 2 | зарезервировано, 0 |
+| 16 | 4 | число итераций PBKDF2 (по умолчанию 600 000; принимается от 1 до 50 000 000) |
+| 20 | 16 | соль |
 | 36 | 12 | nonce |
 
-The key is `PBKDF2-HMAC-SHA256(password, salt, iterations)`, 32 bytes, from the UTF-8 bytes of the
-password in Unicode NFC. A wrong password and a damaged file are told apart by nothing: the tag
-does not match in both cases. Test vectors for SHA-256 (RFC 6234), HMAC-SHA-256 (RFC 4231),
-PBKDF2-HMAC-SHA256 and CRC-32 are in
+Ключ длиной 32 байта — `PBKDF2-HMAC-SHA256(password, salt, iterations)` от байтов UTF-8 пароля,
+приведённого к форме Unicode NFC. Неверный пароль и повреждённый файл ничем не различаются: в
+обоих случаях тег не совпадает. Тестовые векторы для SHA-256 (RFC 6234), HMAC-SHA-256
+(RFC 4231), PBKDF2-HMAC-SHA256 и CRC-32 лежат в
 [`Packages/AppCore/Tests/CoreArchiveTests`](Packages/AppCore/Tests/CoreArchiveTests).
 
-Not in the archive: the category model (it is trained again), folder bookmarks, paths of this
-Mac and window positions.
+В архив не входят: модель категорий (она обучается заново), закладки папок, пути к файлам на
+этом Mac и положение окон.
 
-## Building from source
+## Сборка из исходников
 
-You need macOS 26 or newer with **Xcode 27**, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-(`brew install xcodegen`, or `scripts/install-xcodegen.sh <dir>` for the exact version CI uses). The Xcode
-project is generated from `project.yml` and is not stored in git.
+Нужны macOS 26 или новее с **Xcode 27** и [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+(`brew install xcodegen` или `scripts/install-xcodegen.sh <dir>`, если нужна ровно та версия,
+что на CI). Проект Xcode генерируется из `project.yml` и в git не хранится.
 
 ```sh
-make              # generate the project, build Debug, run it
-make test-core    # tests of the pure-Swift core — the fast loop
-make test         # tests of the application
-make verify       # format, lint, every test, both builds, and the checks CI runs
-make sample       # the app on six months of synthetic data, in a folder of its own
-make sample-large # the same with about 20 000 operations over two years
-make pyenv        # a venv with pandas, so the CSV tests read the tables back for real
+make              # сгенерировать проект, собрать Debug, запустить
+make test-core    # тесты ядра на чистом Swift — быстрый цикл
+make test         # тесты приложения
+make verify       # формат, lint, все тесты, обе сборки, а также проверки, которые запускает CI
+make sample       # приложение на синтетических данных за полгода, в отдельной папке
+make sample-large # то же на примерно 20 000 операций за два года
+make pyenv        # venv с pandas, чтобы тесты CSV действительно перечитывали выгруженные таблицы
 ```
 
-The Debug build is a separate app: its bundle id is `io.github.EvgenyBaulin.itogo.debug`, it has
-its own container, settings and backups, a red «DEBUG» band on its icon, and «DEBUG» in the title
-of its window. It never touches the copy in /Applications. Build products live outside the
-repository, in `~/Library/Developer/Itogo/`; `Build.nosync` is a link there.
+Сборка Debug — отдельное приложение: её bundle id — `io.github.EvgenyBaulin.itogo.debug`, у неё
+свои контейнер, настройки и бэкапы, красная полоса «DEBUG» на значке и «DEBUG» в заголовке окна.
+Копию в /Applications она никогда не трогает. Продукты сборки лежат вне репозитория, в
+`~/Library/Developer/Itogo/`; `Build.nosync` — ссылка туда.
 
-Optional: `scripts/make-signing-identity.sh` creates a self-signed «Itogo Local Signing»
-certificate in your login keychain. With it, Debug builds keep one signature from build to build,
-so the permissions macOS gives the UI tests survive a rebuild; without it everything is signed
-ad hoc. `make hooks` points git at the repository's hooks.
+Необязательно: `scripts/make-signing-identity.sh` создаёт самоподписанный сертификат
+«Itogo Local Signing» в вашей связке ключей «вход». С ним сборки Debug сохраняют одну и ту же
+подпись от сборки к сборке, поэтому разрешения, которые macOS даёт UI-тестам, переживают
+пересборку; без него всё подписывается ad hoc. `make hooks` подключает к git хуки репозитория.
 
-## Layout
+## Структура
 
-| Path | What is inside |
-| ---- | -------------- |
-| `Schema/` | SQL migrations, shared by every platform; they only ever go forward |
-| `Packages/AppCore/` | the calculation core: money, expressions, the input parser, rates, accounting, analytics, planning, the category model, the archive format, synthetic data. Pure Swift and Foundation; builds and is tested on Linux |
-| `Packages/AppDatabase/` | the GRDB storage layer: migrations, records, repositories |
-| `Apps/macOS/App/` | the entry point, scenes, menus and launch options |
-| `Apps/macOS/Features/` | entry, transactions, overview, analytics, reports, planning, reconciliation, debts, settings |
-| `Apps/macOS/Platform/` | database, backups, export, archive, rates, updates, the calculation pipeline, logging |
-| `Apps/macOS/Shared/` | the design system, localization, charts |
-| `Apps/macOS/Resources/` | Info.plist, entitlements, String Catalogs, the icons |
-| `Apps/macOS/Tests/`, `Apps/macOS/UITests/` | application tests and UI tests |
-| `scripts/` | the checks of `make verify`, the release scripts, the git hooks |
+| Путь | Что внутри |
+| ---- | ---------- |
+| `Schema/` | SQL-миграции, общие для всех платформ; они идут только вперёд |
+| `Packages/AppCore/` | вычислительное ядро: деньги, выражения, разбор строки ввода, курсы, учёт, аналитика, планирование, модель категорий, формат архива, синтетические данные. Чистый Swift и Foundation; собирается и тестируется на Linux |
+| `Packages/AppDatabase/` | слой хранения на GRDB: миграции, записи, репозитории |
+| `Apps/macOS/App/` | точка входа, сцены, меню и параметры запуска |
+| `Apps/macOS/Features/` | ввод, операции, обзор, аналитика, отчёты, планирование, сверка, долги, настройки |
+| `Apps/macOS/Platform/` | база данных, бэкапы, экспорт, архив, курсы, обновления, конвейер расчётов, журнал |
+| `Apps/macOS/Shared/` | дизайн-система, локализация, графики |
+| `Apps/macOS/Resources/` | Info.plist, entitlements, String Catalogs, значки |
+| `Apps/macOS/Tests/`, `Apps/macOS/UITests/` | тесты приложения и UI-тесты |
+| `scripts/` | проверки `make verify`, скрипты выпуска, хуки git |
 
-## Releasing
+## Выпуск
 
-For the maintainer; every step runs on the maintainer's Mac.
+Для сопровождающего; каждый шаг выполняется на его Mac.
 
-1. In `project.yml`, raise `CURRENT_PROJECT_VERSION` — **Sparkle compares this number**, not the
-   short version — and set `MARKETING_VERSION`. Add a section `## [X.Y.Z] — <date>` to
-   `CHANGELOG.md`.
-2. `make verify` must end with `verify: green`.
-3. `make release-local` builds Release with the public key from `sparkle-public-key.txt`, checks
-   the bundle id, the key and the version inside what was built, packages `Itogo-X.Y.Z.zip` and
-   signs it with Sparkle's `sign_update` and the private key in the login keychain. It writes
-   the feed entry `appcast-entry-X.Y.Z.xml` next to the archive. `ARGS=--dry-run` checks
-   everything and builds nothing.
-4. `gh release create vX.Y.Z <archive> --title "Itogo X.Y.Z"` with the CHANGELOG section as notes.
-5. Put the entry into `appcast.xml` on the branch `gh-pages` with
-   `scripts/release-entry.sh into <appcast.xml> X.Y.Z <build> <length> <signature>`, push it, and
-   check that the live feed serves the new length and signature.
+1. В `project.yml` увеличьте `CURRENT_PROJECT_VERSION` — **Sparkle сравнивает именно это
+   число**, а не короткую версию — и задайте `MARKETING_VERSION`. Добавьте в `CHANGELOG.md`
+   раздел `## [X.Y.Z] — <date>`.
+2. `make verify` должен закончиться строкой `verify: green`.
+3. `make release-local` собирает Release с публичным ключом из `sparkle-public-key.txt`,
+   проверяет bundle id, ключ и версию внутри собранного, упаковывает `Itogo-X.Y.Z.zip` и
+   подписывает его приватным ключом из связки ключей «вход» с помощью утилиты Sparkle
+   `sign_update`. Рядом с архивом он пишет запись ленты `appcast-entry-X.Y.Z.xml`.
+   `ARGS=--dry-run` проверяет всё и ничего не собирает.
+4. Выполните `gh release create vX.Y.Z <archive> --title "Itogo X.Y.Z"`, указав раздел
+   CHANGELOG в качестве описания.
+5. Добавьте запись в `appcast.xml` на ветке `gh-pages` командой
+   `scripts/release-entry.sh into <appcast.xml> X.Y.Z <build> <length> <signature>`, отправьте
+   ветку на GitHub (push) и проверьте, что опубликованная лента отдаёт новую длину и подпись.
 
-The private EdDSA key never enters the repository; lose it, and installed copies can never be
-updated again, so keep a copy in a password manager. `.github/workflows/release.yml` is a spare
-path that does the same from a pushed tag:
+Приватный ключ EdDSA никогда не попадает в репозиторий; потеряете его — и установленные копии
+уже никогда не получат обновлений, поэтому держите его копию в менеджере паролей.
+`.github/workflows/release.yml` — запасной путь, который делает то же самое по отправленному
+тегу:
 
-- it needs two repository secrets, `SPARKLE_PRIVATE_KEY` (the private key as
-  `generate_keys -x` prints it) and `SPARKLE_PUBLIC_KEY`;
-- a release already published by hand makes it stop at its first job.
+- ему нужны два секрета репозитория: `SPARKLE_PRIVATE_KEY` (приватный ключ в том виде, в каком
+  его печатает `generate_keys -x`) и `SPARKLE_PUBLIC_KEY`;
+- если выпуск уже опубликован вручную, workflow останавливается на первом задании.
 
-## Acknowledgements
+## Благодарности
 
-- [GRDB.swift](https://github.com/groue/GRDB.swift) by Gwendal Roué — MIT License.
-- [Sparkle](https://github.com/sparkle-project/Sparkle) — MIT License.
+- [GRDB.swift](https://github.com/groue/GRDB.swift), автор — Gwendal Roué, лицензия MIT.
+- [Sparkle](https://github.com/sparkle-project/Sparkle) — лицензия MIT.
 
-## License
+## Лицензия
 
 [MIT](LICENSE) © 2026 Evgeny Baulin

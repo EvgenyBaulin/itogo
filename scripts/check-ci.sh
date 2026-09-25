@@ -20,7 +20,7 @@
 # and named no test.
 #
 # And every secret a workflow reads is named as a secret in the instructions a maintainer
-# follows — the section «Releasing» of README.md: a release once stopped on SPARKLE_PUBLIC_KEY
+# follows — the section «Выпуск» of README.md: a release once stopped on SPARKLE_PUBLIC_KEY
 # while the instructions of the day asked for SPARKLE_PRIVATE_KEY alone. A name counts where a
 # list item or a paragraph that says «секрет» or «secret» spells it; a variable of the same name
 # elsewhere does not.
