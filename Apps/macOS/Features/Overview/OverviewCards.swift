@@ -181,44 +181,6 @@ private struct QualitiesCard: View {
   }
 }
 
-/// Parts I paid for somebody else that have not come back. When nobody owes anything the
-/// card stays and says so — the grid does not rearrange itself — and offers no button, as
-/// there is nothing to close.
-private struct OwedCard: View {
-  @Dependency(\.environment) private var environment
-  @Dependency(\.compute) private var compute
-  let actions: OperationActions
-
-  var body: some View {
-    ComputedBlock(
-      title: environment.language("owed.title", table: "Entry"), state: compute.states.owed,
-      fillsHeight: true, retry: { compute.retry(ComputeStep.owed) }
-    ) { owed in
-      if owed.count > 0 {
-        VStack(alignment: .leading, spacing: 8) {
-          HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(verbatim: environment.money.rounded(owed.amount))
-              .font(.title2.monospacedDigit())
-            Text(verbatim: environment.language.format("owed.count", table: "Entry", owed.count))
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          .accessibilityElement(children: .combine)
-          // Content, not a floating control: a plain small button, never glass.
-          Button(environment.language("reimbursement.title", table: "Entry")) {
-            actions.recordingReimbursement = true
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
-      } else {
-        Text(verbatim: environment.language("overview.owedNobody", table: "Overview"))
-          .foregroundStyle(.secondary)
-      }
-    }
-  }
-}
-
 /// The spending of the whole month as it is likely to end: the remainder of the forecast
 /// step laid over what is spent and planned in the data on screen, so the known part is
 /// always fresh and P10 never falls below what is already spent.
@@ -289,54 +251,6 @@ private struct ForecastCard: View {
           planned: snapshot.planning.planned.total,
           computedAt: at),
         at: at)
-    }
-  }
-}
-
-/// The last reconciliation: its day, how long ago, the difference it found, and «Сверить…»,
-/// which opens the reconciliation sheet of the main window.
-private struct ReconciliationCard: View {
-  @Dependency(\.environment) private var environment
-  @Dependency(\.compute) private var compute
-
-  var body: some View {
-    ComputedBlock(
-      title: environment.language("overview.reconciliation", table: "Overview"),
-      state: compute.states.data, fillsHeight: true,
-      retry: { compute.retry(ComputeStep.data) }
-    ) { snapshot in
-      VStack(alignment: .leading, spacing: 6) {
-        if let last = snapshot.planning.lastReconciliation {
-          Text(verbatim: environment.dates.longDay(last.date))
-            .font(.title3)
-          Text(
-            verbatim: environment.language.format(
-              "overview.reconciliationAgo", table: "Planning",
-              max(0, last.date.days(to: snapshot.today)))
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          if let difference = last.differenceE4 {
-            Text(
-              verbatim: environment.format(
-                "overview.reconciliationDifference", table: "Planning",
-                environment.money.signedRounded(difference))
-            )
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-          }
-        } else {
-          Text(verbatim: environment.language("overview.reconciliationNone", table: "Overview"))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        // Content, not a floating control: a plain small button, never glass.
-        Button(environment.language("reconcile.open", table: "Planning")) {
-          environment.showsReconciliation = true
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-      }
     }
   }
 }

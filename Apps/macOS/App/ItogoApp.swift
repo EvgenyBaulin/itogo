@@ -340,27 +340,14 @@ struct MainWindow: View {
 
   var body: some View {
     NavigationSplitView {
-      List(Section.allCases, selection: $section) { item in
-        Label {
-          Text(verbatim: environment.language(item.titleKey))
-        } icon: {
-          Image(systemName: item.symbol)
-        }
-        .tag(item)
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .selectSection)) { note in
-        guard let index = note.object as? Int,
-          let chosen = Section.allCases.first(where: { $0.shortcutIndex == index })
-        else { return }
-        section = chosen
-      }
-      .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
-      // Every column of a split view is laid out in a host of its own, and on macOS 26 a
-      // host of its own does not always get the environment of the scene — the crash of
-      // 19.09 in the inspector, and the journal line `dependencies.missing … DayList.swift`
-      // of 21.09 in this window. The window holds the dependencies as a value, so it hands
-      // them over again here; below the root nothing has to trust the environment.
-      .appDependencies(deps)
+      MainSidebar(section: $section)
+        .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
+        // Every column of a split view is laid out in a host of its own, and on macOS 26 a
+        // host of its own does not always get the environment of the scene — the crash of
+        // 19.09 in the inspector, and the journal line `dependencies.missing … DayList.swift`
+        // of 21.09 in this window. The window holds the dependencies as a value, so it hands
+        // them over again here; below the root nothing has to trust the environment.
+        .appDependencies(deps)
     } detail: {
       // The entry bar takes its width from the whole window, and the detail column it
       // floats over only keeps it clear of its sides.
