@@ -206,6 +206,6 @@ extension Rate: @retroactive FetchableRecord, @retroactive PersistableRecord {
     container["rub_per_unit"] = RowMapping.string(rubPerUnit)
     container["nominal"] = nominal
     container["source"] = source.rawValue
-    container["fetched_at"] = fetchedAt
+    container["fetched_at"] = StoredInstant.databaseValue(fetchedAt)
   }
 }

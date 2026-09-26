@@ -938,6 +938,23 @@
         }
       }
     },
+    "account.refusal.deletesWithMoney": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This account has money on it. Transfer the balance to another account and archive this one, or reconcile it to zero without recording the difference and then delete it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На счёте есть деньги. Переведите остаток на другой счёт и уберите этот в архив — или сверьте его до нуля без записи разницы, тогда его можно удалить."
+          }
+        }
+      }
+    },
     "account.refusal.duplicateCurrency": {
       "extractionState": "manual",
       "localizations": {

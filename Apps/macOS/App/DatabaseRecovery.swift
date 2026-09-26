@@ -131,8 +131,16 @@ enum DatabaseRecovery {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-    let aside = damagedDirectory.appendingPathComponent(
-      "finance-\(formatter.string(from: now)).sqlite")
+    // Named by the second, or the first one after it no file has: a file set aside before —
+    // a start that failed again at once — is never moved over, and it may hold the last days.
+    var stamp = now
+    var aside = damagedDirectory.appendingPathComponent(
+      "finance-\(formatter.string(from: stamp)).sqlite")
+    while manager.fileExists(atPath: aside.path) {
+      stamp = stamp.addingTimeInterval(1)
+      aside = damagedDirectory.appendingPathComponent(
+        "finance-\(formatter.string(from: stamp)).sqlite")
+    }
     do {
       try manager.createDirectory(at: damagedDirectory, withIntermediateDirectories: true)
       let size = (try? manager.attributesOfItem(atPath: database.path)[.size] as? Int) ?? 0

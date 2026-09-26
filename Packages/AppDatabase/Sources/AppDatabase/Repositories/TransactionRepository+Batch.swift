@@ -474,7 +474,7 @@ extension TransactionRepository {
       let marks = databaseQuestionMarks(count: chunk.count)
       try db.execute(
         sql: "UPDATE transactions SET deleted_at = ?, updated_at = ? WHERE id IN (\(marks))",
-        arguments: StatementArguments([deletedAt, instant] as [(any DatabaseValueConvertible)?])
+        arguments: [StoredInstant.databaseValue(deletedAt), StoredInstant.databaseValue(instant)]
           + StatementArguments(chunk))
     }
   }

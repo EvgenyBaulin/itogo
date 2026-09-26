@@ -86,10 +86,24 @@ final class SettingsWindowSizeTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(content.frame.width, SettingsView.minimumSize.width)
     XCTAssertGreaterThanOrEqual(content.frame.height, SettingsView.minimumSize.height)
 
-    window.setContentSize(CGSize(width: 880, height: 700))
+    // The larger size needs a screen that holds it with the title bar and the tabs above it:
+    // on CI's 1024 × 768 screen the window stops at 677 points of content, the screen's limit
+    // and not the window's.
+    let larger = CGSize(width: 880, height: 700)
+    let chrome = CGSize(
+      width: window.frame.width - content.frame.width,
+      height: window.frame.height - content.frame.height)
+    try TestEnvironment.requireScreen(
+      width: larger.width + chrome.width, height: larger.height + chrome.height, for: window)
+    // Where the window is and what its screen shows, so a red log says which one stopped it.
+    let room = {
+      "window \(window.frame), screen visible \(window.screen?.visibleFrame ?? .zero)"
+    }
+
+    window.setContentSize(larger)
     RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-    XCTAssertEqual(content.frame.width, 880, accuracy: 1, "not made wider")
-    XCTAssertEqual(content.frame.height, 700, accuracy: 1, "not made taller")
+    XCTAssertEqual(content.frame.width, 880, accuracy: 1, "not made wider; \(room())")
+    XCTAssertEqual(content.frame.height, 700, accuracy: 1, "not made taller; \(room())")
 
     // Another tab: SwiftUI sets the frame of the window again, and the corner stays.
     let toolbar = try XCTUnwrap(window.toolbar, "the tabs are not in a toolbar")
@@ -99,8 +113,10 @@ final class SettingsWindowSizeTests: XCTestCase {
     if let action = other.action { NSApp.sendAction(action, to: other.target, from: other) }
     RunLoop.main.run(until: Date().addingTimeInterval(0.5))
     XCTAssertTrue(window.styleMask.contains(.resizable), "another tab took the corner away")
-    XCTAssertEqual(content.frame.width, 880, accuracy: 1, "another tab shrank the window")
-    XCTAssertEqual(content.frame.height, 700, accuracy: 1, "another tab shrank the window")
+    XCTAssertEqual(
+      content.frame.width, 880, accuracy: 1, "another tab shrank the window; \(room())")
+    XCTAssertEqual(
+      content.frame.height, 700, accuracy: 1, "another tab shrank the window; \(room())")
   }
 
   /// The domain as it was: a key the test added goes, a key it changed or removed gets its

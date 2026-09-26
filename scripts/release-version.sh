@@ -14,7 +14,9 @@
 #        release-version.sh app <Itogo.app> <version> <build>
 #                                                       fails unless the built app says both
 #        release-version.sh grew [<repository>]         fails unless CURRENT_PROJECT_VERSION is
-#                                                       greater than at the release before
+#                                                       greater than at the release before and
+#                                                       than every build the feed on
+#                                                       origin/gh-pages announces
 #        release-version.sh --self-test
 set -euo pipefail
 
@@ -50,6 +52,31 @@ check_tag() {
   [ "${version}" = "${spec}" ] || fail "tag ${tag} but project.yml says ${spec}"
 }
 
+# The feed on the branch Pages publishes, as this clone last fetched or pushed it: every build it
+# announces is on somebody's Mac already. A release published with `gh release create` gets its
+# tag on GitHub and not here, so until the next fetch the nearest tag under HEAD is the release
+# before it, and only the feed still knows the last build. A clone that never saw the branch
+# has nothing to compare with, and says so, the way a missing tag is said aloud below; a feed
+# that does not parse is one Sparkle drops whole, and no release should go out over it. The ref
+# is only as fresh as the last fetch: make-release.sh fetches it first.
+check_feed() {
+  local repo="$1" build="$2" feed announced last
+  if ! feed="$(git -C "${repo}" show refs/remotes/origin/gh-pages:appcast.xml 2> /dev/null)"; then
+    printf 'build %s: no appcast.xml on origin/gh-pages in this clone, compared with the tags alone\n' \
+      "${build}"
+    return 0
+  fi
+  announced="$(printf '%s\n' "${feed}" | /usr/bin/xmllint --xpath \
+    "count(//*[local-name()='item']/*[local-name()='version'][number(.) >= ${build}])" - \
+    2> /dev/null)" || fail "appcast.xml on origin/gh-pages does not parse"
+  last="$(printf '%s\n' "${feed}" | sed -nE 's/.*<sparkle:version>([0-9]+)<\/sparkle:version>.*/\1/p' |
+    sort -n | tail -n 1)"
+  [ "${announced}" = "0" ] ||
+    fail "CURRENT_PROJECT_VERSION ${build} is not greater than build ${last:-?} the feed on origin/gh-pages announces: Sparkle would never offer this release"
+  printf 'build %s is above every build the feed on origin/gh-pages announces (the last: %s)\n' \
+    "${build}" "${last:-none}"
+}
+
 # Sparkle offers an update only when CFBundleVersion is greater than the one installed, so a
 # release that forgot to raise CURRENT_PROJECT_VERSION reaches nobody.
 # The release before this one is the nearest tag of the history under it, the tag of this very
@@ -60,6 +87,7 @@ check_grew() {
   build="$(build_number "${repo}/project.yml")"
   [[ "${build}" =~ ^[1-9][0-9]*$ ]] ||
     fail "CURRENT_PROJECT_VERSION «${build}» is not a whole number above zero"
+  check_feed "${repo}" "${build}"
   # A shallow clone has no tags under HEAD, and every release would look like the first one.
   [ "$(git -C "${repo}" rev-parse --is-shallow-repository)" = "false" ] ||
     fail "the history is shallow, so the release before this one cannot be seen (fetch-depth: 0)"
@@ -135,6 +163,10 @@ if [ "${1:-}" = "--self-test" ]; then
   yml 1.0.0 1
   (check_grew "${repo}" > /dev/null) ||
     { echo "release-version self-test: refused the first release, which has nothing before it"; exit 1; }
+  case "$(check_grew "${repo}")" in
+    *"no appcast.xml on origin/gh-pages"*) ;;
+    *) echo "release-version self-test: a clone without the branch of the feed was not said aloud"; exit 1 ;;
+  esac
   in_repo add project.yml
   in_repo commit -q -m "1.0.0"
   in_repo tag v1.0.0
@@ -154,6 +186,43 @@ if [ "${1:-}" = "--self-test" ]; then
   in_repo tag v1.0.1
   (check_grew "${repo}" > /dev/null) ||
     { echo "release-version self-test: compared the tag being released with itself"; exit 1; }
+  # A release published with `gh release create` gets its tag on GitHub, not here: until the
+  # next fetch the nearest tag under HEAD is the release before it. The feed on the branch Pages
+  # publishes, as this clone last saw it, still says which builds installed copies have.
+  feed_of() {
+    printf '<?xml version="1.0"?>\n<rss version="2.0" xmlns:sparkle="%s"><channel>' \
+      "http://www.andymatuschak.org/xml-namespaces/sparkle"
+    for announced in "$@"; do
+      printf '<item><sparkle:version>%s</sparkle:version></item>' "${announced}"
+    done
+    printf '</channel></rss>\n'
+  }
+  pages() {
+    local blob tree commit
+    blob="$(printf '%s' "$1" | git -C "${repo}" hash-object -w --stdin)"
+    tree="$(printf '100644 blob %s\tappcast.xml\n' "${blob}" | git -C "${repo}" mktree)"
+    commit="$(git -C "${repo}" -c commit.gpgsign=false -c user.name=test \
+      -c user.email=test@example.invalid commit-tree "${tree}" -m feed)"
+    git -C "${repo}" update-ref refs/remotes/origin/gh-pages "${commit}"
+  }
+  pages "$(feed_of 3 2 1)"
+  yml 1.0.3 3
+  if (check_grew "${repo}" > /dev/null 2>&1); then
+    echo "release-version self-test: took build 3 while the feed on gh-pages announces build 3"
+    exit 1
+  fi
+  yml 1.0.3 4
+  (check_grew "${repo}" > /dev/null) ||
+    { echo "release-version self-test: refused build 4 over a feed that announces 3"; exit 1; }
+  pages "$(feed_of)"
+  yml 1.0.3 3
+  (check_grew "${repo}" > /dev/null) ||
+    { echo "release-version self-test: refused build 3 over a feed that announces nothing"; exit 1; }
+  pages "<rss><channel><item>"
+  if (check_grew "${repo}" > /dev/null 2>&1); then
+    echo "release-version self-test: took a build over a feed on gh-pages that does not parse"
+    exit 1
+  fi
   echo "release-version self-test: ok"
   exit 0
 fi

@@ -367,6 +367,191 @@ final class TransferListTests: XCTestCase {
     }
   }
 
+  /// A transfer of an account in the archive stays when a list deletes it, as it does on the
+  /// screen of the account: taken away, it would move money on an account no total counts, and
+  /// «Всего» would grow out of nothing. Сбер 100 000 ₽ and cash 5 000 ₽, 1 000 ₽ to the cash and
+  /// 6 000 ₽ back, the empty cash archived: deleting the first transfer from a list made «Всего»
+  /// 106 000 ₽ while the money was 105 000 ₽. The coffee selected with it still goes, in one
+  /// step of ⌘Z; the question says which transfer stays and why, in both languages; the
+  /// transfer alone is nothing to delete. With the cash back, the transfer goes.
+  func testAListDeletionKeepsATransferOfAnArchivedAccountAndSaysWhy() async throws {
+    let (setup, _) = try setUpStore()
+    let references = ReferenceRepository(writer: setup.stack.writer)
+    var cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
+    try references.save(cash)
+    let toCash = Transfer(
+      occurredAt: moment(today, hour: 9), fromAccountId: sber.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(whole: 1_000), toAccountId: cash.id, toCurrency: .rub,
+      toAmountE4: AmountE4(whole: 1_000), createdAt: moment(today, hour: 9),
+      updatedAt: moment(today, hour: 9))
+    let fromCash = Transfer(
+      occurredAt: moment(today, hour: 10), fromAccountId: cash.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(whole: 6_000), toAccountId: sber.id, toCurrency: .rub,
+      toAmountE4: AmountE4(whole: 6_000), createdAt: moment(today, hour: 10),
+      updatedAt: moment(today, hour: 10))
+    let coffee = try expense(300, on: today, hour: 8)
+    _ = try setup.planning.apply(
+      PlanningChange(created: [coffee], upsert: PlanningRows(transfers: [toCash, fromCash])))
+    cash.archived = true
+    try references.save(cash)
+    try await show(setup)
+
+    let environment = AppEnvironment()
+    // The choice is stored for the whole test host: it goes back to what it was.
+    let before = environment.language.choice
+    defer { environment.language.choice = before }
+    let actions = OperationActions()
+    for choice in [AppLanguage.Choice.english, .russian] {
+      environment.language.choice = choice
+      let words = TransferText.message(.issue(.archivedAccount), environment)
+      // With the coffee: the coffee's question, and a line for the transfer that stays.
+      actions.requestDeletion(of: [toCash.id, coffee.id], store: setup.store)
+      let both = try XCTUnwrap(actions.confirmation)
+      guard case .delete(let ids, _, _, _) = both else { return XCTFail("a deletion expected") }
+      XCTAssertEqual(ids, [coffee.id], "the transfer of the archived cash is not asked about")
+      let message = BulkConfirmationText.message(both, environment: environment)
+      XCTAssertTrue(message.contains(words), message)
+      XCTAssertFalse(message.contains("transactions."), message)
+      // Alone: nothing to delete, and why.
+      actions.requestDeletion(of: [toCash.id], store: setup.store)
+      let alone = try XCTUnwrap(actions.confirmation, "the owner is told why nothing goes")
+      guard case .delete(let none, _, _, _) = alone else { return XCTFail("a deletion expected") }
+      XCTAssertEqual(none, [])
+      XCTAssertEqual(
+        BulkConfirmationText.title(alone, environment: environment),
+        environment.language("bulk.nothingToDelete", table: "Transactions"))
+      let reason = BulkConfirmationText.message(alone, environment: environment)
+      XCTAssertTrue(reason.contains(words), reason)
+    }
+
+    // The write itself keeps it too, whatever it is handed: the coffee goes, both transfers
+    // stay, and one ⌘Z brings the coffee back.
+    XCTAssertTrue(setup.store.delete(ids: [toCash.id, coffee.id]))
+    let afterDelete = try await transfers(setup)
+    XCTAssertEqual(Set(afterDelete), [toCash.id, fromCash.id])
+    XCTAssertTrue(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
+    setup.store.undo()
+    XCTAssertFalse(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
+    XCTAssertFalse(setup.store.canUndo)
+    // The transfer alone: nothing is written.
+    XCTAssertFalse(setup.store.delete(ids: [toCash.id]))
+    let kept = try await transfers(setup)
+    XCTAssertEqual(Set(kept), [toCash.id, fromCash.id])
+    XCTAssertFalse(setup.store.canUndo)
+    XCTAssertNil(setup.store.failure)
+
+    // «Вернуть» the cash, and the transfer goes.
+    cash.archived = false
+    try references.save(cash)
+    try await show(setup)
+    XCTAssertTrue(setup.store.delete(ids: [toCash.id]))
+    let afterRestore = try await transfers(setup)
+    XCTAssertEqual(afterRestore, [fromCash.id])
+  }
+
+  /// A transfer whose fee a refund was recorded against stays when a list deletes it, as on the
+  /// screen of the account, and the question says why. It used to go into the write and take
+  /// the whole deletion down with it: nothing selected went, and the owner read only that the
+  /// deletion failed.
+  func testAListDeletionKeepsATransferWhoseFeeWasRefundedAndTakesTheRest() async throws {
+    let (setup, _) = try setUpStore()
+    let moved = transfer(on: today, hour: 11)
+    var fee = try expense(30, on: today, hour: 11)
+    fee.transaction.externalId = TransferRules.feeKey(of: moved.id)
+    let coffee = try expense(300, on: today, hour: 9)
+    var back = TransactionDraft(
+      kind: .refund, occurredAt: moment(today, hour: 12), amount: AmountE4(whole: 10),
+      paymentMethodId: sber.id)
+    let charged = try XCTUnwrap(fee.parts.first)
+    back.parts = [PartDraft(amount: AmountE4(whole: 10), refundOfPartId: charged.id)]
+    let refund = try back.materialize(now: moment(today, hour: 12))
+    _ = try setup.planning.apply(
+      PlanningChange(
+        created: [fee, refund, coffee], upsert: PlanningRows(transfers: [moved])))
+    try await show(setup)
+
+    let environment = AppEnvironment()
+    // The choice is stored for the whole test host: it goes back to what it was.
+    let before = environment.language.choice
+    defer { environment.language.choice = before }
+    environment.language.choice = .english
+    let actions = OperationActions()
+    actions.requestDeletion(of: [moved.id, coffee.id], store: setup.store)
+    let confirmation = try XCTUnwrap(actions.confirmation)
+    guard case .delete(let ids, _, _, _) = confirmation else {
+      return XCTFail("a deletion expected")
+    }
+    XCTAssertEqual(ids, [coffee.id])
+    let message = BulkConfirmationText.message(confirmation, environment: environment)
+    XCTAssertTrue(message.contains(TransferText.message(.feeRefunded, environment)), message)
+
+    XCTAssertTrue(setup.store.delete(ids: [moved.id, coffee.id]))
+    XCTAssertNil(setup.store.failure, "nothing failed: the transfer was kept, not refused")
+    let afterDelete = try await transfers(setup)
+    XCTAssertEqual(afterDelete, [moved.id])
+    XCTAssertTrue(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
+    XCTAssertFalse(try XCTUnwrap(try setup.repository.entry(id: fee.id)).transaction.isDeleted)
+  }
+
+  /// A transfer whose fee a person gave the money back for stays when a list deletes it, as on
+  /// the screen of the account, and the question says why. It used to go with its fee, closed
+  /// part and all: the money back was left pointing at a fee that was no longer there. The
+  /// coffee selected with it still goes, in one step of ⌘Z.
+  func testAListDeletionKeepsATransferWhoseFeeWasClosedByMoneyBackAndTakesTheRest() async throws {
+    let (setup, _) = try setUpStore()
+    let alex = Person(name: "Alex")
+    let moved = transfer(on: today, hour: 11)
+    var charged = TransactionDraft(
+      occurredAt: moment(today, hour: 11), amount: AmountE4(whole: 30), note: "fee",
+      paymentMethodId: sber.id)
+    charged.normalizeSinglePart()
+    charged.parts[0].reimbursable = true
+    charged.parts[0].debtorPersonId = alex.id
+    var fee = try charged.materialize(now: moment(today, hour: 11))
+    fee.transaction.externalId = TransferRules.feeKey(of: moved.id)
+    fee.parts[0].reimbursementStatus = .returned
+    var back = TransactionDraft(
+      kind: .reimbursement, occurredAt: moment(today, hour: 12), amount: AmountE4(whole: 30),
+      paymentMethodId: sber.id)
+    back.normalizeSinglePart()
+    back.parts[0].forPersonId = alex.id
+    let moneyBack = try back.materialize(now: moment(today, hour: 12))
+    let link = ReimbursementLink(
+      reimbursementTxId: moneyBack.id, partId: fee.parts[0].id, amountE4: AmountE4(whole: 30))
+    let coffee = try expense(300, on: today, hour: 9)
+    try setup.repository.insert(
+      HistoryBatch(
+        people: [alex], entries: [fee, moneyBack, coffee], links: [link], transfers: [moved]))
+    try await show(setup)
+
+    let environment = AppEnvironment()
+    // The choice is stored for the whole test host: it goes back to what it was.
+    let before = environment.language.choice
+    defer { environment.language.choice = before }
+    environment.language.choice = .english
+    let actions = OperationActions()
+    actions.requestDeletion(of: [moved.id, coffee.id], store: setup.store)
+    let confirmation = try XCTUnwrap(actions.confirmation)
+    guard case .delete(let ids, _, _, _) = confirmation else {
+      return XCTFail("a deletion expected")
+    }
+    XCTAssertEqual(ids, [coffee.id], "the transfer whose fee came back is not asked about")
+    let message = BulkConfirmationText.message(confirmation, environment: environment)
+    XCTAssertTrue(message.contains(TransferText.message(.feeMoneyBack, environment)), message)
+
+    XCTAssertTrue(setup.store.delete(ids: [moved.id, coffee.id]))
+    XCTAssertNil(setup.store.failure, "nothing failed: the transfer was kept, not refused")
+    let afterDelete = try await transfers(setup)
+    XCTAssertEqual(afterDelete, [moved.id])
+    XCTAssertTrue(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
+    let kept = try XCTUnwrap(try setup.repository.entry(id: fee.id))
+    XCTAssertFalse(kept.transaction.isDeleted, "the fee stays with its transfer")
+    XCTAssertEqual(kept.parts.first?.reimbursementStatus, .returned, "and stays closed")
+    setup.store.undo()
+    XCTAssertFalse(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
+    XCTAssertFalse(setup.store.canUndo)
+  }
+
   func testAPlainDeletionOfOperationsStaysAsItWas() async throws {
     let (setup, _) = try setUpStore()
     let coffee = try expense(300, on: today, hour: 9)

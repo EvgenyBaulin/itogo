@@ -1242,6 +1242,41 @@ public final class EntryDraftModel {
     currencyFromDefaults = currency
   }
 
+  /// The currency Enter on `parsed` gives the operation, worked out without touching the draft:
+  /// the preview above the line and the chips under it say this one, so what they show is what
+  /// is saved. It follows `apply` and `applyDefaults` step by step: the purchase picked for
+  /// this very line keeps its currency; the one typed; the one the draft holds when the owner
+  /// set it — picked in the panel, or typed in a line applied before —; otherwise the main
+  /// currency of the account the owner chose — named in the line, picked in the panel, or the
+  /// one whose screen is open now, whatever screen laid the draft's account before —; otherwise
+  /// the default currency.
+  public func currencyOnSaving(_ parsed: ParsedInput) -> CurrencyCode {
+    if editsSavedOperation { return parsed.currency ?? draft.currency }
+    let picked = refundTarget != nil || refundWithoutPurchase || pickBase != nil
+    if picked, parsed == lineOfThePick { return draft.currency }
+    if let typed = parsed.currency { return typed }
+    // Another line forgets the purchase: the draft is again what it was before the pick.
+    let base = picked ? pickBase : nil
+    let held = base?.draft ?? draft
+    let laid = base.map(\.currencyFromDefaults) ?? currencyFromDefaults
+    let fromDefaults = base.map(\.paymentMethodFromDefaults) ?? paymentMethodFromDefaults
+    let fromTheScreen = base?.accountFromTheScreen ?? accountFromTheScreen
+    guard let laid, held.currency == laid else { return held.currency }
+    let chosen: PaymentMethod?
+    if let named = parsed.paymentMethodId {
+      chosen = account(withId: named)
+    } else if held.paymentMethodId == nil || held.paymentMethodId == fromDefaults {
+      // The defaults lay the account again: the screen's counts as chosen, nothing else does.
+      chosen = openAccountScreen?().flatMap { isLiveAccount($0) ? account(withId: $0) : nil }
+    } else if let id = held.paymentMethodId, fromDefaults == nil || fromTheScreen {
+      chosen = account(withId: id)
+    } else {
+      chosen = nil
+    }
+    return AccountRules.currencyForNewOperation(
+      typed: nil, chosenAccount: chosen, default: defaultCurrency)
+  }
+
   private func account(withId id: UUID) -> PaymentMethod? {
     paymentMethods.first { $0.id == id } ?? allAccounts.first { $0.id == id }
   }

@@ -36,7 +36,7 @@ extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive Persis
   public func encode(to container: inout PersistenceContainer) throws {
     container["id"] = id.uuidString
     container["kind"] = kind.rawValue
-    container["occurred_at"] = occurredAt
+    container["occurred_at"] = StoredInstant.databaseValue(occurredAt)
     container["currency"] = currency.code
     container["amount_e4"] = amountE4.raw
     container["amount_expr"] = amountExpr
@@ -55,9 +55,9 @@ extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive Persis
     container["credit_debt_id"] = creditDebtId?.uuidString
     container["import_batch_id"] = importBatchId?.uuidString
     container["external_id"] = externalId
-    container["created_at"] = createdAt
-    container["updated_at"] = updatedAt
-    container["deleted_at"] = deletedAt
+    container["created_at"] = StoredInstant.databaseValue(createdAt)
+    container["updated_at"] = StoredInstant.databaseValue(updatedAt)
+    container["deleted_at"] = StoredInstant.databaseValue(deletedAt)
   }
 }
 
@@ -202,7 +202,7 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
     container["transaction_id"] = transactionId?.uuidString
     container["note"] = note
     container["payment_method_id"] = paymentMethodId?.uuidString
-    container["occurred_at"] = occurredAt
+    container["occurred_at"] = StoredInstant.databaseValue(occurredAt)
     container["account_currency"] = accountCurrency?.code
     container["account_amount_e4"] = accountAmountE4?.raw
   }

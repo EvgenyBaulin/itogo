@@ -303,6 +303,9 @@ struct TransferRowText: Hashable, Sendable {
 struct TransferDeletion: Hashable, Sendable {
   var count = 0
   var fees: AmountE4 = .zero
+  /// Why each transfer of the selection the rules keep stays: one of its accounts is in the
+  /// archive, or something came back for its fee (`TransferActions.deletionRefusals`).
+  var kept: [TransferRefusal] = []
 
   static let none = TransferDeletion()
 }
@@ -322,21 +325,33 @@ enum TransferDeletionText {
   }
 
   /// «И 1 перевод.» after the operations, and «Их комиссии, 15.00 ₽, удаляются вместе с ними.»
+  /// A transfer the rules keep is said to stay, with the words its own sheet refuses it in:
+  /// «1 перевод останется как есть. Один из счетов в архиве.»
   static func lines(
     operations: Int, _ transfers: TransferDeletion, environment: AppEnvironment
   ) -> [String] {
-    guard transfers.count > 0 else { return [] }
     var lines: [String] = []
-    if operations > 0 {
+    if transfers.count > 0, operations > 0 {
       lines.append(
         environment.language.format(
           "transactions.transfers.alsoDeleted", table: table, counts: transfers.count))
     }
-    if !transfers.fees.isZero {
+    if transfers.count > 0, !transfers.fees.isZero {
       lines.append(
         environment.language.format(
           "transactions.transfers.feesDeleted", table: table,
           environment.money.exact(transfers.fees, currency: .rub)))
+    }
+    if !transfers.kept.isEmpty {
+      // Each reason once, in the order the transfers come.
+      var reasons: [String] = []
+      for refusal in transfers.kept {
+        let words = TransferText.message(refusal, environment)
+        if !reasons.contains(words) { reasons.append(words) }
+      }
+      let stays = environment.language.format(
+        "transactions.transfers.kept", table: table, counts: transfers.kept.count)
+      lines.append(([stays] + reasons).joined(separator: " "))
     }
     return lines
   }

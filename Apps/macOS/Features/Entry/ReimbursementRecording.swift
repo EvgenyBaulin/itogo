@@ -130,9 +130,14 @@ struct ReimbursementRecording {
   /// More money came back than I paid: the excess is income in the system Surcharges
   /// category, never in the category of the original spending — in the currency the money
   /// came in, at its rate, on the account it came onto.
+  ///
+  /// `rate` is the rate the money back itself came at, its rubles over its amount: the income
+  /// shows that one — 95 for dollars that came at 95 —, while its rubles are exactly the rubles
+  /// the parts left over, which may differ from the amount times the rate by the rounding of
+  /// each part's share. Without it the rate is the surplus's rubles over its amount.
   static func surplusEntry(
     _ surplus: SurchargeIncome, of reimbursementId: UUID, on day: Date, now: Date,
-    rateDate: DateOnly? = nil, setting: Setting
+    rate: Decimal? = nil, rateDate: DateOnly? = nil, setting: Setting
   ) throws -> TransactionEntry {
     guard let surcharges = setting.surchargesCategoryId else {
       throw Failure.noSurchargesCategory
@@ -141,7 +146,8 @@ struct ReimbursementRecording {
     var draft = TransactionDraft(
       kind: .income, occurredAt: day, currency: surplus.currency, amount: surplus.amountE4,
       rate: foreign
-        ? DecimalMath.round(surplus.amountRubE4.decimal / surplus.amountE4.decimal, scale: 6)
+        ? rate
+          ?? DecimalMath.round(surplus.amountRubE4.decimal / surplus.amountE4.decimal, scale: 6)
         : nil,
       rateDate: foreign ? rateDate : nil,
       rateSource: foreign ? .manual : nil,

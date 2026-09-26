@@ -165,7 +165,8 @@ struct CountQuestions: Sendable {
 
   var count: Date { counts[index] }
 
-  /// «Да» puts the transfer just before this count — after the one before it, if any; «Нет»
+  /// «Да» puts the transfer just before this count — after the one before it, if any — unless
+  /// it is dated before the count already, as an operation keeps its moment; «Нет»
   /// asks about the next count, or puts the transfer after the last. No answer leaves the day
   /// of the counts in the owner's `calendar`: a count at midnight answered «Да» keeps the
   /// transfer on its day, one in the day's last second answered «Нет» too.
@@ -175,7 +176,7 @@ struct CountQuestions: Sendable {
         occurredAt: occurredAt, count: count, wasBefore: wasBefore, calendar: calendar)
     }
     if wasBefore {
-      guard index > 0 else { return .stamp(stamped(count, wasBefore: true)) }
+      guard index > 0 else { return .stamp(min(occurredAt, stamped(count, wasBefore: true))) }
       let previous = counts[index - 1]
       let between = min(stamped(previous, wasBefore: false), stamped(count, wasBefore: true))
       // Two counts less than a second apart at the start of the day leave no whole second
@@ -305,6 +306,53 @@ struct TransferActions {
     return nil
   }
 
+  /// The category of fees the owner put into the archive, to be brought back when the next
+  /// fee finds no live one: the one the fees were written to and remembered, while it is an
+  /// ordinary expense category under a live parent; `nil` otherwise.
+  nonisolated static func archivedFeeCategory(
+    categories: [CoreKit.Category], remembered: UUID?
+  ) -> CoreKit.Category? {
+    let tree = CategoryTree(categories)
+    guard let remembered, let category = categories.first(where: { $0.id == remembered }),
+      category.archived, category.kind == .expense, tree.systemRole(of: category.id) == nil,
+      !(tree.parent(of: category.id)?.archived ?? false)
+    else { return nil }
+    return category
+  }
+
+  /// Why deleting each of `transfers` is refused as `dataset` has them, by the transfer's id;
+  /// a transfer that may go is not among them. A transfer of an account in the archive stays,
+  /// as for an edit: taken away, it would move money on an account no total counts, and
+  /// «Всего» would change out of nothing — «Вернуть» the account first. A fee something came
+  /// back for keeps its transfer. The screen of an account and the lists of operations ask
+  /// this one question. `refunds` are the live refunds of `dataset` (`refunds(in:)`).
+  nonisolated static func deletionRefusals(
+    of transfers: [Transfer], in dataset: Dataset, refunds: RefundIndex
+  ) -> [UUID: TransferRefusal] {
+    guard !transfers.isEmpty else { return [:] }
+    let archived = Set(dataset.paymentMethods.filter(\.archived).map(\.id))
+    let keys = Set(transfers.map { TransferRules.feeKey(of: $0.id) })
+    // The live fee of each transfer, the first one as `fee(of:in:)` finds it.
+    var fees: [String: TransactionEntry] = [:]
+    for entry in dataset.entries where !entry.transaction.isDeleted {
+      guard let key = entry.transaction.externalId, keys.contains(key), fees[key] == nil
+      else { continue }
+      fees[key] = entry
+    }
+    let moneyBack = fees.isEmpty ? [] : Self.moneyBack(in: dataset)
+    var refusals: [UUID: TransferRefusal] = [:]
+    for transfer in transfers {
+      if archived.contains(transfer.fromAccountId) || archived.contains(transfer.toAccountId) {
+        refusals[transfer.id] = .issue(.archivedAccount)
+      } else if let fee = fees[TransferRules.feeKey(of: transfer.id)],
+        let refusal = Self.feeRefusal(fee, becoming: nil, refunds: refunds, moneyBack: moneyBack)
+      {
+        refusals[transfer.id] = refusal
+      }
+    }
+    return refusals
+  }
+
   /// The parts some live money back was linked to.
   nonisolated static func moneyBack(in dataset: Dataset) -> Set<UUID> {
     let live = Set(dataset.entries.filter { !$0.transaction.isDeleted }.map(\.id))
@@ -346,22 +394,18 @@ struct TransferActions {
     return delete(transfer, books: books)
   }
 
-  /// Deletes a transfer and its fee as `books` has them, in one write. A fee something came
-  /// back for keeps its transfer: refused in words.
+  /// Deletes a transfer and its fee as `books` has them, in one write — unless
+  /// `deletionRefusals` keeps it, which is then refused in words.
   @discardableResult
   func delete(_ transfer: Transfer, books: AccountBooks) -> TransferOutcome {
     let dataset = books.dataset
-    guard dataset.transfers.contains(where: { $0.id == transfer.id }) else {
+    guard let stored = dataset.transfers.first(where: { $0.id == transfer.id }) else {
       return .refused(.notFound)
     }
+    let refusals = Self.deletionRefusals(
+      of: [stored], in: dataset, refunds: Self.refunds(in: dataset))
+    if let refusal = refusals[stored.id] { return .refused(refusal) }
     let fee = Self.fee(of: transfer.id, in: dataset.entries)
-    if let fee,
-      let refusal = Self.feeRefusal(
-        fee, becoming: nil, refunds: Self.refunds(in: dataset),
-        moneyBack: Self.moneyBack(in: dataset))
-    {
-      return .refused(refusal)
-    }
     let change = PlanningChange(
       delete: PlanningRowIDs(transfers: [transfer.id]),
       softDeleted: fee.map { [$0.id] } ?? [], at: environment.now())
@@ -430,14 +474,23 @@ struct TransferActions {
     case .existing(let id):
       categoryId = id
     case .create(let nameKey, let parent, let quality):
-      let siblings = categories.filter { $0.parentId == parent && $0.kind == .expense }
-      let made = CoreKit.Category(
-        parentId: parent, kind: .expense,
-        name: environment.language(nameKey, table: AccountText.table),
-        sort: (siblings.map(\.sort).max() ?? 0) + 1, quality: quality)
-      rows.categories = [made]
-      tree = CategoryTree(categories + [made])
-      categoryId = made.id
+      let name = environment.language(nameKey, table: AccountText.table)
+      if var back = Self.archivedFeeCategory(categories: categories, remembered: remembered) {
+        // The owner put the category of fees into the archive: a category the app still
+        // writes into is brought back — in the same step of ⌘Z — rather than made again.
+        back.archived = false
+        rows.categories = [back]
+        tree = CategoryTree(categories.map { $0.id == back.id ? back : $0 })
+        categoryId = back.id
+      } else {
+        let siblings = categories.filter { $0.parentId == parent && $0.kind == .expense }
+        let made = CoreKit.Category(
+          parentId: parent, kind: .expense, name: name,
+          sort: (siblings.map(\.sort).max() ?? 0) + 1, quality: quality)
+        rows.categories = [made]
+        tree = CategoryTree(categories + [made])
+        categoryId = made.id
+      }
     }
     if remembered != categoryId {
       change.settings = [AccountSettings.transferFeeCategoryKey: categoryId.uuidString]

@@ -73,7 +73,7 @@ PYENV_MARKER := $(PYENV)/pandas.ok
 
 .PHONY: all generate build-dir build run test test-core test-db test-ui fmt lint verify test-one eval-model migration-dry-run \
 	    check-core-purity check-toolchain check-warnings check-scripts check-chart-double check-privacy check-environment check-geometry check-stale check-attribution check-native check-glass check-ci check-log-names check-strings ci-checks hooks clean install \
-	    archive-appstore build-appstore check-appstore-clean release-local sample sample-large demo \
+	    archive-appstore build-appstore check-appstore-clean release-local release-check sample sample-large demo \
 	    bench bench-app pyenv
 
 all: run
@@ -174,6 +174,16 @@ check-appstore-clean:
 # placeholder. Never makes a key. `ARGS=--dry-run` checks everything and builds nothing.
 release-local: generate
 	ITOGO_BUILD_ROOT="$(BUILD_ROOT)" $(AWAKE) bash scripts/make-release.sh $(ARGS)
+
+# A published release looked at from outside, the way an installed copy meets it: the feed at
+# the address every copy asks, the archive it points at with its size and EdDSA signature, and
+# the app inside — id, version, build, key, feed, the owner's certificate, the Sparkle pinned,
+# Sparkle's installer — meeting the designated requirement of the release before it. `V=1.1.1`
+# for one version, the newest otherwise. `CANDIDATE=<Itogo.app>` looks at a build made for
+# release before it is published, against the newest release. It downloads, so it is not part
+# of `make verify`.
+release-check:
+	@scripts/check-release.sh $(if $(CANDIDATE),--candidate "$(CANDIDATE)",$(V))
 
 # A build from the repository is stopped by its path, never by its name: the owner's copy in
 # /Applications is called Itogo too, and may be open in the middle of an entry.
@@ -433,14 +443,17 @@ check-stale:
 # The shell scripts stay readable by the bash macOS ships (3.2) and parse before anybody runs
 # one. The check proves itself on two small samples first. The steps of a
 # release that can run without a key and a build prove themselves here too: they run once a
-# version, by hand, and a fault in them is found by the Macs that never get the update. So does
-# the installer of CI's XcodeGen, in the part that needs no network, the hook that cleans a
-# commit message, and the merge of the String Catalogs, which keeps what Xcode wrote there.
+# version, by hand, and a fault in them is found by the Macs that never get the update; the
+# look at a published release (`make release-check`) proves itself offline, on made-up feeds,
+# keys and apps. So do the installer of CI's XcodeGen, in the part that needs no network, the
+# hook that cleans a commit message, and the merge of the String Catalogs, which keeps what
+# Xcode wrote there.
 check-scripts:
 	@scripts/check-scripts.sh --self-test > /dev/null || scripts/check-scripts.sh --self-test
 	@scripts/check-scripts.sh
 	@scripts/release-entry.sh --self-test
 	@scripts/release-version.sh --self-test
+	@scripts/check-release.sh --self-test
 	@scripts/install-xcodegen.sh --self-test
 	@scripts/git-hooks/commit-msg --self-test
 	@python3 scripts/make_xcstrings.py --self-test

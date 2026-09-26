@@ -53,6 +53,16 @@ fi
 version="$("${here}/release-version.sh" version)" || stop "no version to release"
 build="$("${here}/release-version.sh" build)" || stop "no build number to release"
 say "version ${version} (build ${build})"
+# The build number is compared with every release out: the tags and the feed on gh-pages. Both
+# are only as fresh as the last fetch — a release made on GitHub, by the spare workflow or from
+# another clone leaves this clone's refs behind, and a build that repeats one installed copies
+# already have would pass. So they are fetched first; offline, only a dry run goes on.
+if ! git -C "${root}" fetch --quiet --tags origin \
+    "+refs/heads/gh-pages:refs/remotes/origin/gh-pages" 2> /dev/null; then
+  [ -n "${dry_run}" ] ||
+    stop "could not fetch the tags and gh-pages from origin: the build number cannot be compared with what is out."
+  say "warning: could not fetch the tags and gh-pages from origin; comparing with what this clone saw last."
+fi
 grew="$("${here}/release-version.sh" grew)" || stop "raise CURRENT_PROJECT_VERSION in project.yml first."
 say "${grew}"
 

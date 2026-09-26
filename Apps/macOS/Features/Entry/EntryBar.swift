@@ -104,7 +104,10 @@ struct EntryBar<Accessory: View>: View {
   var body: some View {
     GlassEffectContainer(spacing: 12) {
       VStack(alignment: .leading, spacing: EntryBarMetrics.spacing) {
-        TemplatesStrip(model: templates) { template in
+        TemplatesStrip(
+          model: templates,
+          currencyOf: { Templates.currency(of: $0, in: environment, model: model) }
+        ) { template in
           text = templateLine(for: template)
           focused = true
         }
@@ -424,9 +427,7 @@ struct EntryBar<Accessory: View>: View {
     guard let expression = parsed.amountToPreview, let amount = parsed.amount,
       let value = try? AmountE4(decimal: amount)
     else { return nil }
-    // A line that names no currency is in the one the save gives it: the chosen account's or
-    // the default one.
-    let currency = parsed.currency ?? model?.draft.currency ?? environment.defaultCurrency
+    let currency = EntryPreview.currency(of: parsed, model: model, in: environment)
     return "\(expression) = \(environment.money.exact(value, currency: currency))"
   }
 
@@ -510,7 +511,7 @@ struct EntryBar<Accessory: View>: View {
     prepareModel()
     return Templates.line(
       for: template, categories: (model?.categories ?? []) + (model?.archivedCategories ?? []),
-      in: environment)
+      in: environment, model: model)
   }
 
   /// Nothing the owner typed is thrown away unless the operation really reached the
@@ -645,5 +646,28 @@ enum DetailsPanelKey {
     case .down: (true, true)
     case .up, .escape: showing ? (false, true) : (false, false)
     }
+  }
+}
+
+/// The preview above the entry line.
+enum EntryPreview {
+  /// The currency the save gives a line, for the preview above it. With the line's panel it is
+  /// the panel's own answer (`EntryDraftModel.currencyOnSaving`), which follows the save step by
+  /// step. Without one — before the line made its panel — a fresh draft would save: the one
+  /// typed; else the main currency of the account the line names; else the one the line reads
+  /// an amount without a code in — the currency of the account whose screen is open, or the
+  /// default one.
+  @MainActor static func currency(
+    of parsed: ParsedInput, model: EntryDraftModel?, in environment: AppEnvironment
+  ) -> CurrencyCode {
+    if let model { return model.currencyOnSaving(parsed) }
+    if let typed = parsed.currency { return typed }
+    if let named = parsed.paymentMethodId,
+      let account = ((try? environment.references?.paymentMethods()) ?? nil)?
+        .first(where: { $0.id == named })
+    {
+      return account.mainCurrency
+    }
+    return Templates.lineCurrency(in: environment)
   }
 }

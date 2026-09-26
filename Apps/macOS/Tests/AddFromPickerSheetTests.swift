@@ -19,6 +19,12 @@ final class AddFromPickerSheetTests: XCTestCase {
   private var references: ReferenceRepository!
   private var transactions: TransactionRepository!
   private var windows: [NSWindow] = []
+  /// What the windows of a test are drawn with, and so the language every word a test looks
+  /// for is read in. The choice of language lives in the app's defaults, which every test host
+  /// of the app on this Mac shares: a fresh `AppLanguage()` made a moment after the window can
+  /// read another language than the one on screen — a test of another process switched it in
+  /// between — and «Add…» is then looked for under a title the menu does not have.
+  private var environment: AppEnvironment!
   /// The set is the process's: other classes read it after this one (`DependenciesTests`).
   private var missingReadersBefore: Set<String> = []
 
@@ -35,6 +41,7 @@ final class AddFromPickerSheetTests: XCTestCase {
   override func setUp() async throws {
     missingReadersBefore = AppDependencies.missingReaders
     AppDependencies.missingReaders = []
+    environment = AppEnvironment()
     stack = try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
     references = ReferenceRepository(writer: stack.writer)
     transactions = TransactionRepository(writer: stack.writer)
@@ -54,12 +61,13 @@ final class AddFromPickerSheetTests: XCTestCase {
       window.close()
     }
     windows = []
+    environment = nil
     AppDependencies.missingReaders = missingReadersBefore
   }
 
   private final class Count { var value = 0 }
 
-  private var addTitle: String { AppLanguage()("entry.add", table: "Entry") }
+  private var addTitle: String { environment.language("entry.add", table: "Entry") }
 
   private func makeModel() -> EntryDraftModel {
     let model = EntryDraftModel(
@@ -86,7 +94,7 @@ final class AddFromPickerSheetTests: XCTestCase {
   /// window of the app handed to it.
   private func show(_ model: EntryDraftModel, submitted: Count = Count()) -> NSWindow {
     let deps = AppDependencies(
-      environment: AppEnvironment(), store: TransactionsStore(),
+      environment: environment, store: TransactionsStore(),
       compute: ComputeStore(calendar: .system))
     let window = NSWindow(
       contentViewController: NSHostingController(
@@ -188,7 +196,7 @@ final class AddFromPickerSheetTests: XCTestCase {
       XCTAssertTrue(items.contains(value), "\(value): \(items)")
       XCTAssertEqual(items.suffix(2), ["|", addTitle], "\(value): \(items)")
     }
-    for value in ["RUB", AppEnvironment().label(for: .other)] {
+    for value in ["RUB", environment.label(for: .other)] {
       let items = open(try menu(showing: value, in: window))
       XCTAssertFalse(items.isEmpty, "\(value): the menu did not open")
       XCTAssertFalse(items.contains(addTitle), "\(value): \(items)")
@@ -359,7 +367,7 @@ final class AddFromPickerSheetTests: XCTestCase {
       if let before { setenv("ITOGO_DATA_DIR", before, 1) } else { unsetenv("ITOGO_DATA_DIR") }
       try? FileManager.default.removeItem(at: directory)
     }
-    let environment = AppEnvironment()
+    environment = AppEnvironment()
     await environment.start(preparing: {
       try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
     })
@@ -439,7 +447,7 @@ final class AddFromPickerSheetTests: XCTestCase {
 
     let cancel = try XCTUnwrap(
       elements(in: sheet, role: "AXButton").first {
-        attribute($0, "accessibilityLabel") as? String == AppLanguage()("action.cancel")
+        attribute($0, "accessibilityLabel") as? String == environment.language("action.cancel")
       }, "no «Cancel» in the sheet")
     _ = cancel.perform(NSSelectorFromString("accessibilityPerformPress"))
     waitFor { window.attachedSheet == nil }

@@ -1,6 +1,8 @@
 # Says make verify in a comment and in the name of a step, and runs less; two jobs without
 # limits and a test without one; the AppCore tests three times on macOS without pandas (the
-# Linux job needs none); XcodeGen from Homebrew; two actions on Node 20 and one nobody listed.
+# Linux job needs none); XcodeGen from Homebrew; two actions on Node 20 and one nobody listed;
+# three steps read and never declared in their job: one renamed, one declared in another job, one
+# named by the outputs of a job.
 jobs:
   macos:
     runs-on: macos-26
@@ -8,7 +10,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: someone/else@v1
       - run: brew install xcodegen
+      - name: Prepare
+        id: ready
+        run: echo ready
       - name: Test
+        if: ${{ !cancelled() && steps.prepared.outcome == 'success' }}
         run: make test-core build   # not make verify
       - name: Check, as make verify does
         run: |
@@ -22,8 +28,12 @@ jobs:
     steps:
       - uses: actions/setup-python@v5   # not actions/setup-python@v6
       - run: swift test
+        if: steps.built.outcome == 'success'
   xcode:
     runs-on: xcode-27
     timeout-minutes: 30
+    outputs:
+      answer: ${{ steps.asked.outputs.answer }}
     steps:
-      - run: swift test --package-path Packages/AppCore
+      - id: built
+        run: swift test --package-path Packages/AppCore

@@ -40,10 +40,16 @@
 # log that Node 20 is going (github.blog, 2025-09-19); the next step is a failure. An action the
 # table below does not know fails too, so a new one is added with its first Node 24 major.
 #
+# And every step a workflow names in an expression (`steps.<id>.outcome`, `steps.<id>.outputs…`)
+# is declared by an `id:` in the same job. A step GitHub cannot find reads as an empty outcome:
+# `if: steps.prepared.outcome == 'success'` over a renamed id is false, the steps it guards are
+# skipped, and a skipped step does not fail the job — the run ends green without building or
+# testing anything.
+#
 # Usage: check-ci.sh [<Makefile> <workflow.yml>]   (default: Makefile, .github/workflows/build.yml;
-#                                                  the limits, pandas, XcodeGen, the actions
-#                                                  and the secrets are checked in every
-#                                                  workflow)
+#                                                  the limits, pandas, XcodeGen, the actions,
+#                                                  the step ids and the secrets are checked in
+#                                                  every workflow)
 #        check-ci.sh --self-test
 set -u
 
@@ -257,6 +263,54 @@ unpinned() {
     }'
 }
 
+# Prints each `steps.<id>` an expression of a job names — the whole value of an `if:`, or what
+# stands inside `${{ … }}` — that no `id:` of that job declares; exit 1 when there is any.
+# Comments are not read. Read twice: a job may name a step before the step declares its id
+# (the outputs of a job come before its steps).
+undeclared() {
+  awk -v file="${1##*/}" -v quote="'" '
+    function refs(text, found,   rest) {
+      rest = text
+      while (match(rest, /steps\.[A-Za-z_][A-Za-z0-9_-]*/)) {
+        found[substr(rest, RSTART + 6, RLENGTH - 6)] = 1
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+    }
+    FNR == 1 { in_jobs = 0; job = "" }
+    {
+      code = $0; sub(/(^|[[:space:]])#.*$/, "", code)
+      if (code ~ /^jobs:/) { in_jobs = 1; next }
+      if (code ~ /^[^ ]/) { in_jobs = 0; next }
+      if (!in_jobs) next
+      if (code ~ /^  [A-Za-z0-9_-]+:[[:space:]]*$/) {
+        job = code; sub(/^  /, "", job); sub(/:.*$/, "", job); next
+      }
+      if (FNR == NR) {
+        if (code ~ /^[[:space:]]*(- )?id:/) {
+          id = code; sub(/^[[:space:]]*(- )?id:[[:space:]]*/, "", id)
+          gsub(/"/, "", id); gsub(quote, "", id); sub(/[[:space:]].*$/, "", id)
+          declared[job SUBSEP id] = 1
+        }
+        next
+      }
+      delete named
+      if (code ~ /^[[:space:]]*(- )?if:/) { refs(code, named) }
+      rest = code
+      while (match(rest, /\$\{\{[^}]*\}\}/)) {
+        # refs() matches too, and match() sets RSTART and RLENGTH for everyone.
+        expression = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
+        refs(expression, named)
+      }
+      for (id in named) {
+        if (!((job SUBSEP id) in declared)) {
+          print file ": job " job " reads steps." id ", and no step of it has id: " id
+          bad = 1
+        }
+      }
+    }
+    END { exit bad }' "$1" "$1"
+}
+
 # The first major of each action this repository uses that runs on Node 24.
 node24="actions/checkout@5 actions/setup-python@6 actions/upload-artifact@5"
 
@@ -373,6 +427,18 @@ if [ "${1:-}" = "--self-test" ]; then
     pandasless "${fixtures}/bad.yml.txt"
     exit 1
   fi
+  if ! undeclared "${fixtures}/good.yml.txt" > /dev/null; then
+    echo "check-ci self-test: good.yml.txt declares every step it reads, and was refused:"
+    undeclared "${fixtures}/good.yml.txt"
+    exit 1
+  fi
+  found="$(undeclared "${fixtures}/bad.yml.txt" | sed 's/.* reads steps\.\([A-Za-z_-]*\),.*/\1/' |
+    sort | tr '\n' ' ')"
+  if [ "${found}" != "asked built prepared " ]; then
+    echo "check-ci self-test: expected the undeclared steps asked built prepared in bad.yml.txt, got: ${found}"
+    undeclared "${fixtures}/bad.yml.txt"
+    exit 1
+  fi
   if ! unnamed "${fixtures}/owner-good.md.txt" "${fixtures}/secrets.yml.txt" > /dev/null; then
     echo "check-ci self-test: owner-good.md.txt asks for every secret, and was refused:"
     unnamed "${fixtures}/owner-good.md.txt" "${fixtures}/secrets.yml.txt"
@@ -396,14 +462,16 @@ if ! found="$(missing "${makefile}" "${workflow}")"; then
   echo "ci: ${workflow##*/} does not run what make verify runs:" ${found}
   status=1
 fi
+undeclared "${workflow}" || status=1
 for file in "${root}"/.github/workflows/*.yml; do
   unlimited "${file}" || status=1
   pandasless "${file}" || status=1
   unpinned "${file}" || status=1
   outdated "${file}" || status=1
+  [ "${file}" -ef "${workflow}" ] || undeclared "${file}" || status=1
 done
 docs=""
 for doc in ${instructions}; do docs="${docs} ${root}/${doc}"; done
 unnamed "${docs}" "${root}"/.github/workflows/*.yml || status=1
 [ "${status}" = "0" ] || exit 1
-echo "ci: runs what make verify runs, every job and test with a limit, here and on CI, pandas for the AppCore tests, one XcodeGen, actions on Node 24, every secret asked for"
+echo "ci: runs what make verify runs, every job and test with a limit, here and on CI, pandas for the AppCore tests, one XcodeGen, actions on Node 24, every step an expression reads declared, every secret asked for"

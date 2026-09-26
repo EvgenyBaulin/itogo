@@ -26,8 +26,8 @@ extension AccountGroup: @retroactive FetchableRecord, @retroactive PersistableRe
   }
 }
 
-/// `occurred_at`, `created_at` and `updated_at` are instants, written the way GRDB writes those
-/// of an operation.
+/// `occurred_at`, `created_at` and `updated_at` are instants, written the way those of an
+/// operation are (`StoredInstant`).
 extension Transfer: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "transfers"
 
@@ -48,7 +48,7 @@ extension Transfer: @retroactive FetchableRecord, @retroactive PersistableRecord
 
   public func encode(to container: inout PersistenceContainer) throws {
     container["id"] = id.uuidString
-    container["occurred_at"] = occurredAt
+    container["occurred_at"] = StoredInstant.databaseValue(occurredAt)
     container["from_payment_method_id"] = fromAccountId.uuidString
     container["from_currency"] = fromCurrency.code
     container["from_amount_e4"] = fromAmountE4.raw
@@ -56,8 +56,8 @@ extension Transfer: @retroactive FetchableRecord, @retroactive PersistableRecord
     container["to_currency"] = toCurrency.code
     container["to_amount_e4"] = toAmountE4.raw
     container["note"] = note
-    container["created_at"] = createdAt
-    container["updated_at"] = updatedAt
+    container["created_at"] = StoredInstant.databaseValue(createdAt)
+    container["updated_at"] = StoredInstant.databaseValue(updatedAt)
   }
 }
 

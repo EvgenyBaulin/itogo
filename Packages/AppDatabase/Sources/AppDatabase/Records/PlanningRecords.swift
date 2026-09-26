@@ -159,10 +159,10 @@ extension Budget: @retroactive FetchableRecord, @retroactive PersistableRecord {
   }
 }
 
-/// `reconciled_at` is an instant like `created_at` of an operation, so GRDB writes it the same
-/// way — UTC text `YYYY-MM-DD HH:MM:SS.SSS`. The breakdown is one JSON text, spelled by
-/// `ReconciliationBreakdown` so the database and the export files agree; NULL when there is
-/// none. A `kind` this build does not know reads as a total, which anchors nothing.
+/// `reconciled_at` is an instant like `created_at` of an operation, written the same way
+/// (`StoredInstant`) — UTC text `YYYY-MM-DD HH:MM:SS.SSS`. The breakdown is one JSON text,
+/// spelled by `ReconciliationBreakdown` so the database and the export files agree; NULL when
+/// there is none. A `kind` this build does not know reads as a total, which anchors nothing.
 extension Reconciliation: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "reconciliations"
 
@@ -182,7 +182,7 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
   public func encode(to container: inout PersistenceContainer) throws {
     container["id"] = id.uuidString
     container["date"] = date.iso
-    container["reconciled_at"] = reconciledAt
+    container["reconciled_at"] = StoredInstant.databaseValue(reconciledAt)
     container["actual_total_rub_e4"] = actualTotalRubE4.raw
     container["expected_total_rub_e4"] = expectedTotalRubE4?.raw
     container["difference_e4"] = differenceE4?.raw

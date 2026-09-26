@@ -327,7 +327,8 @@ public struct TransactionRepository: Sendable {
     try writer.read { db in
       try Self.entries(
         where: "deleted_at IS NULL AND occurred_at >= ? AND occurred_at <= ?",
-        arguments: [from, to], order: "occurred_at DESC, id DESC", db: db)
+        arguments: [StoredInstant.databaseValue(from), StoredInstant.databaseValue(to)],
+        order: "occurred_at DESC, id DESC", db: db)
     }
   }
 
@@ -530,7 +531,8 @@ public struct TransactionRepository: Sendable {
           WHERE id IN (
             SELECT transaction_id FROM transaction_parts WHERE \(condition)id IN (\(marks)))
           """,
-        arguments: StatementArguments([instant]) + statusArgument + StatementArguments(chunk))
+        arguments: [StoredInstant.databaseValue(instant)] + statusArgument
+          + StatementArguments(chunk))
     }
   }
 

@@ -55,7 +55,8 @@ public struct AnomalyRepository: Sendable {
         // the id points at nothing and the row is refused. The dismissal's own id has no
         // key pointing at it and stays as it always was.
         arguments: [
-          UUID().uuidString.lowercased(), rule.rawValue, transactionId?.uuidString, at, subject,
+          UUID().uuidString.lowercased(), rule.rawValue, transactionId?.uuidString,
+          StoredInstant.databaseValue(at), subject,
         ])
     }
   }

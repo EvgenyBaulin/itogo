@@ -437,9 +437,9 @@ struct AccountSetupSheet: View {
           Image(systemName: "exclamationmark.octagon")
         }
         .foregroundStyle(.red)
-      } else if let issue = model?.issues.first {
+      } else if let model, let issue = model.issues.first {
         Label {
-          Text(verbatim: t(issue.messageKey))
+          Text(verbatim: t(model.messageKey(for: issue)))
         } icon: {
           Image(systemName: "info.circle")
         }

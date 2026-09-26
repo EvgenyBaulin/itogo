@@ -7,6 +7,61 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.1.1] — 2026-09-26
+
+Fixes to 1.1.0. The database schema and the transfer-archive format stay as 1.1.0 left them:
+the first launch migrates nothing.
+
+### Changed
+
+- Moments are written to the database cut down to the millisecond instead of rounded to the
+  nearest one, in the same text form. What 1.1.0 wrote is kept as it is.
+- A copy made before an update, a restore or an import, or a damaged file set aside, never
+  takes the name of another: when the name of that second is taken, it gets the next free one.
+
+### Fixed
+
+- An operation, a transfer or a reconciliation entered a moment ago could be missing from a
+  balance for a moment: moments are now never stored later than they happened.
+- The copy made before the update could be replaced by another copy made in the same second.
+- Two copies made before a restore or an import within one second replaced each other.
+- Restoring the older of two copies made before the update wrote a third copy of the same data.
+- A second **Restore from a Copy** in the window that says the database did not open failed
+  when it came within the same second as the first.
+- Deleting a transfer of an archived account created money in the total; such a transfer now
+  stays until the account is brought back: its sheet refuses it, and a deletion in Transactions
+  or Overview leaves it out, deletes the rest and says which transfer stays and why.
+- Deleting a selection that included a transfer whose fee had been refunded deleted nothing and
+  only said it could not delete, and a transfer whose fee had been closed by money back was
+  deleted with that fee; both transfers now stay, with the words of their own sheet, and the
+  rest of the selection is deleted.
+- An account with money on it could be deleted, and its money left the total; deleting it is
+  refused now, and the refusal says what can be done: transfer the balance to another account
+  and archive this one — **Transfer the Balance…** is offered beside it — or reconcile it to
+  zero without recording the difference and then delete it.
+- A transfer fee could create a second «Fees» category after the first was archived; the
+  archived one comes back instead, in the same step of undo.
+- **Yes, Before the Count** moved a transfer already dated before the count to a second before
+  it; the transfer keeps its own time now, as an operation does.
+- A template chip saved its amount in the currency of the account whose screen was open, or of
+  the account picked in the ↓ panel: a «coffee 250 ₽» chip on a tenge account saved 250 ₸.
+- The preview above the entry line could name a currency other than the one the operation was
+  saved in; the preview, the chips and saving now take the currency by one rule.
+- Money back in another currency than the parts it closed left the surplus a fraction of a
+  kopeck off (250.0020 ₽ instead of 250.00 ₽), and closed the part the money ran out on for a
+  fraction of a kopeck more than the account received. The surplus is now exactly the rubles
+  the parts did not take, at the rate the money came at.
+- In **Set Up Your Accounts**, an account named like an archived one was told to bring the
+  archived one back in Settings, which Settings refuses while a live account has that name; an
+  account already in the database is now asked for another name.
+
+### Internal
+
+- CI runs its later steps after a failed test too, and `make check-ci` fails on a condition that
+  reads a step no step of its job declares. A release checks its build number against the
+  published feed, and `make release-check` checks a published release — or a candidate, before
+  it is published — from the outside.
+
 ## [1.1.0] — 2026-09-26
 
 Accounts: what you have now, where it is and in which currency — and the free sum counted from

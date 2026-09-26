@@ -55,7 +55,8 @@ public struct ModelRepository: Sendable {
           VALUES (?, ?, ?, ?, ?, ?, ?)
           """,
         arguments: [
-          row.id.uuidString.lowercased(), row.kind, row.version, row.trainedAt,
+          row.id.uuidString.lowercased(), row.kind, row.version,
+          StoredInstant.databaseValue(row.trainedAt),
           row.metricsJSON, row.file, row.checksum,
         ])
     }
@@ -78,8 +79,8 @@ extension ModelRepository {
         // Ids as every other table keeps them (`RowMapping`): the foreign keys compare text.
         arguments: [
           choice.id.uuidString, choice.text, choice.predictedCategoryId?.uuidString,
-          choice.chosenCategoryId?.uuidString, choice.at, choice.partId?.uuidString,
-          choice.confidenceBp,
+          choice.chosenCategoryId?.uuidString, StoredInstant.databaseValue(choice.at),
+          choice.partId?.uuidString, choice.confidenceBp,
         ])
     }
   }

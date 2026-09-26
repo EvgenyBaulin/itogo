@@ -25,14 +25,15 @@ enum RowMapping {
   }
 
   /// An instant, in any form GRDB reads — its own `YYYY-MM-DD HH:MM:SS.SSS`, with a `T`, a
-  /// timestamp —, or `nil` for NULL. A value that is no instant fails the read with
-  /// `UnreadableValue`, as an id that is no UUID does: GRDB's own subscript stops the program
-  /// on it, and the whole history is read at every start.
+  /// timestamp —, or `nil` for NULL; a text reads as exactly the millisecond it names
+  /// (`StoredInstant`). A value that is no instant fails the read with `UnreadableValue`, as an
+  /// id that is no UUID does: GRDB's own subscript stops the program on it, and the whole
+  /// history is read at every start.
   static func optionalInstant(_ row: Row, _ column: String) throws -> Date? {
     guard row.hasColumn(column) else { return nil }
     let value: DatabaseValue = row[column]
     guard !value.isNull else { return nil }
-    guard let instant = Date.fromDatabaseValue(value) else {
+    guard let instant = StoredInstant.date(from: value) else {
       throw UnreadableValue(column: column)
     }
     return instant

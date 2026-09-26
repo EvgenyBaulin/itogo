@@ -85,6 +85,9 @@ struct MoneyBackRuleModel: Equatable {
     }
 
     var neededBefore = AmountE4.zero
+    // The rubles the parts took at the money's own rate: a link, or — for a part bought in the
+    // money's currency, whose link is at the part's own rate — the share at the money's rate.
+    var takenRub = AmountE4.zero
     for part in parts {
       let needed = need(part)
       let available = max(.zero, received - neededBefore)
@@ -95,8 +98,18 @@ struct MoneyBackRuleModel: Equatable {
           OwedRemainder(partId: part.partId, remainingRubE4: part.remainingRubE4))
         continue
       }
-      let link = take == needed ? part.remainingRubE4 : rubles(take, of: part)
+      // A part the money reaches only partly takes all that is left of it: in rubles, what is
+      // left of the rubles received, unless it was bought in the money's own currency.
+      let restRub = receivedRub - takenRub
+      let link =
+        take == needed
+        ? part.remainingRubE4
+        : part.currency != currency && restRub > .zero
+          ? min(restRub, part.remainingRubE4) : rubles(take, of: part)
       model.allocations.append(ReimbursementAllocation(partId: part.partId, amountE4: link))
+      takenRub +=
+        part.currency != currency
+        ? link : inRubles ? take : MoneyDice.scaled(take, receivedRub, received)
       let rest = part.remainingRubE4 - link
       let foreign = part.currency != .rub || !inRubles
       if take == needed || rest <= drift(part.amountRubE4, foreign: foreign) {
@@ -108,7 +121,9 @@ struct MoneyBackRuleModel: Equatable {
     model.stillOwed += passedRemainders
 
     var over = max(.zero, received - neededBefore)
-    let overRub = inRubles ? over : MoneyDice.scaled(over, receivedRub, received)
+    // The rubles over are the rubles received less the rubles the parts took: every ruble that
+    // came in is written once, a link or the surplus.
+    let overRub = inRubles ? over : max(.zero, receivedRub - takenRub)
     // Money is over only once every part took all it needed: the last part is the last reached.
     if let last = parts.last, over.raw > 0, last.currency != .rub || !inRubles,
       overRub <= drift(last.amountRubE4, foreign: true)

@@ -107,9 +107,13 @@ public enum MoneyBack {
   ///   money takes what it can; a part it covers closes, and its link is exactly what was
   ///   left of its rubles. A part it covers only partly keeps waiting with the rest — unless
   ///   the rest is within the tolerance, which closes it.
-  /// * What is left over is the surplus; within the tolerance of the last part it reached it
-  ///   is drift and no income. Money over while parts on a provisional rate are still owed is
-  ///   not income either: nothing is spread, `.provisionalPartsOwed`.
+  /// * What is left over is the surplus, and its rubles are the rubles received less the rubles
+  ///   the parts took at the money back's rate, so every ruble that came in is written once —
+  ///   but for the drift of the rate: within the tolerance of the last part it reached the
+  ///   surplus is drift and no income, and money that ends exactly on a part's need closes it
+  ///   with its own rubles, whatever the rubles received differ by. Money over while parts on a
+  ///   provisional rate are still owed is not income either: nothing is spread,
+  ///   `.provisionalPartsOwed`.
   /// * No part owed: `.owesOnDebt` when the person has an open «Мне должны» debt among
   ///   `openDebts` — theirs, never another person's —, otherwise `.owesNothing`.
   public static func plan(
@@ -142,6 +146,10 @@ public enum MoneyBack {
     var plan = MoneyBackPlan(currency: currency, skippedProvisional: skipped.map(\.partId))
     var left = max(received, .zero)
     var lastTouched: OwedPart?
+    // What the parts took, in rubles at the money back's own rate: the rubles of their links,
+    // except for a part bought in the money back's currency, whose link is at the part's rate —
+    // the difference is drift of the rate, neither income nor spending.
+    var takenRub = AmountE4.zero
     for part in parts {
       let need = need(of: part, in: currency, rate: rate)
       let take = min(need, left)
@@ -151,10 +159,18 @@ public enum MoneyBack {
         continue
       }
       left = left - take
-      let link =
-        take == need
-        ? part.remainingRubE4 : rubles(of: take, for: part, in: currency, rate: rate)
+      let link: AmountE4
+      if take == need {
+        link = part.remainingRubE4
+      } else if part.currency != currency, receivedRub - takenRub > .zero {
+        // The part takes the rest of the money: the rest of the rubles received, not the rest
+        // converted again — 20 $ received as 1,850 ₽ close 1,000 ₽ and then exactly 850 ₽.
+        link = min(receivedRub - takenRub, part.remainingRubE4)
+      } else {
+        link = rubles(of: take, for: part, in: currency, rate: rate)
+      }
       plan.allocations.append(ReimbursementAllocation(partId: part.partId, amountE4: link))
+      takenRub = takenRub + (part.currency == currency ? convert(take, rate: rate) : link)
       lastTouched = part
       let rest = part.remainingRubE4 - link
       let foreign = part.currency != .rub || currency != .rub
@@ -166,7 +182,10 @@ public enum MoneyBack {
     }
     plan.stillOwed += remainders(of: skipped)
 
-    let surplusRub = convert(left, rate: rate)
+    // The rubles received less the rubles the parts took, not what is left converted again:
+    // that missed by the rounding of every part's share (50 $ at 95 ₽ over a part of 4,500 ₽
+    // came to 4,750.0020 ₽ for 4,750 ₽ received).
+    let surplusRub = left.isZero ? .zero : max(receivedRub - takenRub, .zero)
     if let last = lastTouched, left.raw > 0, last.currency != .rub || currency != .rub,
       surplusRub <= tolerance(partRub: last.amountRubE4, foreignInvolved: true)
     {

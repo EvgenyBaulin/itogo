@@ -90,10 +90,16 @@ struct MoneyBackConfirmation {
       plan, reimbursementTxId: entry.id, accountId: transaction.paymentMethodId)
     var extra: [TransactionEntry] = []
     if let surplus = outcome.surplus {
+      // The rate the money itself came at — its rubles over its amount, as the plan took it.
+      let rate =
+        transaction.amountE4.isZero
+        ? nil
+        : DecimalMath.round(
+          transaction.amountRubE4.decimal / transaction.amountE4.decimal, scale: 6)
       extra.append(
         try ReimbursementRecording.surplusEntry(
           surplus, of: entry.id, on: transaction.occurredAt, now: now,
-          rateDate: transaction.rateDate, setting: setting))
+          rate: rate, rateDate: transaction.rateDate, setting: setting))
     }
     return (outcome, entry, extra)
   }

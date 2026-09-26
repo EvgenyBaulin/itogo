@@ -209,7 +209,12 @@ public actor BackupService {
     try manager.createDirectory(at: directory, withIntermediateDirectories: true)
     Self.removeUnfinishedCopies(in: directory)
 
-    var name = Self.fileName(at: now, label: label)
+    // A copy kept for a reason — before a restore, before an import — is the state the owner
+    // comes back to; another one of the same second never takes its name, and so its place.
+    // Copies after a change follow each other, and the newer of one second stands for both.
+    var name =
+      label == nil
+      ? Self.fileName(at: now) : Self.freeName(in: directory, at: now, label: label)
     var isDamaged = false
     let partial = directory.appendingPathComponent(name + Self.unfinished)
     defer { Self.removeDatabaseFiles(at: partial) }
@@ -223,7 +228,7 @@ public actor BackupService {
       guard keepingADamagedCopy, databaseIsDamaged else {
         throw BackupError.integrityCheckFailed
       }
-      name = Self.fileName(at: now, label: Self.damaged(label))
+      name = Self.freeName(in: directory, at: now, label: Self.damaged(label))
       isDamaged = true
       AppLog.warning(
         "backup.damaged", .backup,
@@ -307,7 +312,7 @@ public actor BackupService {
       return kept
     }
     let manager = FileManager.default
-    let name = fileName(at: now, label: beforeMigration)
+    let name = freeName(in: directory, at: now, label: beforeMigration)
     let partial = directory.appendingPathComponent(name + unfinished)
     let destination = directory.appendingPathComponent(name)
     defer { removeDatabaseFiles(at: partial) }
@@ -342,27 +347,42 @@ public actor BackupService {
     return destination
   }
 
+  /// The name of a new copy with `label`: that of `now`, or of the first second after it that no
+  /// copy has. A copy already under the name of this second is of another state — an update
+  /// stopped on one file and the owner put another in its place within the second, two restores
+  /// one after the other — and it is never replaced: it may be the only copy of that state.
+  private static func freeName(in directory: URL, at now: Date, label: String?) -> String {
+    var stamp = now
+    var name = fileName(at: stamp, label: label)
+    while FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path) {
+      stamp = stamp.addingTimeInterval(1)
+      name = fileName(at: stamp, label: label)
+    }
+    return name
+  }
+
   /// Whether a copy is the one written before an update, which is never pruned.
   static func isBeforeMigration(_ fileName: String) -> Bool {
     fileName.contains("-" + beforeMigration)
   }
 
-  /// The copy an earlier attempt at the update kept, when it still holds exactly what the
-  /// database holds: the same schema and every row the same (`DatabaseStack.sameData`). Only
-  /// the newest is asked — an older one is of an older state — and it is checked as a new copy
-  /// is before it stands for the database. `nil` when there is none, or it is of another state:
-  /// the older version was used in between, or a copy was put in place of the database.
+  /// A copy an earlier update kept, when it still holds exactly what the database holds: the
+  /// same schema and every row the same (`DatabaseStack.sameData`), and checked as a new copy is
+  /// before it stands for the database. Every copy before an update is asked, the newest first:
+  /// an update that stopped is tried again over the file of the newest, and a copy of any of
+  /// them restored from the Backups tab is that copy's file again — a new copy would be the
+  /// same, and nothing ever prunes one. `nil` when none holds it: the older version was used in
+  /// between, or another file was put in place of the database.
   private static func copyStillHolding(_ source: URL, in directory: URL) -> URL? {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
     let copies =
       names
       .filter { $0.hasPrefix("finance-") && $0.hasSuffix("-\(beforeMigration).sqlite") }
       .map { directory.appendingPathComponent($0) }
-    guard let newest = newestFirst(copies).first,
-      DatabaseStack.integrityCheckPassed(at: newest),
-      (try? DatabaseStack.sameData(fileAt: newest, as: source)) == true
-    else { return nil }
-    return newest
+    return newestFirst(copies).first { copy in
+      (try? DatabaseStack.sameData(fileAt: copy, as: source)) == true
+        && DatabaseStack.integrityCheckPassed(at: copy)
+    }
   }
 
   /// Keeps the newest copies and one per day for the retention window — in the folder of copies

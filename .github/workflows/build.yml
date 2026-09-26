@@ -54,13 +54,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The last step that prepares the runner: it runs only when every one before it succeeded
+      # (the Xcode 27 check among them), so its outcome says the runner is ready.
       - name: Install pandas for the CSV check
+        id: prepared
         run: python -m pip install --no-cache-dir -r scripts/requirements-dev.txt
 
       # From here on, the targets `make verify` is made of, so CI builds, tests and checks
       # exactly what the author's Mac does, with the same limits and the same logs
       # (scripts/check-ci.sh fails when the two part ways). The pandas of the step above reads
-      # the Reports tables back.
+      # the Reports tables back. Each of them runs on a prepared runner even after one before it
+      # failed: a red run then names everything that is wrong, not only the first thing.
+      # scripts/check-ci.sh fails when an `if:` reads a step id no step declares: GitHub reads
+      # such an outcome as empty, and the steps it guards would be skipped with the run green.
       - name: Test the packages
         run: ITOGO_PYTHON="$(command -v python)" make test-core test-db
 
@@ -69,11 +75,13 @@ jobs:
       # TEST_RUNNER_ is how xcodebuild hands a variable over): the runner's screen is 1024 × 768
       # and SwiftUI builds no accessibility tree there, so the tests that need either skip.
       - name: Build and test the application
+        if: ${{ !cancelled() && steps.prepared.outcome == 'success' }}
         run: TEST_RUNNER_ITOGO_CI=1 make build test
 
       # Not only built: looked into. No Sparkle, no XPC services, no feed address in the store
       # bundle, and the id that ships.
       - name: Build the App Store configuration and look inside it
+        if: ${{ !cancelled() && steps.prepared.outcome == 'success' }}
         run: make check-appstore-clean
 
       # No implicitly unwrapped optional, warnings of our own code and stale files in the logs
@@ -81,6 +89,7 @@ jobs:
       # back, scripts that parse, no personal data, one name in the history, no web view,
       # glass where it belongs, every literal key in the String Catalog it is looked up in.
       - name: Run the checks of make verify
+        if: ${{ !cancelled() && steps.prepared.outcome == 'success' }}
         run: make ci-checks
 
       # What the build and the tests wrote, for the run that failed.

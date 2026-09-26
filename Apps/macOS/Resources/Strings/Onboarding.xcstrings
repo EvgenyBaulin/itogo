@@ -653,13 +653,30 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "An archived account has this name: bring it back in Settings instead."
+            "value": "An archived account has this name: bring it back in Settings instead of adding it again, or give this one another name."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Счёт с таким названием есть в архиве — верните его в Настройках."
+            "value": "Счёт с таким названием есть в архиве — верните его в Настройках вместо нового или дайте этому другое название."
+          }
+        }
+      }
+    },
+    "onboarding.issue.nameArchivedStored": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An archived account has this name: give this account another name."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт с таким названием есть в архиве — дайте этому счёту другое название."
           }
         }
       }

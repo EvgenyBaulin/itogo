@@ -75,6 +75,16 @@ struct AccountSetupModel: Equatable {
     }
   }
 
+  /// The words the sheet shows for `issue`. An account the database already has, named like an
+  /// archived one, can only be renamed: Settings refuses to bring the archived one back beside a
+  /// live one of its name. An account added here can also give way to the archived one.
+  func messageKey(for issue: Issue) -> String {
+    if case .nameArchived(let id) = issue, accounts.first(where: { $0.id == id })?.isNew == false {
+      return "onboarding.issue.nameArchivedStored"
+    }
+    return issue.messageKey
+  }
+
   var accounts: [Account]
   var groups: [Group]
   var mainId: UUID?

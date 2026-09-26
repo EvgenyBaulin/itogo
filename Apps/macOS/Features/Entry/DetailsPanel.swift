@@ -864,6 +864,30 @@ struct DetailsPanel: View {
   }
 }
 
+/// What an amount field tells of its text: every change the owner makes, once — never the text
+/// it writes back itself when the owner is done with it. Told again, that amount would land a
+/// second time: Enter writes «1500,5» back as «1,500.50» while the same Enter saves the form and
+/// empties it for the next operation, and the echo would put 1,500.50 into the empty form.
+@MainActor
+struct AmountFieldEcho {
+  private(set) var writtenBack: String?
+
+  /// Enter, Tab or leaving the field: the text to write back — the amount written the one way
+  /// the app writes amounts —, or nil when the text stays as it is.
+  mutating func settle(_ text: String) -> String? {
+    guard let settled = AmountField.settledText(text), settled != text else { return nil }
+    writtenBack = settled
+    return settled
+  }
+
+  /// Whether a change of the text is the owner's, to be told: not the text just written back.
+  mutating func tells(_ text: String) -> Bool {
+    let isWrittenBack = text == writtenBack
+    writtenBack = nil
+    return !isWrittenBack
+  }
+}
+
 /// An amount that can be typed as an expression: "1500×3−2000" is evaluated as you type.
 /// The field also follows the amount when something else changes it — splitting evenly,
 /// for example — so what is shown is always what will be saved.
@@ -886,7 +910,7 @@ struct AmountField: View {
   @State private var text: String = ""
   @State private var lastShown: AmountE4 = .zero
   /// The text the field has just written back itself: its amount was told when it was typed.
-  @State private var writtenBack: String?
+  @State private var echo = AmountFieldEcho()
   @FocusState private var isFocused: Bool
 
   /// `locale` is accepted and not needed: amounts are written the same way in every language.
@@ -912,11 +936,7 @@ struct AmountField: View {
       show(newValue)
     }
     .onChange(of: text) { _, newValue in
-      // Told again, the amount would land a second time — after Enter has already saved the
-      // form and emptied it for the next operation.
-      let isWrittenBack = newValue == writtenBack
-      writtenBack = nil
-      guard !isWrittenBack else { return }
+      guard echo.tells(newValue) else { return }
       let parsed = Self.amount(from: newValue)
       if let reads, reads.wrappedValue != (parsed != nil) { reads.wrappedValue = parsed != nil }
       guard let parsed else { return }
@@ -950,8 +970,7 @@ struct AmountField: View {
   }
 
   private func settle() {
-    guard let settled = Self.settledText(text), settled != text else { return }
-    writtenBack = settled
+    guard let settled = echo.settle(text) else { return }
     text = settled
   }
 

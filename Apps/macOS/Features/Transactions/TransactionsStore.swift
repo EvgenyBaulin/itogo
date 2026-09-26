@@ -588,13 +588,19 @@ public final class TransactionsStore {
   /// can change what the choice was made on. More than `backgroundThreshold` operations are
   /// chosen and deleted that way off the main thread: the whole deletion is queued at once,
   /// so nothing the owner does next lands between the choice and the deletion either.
+  ///
+  /// A transfer the rules keep (`TransferActions.deletionRefusals`) stays, and what else is
+  /// listed goes; when nothing but kept transfers is listed, nothing is written and the answer
+  /// is `false`.
   @discardableResult
   public func delete(ids: [UUID], file: String = #fileID) -> Bool {
     guard !refuses("delete(ids:)", file), let repository, !isWritingInBackground else {
       return false
     }
-    let transfers = transfers(among: ids)
+    let (transfers, kept) = transferDeletions(among: ids)
+    let ids = kept.isEmpty ? ids : ids.filter { kept[$0] == nil }
     if !transfers.isEmpty { return delete(ids, with: transfers, file: file) }
+    if ids.isEmpty { return kept.isEmpty }
     // A purchase a live refund takes money back from stays: the write refuses it, and would
     // refuse the whole deletion with it.
     let refunds = listing?.refundIndex ?? .empty
@@ -634,20 +640,36 @@ public final class TransactionsStore {
     return listing.dataset.transfers.filter { wanted.contains($0.id) }
   }
 
-  /// The ids among `ids` that are transfers: what a confirmation of a deletion names besides
-  /// the operations.
+  /// The ids of the transfers among `ids` a deletion takes: what a confirmation of a deletion
+  /// names besides the operations. A transfer the rules keep is not among them.
   public func transferIds(in ids: some Sequence<UUID>) -> [UUID] {
-    transfers(among: ids).map(\.id)
+    transferDeletions(among: ids).going.map(\.id)
   }
 
   /// What a deletion of `ids` takes besides operations: the transfers among them, and the
-  /// rubles of their live fees — what the question before it says.
+  /// rubles of their live fees — what the question before it says —, and why each transfer
+  /// the rules keep stays.
   func transferDeletion(in ids: some Sequence<UUID>) -> TransferDeletion {
-    let transfers = transfers(among: ids)
-    guard !transfers.isEmpty, let listing else { return .none }
-    let fees = feeIds(of: transfers).compactMap { listing.entry($0) }
+    let (going, kept) = transferDeletions(among: ids)
+    guard !going.isEmpty || !kept.isEmpty, let listing else { return .none }
+    let fees = feeIds(of: going).compactMap { listing.entry($0) }
     return TransferDeletion(
-      count: transfers.count, fees: AmountE4.sum(fees.map(\.transaction.amountRubE4)))
+      count: going.count, fees: AmountE4.sum(fees.map(\.transaction.amountRubE4)),
+      kept: transfers(among: ids).compactMap { kept[$0.id] })
+  }
+
+  /// The transfers among `ids` a deletion takes, and why each of the others stays. The rules
+  /// are those of the screen of an account (`TransferActions.deletionRefusals`): a transfer of
+  /// an account in the archive, or one whose fee something came back for, is not deleted from a
+  /// list either. They are read from the rows the lists show, as the rest of a deletion is.
+  private func transferDeletions(
+    among ids: some Sequence<UUID>
+  ) -> (going: [Transfer], kept: [UUID: TransferRefusal]) {
+    let transfers = transfers(among: ids)
+    guard !transfers.isEmpty, let listing else { return ([], [:]) }
+    let kept = TransferActions.deletionRefusals(
+      of: transfers, in: listing.dataset, refunds: listing.refundIndex)
+    return (transfers.filter { kept[$0.id] == nil }, kept)
   }
 
   /// A deletion that takes transfers along: the transfers, their fees and the operations the

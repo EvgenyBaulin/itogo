@@ -24,7 +24,11 @@ enum BulkConfirmation {
     debts: [UUID: Debt]
   ) -> BulkConfirmation? {
     let plan = BulkEditRule.deletion(of: entries, refunds: refunds)
-    guard !plan.changed.isEmpty || !plan.skipped.isEmpty || !transfers.isEmpty else {
+    // A transfer the rules keep is said too: the owner hears why it stays.
+    guard
+      !plan.changed.isEmpty || !plan.skipped.isEmpty || !transfers.isEmpty
+        || !transferSummary.kept.isEmpty
+    else {
       return nil
     }
     return .delete(
@@ -200,8 +204,9 @@ final class OperationActions {
     }
   }
 
-  /// Transfers among `ids` go with the operations; a purchase a live refund takes money back
-  /// from stays, unless the refund goes too.
+  /// Transfers among `ids` go with the operations, but for those the rules keep — of an account
+  /// in the archive, or with a fee something came back for; a purchase a live refund takes
+  /// money back from stays, unless the refund goes too.
   func requestDeletion(of ids: Set<UUID>, store: TransactionsStore) {
     guard !store.isWritingInBackground else { return }
     confirmation = BulkConfirmation.deletion(

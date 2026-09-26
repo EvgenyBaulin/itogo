@@ -22,6 +22,9 @@ enum AccountRefusal: Error, Hashable, Sendable {
   case unreadableBalance(CurrencyCode)
   /// Into the archive with money still on the account.
   case hasMoney
+  /// Deleted while a count says money is on the account: the money would leave every total
+  /// with no step of ⌘Z to bring it back.
+  case deletesWithMoney
   /// Into the archive while nobody knows what is on the account: it moved but was never
   /// counted, so it is counted first rather than taken for money or for zero.
   case balanceUnknown
@@ -541,9 +544,10 @@ struct AccountActions {
     return .done
   }
 
-  /// Deletes accounts nothing points at, for good; the ⌘Z history is forgotten after it.
-  /// When the main account is among them, `newMain` takes the flag first — a step of its own,
-  /// forgotten with the rest.
+  /// Deletes accounts nothing points at, for good; the ⌘Z history is forgotten after it. An
+  /// account a count says holds money stays, as it stays out of the archive: its money would
+  /// leave every total for good. When the main account is among them, `newMain` takes the flag
+  /// first — a step of its own, forgotten with the rest.
   func delete(_ ids: [UUID], newMain: UUID? = nil) -> AccountActionOutcome {
     guard let repository = environment.accounts, !ids.isEmpty else { return .failed }
     let all = self.all
@@ -552,16 +556,20 @@ struct AccountActions {
       guard let usage = try? repository.usage(of: id) else { return .failed }
       if usage.isUsed { return .refused(.inUse(id, usage)) }
     }
+    var nextMain: PaymentMethod?
     if all.contains(where: { ids.contains($0.id) && $0.isDefault && !$0.archived }) {
       switch successor(newMain, leaving: Set(ids), all: all, groups: groups) {
-      case .success(let next):
-        guard
-          store.apply(
-            PlanningChange(upsert: PlanningRows(paymentMethods: [next]), at: environment.now()))
-        else { return .failed }
-      case .failure(let refusal):
-        return .refused(refusal)
+      case .success(let next): nextMain = next
+      case .failure(let refusal): return .refused(refusal)
       }
+    }
+    guard let counted = countedMoney(on: Set(ids), all: all) else { return .failed }
+    if counted { return .refused(.deletesWithMoney) }
+    if let nextMain {
+      guard
+        store.apply(
+          PlanningChange(upsert: PlanningRows(paymentMethods: [nextMain]), at: environment.now()))
+      else { return .failed }
     }
     var deleted = 0
     defer {
@@ -585,6 +593,23 @@ struct AccountActions {
       }
     }
     return .done
+  }
+
+  /// Whether a count says money is on any of `ids` — «Остаток сейчас» typed when the account
+  /// was made is one. An account nothing points at holds exactly its last counts; `nil` when
+  /// the counts cannot be read.
+  private func countedMoney(on ids: Set<UUID>, all: [PaymentMethod]) -> Bool? {
+    guard let book = try? environment.planning?.book() else { return nil }
+    let balances = AccountBalances.build(
+      entries: [], transfers: [], debtEntries: [], debts: [:],
+      reconciliations: book.reconciliations, balances: book.reconciledBalances, accounts: all,
+      tree: CategoryTree([]), now: environment.now(), calendar: environment.calendar)
+    return balances.keys.contains { key in
+      guard ids.contains(key.accountId), let amount = balances[key]?.amountE4 else {
+        return false
+      }
+      return !amount.isZero
+    }
   }
 
   /// Deletes a group nothing is filed under, for good; the ⌘Z history is forgotten after it.
@@ -777,6 +802,7 @@ enum AccountText {
     case .unreadableBalance(let currency):
       return environment.format("account.refusal.unreadableBalance", table: table, currency.code)
     case .hasMoney: return t("account.refusal.hasMoney")
+    case .deletesWithMoney: return t("account.refusal.deletesWithMoney")
     case .balanceUnknown: return t("account.refusal.balanceUnknown")
     case .currencyBalanceUnknown(let currency):
       return environment.format(

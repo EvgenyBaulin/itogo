@@ -29,4 +29,25 @@ enum TestEnvironment {
       widest < width,
       "the screen is \(Int(widest)) points wide, and this layout needs a window of \(Int(width))")
   }
+
+  /// Skips the calling test when the screen a window is on cannot hold a window frame of this
+  /// size. AppKit keeps a window inside the visible frame of its screen in height too — the menu
+  /// bar and the Dock take their share — so a window asked to grow taller than that comes out as
+  /// tall as the screen allows, and the test would measure the screen. The size is the whole
+  /// frame, title bar and toolbar included, not the content alone. The screen is the window's
+  /// own; a window not on one yet opens on the main screen, not on the largest one attached.
+  static func requireScreen(width: CGFloat, height: CGFloat, for window: NSWindow? = nil) throws {
+    let screen = window?.screen ?? NSScreen.main ?? NSScreen.screens.first
+    let visible = screen?.visibleFrame.size ?? .zero
+    try XCTSkipUnless(
+      fits(CGSize(width: width, height: height), in: visible),
+      "the screen of this window does not hold a window of \(Int(width)) × \(Int(height)) points"
+        + " (visible: \(Int(visible.width)) × \(Int(visible.height)))")
+  }
+
+  /// Whether a window frame of this size fits inside a visible frame of that size, edge to edge
+  /// included.
+  nonisolated static func fits(_ frame: CGSize, in visible: CGSize) -> Bool {
+    frame.width <= visible.width && frame.height <= visible.height
+  }
 }

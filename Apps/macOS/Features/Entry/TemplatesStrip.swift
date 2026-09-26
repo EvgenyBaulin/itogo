@@ -6,6 +6,9 @@ import SwiftUI
 /// Tapping a chip fills the line, so the next step is still Enter.
 struct TemplatesStrip: View {
   let model: TemplatesModel
+  /// The currency a chip enters its amount in, as the entry line will read it
+  /// (`Templates.currency(of:in:model:)`).
+  let currencyOf: (Template) -> CurrencyCode
   @Dependency(\.environment) private var environment
   let onPick: (Template) -> Void
 
@@ -50,10 +53,10 @@ struct TemplatesStrip: View {
     .refusedWriteAlert($refused, environment)
   }
 
-  /// The amount in the currency the chip enters it in (`Templates.currency(of:in:)`).
+  /// The amount in the currency the chip enters it in.
   private func title(for template: Template) -> String {
     guard let amount = template.amountE4 else { return template.text }
-    let currency = Templates.currency(of: template, in: environment)
+    let currency = currencyOf(template)
     return "\(template.text) \(environment.money.rounded(amount, currency: currency))"
   }
 }
@@ -175,21 +178,61 @@ enum Templates {
     template.currency ?? lineDefault
   }
 
+  /// The currency the entry line of the app reads an amount without a code in: the main
+  /// currency of the live account whose screen is open — a new operation goes to that account
+  /// and takes its currency —, otherwise «Валюта по умолчанию».
+  @MainActor static func lineCurrency(in environment: AppEnvironment) -> CurrencyCode {
+    let screen = environment.focusedAccountId.flatMap { id in
+      ((try? environment.references?.paymentMethods()) ?? nil)?.first { $0.id == id }
+    }
+    return AccountRules.currencyForNewOperation(
+      typed: nil, chosenAccount: screen, default: environment.defaultCurrency)
+  }
+
   /// The line a chip of the app puts into its entry line, which reads an amount without a code
-  /// in «Валюта по умолчанию»: a ruble chip says «RUB» once the default is the tenge, or it
-  /// would save tenge.
+  /// in `lineCurrency(in:)`: a ruble chip says «RUB» once the default is the tenge, or on the
+  /// screen of a tenge account, or it would save tenge.
   @MainActor static func line(
     for template: Template, categories: [CoreKit.Category], in environment: AppEnvironment
   ) -> String {
-    line(for: template, categories: categories, defaultCurrency: environment.defaultCurrency)
+    line(for: template, categories: categories, in: environment, model: nil)
+  }
+
+  /// The same for the entry line whose panel is `model`. The chip names its currency whenever
+  /// Enter would read its line without the code in another one — the panel's account or
+  /// currency, the screen open now —, and only then.
+  @MainActor static func line(
+    for template: Template, categories: [CoreKit.Category], in environment: AppEnvironment,
+    model: EntryDraftModel?
+  ) -> String {
+    let plain = line(
+      for: template, categories: categories, defaultCurrency: template.currency ?? .rub)
+    return line(
+      for: template, categories: categories,
+      defaultCurrency: readCurrency(of: plain, in: environment, model: model))
+  }
+
+  /// The currency Enter saves `line` in when it names none: the panel's own answer, which
+  /// follows the save (`EntryPreview.currency`).
+  @MainActor static func readCurrency(
+    of line: String, in environment: AppEnvironment, model: EntryDraftModel?
+  ) -> CurrencyCode {
+    let parsed = CoreLineInterpreter(
+      vocabulary: environment.vocabulary, calendar: environment.calendar
+    ).interpret(line, today: environment.today, kind: model?.draft.kind)
+    return EntryPreview.currency(of: parsed, model: model, in: environment)
   }
 
   /// The currency a chip of the app enters and shows its amount in: a template that names none
-  /// is entered in «Валюта по умолчанию», as the entry line reads an amount without a code.
+  /// is entered in the currency its line is read in — with the panel `model`, the one it gives.
   @MainActor static func currency(
-    of template: Template, in environment: AppEnvironment
+    of template: Template, in environment: AppEnvironment, model: EntryDraftModel? = nil
   ) -> CurrencyCode {
-    currency(of: template, lineDefault: environment.defaultCurrency)
+    if let currency = template.currency { return currency }
+    guard model != nil else { return lineCurrency(in: environment) }
+    return readCurrency(
+      of: line(for: template, categories: [], defaultCurrency: .rub), in: environment,
+      model: model)
   }
 
   /// Whether a chip can enter this operation again: only what its line can say. An expense,

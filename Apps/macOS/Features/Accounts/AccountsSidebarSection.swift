@@ -578,7 +578,7 @@ private struct AccountsSidebarPresentations: ViewModifier {
   @ViewBuilder
   private func refusalButtons(_ refusal: AccountsSidebarModel.Refusal) -> some View {
     switch refusal.reason {
-    case .hasMoney:
+    case .hasMoney, .deletesWithMoney:
       if let account = refusal.account {
         Button(t("sidebar.moveBalance")) { moveBalance(of: account) }
       }
