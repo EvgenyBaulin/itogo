@@ -21,6 +21,17 @@
     <language>en</language>
     <!-- Release entries go here, newest first. -->
     <item>
+      <title>1.1.1</title>
+      <pubDate>Sat, 26 Sep 2026 05:44:39 +0000</pubDate>
+      <sparkle:version>3</sparkle:version>
+      <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/EvgenyBaulin/itogo/releases/download/v1.1.1/Itogo-1.1.1.zip"
+                 length="21114594"
+                 type="application/octet-stream"
+                 sparkle:edSignature="2o1YC04ru1pxaThrUNms8alWwfz/Qt6c84A0ssxmCzK7JWBR6fhnykKNq/il8LczgvCjD8DopM2YXdHKSJoVDw==" />
+    </item>
+    <item>
       <title>1.1.0</title>
       <pubDate>Sat, 26 Sep 2026 03:37:52 +0000</pubDate>
       <sparkle:version>2</sparkle:version>
