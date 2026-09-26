@@ -1169,7 +1169,7 @@ final class SampleHistoryWriter {
 }
 
 /// Whole days between two calendar days.
-private func daysBetween(_ start: DateOnly, _ end: DateOnly, calendar: CalendarContext) -> Int {
+func daysBetween(_ start: DateOnly, _ end: DateOnly, calendar: CalendarContext) -> Int {
   let seconds = calendar.startOfDay(end).timeIntervalSince(calendar.startOfDay(start))
   return Int((seconds / 86_400).rounded())
 }

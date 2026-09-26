@@ -162,13 +162,20 @@ public struct PlanningUndo: Sendable, Hashable {
   public var removedLinks: [ReimbursementLink]
   /// What deleting the operations of `PlanningChange.softDeleted` did, for `restore`.
   public var deletion: DeletionEffects
+  /// Refunds in the bin that let go of a part a rewrite dropped, refund part → purchase part:
+  /// ⌘Z ties them back once the part is back.
+  public var releasedRefunds: [UUID: UUID]
+  /// The operations the change created and rewrote, as the write left them — with the account
+  /// it gave the ones that named none —, for the caller to show; ⌘Z does not need them.
+  public var written: [TransactionEntry]
 
   public init(
     createdTransactionIds: [UUID] = [], inserted: PlanningRowIDs = .empty,
     before: PlanningRows = .empty, settingsBefore: [String: String?] = [:],
     rowIDs: [UUID: Int64] = [:], cleared: [ClearedReference] = [],
     rewrittenBefore: [TransactionEntry] = [], removedLinks: [ReimbursementLink] = [],
-    deletion: DeletionEffects = .none
+    deletion: DeletionEffects = .none, releasedRefunds: [UUID: UUID] = [:],
+    written: [TransactionEntry] = []
   ) {
     self.createdTransactionIds = createdTransactionIds
     self.inserted = inserted
@@ -179,6 +186,8 @@ public struct PlanningUndo: Sendable, Hashable {
     self.rewrittenBefore = rewrittenBefore
     self.removedLinks = removedLinks
     self.deletion = deletion
+    self.releasedRefunds = releasedRefunds
+    self.written = written
   }
 }
 
@@ -232,11 +241,20 @@ public struct PlanningRepository: Sendable {
   /// deleted takes along a reconciliation of accounts it leaves with no count, as
   /// `AccountRepository.delete` does.
   ///
+  /// Every operation written gets an account — the main one when it names none — and one that
+  /// moves money on an account that does not hold its currency says what the account was
+  /// charged (`TransactionRepository.assigningAccount`); so does money borrowed or lent through
+  /// the debt journal alone. The operations as written come back in `PlanningUndo.written`.
+  /// A refund is held to the part it takes back from, and a rewrite to what refunds and partial
+  /// money back lean on (`rewrite`).
+  ///
   /// Throws `DatabaseError.unbalancedParts` before writing anything when an operation does
   /// not add up, `DatabaseError.notFound` when an operation to rewrite is not there or is
   /// deleted, `PlanningWriteError.referencedByOperations` when an event, a goal, a debt or
-  /// an account to delete is still used, and `AccountWriteError.isMain` when the main account
-  /// to delete is the only one. Any failure rolls the whole change back — among them the
+  /// an account to delete is still used, `AccountWriteError.isMain` when the main account
+  /// to delete is the only one, `AccountWriteError.chargeMissing` when a charge is
+  /// missing, and `LinkedEditRefusal` or `RefundError` when a refund or partial money back
+  /// would be left without its ground. Any failure rolls the whole change back — among them the
   /// unique `external_id`, which keeps one due date from being paid twice.
   public func apply(_ change: PlanningChange) throws -> PlanningUndo {
     try Self.refuseUnbalanced(change)
@@ -274,12 +292,21 @@ public struct PlanningRepository: Sendable {
     try journal.upsert(rows.expected, db: db)
     try journal.upsert(rows.budgets, db: db)
     // New operations are written the way `TransactionRepository.insert` writes them: as new
-    // rows, so an id or an `external_id` that is already there fails the change.
+    // rows, so an id or an `external_id` that is already there fails the change. Each is given
+    // an account like any other (`TransactionRepository.assigningAccount`), and a refund is
+    // held to the part it takes back from.
+    let lookups = WriteLookups()
+    var written: [TransactionEntry] = []
     for entry in change.created {
-      try entry.transaction.insert(db)
-      for part in entry.parts { try part.insert(db) }
+      let assigned = try TransactionRepository.assigningAccount(entry, lookups: lookups, db: db)
+      try TransactionRepository.refuseUnsoundRefund(assigned, over: nil, db: db)
+      try assigned.transaction.insert(db)
+      for part in assigned.parts { try part.insert(db) }
+      written.append(assigned)
     }
-    let (rewrittenBefore, removedLinks) = try rewrite(change.rewritten, at: change.at, db: db)
+    let rewrites = try rewrite(change.rewritten, at: change.at, lookups: lookups, db: db)
+    written += rewrites.written
+    try Self.refuseMissingCharge(of: rows.debtEntries, db: db)
     try journal.upsert(rows.debtEntries, db: db)
     try journal.upsert(rows.expectedLinks, db: db)
     try journal.upsert(rows.transfers, db: db)
@@ -317,38 +344,87 @@ public struct PlanningRepository: Sendable {
     return PlanningUndo(
       createdTransactionIds: change.created.map(\.id), inserted: journal.inserted,
       before: journal.before, settingsBefore: settingsBefore, rowIDs: journal.rowIDs,
-      cleared: journal.cleared, rewrittenBefore: rewrittenBefore, removedLinks: removedLinks,
-      deletion: deletion)
+      cleared: journal.cleared, rewrittenBefore: rewrites.before,
+      removedLinks: rewrites.removedLinks, deletion: deletion,
+      releasedRefunds: rewrites.releasedRefunds, written: written)
   }
 
-  /// Writes each operation over the live row with its id, stamped as updated at `instant`,
-  /// and returns the rows as they were — each one once, as it was before its first rewrite —
-  /// with the money-back links of the parts the rewrites dropped, read before they go.
-  private static func rewrite(
-    _ entries: [TransactionEntry], at instant: Date, db: Database
-  ) throws -> (before: [TransactionEntry], removedLinks: [ReimbursementLink]) {
+  /// What `rewrite` did: the rows as they were — each one once, as it was before its first
+  /// rewrite —, the money-back links of the parts the rewrites dropped, the refunds in the bin
+  /// that let go of those parts, and the operations as written.
+  private struct Rewrites {
     var before: [TransactionEntry] = []
     var removedLinks: [ReimbursementLink] = []
+    var releasedRefunds: [UUID: UUID] = [:]
+    var written: [TransactionEntry] = []
+  }
+
+  /// Writes each operation over the live row with its id, stamped as updated at `instant`.
+  ///
+  /// A rewrite is held to what refunds and money back that covered only some of a part lean
+  /// on, as an edit is (`OperationEditRule.linkedRefusal`): a refunded part is not cut below
+  /// its refunds, a partly returned part keeps its money. A refund is held to the part it takes
+  /// back from. What a whole reimbursement settled is the caller's to keep: no planning action
+  /// rewrites money back or what it wrote, and a part it closed that a rewrite drops comes back
+  /// with its links on ⌘Z.
+  private static func rewrite(
+    _ entries: [TransactionEntry], at instant: Date, lookups: WriteLookups, db: Database
+  ) throws -> Rewrites {
+    var done = Rewrites()
     var seen: Set<UUID> = []
     for var entry in entries {
       guard let current = try TransactionRepository.entry(id: entry.id, db: db),
         !current.transaction.isDeleted,
         entry.parts.allSatisfy({ $0.transactionId == entry.id })
       else { throw DatabaseError.notFound }
+      if let refusal = OperationEditRule.linkedRefusal(
+        editing: current, into: entry,
+        facts: try TransactionRepository.editFacts(current, entry, db: db))
+      {
+        throw refusal
+      }
       let kept = Set(entry.parts.map(\.id))
       let dropped = current.parts.map(\.id).filter { !kept.contains($0) }
       if !dropped.isEmpty {
-        removedLinks +=
+        done.removedLinks +=
           try ReimbursementLink
           .filter(dropped.map(\.uuidString).contains(Column("part_id")))
           .order(Column.rowID)
           .fetchAll(db)
       }
       entry.transaction.updatedAt = instant
-      try TransactionRepository.write(entry, over: current, db: db)
-      if seen.insert(entry.id).inserted { before.append(current) }
+      entry = try TransactionRepository.assigningAccount(
+        entry, over: current, lookups: lookups, db: db)
+      try TransactionRepository.refuseUnsoundRefund(entry, over: current, db: db)
+      let released = try TransactionRepository.write(entry, over: current, db: db)
+      done.releasedRefunds.merge(released) { first, _ in first }
+      if seen.insert(entry.id).inserted { done.before.append(current) }
+      done.written.removeAll { $0.id == entry.id }
+      done.written.append(entry)
     }
-    return (before, removedLinks)
+    return done
+  }
+
+  /// Money borrowed or lent through the journal alone moves money on an account — the line's,
+  /// or the main one —: a line with a moment whose account does not hold the debt's currency
+  /// must say what the account moved, in a currency it holds, or the change is refused with
+  /// `AccountWriteError.chargeMissing`. Lines written before accounts have no moment and are
+  /// never asked.
+  private static func refuseMissingCharge(of lines: [DebtEntry], db: Database) throws {
+    var main: UUID??
+    for line in lines
+    where line.kind == .borrowed && line.transactionId == nil && line.occurredAt != nil {
+      if main == nil { main = .some(try TransactionRepository.mainAccountId(db)) }
+      guard let accountId = line.paymentMethodId ?? main ?? nil,
+        let account = try PaymentMethod.fetchOne(db, key: accountId.uuidString),
+        let debt = try Debt.fetchOne(db, key: line.debtId.uuidString),
+        !account.holds(debt.currency)
+      else { continue }
+      if let charged = line.accountCurrency, line.accountAmountE4 != nil, account.holds(charged) {
+        continue
+      }
+      throw AccountWriteError.chargeMissing
+    }
   }
 
   /// Deletes accounts under the rules `AccountRepository.delete` keeps: the main account goes
@@ -387,7 +463,8 @@ public struct PlanningRepository: Sendable {
   /// The operations it deleted come back first, with everything their deletion took along
   /// (`TransactionRepository.restore(ids:at:effects:)`), and the operations it rewrote are
   /// written back as they were — their keys let go first, since the change may have moved one
-  /// from one of them to another —, with the money-back links of the parts it dropped. The
+  /// from one of them to another —, with the money-back links of the parts it dropped and the
+  /// refunds in the bin that let go of those parts tied back to them. The
   /// operations it created go for good, with the journal lines
   /// and income links that point at them — deleted first, as `TransactionRepository.purge`
   /// does, since the foreign key would only clear a line's `transaction_id` and leave the debt
@@ -434,6 +511,7 @@ public struct PlanningRepository: Sendable {
       }
       try TransactionRepository.write(before, over: current, db: db)
     }
+    try TransactionRepository.relink(undo.releasedRefunds, db: db)
     for link in undo.removedLinks {
       // A link whose money back or part is gone since has nothing to come back to.
       guard try CoreKit.Transaction.exists(db, key: link.reimbursementTxId.uuidString),
@@ -503,7 +581,12 @@ public struct PlanningRepository: Sendable {
     // before the rowids are put back, so a removed account gets back a rowid a new one took.
     try Self.deleteAll(PaymentMethod.self, ids: added.paymentMethods, db: db)
     try Self.deleteAll(AccountGroup.self, ids: added.accountGroups, db: db)
+    try Self.restoreRowIDs(before.accountGroups, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.paymentMethods, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.categories, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.events, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.goals, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.debts, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.budgets, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.debtEntries, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.expectedLinks, undo.rowIDs, db: db)
@@ -523,17 +606,30 @@ public struct PlanningRepository: Sendable {
   /// row at a new rowid, which would put it last in every list read in rowid order. A rowid
   /// another row took in the meantime is left alone (`OR IGNORE`): the row then stays last,
   /// which is all that happens.
+  ///
+  /// Rows written back together can land at each other's rowids — two limits removed later
+  /// one first come back at the first free rowids in that order — so every row that is not
+  /// at its own is first moved past the last rowid, out of the way, and only then put back:
+  /// otherwise each would find its place taken by the other and both would stay swapped.
   private static func restoreRowIDs<Record: PlanningRow>(
     _ rows: [Record], _ rowIDs: [UUID: Int64], db: Database
   ) throws {
-    for row in rows {
-      guard let rowID = rowIDs[row.id] else { continue }
+    let table = Record.databaseTableName
+    let moving = rows.compactMap { row in
+      rowIDs[row.id].map { (id: row.id.uuidString, rowID: $0) }
+    }
+    for row in moving {
       try db.execute(
         sql: """
-          UPDATE OR IGNORE \(Record.databaseTableName) SET rowid = ?
+          UPDATE \(table) SET rowid = (SELECT MAX(rowid) + 1 FROM \(table))
           WHERE id = ? AND rowid <> ?
           """,
-        arguments: [rowID, row.id.uuidString, rowID])
+        arguments: [row.id, row.rowID])
+    }
+    for row in moving {
+      try db.execute(
+        sql: "UPDATE OR IGNORE \(table) SET rowid = ? WHERE id = ? AND rowid <> ?",
+        arguments: [row.rowID, row.id, row.rowID])
     }
   }
 

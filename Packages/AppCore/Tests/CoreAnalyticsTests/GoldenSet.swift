@@ -337,11 +337,23 @@ struct Golden: Decodable {
         periodMonth: row.periodMonth.flatMap(MonthKey.init(iso:)),
         debtId: row.debt.map(id),
         creditDebtId: row.creditDebt.map(id),
-        externalId: row.externalId,
+        externalId: row.externalId.map(Self.writtenAsTheAppWrites),
         createdAt: when,
         updatedAt: when,
         deletedAt: row.deleted == true ? when : nil),
       parts: parts)
+  }
+
+  /// A key the app wrote into `external_id`, with the small numbers the fixture names things by
+  /// turned into the ids the app writes: `reimb:129:shortfall:1151` names the part whose id is
+  /// `id(1151)`, and the ledger finds a shortfall by that id.
+  static func writtenAsTheAppWrites(_ key: String) -> String {
+    key.split(separator: ":", omittingEmptySubsequences: false).map { field in
+      guard !field.isEmpty, field.allSatisfy(\.isNumber), let number = Int(field) else {
+        return String(field)
+      }
+      return id(number).uuidString.lowercased()
+    }.joined(separator: ":")
   }
 
   /// `2026-07-01T10:00` in UTC.

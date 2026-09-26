@@ -1,6 +1,108 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "entry.account.from": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Со счёта"
+          }
+        }
+      }
+    },
+    "entry.account.to": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На счёт"
+          }
+        }
+      }
+    },
+    "entry.accountCharge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charged to account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Списано со счёта"
+          }
+        }
+      }
+    },
+    "entry.accountCharge.check": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charged to account was not recalculated — check it"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Списано со счёта не пересчитано — проверьте"
+          }
+        }
+      }
+    },
+    "entry.accountCharge.provisional": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "provisional"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "предварительно"
+          }
+        }
+      }
+    },
+    "entry.accountCharge.provisionalHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The rate of this day is still being refined: check the figure against the statement."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Курс этого дня ещё уточняется: сверьте сумму с выпиской."
+          }
+        }
+      }
+    },
     "entry.add": {
       "extractionState": "manual",
       "localizations": {
@@ -14,6 +116,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Добавить…"
+          }
+        }
+      }
+    },
+    "entry.add.accountNotBack": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account «%1$@» is in the archive and cannot come back now: %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт «%1$@» в архиве, и сейчас его не вернуть: %2$@"
           }
         }
       }
@@ -143,13 +262,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "New payment method"
+            "value": "New account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Новый способ оплаты"
+            "value": "Новый счёт"
           }
         }
       }
@@ -201,6 +320,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сумма"
+          }
+        }
+      }
+    },
+    "entry.beforeCount.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This account was reconciled that day. If the operation happened before that, its money is already in the reconciled balance."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этот день счёт сверяли. Если операция прошла до сверки, её деньги уже в сверенном остатке."
+          }
+        }
+      }
+    },
+    "entry.beforeCount.no": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No, after it"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет, после"
+          }
+        }
+      }
+    },
+    "entry.beforeCount.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Was this before the reconciliation at %@?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это было до сверки в %@?"
+          }
+        }
+      }
+    },
+    "entry.beforeCount.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yes, before it"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Да, до сверки"
           }
         }
       }
@@ -443,6 +630,23 @@
         }
       }
     },
+    "entry.error.chargeMissing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter how much the account was charged: there is no rate to work it out."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Укажите, сколько списано со счёта: курса для пересчёта нет."
+          }
+        }
+      }
+    },
     "entry.error.closedPartChanged": {
       "extractionState": "manual",
       "localizations": {
@@ -670,13 +874,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The payment method could not be added. Try again."
+            "value": "The account could not be added. Try again."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Не удалось добавить способ оплаты. Попробуйте ещё раз."
+            "value": "Не удалось добавить счёт. Попробуйте ещё раз."
           }
         }
       }
@@ -728,6 +932,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "Курса на эту дату ещё нет — введите его вручную"
+          }
+        }
+      }
+    },
+    "entry.error.refundExceedsRemaining": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The refund is more than is left of the purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат больше, чем осталось от покупки"
+          }
+        }
+      }
+    },
+    "entry.error.refundNotRefundable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This purchase can no longer be refunded"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эту покупку больше нельзя вернуть"
+          }
+        }
+      }
+    },
+    "entry.error.refundOneAmount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund of a purchase is one amount: it cannot be split or paid for someone"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат покупки — одна сумма: его нельзя разделить или записать за другого"
+          }
+        }
+      }
+    },
+    "entry.error.refundOtherCurrency": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund is in the currency of its purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат покупки — в валюте покупки"
           }
         }
       }
@@ -1010,13 +1282,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment method"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способ оплаты"
+            "value": "Счёт"
           }
         }
       }
@@ -1140,6 +1412,74 @@
         }
       }
     },
+    "entry.refund.change": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another Purchase…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Другая покупка…"
+          }
+        }
+      }
+    },
+    "entry.refund.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "without a purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "без покупки"
+          }
+        }
+      }
+    },
+    "entry.refund.pick": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Purchase…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выбрать покупку…"
+          }
+        }
+      }
+    },
+    "entry.refund.purchase": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Покупка"
+          }
+        }
+      }
+    },
     "entry.save": {
       "extractionState": "manual",
       "localizations": {
@@ -1238,6 +1578,382 @@
           "stringUnit": {
             "state": "translated",
             "value": "Нераспределено"
+          }
+        }
+      }
+    },
+    "moneyBack.asDebtRepayment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record as Debt Repayment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать возвратом долга"
+          }
+        }
+      }
+    },
+    "moneyBack.asIncome": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record as Income"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать доходом"
+          }
+        }
+      }
+    },
+    "moneyBack.choosePerson": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose whom the money came from."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите, от кого деньги."
+          }
+        }
+      }
+    },
+    "moneyBack.closes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "closes: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "закроет: %@"
+          }
+        }
+      }
+    },
+    "moneyBack.fromNote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "from: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "от: %@"
+          }
+        }
+      }
+    },
+    "moneyBack.manual": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manually…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вручную…"
+          }
+        }
+      }
+    },
+    "moneyBack.onlyProvisional": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Everything this person owes is on a provisional rate. Record the money once the rates are final, or manually."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Всё, что должен этот человек, пока по предварительному курсу. Запишите деньги, когда курс станет окончательным, или вручную."
+          }
+        }
+      }
+    },
+    "moneyBack.owesNothing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This person owes you nothing. Money that did not come back for something is income — record it as income."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот человек вам ничего не должен. Деньги не за что-то купленное — это доход: запишите их доходом."
+          }
+        }
+      }
+    },
+    "moneyBack.owesNothingMore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "owes nothing more"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "больше ничего не должен"
+          }
+        }
+      }
+    },
+    "moneyBack.owesOnDebt": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing paid for this person is waiting, but they owe you on a debt. The money is a repayment of that debt."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "За этого человека ничего не ждёт возврата, но он должен вам по долгу. Эти деньги — возврат долга."
+          }
+        }
+      }
+    },
+    "moneyBack.partWithoutNote": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no description"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "без описания"
+          }
+        }
+      }
+    },
+    "moneyBack.provisionalPartsOwed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The money is more than the parts it can close while other parts wait for their final rate. Record it later, or manually."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Денег больше, чем закрывают части, а другие части ждут окончательного курса. Запишите позже или вручную."
+          }
+        }
+      }
+    },
+    "moneyBack.provisionalRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The rate of this money is still provisional. Type the rate in the ↓ panel, or record the money later."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Курс этих денег ещё предварительный. Введите курс в панели ↓ или запишите позже."
+          }
+        }
+      }
+    },
+    "moneyBack.received": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credited to the account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зачислено на счёт"
+          }
+        }
+      }
+    },
+    "moneyBack.record": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать"
+          }
+        }
+      }
+    },
+    "moneyBack.skipped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld part on a provisional rate waits for the final rate"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld parts on a provisional rate wait for the final rate"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld части по предварительному курсу ждут окончательного"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld частей по предварительному курсу ждут окончательного"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld часть по предварительному курсу ждёт окончательного"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld части по предварительному курсу ждут окончательного"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "moneyBack.stillOwes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "still owes: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "останется должен: %@"
+          }
+        }
+      }
+    },
+    "moneyBack.surplus": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ over what is owed goes to income in Surcharges"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сверх долга %@ — доход в «Доплатах»"
+          }
+        }
+      }
+    },
+    "moneyBack.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Money Back"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат денег"
+          }
+        }
+      }
+    },
+    "moneyBack.unnamedParts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing is owed under this name, but some parts paid for others name nobody — they may be this person's. Settle them with Manually…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На это имя долгов нет, но есть части «за другого» без должника — возможно, это они. Отметьте их через «Вручную…»"
           }
         }
       }
@@ -1346,6 +2062,227 @@
         }
       }
     },
+    "refund.choose": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refund"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть"
+          }
+        }
+      }
+    },
+    "refund.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No purchase to refund"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет покупок, которые можно вернуть"
+          }
+        }
+      }
+    },
+    "refund.exceeds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "More than is left to refund"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Больше, чем осталось вернуть"
+          }
+        }
+      }
+    },
+    "refund.narrowed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Purchases that match the line"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Покупки, подходящие к строке"
+          }
+        }
+      }
+    },
+    "refund.partOfSplit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "part of a purchase of %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "часть покупки на %@"
+          }
+        }
+      }
+    },
+    "refund.pickOne": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите покупку"
+          }
+        }
+      }
+    },
+    "refund.refunded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ refunded"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "вернули %@"
+          }
+        }
+      }
+    },
+    "refund.showAll": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show All Purchases"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать все покупки"
+          }
+        }
+      }
+    },
+    "refund.showEarlier": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Earlier"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать раньше"
+          }
+        }
+      }
+    },
+    "refund.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refund of a Purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат покупки"
+          }
+        }
+      }
+    },
+    "refund.whole": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Whole amount, %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вся сумма, %@"
+          }
+        }
+      }
+    },
+    "refund.withoutPurchase": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Without a Purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без покупки"
+          }
+        }
+      }
+    },
+    "refund.withoutPurchaseHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund of its own: something bought before the ledger, or money taken out of a goal"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат сам по себе: вещь куплена до учёта или деньги сняты с цели"
+          }
+        }
+      }
+    },
     "reimbursement.differentPeople": {
       "extractionState": "manual",
       "localizations": {
@@ -1448,6 +2385,23 @@
         }
       }
     },
+    "reimbursement.returnedSoFar": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ back so far"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "уже вернули %@"
+          }
+        }
+      }
+    },
     "reimbursement.shareExceedsPart": {
       "extractionState": "manual",
       "localizations": {
@@ -1546,6 +2500,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Записать возврат денег"
+          }
+        }
+      }
+    },
+    "reimbursement.writeOffRest": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write Off the Rest"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Списать остаток"
+          }
+        }
+      }
+    },
+    "templates.archive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Put in the archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Убрать в архив"
           }
         }
       }

@@ -20,6 +20,8 @@ public enum BulkEdit: Hashable, Sendable {
   /// `nil` takes the event away.
   case event(UUID?)
   case place(UUID?)
+  /// The account. Every operation has one, so `nil` moves the operations to the main account
+  /// rather than leaving them with none; the storage layer fills it in.
   case paymentMethod(UUID?)
 
   /// Whether the change is made to the parts, and so reaches every part of a split — the
@@ -69,6 +71,15 @@ public enum BulkSkipReason: String, Hashable, Sendable, CaseIterable {
   /// closing nothing and its shortfall counted as my spending on a purchase that is not
   /// there. The reimbursement is deleted first — which opens the part again.
   case closedByReimbursement
+  /// The kind of the operation has no such field: income has no event and no «на кого», money
+  /// back has no place and no event.
+  case fieldNotForKind
+  /// Refunds take money back from the purchase: gone, it would leave them taking back from
+  /// nothing. The refunds are deleted first, or together with it.
+  case hasRefunds
+  /// The account does not hold the operation's currency, and the rate needed to work out what
+  /// it is charged is not known yet.
+  case noRateForCharge
 }
 
 /// An operation the change leaves alone, entirely or in part.
@@ -153,21 +164,35 @@ public struct BulkEditPlan: Hashable, Sendable {
 /// * **For whom** — a group drops the person; a person keeps the group unless it was «me»,
 ///   which becomes «other». Parts paid for somebody else already name who owes them, and
 ///   money given back has no «для кого».
-/// * **Event** — every kind of operation takes one.
-/// * **Place** and **payment method** are fields of the operation. Income gets no place.
+/// * **Event** — a purchase and a refund take one; income and money back have none.
+/// * **Place** and **account** are fields of the operation. Income and money back get no
+///   place. An account that does not hold the operation's currency is charged in its main
+///   currency: a figure already in that currency stays — it may have been typed from the
+///   statement —, otherwise it is worked out at the operation's rate and the rates of its day
+///   (`AccountRules.prefillLeg`); a refund taken back from a purchase, at the rates of its day
+///   alone (`RefundRules.prefillLeg`). A contribution to a goal is charged nothing.
 public enum BulkEditRule {
 
   // MARK: - Planning
 
+  /// `accounts`, `rates` and `calendar` work out what an account is charged for an operation
+  /// in a currency it does not hold; without the account in `accounts` the operation only
+  /// changes its account.
   public static func plan(
     _ edit: BulkEdit,
     entries: [TransactionEntry],
     tree: CategoryTree,
-    history: ManualQualityHistory = .empty
+    history: ManualQualityHistory = .empty,
+    accounts: [PaymentMethod] = [],
+    rates: DayRates = .empty,
+    calendar: CalendarContext = .utc
   ) -> BulkEditPlan {
     var plan = BulkEditPlan()
     for entry in entries {
-      switch apply(edit, to: entry, tree: tree, history: history) {
+      switch apply(
+        edit, to: entry, tree: tree, history: history, accounts: accounts, rates: rates,
+        calendar: calendar)
+      {
       case .changed(let changed, let keptParts):
         plan.changed.append(changed)
         if edit.editsParts, changed.isSplit, entry.parts.allSatisfy(edit.reaches) {
@@ -194,13 +219,22 @@ public enum BulkEditRule {
   /// deleting a reimbursement opens the parts no other live one still closes. The store asks
   /// this of the rows as they are inside the write, so a reimbursement recorded or deleted a
   /// moment ago counts.
-  public static func deletion(of entries: [TransactionEntry]) -> BulkEditPlan {
+  ///
+  /// A purchase refunds take money back from stays too, unless every one of those refunds
+  /// goes in the same deletion: `refunds` are the refunds of the whole ledger.
+  public static func deletion(
+    of entries: [TransactionEntry], refunds: RefundIndex = .empty
+  ) -> BulkEditPlan {
     var plan = BulkEditPlan()
+    let deleted = Set(entries.map(\.id))
     for entry in entries {
+      let refundedBy = entry.parts.flatMap { refunds.refunds(ofPart: $0.id) }
       if entry.transaction.creditDebtId != nil {
         plan.skipped.append(BulkSkip(transactionId: entry.id, reason: .creditPurchase))
       } else if entry.parts.contains(where: { $0.reimbursementStatus == .returned }) {
         plan.skipped.append(BulkSkip(transactionId: entry.id, reason: .closedByReimbursement))
+      } else if refundedBy.contains(where: { !deleted.contains($0) }) {
+        plan.skipped.append(BulkSkip(transactionId: entry.id, reason: .hasRefunds))
       } else {
         plan.changed.append(entry)
       }
@@ -216,7 +250,10 @@ public enum BulkEditRule {
     _ edit: BulkEdit,
     to entry: TransactionEntry,
     tree: CategoryTree,
-    history: ManualQualityHistory = .empty
+    history: ManualQualityHistory = .empty,
+    accounts: [PaymentMethod] = [],
+    rates: DayRates = .empty,
+    calendar: CalendarContext = .utc
   ) -> BulkEditOutcome {
     let transaction = entry.transaction
     if let reason = refusal(of: edit, for: transaction, tree: tree) {
@@ -229,7 +266,18 @@ public enum BulkEditRule {
     case .place(let placeId):
       edited.transaction.placeId = placeId
     case .paymentMethod(let methodId):
-      edited.transaction.paymentMethodId = methodId
+      let account =
+        methodId.flatMap { id in accounts.first { $0.id == id } }
+        ?? (methodId == nil ? accounts.first { $0.isDefault && !$0.archived } : nil)
+      edited.transaction.paymentMethodId = methodId ?? account?.id
+      if let account {
+        guard
+          let charged = charge(
+            of: entry, on: account, tree: tree, rates: rates, calendar: calendar)
+        else { return .skipped(.noRateForCharge) }
+        edited.transaction.accountCurrency = charged?.currency
+        edited.transaction.accountAmountE4 = charged?.amount
+      }
     case .category, .refile, .quality, .forWhom, .forPerson, .event:
       var reached = 0
       for index in edited.parts.indices where edit.reaches(edited.parts[index]) {
@@ -247,16 +295,53 @@ public enum BulkEditRule {
     return .changed(edited, keptParts: keptParts)
   }
 
+  /// What `entry` is charged on `account`: `.some(nil)` when nothing is charged apart — the
+  /// account holds the currency, or the operation only moves money into a goal —, the figure
+  /// otherwise, and `nil` when it cannot be worked out.
+  private static func charge(
+    of entry: TransactionEntry, on account: PaymentMethod, tree: CategoryTree, rates: DayRates,
+    calendar: CalendarContext
+  ) -> (currency: CurrencyCode, amount: AmountE4)?? {
+    let transaction = entry.transaction
+    if KindFields.isGoalOnly(entry, tree: tree) { return .some(nil) }
+    guard let leg = AccountRules.legCurrency(for: transaction.currency, account: account) else {
+      return .some(nil)
+    }
+    if transaction.accountCurrency == leg, let kept = transaction.accountAmountE4 {
+      return (leg, kept)
+    }
+    let day = calendar.day(of: transaction.occurredAt)
+    // A refund taken back from a purchase carries the purchase's rate for its rubles, but the
+    // account received it at the rates of the refund's own day.
+    if RefundRules.takesBack(entry) {
+      return RefundRules.prefillLeg(
+        amount: transaction.amountE4, currency: transaction.currency, day: day,
+        account: account, rates: rates
+      ).map { (leg, $0) }
+    }
+    // A leg in rubles is the operation's rubles, so moving it changes no ruble figure.
+    if leg == .rub { return (leg, transaction.amountRubE4) }
+    guard
+      let amount = AccountRules.prefillLeg(
+        amount: transaction.amountE4, currency: transaction.currency, rate: transaction.rate,
+        day: day, account: account, rates: rates)
+    else { return nil }
+    return (leg, amount)
+  }
+
   /// Puts back what a bulk change may have changed, taken from the snapshot made before
   /// it, onto the operation as it is now. Everything else — a part written off since, a
   /// rate refined since — stays as the database has it: undo takes back my change, not
-  /// the changes that came after it.
+  /// the changes that came after it. The account comes back with what it was charged, so an
+  /// operation never stays on its old account with the charge of the new one.
   public static func revert(
     _ current: TransactionEntry, to snapshot: TransactionEntry
   ) -> TransactionEntry {
     var reverted = current
     reverted.transaction.placeId = snapshot.transaction.placeId
     reverted.transaction.paymentMethodId = snapshot.transaction.paymentMethodId
+    reverted.transaction.accountCurrency = snapshot.transaction.accountCurrency
+    reverted.transaction.accountAmountE4 = snapshot.transaction.accountAmountE4
     let before = Dictionary(
       snapshot.parts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     for index in reverted.parts.indices {
@@ -291,10 +376,20 @@ public enum BulkEditRule {
     case .quality:
       return transaction.kind.hasQuality ? nil : .noQuality
     case .forWhom, .forPerson:
-      return transaction.kind == .reimbursement ? .moneyReturned : nil
+      switch transaction.kind {
+      case .reimbursement: return .moneyReturned
+      case .income: return .fieldNotForKind
+      case .expense, .refund: return nil
+      }
     case .place:
-      return transaction.kind == .income ? .incomeHasNoPlace : nil
-    case .event, .paymentMethod:
+      switch transaction.kind {
+      case .income: return .incomeHasNoPlace
+      case .reimbursement: return .fieldNotForKind
+      case .expense, .refund: return nil
+      }
+    case .event:
+      return KindFields.fields(of: transaction.kind).contains(.event) ? nil : .fieldNotForKind
+    case .paymentMethod:
       return nil
     }
   }

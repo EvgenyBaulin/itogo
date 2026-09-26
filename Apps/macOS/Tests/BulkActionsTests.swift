@@ -516,7 +516,7 @@ final class BulkActionsTests: XCTestCase {
 
     let confirmation = try XCTUnwrap(
       BulkConfirmation.deletion(of: [entries[0], laptop], debts: [:]))
-    guard case .delete(let ids, let plan, let totals) = confirmation else {
+    guard case .delete(let ids, let plan, let totals, _) = confirmation else {
       return XCTFail("a deletion was expected")
     }
     XCTAssertEqual(ids, [entries[0].id])
@@ -586,5 +586,115 @@ final class BulkActionsTests: XCTestCase {
       environment.language.format("selection.count", table: "Transactions", 2), "2 операции")
     XCTAssertEqual(
       environment.language.format("selection.count", table: "Transactions", 21), "21 операция")
+  }
+
+  // MARK: Accounts
+
+  /// Coffee for 1 000 ₽ on the card, and the lists knowing both accounts.
+  private func coffeeOnTheCard() throws -> (
+    entry: TransactionEntry, card: PaymentMethod, kaspi: PaymentMethod
+  ) {
+    try makeStore()
+    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
+    let kaspi = PaymentMethod(name: "Kaspi", currency: CurrencyCode("KZT"))
+    for account in [card, kaspi] { try references.save(account) }
+    var draft = TransactionDraft(
+      occurredAt: CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 18)),
+      amount: AmountE4(whole: 1_000), note: "coffee", paymentMethodId: card.id)
+    draft.normalizeSinglePart()
+    let entry = try repository.save(try draft.materialize())
+    let dataset = Dataset(
+      entries: try repository.entries(from: .distantPast, to: .distantFuture),
+      categories: try references.categories(includeArchived: true),
+      paymentMethods: [card, kaspi])
+    store.show(Ledger(dataset: dataset, calendar: .utc))
+    return (entry, card, kaspi)
+  }
+
+  /// 20 ₽ for 100 ₸ on the day of the coffee.
+  private var tengeRates: DayRates {
+    DayRates(series: [
+      CurrencyCode("KZT"): [DayRate(day: DateOnly(year: 2026, month: 9, day: 18), perUnit: 0.2)]
+    ])
+  }
+
+  /// Moved in bulk onto an account that does not hold rubles, the coffee says what that
+  /// account was charged — worked out at the rates of its day — and ⌘Z puts it back on the
+  /// card with nothing charged apart.
+  func testMovingOperationsToAnAccountWithoutTheirCurrencyChargesIt() throws {
+    let (entry, card, kaspi) = try coffeeOnTheCard()
+    let kzt = CurrencyCode("KZT")
+
+    let plan = store.plan(
+      .paymentMethod(kaspi.id), ids: [entry.id], rates: tengeRates, calendar: .utc)
+    XCTAssertEqual(plan.skipped, [])
+    XCTAssertEqual(plan.changed.first?.transaction.accountCurrency, kzt)
+    XCTAssertEqual(plan.changed.first?.transaction.accountAmountE4, AmountE4(whole: 5_000))
+
+    XCTAssertTrue(
+      store.apply(.paymentMethod(kaspi.id), to: [entry.id], rates: tengeRates, calendar: .utc))
+    let moved = try XCTUnwrap(try repository.entry(id: entry.id))
+    XCTAssertEqual(moved.transaction.paymentMethodId, kaspi.id)
+    XCTAssertEqual(moved.transaction.accountCurrency, kzt)
+    XCTAssertEqual(moved.transaction.accountAmountE4, AmountE4(whole: 5_000))
+
+    store.undo()
+    let back = try XCTUnwrap(try repository.entry(id: entry.id))
+    XCTAssertEqual(back.transaction.paymentMethodId, card.id)
+    XCTAssertNil(back.transaction.accountCurrency)
+    XCTAssertNil(back.transaction.accountAmountE4)
+  }
+
+  /// Without the rate of the day nothing can be charged: the operation stays where it is, and
+  /// the confirmation says why.
+  func testAnOperationWithoutTheRateToChargeItStaysWhereItIs() throws {
+    let (entry, _, kaspi) = try coffeeOnTheCard()
+    let plan = store.plan(.paymentMethod(kaspi.id), ids: [entry.id], calendar: .utc)
+    XCTAssertEqual(plan.changed, [])
+    XCTAssertEqual(plan.skipped.map(\.reason), [.noRateForCharge])
+  }
+
+  /// A purchase a refund takes money back from is not deleted from under it: planned from the
+  /// store, the deletion leaves it and says why.
+  func testThePlannedDeletionKeepsAPurchaseWhoseRefundStays() throws {
+    let entries = try saveEntries(["Sneakers"])
+    let purchase = entries[0]
+    let draft = try RefundRules.draft(
+      refunding: purchase.parts[0], of: purchase, amount: AmountE4(whole: 40),
+      occurredAt: purchase.transaction.occurredAt.addingTimeInterval(3600), accountId: nil,
+      index: RefundIndex(entries: [purchase], debts: [:]), tree: CategoryTree())
+    let refund = try repository.save(try draft.materialize())
+    try showDatabase()
+
+    let plan = store.planDeletion(ids: [purchase.id])
+    XCTAssertEqual(plan.changed, [])
+    XCTAssertEqual(plan.skipped.map(\.reason), [.hasRefunds])
+    XCTAssertEqual(store.planDeletion(ids: [purchase.id, refund.id]).changed.count, 2)
+  }
+
+  /// The account menu of a selection moves operations to another account and never to none:
+  /// every operation keeps one. The main account comes first, as in every menu of accounts,
+  /// and an archived one is not offered.
+  func testTheAccountMenuOffersEveryLiveAccountMainFirstAndNeverNone() {
+    let cash = PaymentMethod(name: "Cash", currency: .rub)
+    let main = PaymentMethod(name: "Zeta card", currency: .rub, isDefault: true)
+    var old = PaymentMethod(name: "Old", currency: .rub)
+    old.archived = true
+    let edits = BulkMenuItems.accountEdits(
+      [cash, old, main], locale: Locale(identifier: "en_US"))
+    XCTAssertEqual(edits, [.paymentMethod(main.id), .paymentMethod(cash.id)])
+    XCTAssertFalse(edits.contains(.paymentMethod(nil)))
+  }
+
+  /// Only a change of the account works out what an account is charged: the rest of the menu
+  /// — a category, a place, an event, a quality, «на кого» — never reads the rate cache.
+  func testOnlyAChangeOfTheAccountReadsTheRates() {
+    XCTAssertTrue(BulkRates.needed(for: .paymentMethod(UUID())))
+    for edit: BulkEdit in [
+      .category(UUID()), .refile(from: [UUID()], to: UUID()), .quality(.bad),
+      .forWhom(.family), .forPerson(UUID()), .event(nil), .place(UUID()),
+    ] {
+      XCTAssertFalse(BulkRates.needed(for: edit), "\(edit)")
+    }
   }
 }

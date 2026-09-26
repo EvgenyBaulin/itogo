@@ -13,16 +13,17 @@ import Foundation
 public enum AppPaths {
   /// A folder of synthetic data, opened with `--data-set <name>`: the six months of `make sample`,
   /// the twenty thousand operations of `make sample-large`, the history `make bench-app` times, the
-  /// small one of the UI test. A Debug build fills it at launch; a Release build only opens one
-  /// that is there. Its name is on the title of the main window, so a set is never taken for the
-  /// real data.
+  /// small one of the UI test, the year of `make demo` drawn from a new seed every time. A Debug
+  /// build fills it at launch; a Release build only opens one that is there. Its name is on the
+  /// title of the main window, so a set is never taken for the real data.
   public enum DataSet: String, CaseIterable, Sendable {
     case sample
     case sampleLarge = "sample-large"
     case bench
     case uiTest = "ui-test"
+    case demo
 
-    /// What the title of the main window says: «SAMPLE», «BENCH».
+    /// What the title of the main window says: «SAMPLE», «BENCH», «DEMO».
     public var badge: String { rawValue.uppercased() }
   }
 

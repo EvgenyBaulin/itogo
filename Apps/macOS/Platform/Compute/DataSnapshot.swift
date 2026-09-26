@@ -27,33 +27,61 @@ struct SnapshotContext: Hashable, Sendable {
   var lastReconciliation: DateOnly?
   /// The last known rate of every currency planning counts in — debts, scheduled payments
   /// and what others give back for them, expected income, the enabled currencies of a
-  /// reconciliation — so planned payments, funding and totals convert without a guess.
+  /// reconciliation, goals, accounts and transfers — so planned payments, funding, balances
+  /// and totals convert without a guess. Rubles for one unit: 100 tenge are quoted, one is
+  /// kept.
   var rubPerUnit: [CurrencyCode: Decimal] = [:]
   /// The day of each of those rates: on a weekend or offline it is not today, and the
   /// reconciliation says so.
   var rateDays: [CurrencyCode: DateOnly] = [:]
+  /// Every rate the table holds of the enabled currencies and those of the goals and the
+  /// accounts, by day, in rubles for one unit: what a contribution to a goal in another
+  /// currency counts at on its own day.
+  var dayRates: DayRates = .empty
+  /// The language the names of the accounts are ordered in (`AccountsSnapshot`).
+  var localeIdentifier = "en"
 
   /// Rates of those currencies as the table gives them for `today`.
-  init(dataset: Dataset, rates: RateTable, today: DateOnly, also extra: [CurrencyCode] = []) {
+  init(
+    dataset: Dataset, rates: RateTable, today: DateOnly, also extra: [CurrencyCode] = [],
+    localeIdentifier: String = "en"
+  ) {
     self.lastReconciliation = dataset.planning.reconciliations.last?.date
+    self.localeIdentifier = localeIdentifier
     var currencies = Set(dataset.debts.map(\.currency))
     for payment in dataset.planning.scheduled {
       currencies.insert(payment.currency)
       if let back = payment.reimbursementCurrency { currencies.insert(back) }
     }
     currencies.formUnion(dataset.planning.expected.map(\.currency))
-    currencies.formUnion(extra)
+    currencies.formUnion(dataset.transfers.flatMap { [$0.fromCurrency, $0.toCurrency] })
+    // By day: what the goals count their contributions at, and what a leg is prefilled with.
+    var byDay = Set(extra)
+    byDay.formUnion(dataset.goals.map(\.currency))
+    byDay.formUnion(dataset.paymentMethods.flatMap(\.currencies))
+    byDay.remove(.rub)
+    currencies.formUnion(byDay)
     for currency in currencies where currency != .rub {
       if let rate = rates.rate(for: currency, on: today) {
         rubPerUnit[currency] = rate.perUnit
         rateDays[currency] = rate.date
       }
     }
+    var series: [CurrencyCode: [DayRate]] = [:]
+    for rate in rates.rates where byDay.contains(rate.currency) {
+      series[rate.currency, default: []].append(DayRate(day: rate.date, perUnit: rate.perUnit))
+    }
+    self.dayRates = DayRates(series: series)
   }
 
-  init(lastReconciliation: DateOnly? = nil, rubPerUnit: [CurrencyCode: Decimal] = [:]) {
+  init(
+    lastReconciliation: DateOnly? = nil, rubPerUnit: [CurrencyCode: Decimal] = [:],
+    dayRates: DayRates = .empty, localeIdentifier: String = "en"
+  ) {
     self.lastReconciliation = lastReconciliation
     self.rubPerUnit = rubPerUnit
+    self.dayRates = dayRates
+    self.localeIdentifier = localeIdentifier
   }
 }
 
@@ -86,9 +114,9 @@ struct OwedResult: Sendable {
 struct DataSnapshot: Sendable {
   let ledger: Ledger
   let summary: OverviewSummary
-  /// Payments, limits, goals, expectations, events, free to spend, debts and reminders,
-  /// built from the same ledger off the main thread. Its `planned` is the one
-  /// figure of planned payments the cards and the forecast show.
+  /// Payments, limits, goals, expectations, events, free to spend, debts, reminders and the
+  /// money on the accounts, built from the same ledger off the main thread. Its `planned` is
+  /// the one figure of planned payments the cards and the forecast show.
   let planning: PlanningSnapshot
   let owed: OwedSummary
   /// The days of the previous and the current month, and any later — Overview lists these.
@@ -118,13 +146,22 @@ struct DataSnapshot: Sendable {
     where seen.insert(row.transactionId).inserted {
       ids.append(row.transactionId)
     }
+    // The transfers of those days too: rows of their own, in no total, and selectable as long
+    // as they are shown.
+    let transfers = dataset.transfers.filter {
+      DayRange(start, end).contains(calendar.day(of: $0.occurredAt))
+    }
+    seen.formUnion(transfers.map(\.id))
+    // A refund taken back from a purchase counts in the purchase's day, as everywhere else.
     let groups = TransactionsStore.group(
-      ids.compactMap { ledger.entry($0) }, calendar: calendar, debts: dataset.debtsById)
+      ids.compactMap { ledger.entry($0) }, calendar: calendar, debts: dataset.debtsById,
+      transfers: transfers, refunds: ledger.refundIndex)
     return DataSnapshot(
       ledger: ledger,
       summary: summary,
       planning: PlanningSnapshot.build(
-        ledger: ledger, today: today, now: now, rubPerUnit: context.rubPerUnit),
+        ledger: ledger, today: today, now: now, rubPerUnit: context.rubPerUnit,
+        dayRates: context.dayRates, localeIdentifier: context.localeIdentifier),
       owed: OwedSummary(summary),
       recentGroups: groups,
       recentIds: seen,

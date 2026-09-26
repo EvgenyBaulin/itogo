@@ -3,10 +3,11 @@ import AppDatabase
 import SwiftUI
 
 /// Settings of planning and reconciliation («Сверка: напоминание раз в N
-/// дней (по умолчанию 14)», «Сбережения: целевая доля (по умолчанию 10%)»). The values live in
-/// the `settings` table under `PlanningSettings` keys, so they travel with the archive and the
-/// pipeline reads them with the rest of the data: a change here reaches the numbers through
-/// the observation of the database, like any other write.
+/// дней (по умолчанию 14)», «Сбережения: целевая доля (по умолчанию 10%)», how many limits the
+/// lists of limits show). The values live in the `settings` table under `PlanningSettings`
+/// keys, so they travel with the archive and the pipeline reads them with the rest of the
+/// data: a change here reaches the numbers through the observation of the database, like any
+/// other write.
 struct PlanningSettingsView: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -30,18 +31,8 @@ struct PlanningSettingsView: View {
               "settings.planning.reconcileEvery", table: "Settings",
               counts: values.reconcileEveryDays))
         }
-        Toggle(
-          isOn: Binding(
-            get: { values.reconcileIncludesGoalSavings },
-            set: { save(\.reconcileIncludesGoalSavings, $0) })
-        ) {
-          Text(verbatim: t("settings.planning.includesGoals"))
-        }
       } header: {
         Text(verbatim: t("settings.planning.reconciliation"))
-      } footer: {
-        Text(verbatim: t("settings.planning.includesGoalsHint"))
-          .foregroundStyle(.secondary)
       }
 
       Section {
@@ -59,11 +50,40 @@ struct PlanningSettingsView: View {
           isOn: Binding(get: { values.reserveGoalPlan }, set: { save(\.reserveGoalPlan, $0) })
         ) {
           Text(verbatim: t("settings.planning.reserve"))
+          Text(verbatim: t("settings.planning.reserveHint"))
         }
+        // Where the money saved in goals is kept. On an account counted in the summary, the
+        // grey line of the free sum takes it off what can be spent; on an account outside the
+        // summary it is not in the balance, and taking it off would count it twice.
+        Toggle(
+          isOn: Binding(
+            get: { values.reconcileIncludesGoalSavings },
+            set: { save(\.reconcileIncludesGoalSavings, $0) })
+        ) {
+          Text(verbatim: t("settings.planning.includesGoals"))
+          Text(verbatim: t("settings.planning.includesGoalsHint"))
+        }
+        .accessibilityIdentifier("settings.planning.goalMoney")
       } header: {
         Text(verbatim: t("settings.planning.savings"))
+      }
+
+      Section {
+        Picker(
+          selection: Binding(get: { values.limitsTopN }, set: { save(\.limitsTopN, $0) })
+        ) {
+          ForEach(Self.limitsTopNChoices(including: values.limitsTopN), id: \.self) { count in
+            Text(verbatim: Self.choiceTitle(count, environment.money)).tag(Int?.some(count))
+          }
+          Text(verbatim: t("settings.planning.limitsTopN.all")).tag(Int?.none)
+        } label: {
+          Text(verbatim: t("settings.planning.limitsTopN"))
+        }
+        .accessibilityIdentifier("settings.planning.limitsTopN")
+      } header: {
+        Text(verbatim: t("settings.planning.limits"))
       } footer: {
-        Text(verbatim: t("settings.planning.reserveHint"))
+        Text(verbatim: t("settings.planning.limitsHint"))
           .foregroundStyle(.secondary)
       }
 
@@ -139,6 +159,21 @@ struct PlanningSettingsView: View {
       refused = true
       load()
     }
+  }
+
+  /// A number of limits to show as the picker writes it: as every other number, thousands
+  /// grouped.
+  static func choiceTitle(_ count: Int, _ money: MoneyFormatter) -> String {
+    money.count(Int64(count))
+  }
+
+  /// How many limits the lists can be set to show, fewest first: the usual choices, and the
+  /// number stored when it is none of them — written by another version or by hand, it is
+  /// still shown as it is rather than as a choice nobody made.
+  static func limitsTopNChoices(including current: Int?) -> [Int] {
+    let usual = [3, 5, 10, 20]
+    guard let current, !usual.contains(current) else { return usual }
+    return (usual + [current]).sorted()
   }
 
   /// The storage keys whose text differs between two readings.

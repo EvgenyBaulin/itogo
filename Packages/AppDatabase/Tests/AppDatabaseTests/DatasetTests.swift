@@ -106,7 +106,7 @@ struct DatasetTests {
     let loaded = try await DatasetRepository(writer: stack.writer).load(version: 1)
     let fromDatabase = Ledger(dataset: loaded, calendar: TestSupport.sampleCalendar)
     let fromGenerator = Ledger(
-      dataset: TestSupport.dataset(set), calendar: TestSupport.sampleCalendar)
+      dataset: TestSupport.dataset(set.assigningAccounts()), calendar: TestSupport.sampleCalendar)
 
     #expect(fromDatabase.rows.count > set.entries.count)
     #expect(fromDatabase.rows == fromGenerator.rows)

@@ -503,6 +503,33 @@ struct DebtsTests {
     #expect(overview.closed.first?.nextPayment == nil)
   }
 
+  /// A part of 1 500 that got 700 back is owed as the 800 left of it; a part covered in full by
+  /// money back that did not close it is owed nothing and leaves the list.
+  @Test func owedToMeListsWhatIsLeftOfEachPart() throws {
+    let anna = id(40)
+    let entries = [
+      operation(
+        201, on: "2026-09-01",
+        parts: [part(2011, "1500", reimbursable: true, debtor: anna, status: .expected)]),
+      operation(
+        202, on: "2026-09-02",
+        parts: [part(2021, "300", reimbursable: true, debtor: anna, status: .expected)]),
+      operation(203, .reimbursement, on: "2026-09-10", parts: [part(2031, "1000")]),
+    ]
+    let links = [
+      ReimbursementLink(reimbursementTxId: id(203), partId: id(2011), amountE4: money("700")),
+      ReimbursementLink(reimbursementTxId: id(203), partId: id(2021), amountE4: money("300")),
+    ]
+    let ledger = Ledger(dataset: Dataset(entries: entries, links: links), calendar: .utc)
+    let overview = DebtsOverview.build(
+      ledger: ledger, book: PlanningBook(), today: day("2026-09-15"), rubPerUnit: [:])
+    let group = try #require(overview.owedToMe.first)
+    #expect(group.parts.map(\.partId) == [id(2011)])
+    #expect(group.parts.map(\.amountRub) == [money("800")])
+    #expect(group.parts.map(\.returnedRub) == [money("700")])
+    #expect(overview.totalOwedToMeRub == money("800"))
+  }
+
   @Test func owedToMeMergesPersonalDebtsAndPartsByPerson() throws {
     let fixture = section()
     let overview = DebtsOverview.build(

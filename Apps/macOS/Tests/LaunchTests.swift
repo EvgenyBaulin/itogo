@@ -953,3 +953,46 @@ final class OverviewEmptyLineTests: XCTestCase {
     XCTAssertEqual(line.table, "Overview")
   }
 }
+
+/// `--seed` of `make demo`: a Debug launch generates its set from the seed it was given, a
+/// Release build ignores it, and anything that is not a whole number a journal can count is
+/// passed over.
+final class LaunchSeedTests: XCTestCase {
+  func testADebugLaunchTakesTheSeedOfTheDemo() {
+    let demo = LaunchOptions(
+      arguments: ["Itogo", "--data-set", "demo", "--generate", "12", "--seed", "184467440737"],
+      debug: true)
+    XCTAssertEqual(demo.dataSet, .demo)
+    XCTAssertEqual(demo.generation, .months(12))
+    XCTAssertEqual(demo.seed, 184_467_440_737)
+    XCTAssertEqual(LaunchOptions(arguments: ["Itogo", "--seed", "0"], debug: true).seed, 0)
+    XCTAssertNil(LaunchOptions(arguments: ["Itogo", "--generate", "6"], debug: true).seed)
+  }
+
+  func testAReleaseBuildIgnoresTheSeed() {
+    let release = LaunchOptions(
+      arguments: ["Itogo", "--data-set", "demo", "--seed", "42"], debug: false)
+    XCTAssertEqual(release.dataSet, .demo, "a Release build still opens a set that is there")
+    XCTAssertNil(release.seed)
+  }
+
+  func testAMistypedSeedIsPassedOver() {
+    for text in ["-5", "abc", "1.5", "", "9223372036854775808", "18446744073709551615"] {
+      XCTAssertNil(
+        LaunchOptions(arguments: ["Itogo", "--seed", text], debug: true).seed, text)
+    }
+    XCTAssertEqual(
+      LaunchOptions(arguments: ["Itogo", "--seed", "9223372036854775807"], debug: true).seed,
+      UInt64(Int.max))
+  }
+
+  #if DEBUG
+    func testASetIsGeneratedFromTheSeedOfTheLaunchOrTheFixedOne() {
+      let demo = LaunchOptions(arguments: ["Itogo", "--seed", "42"], debug: true)
+      XCTAssertEqual(DataSetGeneration.seed(of: demo), 42)
+      XCTAssertEqual(
+        DataSetGeneration.seed(of: LaunchOptions(arguments: ["Itogo"], debug: true)), 20_260_918)
+      XCTAssertEqual(DataSetGeneration.fixedSeed, 20_260_918)
+    }
+  #endif
+}

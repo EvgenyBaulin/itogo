@@ -3,7 +3,7 @@ import CoreKit
 import Foundation
 
 /// The income a month is expected to bring, in rubles — the first term of «can save this
-/// month» and of «free to spend».
+/// month».
 public struct MonthIncomeEstimate: Hashable, Sendable {
   public enum Source: String, Hashable, Sendable, CaseIterable {
     /// Received plus what the expectations of this month still wait for.
@@ -146,6 +146,44 @@ public enum IncomeEstimate {
       }
     }
     return total
+  }
+
+  /// What the expectations still wait for from today through `through`, in rubles at today's
+  /// rate — the grey line «ещё ждём до D» of the free sum, shown and never added.
+  ///
+  /// Every due date from the 1st of today's month through `through` counts, an overdue one of
+  /// this month included (a due date of an earlier month never paid is not waited for any
+  /// more, as `month` has it): its unfulfilled remainder, plus the operations already linked to
+  /// it that are dated after today and by `through` — written ahead, their money has not come
+  /// yet. `statuses` have to reach `through` (`ExpectedIncomeRules.statuses(through:)`).
+  /// Expectations whose remainder has no rate are left out and listed.
+  public static func stillExpected(
+    statuses: [ExpectedIncomeStatus], today: DateOnly, through: DateOnly, ledger: Ledger
+  ) -> (amount: AmountE4, withoutRate: [UUID]) {
+    let first = today.monthKey.firstDay
+    var total = AmountE4.zero
+    var withoutRate: [UUID] = []
+    for status in statuses where !status.income.closed {
+      for occurrence in status.occurrences where occurrence.due >= first {
+        guard occurrence.due <= through else { continue }
+        for transactionId in occurrence.transactionIds {
+          guard let entry = ledger.entry(transactionId) else { continue }
+          for part in entry.parts {
+            guard let row = ledger.row(ofPart: part.id), row.kind == .income, row.day > today,
+              row.day <= through
+            else { continue }
+            total += row.amountRubE4
+          }
+        }
+        guard !occurrence.isFulfilled else { continue }
+        if let rubles = occurrence.remainingRub {
+          total += rubles
+        } else if !withoutRate.contains(status.id) {
+          withoutRate.append(status.id)
+        }
+      }
+    }
+    return (total, withoutRate)
   }
 
   /// The median, with the mean of the two middle values for an even count, rounded half

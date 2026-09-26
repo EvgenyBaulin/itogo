@@ -1,6 +1,7 @@
 import AppCore
 import AppDatabase
 import Foundation
+import SwiftUI
 
 /// What saving the entry line writes besides the operation itself, as one change of planning
 /// and so one step of ⌘Z: a debt opened for a purchase on credit and its first line — both
@@ -25,6 +26,13 @@ enum EntryCommit {
     case is CurrencyMismatch: return "entry.error.debtCurrency"
     case is CreditNotPurchase: return "entry.error.creditNotPurchase"
     case MoneyConversionError.rateMissing: return "entry.error.rateMissing"
+    // A refund of a purchase: more than is left of it — another refund came meanwhile — or a
+    // purchase that can no longer be refunded.
+    case RefundError.exceedsRemaining: return "entry.error.refundExceedsRemaining"
+    case RefundError.notPositive: return "entry.error.amountNotPositive"
+    case RefundError.otherCurrency: return "entry.error.refundOtherCurrency"
+    case RefundError.notRefundable, RefundError.purchaseHasRefunds:
+      return "entry.error.refundNotRefundable"
     case CoreError.divisionByZero: return "entry.error.divisionByZero"
     case CoreError.amountOutOfRange: return "entry.error.amountTooLarge"
     default:
@@ -73,5 +81,61 @@ enum EntryCommit {
     }
     guard rows != .empty else { return nil }
     return PlanningChange(created: [entry], upsert: rows)
+  }
+}
+
+/// «Это было до сверки в 14:05?» — asked when an operation is saved after the latest count of a
+/// balance it moves and dated on that count's day (`EntryDraftModel.countToAskAbout`). The
+/// answer dates it before or after the count (`EntryDraftModel.answerCount`) and the save goes
+/// on; closing the question saves nothing.
+struct BeforeTheCountQuestion: Identifiable, Hashable {
+  /// The moment of the count.
+  let count: Date
+  var id: Date { count }
+}
+
+/// The question as a dialog of whatever view saves: «Да» and «Нет» answer it, and `answered`
+/// gets the count and whether the operation was before it.
+struct BeforeTheCountDialog: ViewModifier {
+  @Dependency(\.environment) private var environment
+  @Binding var question: BeforeTheCountQuestion?
+  let answered: (_ count: Date, _ wasBefore: Bool) -> Void
+
+  func body(content: Content) -> some View {
+    content.confirmationDialog(
+      title, isPresented: isPresented, titleVisibility: .visible, presenting: question
+    ) { question in
+      Button(t("entry.beforeCount.yes")) { answered(question.count, true) }
+      Button(t("entry.beforeCount.no")) { answered(question.count, false) }
+      Button(environment.language("action.cancel"), role: .cancel) {}
+    } message: { _ in
+      Text(verbatim: t("entry.beforeCount.message"))
+    }
+  }
+
+  private var title: String {
+    guard let question else { return "" }
+    return environment.language.format(
+      "entry.beforeCount.title", table: "Entry", environment.dates.time(question.count))
+  }
+
+  private var isPresented: Binding<Bool> {
+    Binding(
+      get: { question != nil },
+      set: { isShown in
+        if !isShown { question = nil }
+      })
+  }
+
+  private func t(_ key: String) -> String { environment.language(key, table: "Entry") }
+}
+
+extension View {
+  /// Asks «Это было до сверки в 14:05?» while `question` is set.
+  func beforeTheCountQuestion(
+    _ question: Binding<BeforeTheCountQuestion?>,
+    answered: @escaping (_ count: Date, _ wasBefore: Bool) -> Void
+  ) -> some View {
+    modifier(BeforeTheCountDialog(question: question, answered: answered))
   }
 }

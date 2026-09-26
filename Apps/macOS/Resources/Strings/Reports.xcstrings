@@ -75,13 +75,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "by payment method"
+            "value": "by account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "по способу оплаты"
+            "value": "по счёту"
           }
         }
       }
@@ -466,13 +466,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment method"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способу оплаты"
+            "value": "Счёту"
           }
         }
       }
@@ -659,7 +659,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способ не указан"
+            "value": "Счёт не указан"
           }
         }
       }

@@ -83,8 +83,16 @@ struct EntryBar<Accessory: View>: View {
   @State private var showsDetails = false
   @State private var errorKey: String?
   @State private var model: EntryDraftModel?
-  /// Money back from a person, waiting in the reimbursement sheet for its parts.
-  @State private var reimbursing: ReimbursementPrefill?
+  /// Money back from a person, waiting in its confirmation.
+  @State private var moneyBack: MoneyBackPrefill?
+  /// The payment form of a debt the money back repays in another currency than the debt's:
+  /// waiting for the confirmation to close, then open.
+  @State private var pendingRepayment: DebtSheet?
+  @State private var repayment: DebtSheet?
+  /// «Это было до сверки в 14:05?», waiting for the owner's answer before the save goes on.
+  @State private var countQuestion: BeforeTheCountQuestion?
+  /// The picker of purchases a refund takes money back from, while it is open.
+  @State private var refundRequest: RefundPickerRequest?
   /// The chips under the line.
   @State private var templates = TemplatesModel()
   @Namespace private var glass
@@ -207,13 +215,78 @@ struct EntryBar<Accessory: View>: View {
       // The chips too: a restore or an archive brought in replaces them.
       templates.reload()
     }
-    // Cancelled, the sheet leaves the line as it was; recorded, it clears it like a save.
-    .sheet(item: $reimbursing) { prefill in
-      ReimbursementSheet(prefill: prefill) {
-        if let model { finishSaving(model) }
+    // Cancelled, the confirmation leaves the line as it was; recorded, it clears it like a
+    // save. A person who owes nothing, or owes on a debt, sends the money back to the line as
+    // income or as that debt's repayment.
+    .sheet(
+      item: $moneyBack,
+      onDismiss: {
+        // One sheet at a time: the payment form of the debt opens once the confirmation is gone.
+        repayment = pendingRepayment
+        pendingRepayment = nil
       }
+    ) { prefill in
+      MoneyBackConfirmSheet(
+        prefill: prefill,
+        recordAsIncome: { recordMoneyBack(.income, from: $0) },
+        recordAsDebtRepayment: { recordMoneyBack(.debtRepayment($0), from: $1) },
+        recorded: { if let model { finishSaving(model) } }
+      )
       .handingOver(dependencies)
     }
+    // Written there, the repayment clears the line like a save; cancelled, the line stays.
+    .sheet(item: $repayment) { form in
+      DebtSheetView(sheet: form, onDone: { if let model { finishSaving(model) } })
+        .handingOver(dependencies)
+    }
+    // The ↓ panel asks for the picker through the model: read here, in the body, so the ask
+    // is seen, and handed to the sheet.
+    .onChange(of: model?.refundPicking) { _, request in
+      guard let request else { return }
+      model?.refundPicking = nil
+      refundRequest = request
+    }
+    // A refund picks the purchase it takes money back from; asked by Enter, the save goes on
+    // once one is picked — or «Без покупки».
+    .sheet(item: $refundRequest) { request in
+      if let model {
+        RefundPicker(entry: model) {
+          guard request.savesAfterChoice else { return }
+          Task { @MainActor in commit(model) }
+        }
+        .handingOver(dependencies)
+      }
+    }
+    // The answer dates the operation before or after the count, and the save goes on.
+    .beforeTheCountQuestion($countQuestion) { count, wasBefore in
+      guard let model else { return }
+      model.answerCount(count, wasBefore: wasBefore)
+      commit(model)
+    }
+  }
+
+  /// Money back of a person who owes nothing is income; of one who owes on a debt, that debt's
+  /// repayment. The line saves it that way at once, as the confirmation held it — except a
+  /// repayment in another currency than the debt's, which the line cannot write: the payment
+  /// form of the debt opens instead, on the account the money came to.
+  private func recordMoneyBack(
+    _ route: EntryDraftModel.MoneyBackInstead, from sheet: TransactionDraft
+  ) {
+    guard let model else { return }
+    if case .debtRepayment(let debtId) = route,
+      let form = MoneyBackConfirmation.repaymentForm(
+        of: debtId, money: Money(amount: sheet.amount, currency: sheet.currency),
+        account: sheet.paymentMethodId,
+        among: (try? environment.references?.debts()) ?? model.debts)
+    {
+      pendingRepayment = form
+      return
+    }
+    model.recordMoneyBackInstead(
+      route, from: sheet,
+      fromNote: { environment.language.format("moneyBack.fromNote", table: "Entry", $0) },
+      today: environment.today)
+    Task { @MainActor in commit(model) }
   }
 
   /// Hangs a view over the top edge of whatever it is put on, one `spacing` clear of it, and
@@ -351,7 +424,10 @@ struct EntryBar<Accessory: View>: View {
     guard let expression = parsed.amountToPreview, let amount = parsed.amount,
       let value = try? AmountE4(decimal: amount)
     else { return nil }
-    return "\(expression) = \(environment.money.exact(value, currency: parsed.currency ?? .rub))"
+    // A line that names no currency is in the one the save gives it: the chosen account's or
+    // the default one.
+    let currency = parsed.currency ?? model?.draft.currency ?? environment.defaultCurrency
+    return "\(expression) = \(environment.money.exact(value, currency: currency))"
   }
 
   private func prepareModel() {
@@ -377,7 +453,7 @@ struct EntryBar<Accessory: View>: View {
       return
     }
 
-    let parsed = interpreter.interpret(trimmed, today: environment.today)
+    let parsed = interpreter.interpret(trimmed, today: environment.today, kind: model.draft.kind)
     guard let amount = parsed.amount else {
       errorKey = parsed.missingAmountErrorKey
       return
@@ -433,7 +509,8 @@ struct EntryBar<Accessory: View>: View {
   private func templateLine(for template: Template) -> String {
     prepareModel()
     return Templates.line(
-      for: template, categories: (model?.categories ?? []) + (model?.archivedCategories ?? []))
+      for: template, categories: (model?.categories ?? []) + (model?.archivedCategories ?? []),
+      in: environment)
   }
 
   /// Nothing the owner typed is thrown away unless the operation really reached the
@@ -443,24 +520,61 @@ struct EntryBar<Accessory: View>: View {
     // A date nobody chose is now, not when the draft was made; first, so the
     // rate is the one of the day the operation lands on.
     model.takeTheMomentOfSaving()
-    do {
-      environment.applyRate(to: &model.draft)
-      // The conversion is tried before anything is written, so a missing rate cannot leave
-      // a debt behind that nothing bought.
-      let convert = environment.rublesConverter(for: model.draft)
-      let rubles = try convert(model.draft.amount)
-      // Money back from a person closes parts, and which ones is chosen in the sheet: nothing
-      // is written here.
-      if model.recordsThroughReimbursementSheet {
-        errorKey = nil
-        reimbursing = ReimbursementPrefill(draft: model.draft, received: rubles)
-        return
+    // Asked again on every way into the save — after the picker of purchases, after the
+    // question about the count, after the confirmation of money back: what they changed may
+    // stop it (a purchase whose account needs «Списано со счёта» typed). The panel opens on
+    // a reason it shows.
+    if let refusal = model.saveRefusalKey {
+      errorKey = refusal
+      if model.shownRefusalKey != nil, !showsDetails {
+        withAnimation(.snappy) { showsDetails = true }
       }
+      return
+    }
+    // A refund first says which purchase it takes money back from — or that it has none.
+    if model.needsRefundPurchase {
+      errorKey = nil
+      refundRequest = RefundPickerRequest(savesAfterChoice: true)
+      return
+    }
+    // Dated on the day of the latest count of its account and saved after it: whether its
+    // money was already counted is asked before anything is written.
+    if let count = model.countToAskAbout(
+      savedAt: Date(), balances: compute.snapshot?.planning.accounts.balances ?? .empty)
+    {
+      countQuestion = BeforeTheCountQuestion(count: count)
+      return
+    }
+    // Money back from a person closes parts, and which ones the confirmation shows: nothing
+    // is written here. Its rate and what the account received are worked out there.
+    if model.recordsThroughReimbursementSheet {
+      errorKey = nil
+      // Laid as a save lays it, which also asks the bank for the rate of the day when the cache
+      // has none yet: the confirmation works it out again once it came.
+      var money = model.draftForSaving
+      environment.applyRate(to: &money)
+      moneyBack = MoneyBackPrefill(draft: money)
+      return
+    }
+    do {
+      // A refund of a purchase keeps the purchase's rate: `applyRate` leaves it alone.
+      environment.applyRate(to: &model.draft)
+      // «Списано со счёта» follows the rate the save has just laid.
+      model.refreshCharge()
+      // The conversion is tried before anything is written, so a missing rate cannot leave
+      // a debt behind that nothing bought. A refund of a purchase is in the purchase's rubles,
+      // checked against what is left of it now.
+      let convert =
+        model.refundTarget == nil
+        ? environment.rublesConverter(for: model.draft)
+        : try model.refundRubles(index: model.refundIndexNow())
+      _ = try convert(model.draft.amount)
       let credit = openCreditIfNeeded(model)
-      let entry = try model.draft.materialize(rublesConverter: convert)
+      // What the kind has no field for stays out of what is written.
+      let entry = try model.draftForSaving.materialize(rublesConverter: convert)
       // The operation and what it moves — a debt opened for it, the line of a debt payment,
       // the link to an expected income — land in one write: one ⌘Z takes all of it back.
-      let paidDebt = model.draft.debtId.flatMap { id in model.debts.first { $0.id == id } }
+      let paidDebt = model.debtPaid(by: entry)
       let saved: Bool
       if let change = try EntryCommit.change(
         entry: entry, openedCredit: credit?.debt, creditIsNew: credit?.isNew ?? false,

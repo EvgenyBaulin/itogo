@@ -102,14 +102,13 @@ public enum EventPlanning {
 
   /// The three lists of the events block, without archived events.
   public static func build(ledger: Ledger, today: DateOnly) -> EventsPlanning {
-    let plans = plans(ledger: ledger, today: today)
+    build(plans: plans(ledger: ledger, today: today), today: today)
+  }
+
+  /// The same from the plans already worked out (`plans(ledger:today:)`).
+  public static func build(plans: [EventPlan], today: DateOnly) -> EventsPlanning {
     guard !plans.isEmpty else { return .empty }
-    let visible = plans.filter { !$0.event.archived }
-      .sorted { left, right in
-        left.event.startDate != right.event.startDate
-          ? left.event.startDate < right.event.startDate
-          : left.event.id.uuidString < right.event.id.uuidString
-      }
+    let visible = byStart(plans.filter { !$0.event.archived })
     let horizon = today.adding(days: upcomingDays)
     let endedSince = today.adding(days: -endedDays)
     func isUpcoming(_ event: Event) -> Bool {
@@ -125,6 +124,20 @@ public enum EventPlanning {
         plan.budget != nil
           && (plan.isActive || endedLately(plan.event) || isUpcoming(plan.event))
       })
+  }
+
+  /// Every live event with a budget that is under way or still ahead, however far, by start:
+  /// what the free sum keeps back the rest of the budgets for (`CashPlan`).
+  public static func budgetedAhead(_ plans: [EventPlan], today: DateOnly) -> [EventPlan] {
+    byStart(plans.filter { !$0.event.archived && $0.budget != nil && $0.event.endDate >= today })
+  }
+
+  private static func byStart(_ plans: [EventPlan]) -> [EventPlan] {
+    plans.sorted { left, right in
+      left.event.startDate != right.event.startDate
+        ? left.event.startDate < right.event.startDate
+        : left.event.id.uuidString < right.event.id.uuidString
+    }
   }
 
   /// The plan of every event, archived ones included, in the order of `ledger.dataset.events`.

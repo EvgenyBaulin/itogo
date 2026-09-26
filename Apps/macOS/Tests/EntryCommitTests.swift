@@ -199,6 +199,134 @@ final class EntryCommitTests: XCTestCase {
     model.draft.normalizeSinglePart()
     XCTAssertFalse(model.recordsThroughReimbursementSheet)
   }
+
+  // MARK: What the line writes is what the debt, the sheet and the words follow
+
+  private var saveDay: DateOnly { DateOnly(year: 2026, month: 9, day: 19) }
+
+  private func lineModel() -> EntryDraftModel {
+    let model = EntryDraftModel(
+      references: references, transactions: transactions, calendar: .utc)
+    model.reload()
+    return model
+  }
+
+  /// An expense on the mortgage turned into a refund «без покупки»: a refund pays no debt, so
+  /// nothing is written in the mortgage's journal — it used to grow by the refund.
+  func testARefundWithoutAPurchaseMovesNoDebt() throws {
+    let mortgage = Debt(direction: .iOwe, type: .loan, name: "Ипотека")
+    try references.save(mortgage)
+    let model = lineModel()
+    model.draft.amount = AmountE4(whole: 5_000)
+    model.draft.normalizeSinglePart()
+    model.draft.debtId = mortgage.id
+    model.draft.kind = .refund
+    model.applyDefaults(today: saveDay)
+    model.refundWithoutPurchase = true
+
+    let entry = try model.draftForSaving.materialize()
+    XCTAssertNil(entry.transaction.debtId)
+    XCTAssertNil(model.debtPaid(by: entry))
+    XCTAssertNil(
+      try EntryCommit.change(
+        entry: entry, openedCredit: nil, paidDebt: model.debtPaid(by: entry),
+        expectedIncomeId: nil, day: saveDay))
+  }
+
+  /// A debt made in Debts after the line last read its dictionaries is still the one the
+  /// repayment pays: without it the operation named the debt and its journal got no line.
+  func testADebtOpenedAfterTheLineLastReadItIsPaid() throws {
+    let masha = Person(name: "Маша")
+    try references.save(masha)
+    let model = lineModel()
+    let loan = Debt(direction: .owedToMe, type: .personal, name: "Маша", personId: masha.id)
+    try references.save(loan)
+    model.draft.kind = .reimbursement
+    model.draft.amount = AmountE4(whole: 500)
+    model.draft.normalizeSinglePart()
+    model.draft.parts[0].forPersonId = masha.id
+    model.recordMoneyBackInstead(
+      .debtRepayment(loan.id), from: model.draftForSaving, fromNote: { "от: \($0)" },
+      today: saveDay)
+
+    let entry = try model.draftForSaving.materialize()
+    XCTAssertEqual(entry.transaction.debtId, loan.id)
+    XCTAssertEqual(model.debtPaid(by: entry)?.id, loan.id)
+  }
+
+  /// «Записать доходом» records the money as the confirmation held it: the amount, the account
+  /// and the person corrected there, not the line's.
+  func testMoneyBackRecordedAsIncomeIsTheOneTheSheetHeld() throws {
+    let anya = Person(name: "Аня")
+    let masha = Person(name: "Маша")
+    let card = PaymentMethod(name: "Карта", isDefault: true)
+    let cash = PaymentMethod(name: "Наличные", kind: .cash)
+    for person in [anya, masha] { try references.save(person) }
+    for account in [card, cash] { try references.save(account) }
+    let model = lineModel()
+    let parsed = InputLineParser(
+      vocabulary: ParserVocabulary(
+        people: [.init(id: anya.id, name: anya.name), .init(id: masha.id, name: masha.name)]),
+      calendar: .utc
+    ).parse("возврат денег 1700 от Ани", today: saveDay)
+    model.apply(parsed, amount: AmountE4(whole: 1_700), today: saveDay)
+
+    // The line's own person stays: whom it came from is said the way the line said it.
+    var same = model.draftForSaving
+    same.amount = AmountE4(whole: 1_500)
+    same.parts = [PartDraft(amount: AmountE4(whole: 1_500), forPersonId: anya.id)]
+    same.paymentMethodId = cash.id
+    let first = lineModel()
+    first.apply(parsed, amount: AmountE4(whole: 1_700), today: saveDay)
+    first.recordMoneyBackInstead(
+      .income, from: same, fromNote: { "от: \($0)" }, today: saveDay)
+    XCTAssertEqual(first.draft.kind, .income)
+    XCTAssertEqual(first.draft.amount, AmountE4(whole: 1_500))
+    XCTAssertEqual(first.draft.paymentMethodId, cash.id)
+    XCTAssertEqual(first.draft.note, "от Ани")
+    let income = try first.draftForSaving.materialize()
+    XCTAssertEqual(income.transaction.amountE4, AmountE4(whole: 1_500))
+    XCTAssertEqual(income.parts.map(\.amountE4), [AmountE4(whole: 1_500)])
+    XCTAssertEqual(income.transaction.paymentMethodId, cash.id)
+
+    // Another person picked in the sheet is named in words of the app.
+    var other = model.draftForSaving
+    other.parts = [PartDraft(amount: AmountE4(whole: 1_700), forPersonId: masha.id)]
+    model.recordMoneyBackInstead(
+      .income, from: other, fromNote: { "от: \($0)" }, today: saveDay)
+    XCTAssertEqual(model.draft.note, "от: Маша")
+  }
+
+  /// «Записать возвратом долга» repays the debt with the sheet's money and names the person
+  /// picked there.
+  func testMoneyBackRecordedAsADebtRepaymentIsTheOneTheSheetHeld() throws {
+    let masha = Person(name: "Маша")
+    let card = PaymentMethod(name: "Карта", isDefault: true)
+    let cash = PaymentMethod(name: "Наличные", kind: .cash)
+    try references.save(masha)
+    for account in [card, cash] { try references.save(account) }
+    let loan = Debt(direction: .owedToMe, type: .personal, name: "Маша", personId: masha.id)
+    try references.save(loan)
+    let model = lineModel()
+    model.draft.kind = .reimbursement
+    model.draft.amount = AmountE4(whole: 1_700)
+    model.draft.normalizeSinglePart()
+    model.applyDefaults(today: saveDay)
+
+    var sheet = model.draftForSaving
+    sheet.amount = AmountE4(whole: 1_500)
+    sheet.parts = [PartDraft(amount: AmountE4(whole: 1_500), forPersonId: masha.id)]
+    sheet.paymentMethodId = cash.id
+    model.recordMoneyBackInstead(
+      .debtRepayment(loan.id), from: sheet, fromNote: { "от: \($0)" }, today: saveDay)
+
+    let entry = try model.draftForSaving.materialize()
+    XCTAssertEqual(entry.transaction.kind, .reimbursement)
+    XCTAssertEqual(entry.transaction.debtId, loan.id)
+    XCTAssertEqual(entry.transaction.amountE4, AmountE4(whole: 1_500))
+    XCTAssertEqual(entry.transaction.paymentMethodId, cash.id)
+    XCTAssertEqual(entry.parts.first?.forPersonId, masha.id)
+  }
 }
 
 /// What the entry line says when saving throws once the line has been read: the expression
@@ -227,5 +355,10 @@ final class EntryCommitErrorTests: XCTestCase {
     XCTAssertEqual(
       EntryCommit.errorKey(of: MoneyConversionError.rateMissing), "entry.error.rateMissing")
     XCTAssertEqual(EntryCommit.errorKey(of: CoreError.divisionByZero), "entry.error.divisionByZero")
+  }
+
+  func testARefundInAnotherCurrencyThanItsPurchaseSaysSo() {
+    XCTAssertEqual(
+      EntryCommit.errorKey(of: RefundError.otherCurrency), "entry.error.refundOtherCurrency")
   }
 }

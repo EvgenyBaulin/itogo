@@ -6,7 +6,8 @@ import Foundation
 /// field can underline the exact character that broke the formula.
 struct ExpressionToken: Equatable {
   enum Kind: Equatable {
-    case number(Decimal)
+    /// A number, and the same number as an exact fraction when it fits one.
+    case number(Decimal, exact: ExactFraction?)
     case plus
     case minus
     case times
@@ -78,8 +79,8 @@ enum ExpressionLexer {
         let scanned = try scanNumber(characters, from: index)
         tokens.append(
           ExpressionToken(
-            kind: .number(scanned.value), position: index, end: scanned.end,
-            canonical: scanned.canonical))
+            kind: .number(scanned.value, exact: scanned.exact), position: index,
+            end: scanned.end, canonical: scanned.canonical))
         index = scanned.end
         continue
       }
@@ -96,7 +97,7 @@ enum ExpressionLexer {
   /// its canonical text.
   private static func scanNumber(
     _ characters: [Character], from start: Int
-  ) throws -> (value: Decimal, end: Int, canonical: String) {
+  ) throws -> (value: Decimal, exact: ExactFraction?, end: Int, canonical: String) {
     var index = start
     var digits = ""
     // Spaces group thousands before the decimal part only. Once a `.` or `,` has been read,
@@ -139,7 +140,11 @@ enum ExpressionLexer {
       if TypedNumber.isTooLarge(digits) { throw CoreError.amountOutOfRange }
       throw CoreError.malformedExpression(position: start)
     }
-    return (reading.value * multiplier, index, reading.canonical + suffix)
+    var exact = ExactFraction(
+      integerDigits: reading.integerDigits, fractionDigits: reading.fractionDigits,
+      multiplier: suffix.isEmpty ? 1 : 1_000)
+    if reading.isNegative { exact = exact?.negated() }
+    return (reading.value * multiplier, exact, index, reading.canonical + suffix)
   }
 
   /// A space belongs to a number only when exactly three digits follow it, the way

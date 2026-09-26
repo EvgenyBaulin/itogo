@@ -22,6 +22,11 @@ public enum StartFailure: String, Equatable, Sendable, CaseIterable {
   case applicationDamaged
   /// The data set named at launch was never made (Debug).
   case dataSetMissing
+  /// The database needs an update, and the copy of it that has to come first could not be
+  /// written or did not pass its check (`BeforeMigrationCopyFailed`). Nothing was migrated: the
+  /// file is as the older version left it. A copy that failed because the database itself is
+  /// damaged is `damaged`: no retry gives a better copy, a restored one is the way out.
+  case copyBeforeUpdate
   /// Anything else. The journal has the type and the code.
   case other
 
@@ -30,6 +35,10 @@ public enum StartFailure: String, Equatable, Sendable, CaseIterable {
     case DatabaseError.migrationMismatch: self = .newerSchema
     case DatabaseError.schemaMissing: self = .applicationDamaged
     case is AppPaths.DataSetMissing: self = .dataSetMissing
+    case let failure as BeforeMigrationCopyFailed:
+      self =
+        failure.databaseIsDamaged || StartFailure(failure.underlying) == .damaged
+        ? .damaged : .copyBeforeUpdate
     default:
       if let code = Self.sqliteCode(of: error) {
         switch Int32(code & 0xFF) {

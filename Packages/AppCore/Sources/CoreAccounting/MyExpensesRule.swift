@@ -24,8 +24,17 @@ public struct OwedPart: Identifiable, Hashable, Sendable {
   /// The operation still converts at a stand-in rate that the pipeline refines later.
   public var rateProvisional: Bool
   public var note: String?
+  /// What already came back for the part, in rubles, through live money back that did not
+  /// close it: money back may cover only some of a part, which then keeps waiting for the rest.
+  public var returnedRubE4: AmountE4
+  /// The account the purchase was paid from: what is left of the part and is written off,
+  /// or falls short, is spending from that account.
+  public var accountId: UUID?
 
   public var id: UUID { partId }
+
+  /// What is still owed, in rubles: the part less what already came back.
+  public var remainingRubE4: AmountE4 { max(.zero, amountRubE4 - returnedRubE4) }
 
   public init(
     partId: UUID,
@@ -40,7 +49,9 @@ public struct OwedPart: Identifiable, Hashable, Sendable {
     amountRubE4: AmountE4? = nil,
     currency: CurrencyCode = .rub,
     rateProvisional: Bool = false,
-    note: String? = nil
+    note: String? = nil,
+    returnedRubE4: AmountE4 = .zero,
+    accountId: UUID? = nil
   ) {
     self.partId = partId
     self.transactionId = transactionId
@@ -55,9 +66,12 @@ public struct OwedPart: Identifiable, Hashable, Sendable {
     self.currency = currency
     self.rateProvisional = rateProvisional
     self.note = note
+    self.returnedRubE4 = returnedRubE4
+    self.accountId = accountId
   }
 
-  public init(part: TransactionPart, in transaction: Transaction) {
+  /// `returned` — the rubles already given back for the part through live money back.
+  public init(part: TransactionPart, in transaction: Transaction, returned: AmountE4 = .zero) {
     self.init(
       partId: part.id,
       transactionId: transaction.id,
@@ -71,15 +85,18 @@ public struct OwedPart: Identifiable, Hashable, Sendable {
       amountRubE4: part.amountRubE4,
       currency: transaction.currency,
       rateProvisional: transaction.rateProvisional,
-      note: part.note ?? transaction.note)
+      note: part.note ?? transaction.note,
+      returnedRubE4: returned,
+      accountId: transaction.paymentMethodId)
   }
 
-  /// The same part owed in rubles. Money comes back in rubles, so this is what a
-  /// reimbursement is matched against: 50 dollars paid for a friend are owed as the rubles
-  /// they cost that day, not as «50» of whatever the friend pays back in.
+  /// What is still owed on the part, in rubles — what a reimbursement settled by hand is
+  /// matched against: 50 dollars paid for a friend are owed as the rubles they cost that day,
+  /// not as «50» of whatever the friend pays back in, and money that already came back for the
+  /// part is never owed again, nor counted short a second time.
   public var inRubles: OwedPart {
     var copy = self
-    copy.amountE4 = amountRubE4
+    copy.amountE4 = remainingRubE4
     copy.currency = .rub
     return copy
   }
@@ -285,20 +302,42 @@ public enum MyExpensesRule {
 
   /// The parts I paid for other people and have not been paid back for yet, oldest first.
   /// A part that was already returned or written off has left the list.
-  public static func owedToMe(entries: [TransactionEntry]) -> [OwedPart] {
+  ///
+  /// Money back may cover only some of a part: the part keeps waiting, with what came back
+  /// in `returnedRubE4` and the rest in `remainingRubE4`, and leaves the list only once nothing
+  /// is left. A link counts while its money back is live: one whose money back is among
+  /// `entries` and deleted — or is no money back — is passed over, and one whose money back
+  /// is not among them is taken as the caller gives it.
+  public static func owedToMe(
+    entries: [TransactionEntry], links: [ReimbursementLink] = []
+  ) -> [OwedPart] {
+    var gone: Set<UUID> = []
+    for entry in entries
+    where entry.transaction.isDeleted || entry.transaction.kind != .reimbursement {
+      gone.insert(entry.id)
+    }
+    var returned: [UUID: AmountE4] = [:]
+    for link in links where !gone.contains(link.reimbursementTxId) {
+      returned[link.partId, default: .zero] += link.amountE4
+    }
     var result: [OwedPart] = []
     for entry in entries where !entry.transaction.isDeleted {
       guard entry.transaction.kind == .expense else { continue }
       for part in entry.parts where part.reimbursable {
         guard (part.reimbursementStatus ?? .expected) == .expected else { continue }
-        result.append(OwedPart(part: part, in: entry.transaction))
+        let owed = OwedPart(part: part, in: entry.transaction, returned: returned[part.id] ?? .zero)
+        guard owed.remainingRubE4.raw > 0 else { continue }
+        result.append(owed)
       }
     }
     return result.sorted(by: oldestFirst)
   }
 
-  public static func totalOwedToMe(entries: [TransactionEntry]) -> AmountE4 {
-    AmountE4.sum(owedToMe(entries: entries).map(\.amountRubE4))
+  /// What the parts still waiting come to, in rubles: what is left of each.
+  public static func totalOwedToMe(
+    entries: [TransactionEntry], links: [ReimbursementLink] = []
+  ) -> AmountE4 {
+    AmountE4.sum(owedToMe(entries: entries, links: links).map(\.remainingRubE4))
   }
 
   /// Oldest first, with a stable tiebreaker so the order never depends on hashing.

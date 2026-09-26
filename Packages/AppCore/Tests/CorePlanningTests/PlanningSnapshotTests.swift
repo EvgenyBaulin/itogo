@@ -486,72 +486,7 @@ struct PlanningSnapshotTests {
     #expect(planning.forOthersThisMonth == Fx.rub("600"))
   }
 
-  // MARK: - Free to spend
-
-  /// 110 000 + 20 000 − 27 000 − 1 200 − 5 000 − 6 000 = 90 800 over the 12 days from the
-  /// 19th through the 30th: 7 566.6667 a day. The 600 my sister returns is only listed.
-  @Test func freeToSpendThroughTheEndOfTheMonth() {
-    let planning = snapshot()
-    let free = planning.freeToSpend
-    #expect(
-      free.lines.map(\.amount)
-        == ["110000", "20000", "27000", "1200", "5000", "6000"].map(Fx.rub))
-    #expect(free.free == Fx.rub("90800"))
-    #expect(free.until == Fx.day("2026-09-30"))
-    #expect(free.days == 12)
-    #expect(free.dailyGuide == Fx.rub("7566.6667"))
-    #expect(
-      free.info == [
-        FreeToSpendLine(key: FreeToSpend.Key.forOthers, sign: .minus, amount: Fx.rub("600"))
-      ])
-    // A day past the month is its end; the month figures are the same either way.
-    let ledger = september()
-    #expect(
-      planning.freeToSpend(until: Fx.day("2026-10-05"), reserve: true, ledger: ledger) == free)
-    #expect(
-      planning.freeToSpend(until: Fx.day("2026-09-30"), reserve: true, ledger: ledger) == free)
-    // Without the reserve the 6 000 are free.
-    let unreserved = planning.freeToSpend(
-      until: Fx.day("2026-09-30"), reserve: false, ledger: ledger)
-    #expect(unreserved.free == Fx.rub("96800"))
-    #expect(!unreserved.lines.contains { $0.key == FreeToSpend.Key.goalReserve })
-  }
-
-  /// Through the 24th: the website is due on the 25th and the loan too, so neither is in;
-  /// the internet and the music are: 110 000 − 27 000 − 1 200 − 6 000 = 75 800 over 6
-  /// days, 12 633.3333 a day. Through the 20th only the internet is due, and nothing for my
-  /// sister: 110 000 − 27 000 − 900 = 82 100 without the reserve, 41 050 a day.
-  @Test func freeToSpendThroughADayOfTheMonth() {
-    let planning = snapshot()
-    let ledger = september()
-    let the24th = planning.freeToSpend(until: Fx.day("2026-09-24"), reserve: true, ledger: ledger)
-    #expect(
-      the24th.lines.map(\.key) == [
-        FreeToSpend.Key.income, FreeToSpend.Key.expected, FreeToSpend.Key.spent,
-        FreeToSpend.Key.scheduled, FreeToSpend.Key.debts, FreeToSpend.Key.goalReserve,
-      ])
-    #expect(
-      the24th.lines.map(\.amount) == ["110000", "0", "27000", "1200", "0", "6000"].map(Fx.rub))
-    #expect(the24th.free == Fx.rub("75800"))
-    #expect(the24th.until == Fx.day("2026-09-24"))
-    #expect(the24th.days == 6)
-    #expect(the24th.dailyGuide == Fx.rub("12633.3333"))
-    #expect(the24th.info.map(\.amount) == [Fx.rub("600")])
-
-    let the20th = planning.freeToSpend(
-      until: Fx.day("2026-09-20"), reserve: false, ledger: ledger)
-    #expect(the20th.lines.map(\.amount) == ["110000", "0", "27000", "900", "0"].map(Fx.rub))
-    #expect(the20th.free == Fx.rub("82100"))
-    #expect(the20th.days == 2)
-    #expect(the20th.dailyGuide == Fx.rub("41050"))
-    #expect(the20th.info.isEmpty)
-
-    // A day before today is today.
-    let yesterday = planning.freeToSpend(
-      until: Fx.day("2026-09-18"), reserve: false, ledger: ledger)
-    #expect(yesterday.until == today)
-    #expect(yesterday.days == 1)
-  }
+  // MARK: - The free sum
 
   /// An expectation of this month that is late still waits for its money, as a late payment
   /// still waits on the other side: 5 000 due on the 10th counts through the 24th.
@@ -562,9 +497,11 @@ struct PlanningSnapshotTests {
     ])
     let ledger = Fx.ledger([], book: book)
     let planning = PlanningSnapshot.build(ledger: ledger, today: today, now: now, rubPerUnit: [:])
-    let free = planning.freeToSpend(until: Fx.day("2026-09-24"), reserve: true, ledger: ledger)
-    #expect(free.lines.first { $0.key == FreeToSpend.Key.expected }?.amount == Fx.rub("5000"))
-    #expect(free.free == Fx.rub("5000"))
+    let free = planning.freeMoney(until: Fx.day("2026-09-24"), ledger: ledger)
+    #expect(free.info.first { $0.key == FreeMoney.Key.stillExpected }?.amount == Fx.rub("5000"))
+    // Shown, never added: with nothing counted there is no money to add it to.
+    #expect(free.state == .noReconciliation)
+    #expect(free.grey == nil)
   }
 
   // MARK: - Can save
@@ -693,13 +630,12 @@ struct PlanningSnapshotTests {
     #expect(planning.subscriptionsYearly == .zero)
     #expect(planning.forOthersThisMonth == .zero)
 
-    let free = planning.freeToSpend
-    #expect(free.free == .zero)
+    let free = planning.freeMoney
+    #expect(free.state == .noReconciliation)
+    #expect(free.main == nil && free.grey == nil)
     #expect(free.dailyGuide == .zero)
-    #expect(free.info.isEmpty)
-    #expect(
-      planning.freeToSpend(until: Fx.day("2026-09-25"), reserve: true, ledger: ledger).free
-        == .zero)
+    #expect(free.info.map(\.amount) == [.zero])
+    #expect(planning.freeMoney(until: Fx.day("2026-09-25"), ledger: ledger).dailyGuide == .zero)
     let remainder = MonthForecast.Remainder(
       p10: .zero, middle: .zero, p90: .zero, lowData: true, computedFor: today, daysLeft: 11,
       windowDays: 0)
@@ -717,7 +653,7 @@ struct PlanningSnapshotTests {
     #expect(empty.planned.total == .zero)
     #expect(empty.income.value == nil)
     #expect(!empty.reconciliationDue)
-    #expect(empty.freeToSpend.free == .zero)
+    #expect(empty.freeMoney.state == .noReconciliation)
     #expect(empty.debts.iOwe.isEmpty)
   }
 }

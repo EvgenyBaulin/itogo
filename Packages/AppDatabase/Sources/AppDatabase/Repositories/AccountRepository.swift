@@ -24,6 +24,22 @@ public struct AccountUsage: Hashable, Sendable {
   public var isUsed: Bool { operations + transfers + scheduled + debtEntries > 0 }
 }
 
+/// What `AccountRepository.ensureMainAccount()` put right, for the journal.
+public struct MainAccountRepair: Hashable, Sendable {
+  /// The one live main account now.
+  public var mainId: UUID
+  /// It was not flagged main before.
+  public var madeMain: Bool
+  /// How many other accounts lost the flag, archived ones included.
+  public var cleared: Int
+
+  public init(mainId: UUID, madeMain: Bool, cleared: Int) {
+    self.mainId = mainId
+    self.madeMain = madeMain
+    self.cleared = cleared
+  }
+}
+
 /// Why a write of the accounts was not made. Nothing is written then.
 public enum AccountWriteError: Error, Equatable, Sendable {
   /// The account is used (`AccountUsage`): it can be archived or merged, not deleted.
@@ -304,6 +320,70 @@ public struct AccountRepository: Sendable {
       try Self.assignUnassigned(to: main, db: db)
       try SettingsRepository.set(
         AccountSettings.setupKey, to: AccountSettings.Setup.later.rawValue, in: db)
+    }
+  }
+
+  // MARK: The main account
+
+  /// Exactly one live account is main. Two left flagged by a write cut short, an archived one
+  /// still flagged, or none among live accounts are put right in one write, by the rule of the
+  /// update of an older database (`AccountsMigration.repair`): the most used of the live
+  /// accounts flagged main, else of all live accounts, the one written first on a tie — chosen
+  /// among the accounts in the summary whenever there is one, since the money of the main
+  /// account always counts. Nothing is made: with no live account at all, the setup of the
+  /// accounts makes the first one.
+  ///
+  /// The app runs it on every open, before anything reads the accounts. Returns `nil` when
+  /// nothing needed to change. Not a step of ⌘Z: it restores what every step assumes.
+  @discardableResult
+  public func ensureMainAccount() throws -> MainAccountRepair? {
+    try writer.write { db in
+      var ids: [UUID: String] = [:]
+      var accounts: [MigratingAccount] = []
+      // An account whose group is gone counts as in no group, as everywhere else.
+      for row in try Row.fetchAll(
+        db,
+        sql: """
+          SELECT p.rowid AS rowid, p.id AS id, p.name AS name, p.archived AS archived,
+            p.is_default AS is_default, COALESCE(g.in_summary, 1) AS in_summary
+          FROM payment_methods p LEFT JOIN account_groups g ON g.id = p.group_id
+          """)
+      {
+        // An account without an id, or one that is no UUID — a hand edit, another program —
+        // cannot be chosen; a flag that is no number stops the repair as it stops every read.
+        guard let text: String = row["id"], let id = UUID(uuidString: text) else { continue }
+        ids[id] = text
+        accounts.append(
+          MigratingAccount(
+            id: id, name: row["name"] ?? "",
+            archived: try RowMapping.flag(row, "archived", fallback: false),
+            isDefault: try RowMapping.flag(row, "is_default", fallback: false), rowid: row["rowid"],
+            inSummary: try RowMapping.flag(row, "in_summary", fallback: true)))
+      }
+      var live: [UUID: Int] = [:]
+      for row in try Row.fetchAll(
+        db,
+        sql: """
+          SELECT payment_method_id, COUNT(*) FROM transactions
+          WHERE deleted_at IS NULL AND payment_method_id IS NOT NULL
+          GROUP BY payment_method_id
+          """)
+      {
+        guard let text: String = row[0], let id = UUID(uuidString: text) else { continue }
+        live[id, default: 0] += row[1]
+      }
+      guard let repair = AccountsMigration.repair(accounts: accounts, liveOperations: live),
+        let main = ids[repair.mainId]
+      else { return nil }
+      try db.execute(
+        sql: "UPDATE payment_methods SET is_default = 0 WHERE is_default = 1 AND id <> ?",
+        arguments: [main])
+      let cleared = db.changesCount
+      try db.execute(
+        sql: "UPDATE payment_methods SET is_default = 1 WHERE id = ? AND is_default = 0",
+        arguments: [main])
+      return MainAccountRepair(
+        mainId: repair.mainId, madeMain: db.changesCount > 0, cleared: cleared)
     }
   }
 

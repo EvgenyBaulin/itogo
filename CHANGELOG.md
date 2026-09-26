@@ -7,10 +7,120 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
-## [Unreleased]
+## [1.1.0] — 2026-09-26
+
+Accounts: what you have now, where it is and in which currency — and the free sum counted from
+that money instead of from a single total.
+
+### Upgrading
+
+- The first launch of 1.1.0 migrates the database forward, once. The update only adds tables
+  and columns and fills the new ones from what is there: nothing is deleted or overwritten.
+  Every payment method becomes an account, every operation keeps its own, and operations that
+  had none go to the main account.
+- Before it migrates, the app writes a copy `finance-<date and time>-before-migration.sqlite`
+  into the backups folder and checks it: the copy opens, passes `integrity_check`, and has as
+  many rows in every table as the database. This copy is never pruned — the 50/90 rule of the
+  backups leaves it alone and does not count it. Without a checked copy there is no migration:
+  the app says why and leaves the database as it was. The migration and the steps that fill the
+  new columns run in one transaction, so a failure leaves the database exactly as 1.0.0 had it;
+  the next attempt uses the same copy.
+- 1.0.0 cannot open a migrated database: it refuses a schema newer than its own. To go back to
+  1.0.0, restore the `-before-migration` copy in it — 1.0.0 offers the copies in the window that
+  says the database did not open — or put it in place by hand as the README describes. What was
+  entered in 1.1.0 is not in that copy.
+- After the update the app offers to set up the accounts once (see **Set Up Your Accounts**
+  below).
+- A transfer archive written by 1.0.0 opens in 1.1.0 and is migrated the same way. An archive
+  written by 1.1.0 carries schema 4, and 1.0.0 refuses it.
+
+### Added
+
+- **Accounts.** Payment methods are accounts now: card, cash, account or other. An account
+  holds one or more currencies — the first is its main one — and its balance is kept for each
+  currency apart. There is always exactly one main account, first in every list and menu; the
+  others go alphabetically or in the order you drag them into, and **Sort Alphabetically**
+  brings the alphabet back. Accounts can be renamed, merged, archived and brought back, and
+  deleted when nothing refers to them.
+- **Account groups**, such as «Russia» and «Kazakhstan». A group can be left out of the
+  summary (**Count in the overall summary** off): its money is then shown apart, with its own
+  total, and stays out of the total, the free sum and Planning, while its income and spending
+  still count everywhere — Overview, Analytics, Reports, limits, the forecast.
+- **Accounts in the sidebar.** Under the three sections, «Accounts» lists the groups with their
+  totals and the accounts with their balances; a foreign currency also shows its rubles.
+  An account opens a screen of its own — the balance in every currency, its operations and
+  transfers by day, **Transfer**, **Reconcile** and **Edit** — and a group shows its total and
+  the history of its accounts. While an account's screen is open, a new operation goes to that
+  account.
+- **Transfers** between accounts, and between the currencies of one account (an exchange):
+  the amount sent and the amount received as the bank shows them, with the rate they imply, and
+  an optional fee recorded as an expense of its own. A transfer is a row of its own with ⇄ in
+  the day lists, is neither income nor spending, and takes one step of undo.
+- **What the account was charged.** An operation in a currency the account does not hold is
+  charged in the account's main currency: the ↓ panel prefills the charge at the Bank of
+  Russia's rates, and you can type the figure from the statement. Every operation has an
+  account — the one typed or picked, otherwise the place's last one, otherwise the main one.
+- **Set Up Your Accounts** on the first launch, and once after the update: quick picks of
+  Russian and Kazakh banks, cash and any other name, the payment methods the database already
+  has, and for each account its currencies, its group and how much is on it now. Those amounts
+  are the first reconciliation. **Later** keeps the accounts as they are, the main one included
+  — only a database with no account at all gets a «Main account» — and a card in Overview leads
+  back to the setup.
+- **Reconciliation by account and currency.** One sheet lists every account in every
+  currency with the expected balance filled in; you change only the rows that differ. The
+  first count of an account and currency is the starting point and compares nothing; later
+  ones show the difference in that currency and can record it on that account. A move of the
+  exchange rate is never a difference. An operation dated on the day of the latest count and
+  entered after it asks whether it happened before the count.
+- **Refunds tied to purchases.** A purchase refund is picked from recent purchases that still
+  have something left to refund — the whole amount or part of it, one part of a split receipt —
+  and counts in the purchase's day and month, as if the purchase had been cheaper, while the
+  money reaches the account on the refund's own day. A purchase refunded in full comes to
+  exactly zero. A refund without a purchase is still possible.
+- **Money back in part.** Say who gives back how much: that person's oldest parts close first,
+  a part covered only partly stays open with what is left, and anything above what was owed is
+  income in «Surcharges», as before. A short confirmation says what closes and what stays owed;
+  the part-by-part sheet is one click away, and a remainder can be written off.
+  The entry line takes «money back 1700 from Anya».
+- **Default currency** in Settings → Currencies: the currency of everything new — the entry
+  line, templates, scheduled payments, expected income, debts, goals, money back. A currency
+  typed in the line comes first, then the chosen account's. Totals, limits and reports stay in
+  rubles.
+- **Goals in any currency.** Progress is counted in the goal's currency; a contribution in
+  another currency counts at the rate of its own day.
+- **Limits running out.** Planning shows the first limits in one order — over, then close,
+  then by the share spent — as many as Settings → Planning says (five by default, or all), and
+  **All limits (N)…** opens the rest; the Overview card uses the same order. Click an amount to
+  change it in place. Settings → Categories has a limit field in every row that can take one.
+- **References.** People, places, accounts and events that nothing refers to can be deleted,
+  several at a time; one in use can be merged into another or archived. Every archive —
+  references, categories, goals, templates, account groups — can be shown, and its rows brought
+  back. Adding an archived name brings it back instead of making a second one. Aliases are
+  «Other names», edited as a list.
+- **Planning.** A planned one-off expense is a scheduled payment of frequency «Once»: it is
+  reminded, counted in the seven-day card, what the cards have to hold and the forecast, and
+  paid off with an operation. Event budgets are set right in the Events block. The money
+  somebody gives back for a payment made for them can be in another currency; the card shows
+  both amounts.
 
 ### Changed
 
+- **The free sum starts from the money you have now**: the balances of the accounts in the
+  summary, each from its latest reconciliation plus every real movement since, in rubles at
+  today's rate. A grey line below subtracts what is still ahead until a date you choose (the
+  end of the month by default, up to twelve months ahead): scheduled payments and
+  subscriptions not yet paid, what is due on the debts you owe, the money already put into
+  goals and the rest of the goal plans, and what is left of event budgets. The daily figure is
+  counted from that line. Expected income is shown as still expected and never added. Without
+  a reconciliation the block asks for the first one. **Goal money sits on accounts in the
+  summary** in Settings → Planning keeps goal savings from being subtracted when that money is
+  on an account outside the summary.
+- **Fields follow the kind of operation.** Income has no «for whom», place, event, «paid for
+  someone» or «on credit»; its account is «To account», an expense's «From account». What 1.0.0
+  stored in those fields of income stays in the database and is ignored.
+- **«Payment method» is «Account»** everywhere: the ↓ panel, the editor, Transactions,
+  Planning, Debts, Analytics («Accounts»), Reports and Settings. The CSV columns keep their
+  names.
 - **Updates.** The toolbar button and the View-menu item are now **Check for Updates…**: when
   there is no new version Sparkle says so and the app keeps running instead of restarting.
 - **Restarting** after a language change, a backup restore or an archive import no longer
@@ -27,10 +137,27 @@ and both move forward only.
   for the fraction — «1,234.56 ₽», «33.3 %». Typed amounts follow one rule: «1,500» is one
   thousand five hundred, «1500,5» and «1.5» have a fraction; rates keep reading «83,125» as
   83.125. Amount fields rewrite what was typed into that form when you leave them.
+- **Data formats.** The export writes 21 CSV files: `account_groups`, `transfers` and
+  `reconciliation_balances` join the list, and new columns are appended at the end of
+  `transactions`, `transaction_parts`, `payment_methods`, `templates`, `goals`, `debt_entries`
+  and `reconciliations`. Archives carry `schemaVersion` 4; `formatVersion` stays 1. The README
+  appendix describes accounts, reconciliations and the keys in `external_id`.
 - **README** is in Russian.
+- For building from source: `make demo` opens the Debug build on a year of demo data drawn
+  from a new random seed each time — accounts in several currencies and a group outside the
+  summary, transfers with fees in rubles and in dollars, currency exchanges, counts, an account
+  merged into another and kept in the archive, refunds tied to purchases, money partly given
+  back, a payment due once, a goal in dollars, event budgets. It prints the seed:
+  `make demo SEED=<n>` makes the same data again on the same day and in the same interface
+  language.
 
 ### Fixed
 
+- A scheduled payment paid with an ordinary operation instead of «Mark as paid» was counted
+  twice — in the free sum, what the cards have to hold, the reminders and the forecast. A
+  matching expense (same category and currency, within 10 % and five days) now counts as the
+  payment; you can link it for good or say it is something else.
+- Archiving or merging the default payment method could leave none.
 - «Buy on credit» could be set on income or a refund and opened an instalment debt.
 - Editing a payment due on the 31st moved it to the 30th for good when its next date fell on a
   shorter month.

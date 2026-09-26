@@ -1,12 +1,13 @@
 import AppCore
 import Foundation
 
-/// What a row of the Transactions table stands for: an operation, or one part of a split
-/// under it. Only operations are ever selected, changed or deleted; a part is shown so the
-/// split can be read, and is changed through its operation.
+/// What a row of the Transactions table stands for: an operation, one part of a split under
+/// it, or a transfer between the owner's accounts. Operations and transfers are selected and
+/// deleted; a part is shown so the split can be read, and is changed through its operation.
 enum RowID: Hashable, Sendable {
   case transaction(UUID)
   case part(UUID)
+  case transfer(UUID)
 }
 
 /// «Category › Subcategory» as the dictionary names them, root first. `archived` is set when
@@ -63,6 +64,115 @@ enum RowTitle: Hashable, Sendable {
     if case .note = self { return true }
     return false
   }
+
+  /// The words of the title, as `RowTitleText` shows them.
+  @MainActor
+  func text(language: AppLanguage) -> String {
+    switch self {
+    case .note(let note): note
+    case .category(let path): CategoryPathText.text(path, language: language)
+    case .kind(let kind): language("kind.\(kind.rawValue)")
+    }
+  }
+}
+
+/// A refund taken back from a purchase, as the rows of both say it. The refund counts in the
+/// purchase — its day, its month, its category — so the purchase says what came back, and the
+/// refund says which purchase it belongs to: two rows that read as one story.
+enum RefundMark: Hashable, Sendable {
+  /// On a purchase, or a part of one: what its refunds took back, in its own currency.
+  case refunded(AmountE4, CurrencyCode)
+  /// On a refund: the purchase it takes back from — what names it, the day it was made — so
+  /// the row leads to it. `withYear` when the purchase is of another year than the refund: a
+  /// purchase refunded through «Показать раньше» may be more than a year old, and «1 сентября»
+  /// alone would not say which.
+  case refundOf(purchaseId: UUID, title: RowTitle, day: DateOnly, withYear: Bool = false)
+
+  /// The mark of an operation of the ledger: what its refunds took back, when it is a purchase
+  /// with any; the purchase, when it is a refund taken back from one; nothing otherwise — a
+  /// refund whose purchase is gone counts on its own, as refunds always did.
+  static func of(_ entry: TransactionEntry, ledger: Ledger) -> RefundMark? {
+    let index = ledger.refundIndex
+    guard !index.isEmpty else { return nil }
+    switch entry.transaction.kind {
+    case .expense:
+      return refunded(AmountE4.sum(entry.parts.map { index.refunded(part: $0.id) }), entry)
+    case .refund:
+      for part in entry.parts {
+        guard let purchasePart = index.purchasePart(ofRefundPart: part.id),
+          let mark = refundOf(purchasePart, by: entry, ledger: ledger)
+        else { continue }
+        return mark
+      }
+      return nil
+    case .income, .reimbursement:
+      return nil
+    }
+  }
+
+  /// The mark of one part of a split: what the refunds took back from that part.
+  static func of(
+    part: TransactionPart, in entry: TransactionEntry, ledger: Ledger
+  ) -> RefundMark? {
+    switch entry.transaction.kind {
+    case .expense:
+      return refunded(ledger.refundIndex.refunded(part: part.id), entry)
+    case .refund:
+      return ledger.refundIndex.purchasePart(ofRefundPart: part.id).flatMap {
+        refundOf($0, by: entry, ledger: ledger)
+      }
+    case .income, .reimbursement:
+      return nil
+    }
+  }
+
+  private static func refunded(_ amount: AmountE4, _ entry: TransactionEntry) -> RefundMark? {
+    amount.raw > 0 ? .refunded(amount, entry.transaction.currency) : nil
+  }
+
+  /// The purchase a refund takes back from, named as its row names it — by the part's own note
+  /// when the part has one, a part of a split being what was taken back.
+  private static func refundOf(
+    _ purchasePart: UUID, by refund: TransactionEntry, ledger: Ledger
+  ) -> RefundMark? {
+    guard let row = ledger.row(ofPart: purchasePart),
+      let purchase = ledger.entry(row.transactionId),
+      let part = purchase.parts.first(where: { $0.id == purchasePart })
+    else { return nil }
+    let title =
+      purchase.isSplit
+      ? RowTitle.resolve(
+        note: part.note ?? purchase.transaction.note,
+        category: CategoryPath(part.categoryId, tree: ledger.tree), kind: .expense)
+      : RowTitle.of(purchase, tree: ledger.tree)
+    let day = ledger.calendar.day(of: purchase.transaction.occurredAt)
+    return .refundOf(
+      purchaseId: purchase.id, title: title, day: day,
+      withYear: day.year != ledger.calendar.day(of: refund.transaction.occurredAt).year)
+  }
+}
+
+/// The words and the symbol of a refund on the rows: «вернули 500 ₽» on the purchase, «к
+/// покупке «Кроссовки», 12 сентября» on the refund — «12 сентября 2025 г.» for a purchase of
+/// another year. The symbol of a refund of a purchase with the words, never a colour alone.
+@MainActor
+enum RefundMarkText {
+  static let symbol = "arrow.uturn.left.circle"
+
+  static func text(_ mark: RefundMark, environment: AppEnvironment) -> String {
+    let language = environment.language
+    switch mark {
+    case .refunded(let amount, let currency):
+      return language.format(
+        "transactions.refunded", table: table, environment.money.exact(amount, currency: currency))
+    case .refundOf(_, let title, let day, let withYear):
+      return language.format(
+        "transactions.refundOf", table: table, title.text(language: language),
+        withYear ? environment.dates.longDay(day) : environment.dates.dayAndMonth(day))
+    }
+  }
+
+  private static let table = "Transactions"
 }
 
 /// A cell of an operation that may differ between its parts: nothing, one value, or
@@ -133,11 +243,105 @@ struct TransactionRowItem: Identifiable, Hashable, Sendable {
   /// The parts of a split, shown under it; `nil` for everything else, so no disclosure
   /// triangle is drawn.
   var parts: [TransactionRowItem]?
+  /// What a refund taken back from a purchase says here: on the purchase, what came back; on
+  /// the refund, the purchase. `nil` for everything else.
+  var refund: RefundMark? = nil
+  /// A transfer between the owner's accounts: where the money went from and to. `nil` for an
+  /// operation and its parts.
+  var transfer: TransferRowText? = nil
 
   var isPart: Bool {
     if case .part = id { return true }
     return false
   }
+
+  var isTransfer: Bool { transfer != nil }
+}
+
+/// What a row of a transfer says: the two accounts, and what arrived when it is another
+/// currency than what was sent — an exchange. The words around it are put in by the cells.
+struct TransferRowText: Hashable, Sendable {
+  let from: String
+  let to: String
+  /// The currencies, for an exchange inside one account: «Freedom: RUB → KZT».
+  let fromCurrency: CurrencyCode
+  let toCurrency: CurrencyCode
+  let received: AmountE4
+  let note: String?
+  /// An exchange between two currencies of one account.
+  let withinOneAccount: Bool
+
+  var isExchange: Bool { fromCurrency != toCurrency }
+
+  /// The accounts, for the account column: «Сбер → Kaspi», or just «Freedom» for an exchange
+  /// inside it.
+  var accounts: String { withinOneAccount ? from : "\(from) → \(to)" }
+
+  init(_ transfer: Transfer, names: [UUID: String]) {
+    from = names[transfer.fromAccountId] ?? ""
+    to = names[transfer.toAccountId] ?? ""
+    fromCurrency = transfer.fromCurrency
+    toCurrency = transfer.toCurrency
+    received = transfer.toAmountE4
+    note = transfer.note
+    withinOneAccount = transfer.fromAccountId == transfer.toAccountId
+  }
+
+  /// «Перевод: Сбер → Kaspi», or «Обмен в Freedom: RUB → KZT» inside one account.
+  @MainActor
+  func title(language: AppLanguage) -> String {
+    withinOneAccount
+      ? language.format(
+        "transactions.transfer.exchange", table: "Transactions", from, fromCurrency.code,
+        toCurrency.code)
+      : language.format("transactions.transfer.title", table: "Transactions", from, to)
+  }
+}
+
+/// What deleting a selection takes besides its operations: the transfers among it, and the
+/// rubles of their fees, which go with them.
+struct TransferDeletion: Hashable, Sendable {
+  var count = 0
+  var fees: AmountE4 = .zero
+
+  static let none = TransferDeletion()
+}
+
+/// The words the question before a deletion says about transfers: a transfer is not an
+/// operation, so it is counted apart, and the fee that goes with it is named.
+@MainActor
+enum TransferDeletionText {
+  /// «Удалить 2 перевода?» when nothing but transfers goes; `nil` when operations go too — the
+  /// operations' question is asked then, and `lines` add the transfers.
+  static func title(
+    operations: Int, _ transfers: TransferDeletion, language: AppLanguage
+  ) -> String? {
+    guard operations == 0, transfers.count > 0 else { return nil }
+    return language.format(
+      "transactions.transfers.confirmDelete", table: table, counts: transfers.count)
+  }
+
+  /// «И 1 перевод.» after the operations, and «Их комиссии, 15.00 ₽, удаляются вместе с ними.»
+  static func lines(
+    operations: Int, _ transfers: TransferDeletion, environment: AppEnvironment
+  ) -> [String] {
+    guard transfers.count > 0 else { return [] }
+    var lines: [String] = []
+    if operations > 0 {
+      lines.append(
+        environment.language.format(
+          "transactions.transfers.alsoDeleted", table: table, counts: transfers.count))
+    }
+    if !transfers.fees.isZero {
+      lines.append(
+        environment.language.format(
+          "transactions.transfers.feesDeleted", table: table,
+          environment.money.exact(transfers.fees, currency: .rub)))
+    }
+    return lines
+  }
+
+  private static let table = "Transactions"
 }
 
 /// One side of one day: its income — with the money people gave back — or its spending.
@@ -145,11 +349,22 @@ struct TransactionSection: Identifiable, Sendable {
   enum Side: String, Sendable {
     case income
     case expenses
+    /// Money moved between the owner's own accounts: in no total.
+    case transfers
 
     /// Money given back is listed among the income because money came in; it is never
     /// added to the income (`RowTotals` keeps it apart).
     static func of(_ kind: TransactionKind) -> Side {
       TransactionsStore.DayGroup.isListedWithIncome(kind) ? .income : .expenses
+    }
+
+    /// The words of the header of the side: «Сегодня · Переводы».
+    var titleKey: String {
+      switch self {
+      case .income: "transactions.income"
+      case .expenses: "transactions.expenses"
+      case .transfers: "transactions.transfers"
+      }
     }
   }
 
@@ -167,15 +382,18 @@ struct TransactionSection: Identifiable, Sendable {
 /// spending within a day, operations newest first within a side.
 struct TransactionListing: Sendable {
   let sections: [TransactionSection]
-  /// The operations listed: the selection never reaches beyond them.
+  /// The operations and transfers listed: the selection never reaches beyond them.
   let visibleIds: Set<UUID>
   /// The operation each listed part belongs to.
   let partOwners: [UUID: UUID]
+  /// The transfers among `visibleIds`: their rows are addressed as transfers, not operations.
+  var transferIds: Set<UUID> = []
 
   static let empty = TransactionListing(sections: [], visibleIds: [], partOwners: [:])
 
   var isEmpty: Bool { sections.isEmpty }
-  var operationCount: Int { visibleIds.count }
+  /// The operations listed — «N earlier operations» counts these; a transfer is not one.
+  var operationCount: Int { visibleIds.count - transferIds.count }
 
   // MARK: Months at a time
 
@@ -209,40 +427,83 @@ struct TransactionListing: Sendable {
         if case .part(let id) = part.id { owners[id] = row.transactionId }
       }
     }
-    return TransactionListing(sections: shown, visibleIds: visible, partOwners: owners)
+    return TransactionListing(
+      sections: shown, visibleIds: visible, partOwners: owners,
+      transferIds: transferIds.intersection(visible))
   }
 
-  /// The operations among rows of the table. Parts are left out: they cannot be selected,
-  /// and the selection holds operations only.
+  /// The operations and transfers among rows of the table. Parts are left out: they cannot be
+  /// selected, and the selection holds operations and transfers only.
   static func operations(in rows: Set<RowID>) -> Set<UUID> {
     Set(
       rows.compactMap { row in
-        if case .transaction(let id) = row { return id }
-        return nil
+        switch row {
+        case .transaction(let id), .transfer(let id): id
+        case .part: nil
+        }
       })
   }
 
+  /// The row a selected id is: a transfer when the listing has it as one, an operation
+  /// otherwise.
+  func row(of id: UUID) -> RowID {
+    transferIds.contains(id) ? .transfer(id) : .transaction(id)
+  }
+
   /// The operations rows stand for, a part standing for its operation: what a double click
-  /// or the menu of a part of a split acts on.
+  /// or the menu of a part of a split acts on. A transfer stands for itself.
   func owners(of rows: Set<RowID>) -> Set<UUID> {
     Set(
       rows.compactMap { row in
         switch row {
-        case .transaction(let id): id
+        case .transaction(let id), .transfer(let id): id
         case .part(let id): partOwners[id]
         }
       })
   }
 
+  /// What the filters find, operations and transfers: the whole listing of the window.
+  static func build(matching filter: EntryFilter, in ledger: Ledger) -> TransactionListing {
+    build(
+      filter.apply(to: ledger), ledger: ledger, transfers: transfers(matching: filter, in: ledger))
+  }
+
   /// Builds the rows of the operations the filter found, newest first, from the ledger
-  /// they were found in. Pure, and meant for `ComputeStore.compute`.
-  static func build(_ ids: [UUID], ledger: Ledger) -> TransactionListing {
+  /// they were found in, and of the transfers given — each day's after its income and its
+  /// spending, in a section of their own that adds up to nothing. Pure, and meant for
+  /// `ComputeStore.compute`.
+  static func build(
+    _ ids: [UUID], ledger: Ledger, transfers: [Transfer] = []
+  ) -> TransactionListing {
     let names = Names(ledger.dataset)
     let debts = ledger.debtsById
     var sections: [TransactionSection] = []
     var partOwners: [UUID: UUID] = [:]
     var visible: Set<UUID> = []
-    visible.reserveCapacity(ids.count)
+    visible.reserveCapacity(ids.count + transfers.count)
+    var transferIds: Set<UUID> = []
+    let calendar = ledger.calendar
+    var transfersByDay = Dictionary(grouping: transfers) { calendar.day(of: $0.occurredAt) }
+
+    /// The transfers of `day` as a section of its own, taken out of those still to list.
+    func transferSection(_ day: DateOnly) {
+      guard let moved = transfersByDay.removeValue(forKey: day), !moved.isEmpty else { return }
+      var rows: [TransactionRowItem] = []
+      for transfer in moved.sorted(by: TransactionsStore.newestFirst)
+      where visible.insert(transfer.id).inserted {
+        transferIds.insert(transfer.id)
+        rows.append(row(for: transfer, names: names))
+      }
+      guard !rows.isEmpty else { return }
+      sections.append(TransactionSection(day: day, side: .transfers, rows: rows, totals: .zero))
+    }
+
+    /// Days of transfers alone newer than `day`, listed before it.
+    func transferDays(after day: DateOnly?) {
+      for other in transfersByDay.keys.sorted(by: >) where day.map({ other > $0 }) ?? true {
+        transferSection(other)
+      }
+    }
 
     var day: DateOnly?
     var income: [TransactionEntry] = []
@@ -255,17 +516,21 @@ struct TransactionListing: Sendable {
           TransactionSection(
             day: day, side: side,
             rows: entries.map { row(for: $0, ledger: ledger, names: names) },
-            totals: RowTotals(entries: entries, debts: debts)))
+            // A refund taken back from a purchase counts in the purchase, on its day: the
+            // same numbers as a day of Overview and the selection.
+            totals: RowTotals(entries: entries, debts: debts, refunds: ledger.refundIndex)))
       }
+      transferSection(day)
       income.removeAll(keepingCapacity: true)
       expenses.removeAll(keepingCapacity: true)
     }
 
     for id in ids {
       guard let entry = ledger.entry(id), visible.insert(id).inserted else { continue }
-      let entryDay = ledger.calendar.day(of: entry.transaction.occurredAt)
+      let entryDay = calendar.day(of: entry.transaction.occurredAt)
       if entryDay != day {
         closeDay()
+        transferDays(after: entryDay)
         day = entryDay
       }
       if TransactionSection.Side.of(entry.transaction.kind) == .income {
@@ -278,7 +543,57 @@ struct TransactionListing: Sendable {
       }
     }
     closeDay()
-    return TransactionListing(sections: sections, visibleIds: visible, partOwners: partOwners)
+    transferDays(after: nil)
+    return TransactionListing(
+      sections: sections, visibleIds: visible, partOwners: partOwners, transferIds: transferIds)
+  }
+
+  /// The transfers the filters of the window find, newest first. A transfer is neither income
+  /// nor spending and has no category, quality, person, place or event: any of those chosen
+  /// leaves transfers out. The period takes the day it was made; the account finds a transfer
+  /// from it or to it; the search looks in its note, the names of its accounts and the amounts
+  /// sent and received, written as an operation's amount is for its search.
+  static func transfers(matching filter: EntryFilter, in ledger: Ledger) -> [Transfer] {
+    guard filter.kind == nil, filter.categoryId == nil, filter.subcategoryId == nil,
+      filter.quality == nil, filter.forWhom == nil, filter.personId == nil,
+      filter.placeId == nil, filter.eventId == nil, filter.reimbursementStatus == nil
+    else { return [] }
+    let words = filter.text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+    let names = Names(ledger.dataset).paymentMethods
+    return ledger.dataset.transfers.filter { transfer in
+      if let period = filter.period,
+        !period.range.contains(ledger.calendar.day(of: transfer.occurredAt))
+      {
+        return false
+      }
+      if let account = filter.paymentMethodId, transfer.fromAccountId != account,
+        transfer.toAccountId != account
+      {
+        return false
+      }
+      guard !words.isEmpty else { return true }
+      let key = [
+        transfer.note ?? "", names[transfer.fromAccountId] ?? "",
+        names[transfer.toAccountId] ?? "", CSVValue.string(amount: transfer.fromAmountE4),
+        CSVValue.string(amount: transfer.toAmountE4),
+      ].joined(separator: "\n").lowercased()
+      return words.allSatisfy { key.contains($0) }
+    }
+    .sorted(by: TransactionsStore.newestFirst)
+  }
+
+  /// The row of a transfer: the amount sent in its currency, the two accounts in the account
+  /// column — one, for an exchange inside an account —, no category, quality or person: it is
+  /// neither income nor spending.
+  private static func row(for transfer: Transfer, names: Names) -> TransactionRowItem {
+    let text = TransferRowText(transfer, names: names.paymentMethods)
+    return TransactionRowItem(
+      id: .transfer(transfer.id), transactionId: transfer.id, kind: .expense,
+      occurredAt: transfer.occurredAt, note: transfer.note, title: .kind(.expense),
+      expression: nil, partNumber: nil, place: nil, category: .none, forWhom: .none,
+      event: .none, paymentMethod: text.accounts, quality: .none,
+      amount: transfer.fromAmountE4, currency: transfer.fromCurrency, amountRub: .zero,
+      partCount: 1, owedMark: nil, parts: nil, transfer: text)
   }
 
   // MARK: - Rows
@@ -302,7 +617,8 @@ struct TransactionListing: Sendable {
           event: cell.event.map(RowCell.one) ?? .none, paymentMethod: nil,
           quality: cell.quality.map(RowCell.one) ?? .none, amount: part.amountE4,
           currency: transaction.currency, amountRub: part.amountRubE4, partCount: 1,
-          owedMark: nil, parts: nil)
+          owedMark: nil, parts: nil,
+          refund: RefundMark.of(part: part, in: entry, ledger: ledger))
       } : nil
     let category = RowCell.of(cells.map(\.category))
     return TransactionRowItem(
@@ -322,7 +638,7 @@ struct TransactionListing: Sendable {
       quality: RowCell.of(cells.map(\.quality)),
       amount: transaction.amountE4, currency: transaction.currency,
       amountRub: transaction.amountRubE4, partCount: entry.parts.count,
-      owedMark: owedMark(of: entry), parts: parts)
+      owedMark: owedMark(of: entry), parts: parts, refund: RefundMark.of(entry, ledger: ledger))
   }
 
   /// The quality of an operation as a row of the list of days shows it, the way the table

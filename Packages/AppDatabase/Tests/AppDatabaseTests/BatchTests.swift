@@ -355,18 +355,19 @@ struct BatchTests {
     #expect(try repository.owedParts().isEmpty)
   }
 
-  /// A part two reimbursements closed together stays closed while one of them is alive.
-  @Test func aPartStaysClosedWhileAnotherReimbursementStillClosesIt() throws {
+  /// A part two reimbursements closed together stays closed while the live one still covers
+  /// it: its link gives back all of the part.
+  @Test func aPartStaysClosedWhileLiveMoneyBackStillCoversIt() throws {
     let (stack, repository) = try makeRepository()
     let setup = try dinnerForAFriend(stack, repository)
     let first = try reimburse(
       600, closing: setup.owed, surcharges: setup.surcharges.id, repository: repository)
-    let second = try TestSupport.makeEntry(amount: 1_000_000, kind: .reimbursement, note: nil)
+    let second = try TestSupport.makeEntry(amount: 6_000_000, kind: .reimbursement, note: nil)
     try repository.save(second)
     try stack.writer.write { db in
       try ReimbursementLink(
         reimbursementTxId: second.id, partId: setup.owed[0].partId,
-        amountE4: AmountE4(whole: 100)
+        amountE4: AmountE4(whole: 600)
       ).insert(db)
     }
 

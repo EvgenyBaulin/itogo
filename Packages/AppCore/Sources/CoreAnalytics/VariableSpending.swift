@@ -14,10 +14,13 @@ public struct VariableSpending: Hashable, Sendable {
   /// The weekday of day number zero, so a weekday is arithmetic and not a calendar call.
   private let weekdayOfZero: Int
 
-  public init(ledger: Ledger) {
+  /// `scheduledOperations` are the ordinary operations that pay a due date of a scheduled
+  /// payment by matching it: planned payments, not variable spending.
+  public init(ledger: Ledger, scheduledOperations: Set<UUID> = []) {
     var daily: [Int: Decimal] = [:]
     var first: Int?
-    for row in ledger.rows where MonthForecast.isVariable(row) {
+    for row in ledger.rows
+    where MonthForecast.isVariable(row, scheduledOperations: scheduledOperations) {
       daily[row.dayNumber, default: 0] += row.contribution.decimal
       first = min(first ?? row.dayNumber, row.dayNumber)
     }

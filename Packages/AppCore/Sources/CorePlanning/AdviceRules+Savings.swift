@@ -76,12 +76,16 @@ extension AdviceRules {
   ///   month it is reached in at its pace.
   /// * Whether «can save» covers the goals is asked of all of them together: Σ needed a month
   ///   of every open goal with a date against P50 — two goals that each fit can still not fit
-  ///   together.
+  ///   together. «Can save» is rubles, so each goal's need is added in rubles at today's rate;
+  ///   a goal whose currency has no rate today leaves the question unanswered, not guessed.
+  /// * A goal's own amounts are in its currency.
   /// * A goal without a date and without a pace has nothing to go by: «not enough data».
   static func goals(_ statuses: [GoalStatus], canSaveP50: AmountE4?) -> [Advice] {
     let open = statuses.filter { $0.remaining.raw > 0 }
-    let allNeed = AmountE4.sum(open.compactMap(\.neededMonthly))
-    let anyNeed = open.contains { $0.neededMonthly != nil }
+    let needs = open.compactMap { status in status.neededMonthly.map { status.rubles($0) } }
+    let anyNeed = !needs.isEmpty
+    let allNeed: AmountE4? =
+      needs.contains(nil) ? nil : AmountE4.sum(needs.compactMap { $0 })
     return open.map { status in
       let goal = status.goal
       let subject = AdviceSubject.goal(goal.name)
@@ -90,7 +94,10 @@ extension AdviceRules {
         return .notEnoughData(
           .goal, reason: Reason.goalNoDateNoPace, subject: subject, idSuffix: idSuffix)
       }
-      var terms = [AdviceTerm(key: Key.goalRemaining, value: .money(status.remaining))]
+      func money(_ amount: AmountE4) -> AdviceValue {
+        AdviceMath.money(amount, in: status.currency)
+      }
+      var terms = [AdviceTerm(key: Key.goalRemaining, value: money(status.remaining))]
       if let date = goal.targetDate {
         terms.append(AdviceTerm(key: Key.goalTargetDate, value: .date(date)))
       }
@@ -98,13 +105,13 @@ extension AdviceRules {
         terms.append(AdviceTerm(key: Key.goalMonthsLeft, value: .months(months)))
       }
       if let pace = status.pace {
-        terms.append(AdviceTerm(key: Key.goalPace, value: .money(pace)))
+        terms.append(AdviceTerm(key: Key.goalPace, value: money(pace)))
       }
 
       var result: AdviceTerm?
       var notes: [AdviceTerm] = []
       if let needed = status.neededMonthly {
-        result = AdviceTerm(key: Key.goalNeededMonthly, op: .equals, value: .money(needed))
+        result = AdviceTerm(key: Key.goalNeededMonthly, op: .equals, value: money(needed))
         if let projected = status.projectedCompletion {
           notes.append(AdviceTerm(key: Key.goalProjected, value: .month(projected)))
         }
@@ -112,9 +119,9 @@ extension AdviceRules {
         result = AdviceTerm(key: Key.goalProjected, op: .equals, value: .month(projected))
       }
       if let byDate = status.amountByTargetDate {
-        notes.append(AdviceTerm(key: Key.goalByTargetDate, value: .money(byDate)))
+        notes.append(AdviceTerm(key: Key.goalByTargetDate, value: money(byDate)))
       }
-      if anyNeed, let p50 = canSaveP50 {
+      if anyNeed, let allNeed, let p50 = canSaveP50 {
         notes.append(AdviceTerm(key: Key.allGoalsNeed, value: .money(allNeed)))
         notes.append(
           allNeed <= p50

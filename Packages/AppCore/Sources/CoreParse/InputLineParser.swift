@@ -16,7 +16,8 @@ import Foundation
 ///  3. **for whom** — "для <имя>" / "for <name>", then the standalone words
 ///     ("друзьям", "family"…). A named person also sets `forWhom` to `.other`: the concrete
 ///     relation lives in the database, not in the line. A possessive or an article behind
-///     a marker ("for my wife", "для моей мамы", "at the Ritz") goes with the marker;
+///     a marker ("for my wife", "для моей мамы", "at the Ritz") goes with the marker. Money
+///     back also reads "от <имя>" / "from <name>": whom the money came from;
 ///  4. **place** behind "в" / "at" — unless a known event or payment method stands there
 ///     ("в День рождения", "in cash"), which then takes the marker, or a time ("в среду",
 ///     "at 9am"), which stays in the note with it —, then known places,
@@ -34,6 +35,10 @@ import Foundation
 ///     there. A "+" in front of it ("кэшбэк +250") is the sign of income when nothing else
 ///     named the kind;
 ///  8. **note** — everything left, joined by single spaces.
+///
+/// A name read behind its marker keeps the marker in its token — «для мамы», «в Пятёрочке»,
+/// «цель Отпуск» — so an operation that has no such field (income has no place and no «на
+/// кого») can give the very words back to its note.
 public struct InputLineParser: Sendable {
   private let vocabulary: ParserVocabulary
   private let calendar: CalendarContext
@@ -43,9 +48,12 @@ public struct InputLineParser: Sendable {
     self.calendar = calendar
   }
 
-  public func parse(_ text: String, today: DateOnly) -> ParsedInput {
+  /// `kind` is the kind the operation already has — chosen in the ↓ panel — for a line that
+  /// names none: money back chosen there reads «от Ани» as whom it came from.
+  public func parse(_ text: String, today: DateOnly, kind: TransactionKind? = nil) -> ParsedInput {
     var session = ParseSession(
       text: text, vocabulary: vocabulary, calendar: calendar, today: today)
+    session.panelKind = kind
     session.readKind()
     session.readGoalAndDebt()
     session.readPeople()
@@ -73,6 +81,8 @@ private struct ParseSession {
   let today: DateOnly
   var result = ParsedInput()
   var claims: [Claim] = []
+  /// The kind the operation already has, for a line that names none.
+  var panelKind: TransactionKind?
 
   init(text: String, vocabulary: ParserVocabulary, calendar: CalendarContext, today: DateOnly) {
     self.words = InputWord.split(text)
@@ -222,8 +232,8 @@ private struct ParseSession {
     for index in words.indices where !words[index].claimed {
       guard markers.contains(words[index].normalized) else { continue }
       if let match = bestMatch(entries, at: index + 1, loose: true) {
-        claim(index, as: nil)
-        claim(match.range, as: role)
+        let phrase = index..<match.range.upperBound
+        claim(phrase, as: role, text: marked(phrase))
         return match.entry.id
       }
       for other in words.indices where !words[other].claimed {
@@ -253,6 +263,11 @@ private struct ParseSession {
     return next
   }
 
+  /// The words of a marker and the name behind it, as typed: «для моей мамы», «в Пятёрочке».
+  func marked(_ range: Range<Int>) -> String {
+    words[range].map(\.original).joined(separator: " ")
+  }
+
   /// A dictionary name behind the marker. A name that itself begins with the article
   /// ("The Ritz") is tried first, as written; then the name after the article.
   func bestMatch(
@@ -265,21 +280,28 @@ private struct ParseSession {
   }
 
   mutating func readPeople() {
+    // Money back names whom it came from — «от Ани», "from Anya" — as well as «для Ани»,
+    // whether the line says it is money back or the panel chose it for a line that names no
+    // kind. In any other line «от» is a word of the note.
+    let namesKind = claims.contains { $0.role == .kind }
+    let isMoneyBack =
+      result.kind == .reimbursement || (!namesKind && panelKind == .reimbursement)
+    let markers =
+      isMoneyBack ? Lexicon.personMarkers.union(Lexicon.fromMarkers) : Lexicon.personMarkers
     for index in words.indices where !words[index].claimed {
-      guard Lexicon.personMarkers.contains(words[index].normalized),
+      guard markers.contains(words[index].normalized),
         let next = nameStart(after: index)
       else { continue }
       if let forWhom = Lexicon.forWhomWords[words[next].normalized] {
         result.forWhom = forWhom
-        claim(index..<next, as: nil)
-        claim(next, as: .forWhom, text: words[next].original)
+        claim(index..<(next + 1), as: .forWhom, text: marked(index..<(next + 1)))
         break
       }
       if let match = bestMatch(vocabulary.people, behind: index, from: next) {
         result.personId = match.entry.id
         result.forWhom = result.forWhom ?? .other
-        claim(index..<match.range.lowerBound, as: nil)
-        claim(match.range, as: .person)
+        let phrase = index..<match.range.upperBound
+        claim(phrase, as: .person, text: marked(phrase))
         break
       }
       // A number, a currency, a time ("for lunch") or a name the dictionary knows as
@@ -292,16 +314,14 @@ private struct ParseSession {
       // not guessed from a stem — «Жени» is a name, not «жены». A known person still wins.
       if let forWhom = Lexicon.declinedForWhomWords[words[next].normalized] {
         result.forWhom = forWhom
-        claim(index..<next, as: nil)
-        claim(next, as: .forWhom, text: words[next].original)
+        claim(index..<(next + 1), as: .forWhom, text: marked(index..<(next + 1)))
         break
       }
       let name = TextNormalizer.trimmingEdgePunctuation(words[next].original)
       result.unknownPersonName = name
       result.unknownPersonPhrase = phrase(from: index, to: next, name: name)
       result.forWhom = result.forWhom ?? .other
-      claim(index..<next, as: nil)
-      claim(next, as: .person, text: words[next].original)
+      claim(index..<(next + 1), as: .person, text: marked(index..<(next + 1)))
       break
     }
     guard result.forWhom == nil else { return }
@@ -334,8 +354,8 @@ private struct ParseSession {
       else { continue }
       if let match = bestMatch(vocabulary.places, behind: index, from: next) {
         result.placeId = match.entry.id
-        claim(index..<match.range.lowerBound, as: nil)
-        claim(match.range, as: .place)
+        let phrase = index..<match.range.upperBound
+        claim(phrase, as: .place, text: marked(phrase))
         return
       }
       // "в День рождения", "in cash": the marker is a plain preposition in front of a known
@@ -353,8 +373,7 @@ private struct ParseSession {
       let name = TextNormalizer.trimmingEdgePunctuation(words[next].original)
       result.unknownPlaceName = name
       result.unknownPlacePhrase = phrase(from: index, to: next, name: name)
-      claim(index..<next, as: nil)
-      claim(next, as: .place, text: words[next].original)
+      claim(index..<(next + 1), as: .place, text: marked(index..<(next + 1)))
       return
     }
   }
@@ -380,8 +399,9 @@ private struct ParseSession {
     } else {
       result.paymentMethodId = winner.entry.id
     }
-    claim(marker..<winner.range.lowerBound, as: nil)
-    claim(winner.range, as: winner.role)
+    claim(
+      marker..<winner.range.upperBound, as: winner.role,
+      text: marked(marker..<winner.range.upperBound))
     return true
   }
 

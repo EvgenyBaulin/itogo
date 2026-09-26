@@ -43,17 +43,19 @@ public enum DebtPayoff {
   ///
   /// Monthly compounding at r = rate ÷ 100 ÷ 12, in `Decimal`: every month the interest is
   /// balance × r rounded to stored units (half away from zero), and the balance becomes
-  /// balance + interest − payment, until it reaches zero. A payment that does not cover the
+  /// balance + interest − payment, until it reaches zero. The product is taken before the
+  /// division — balance × rate ÷ 1 200 — so r, a repeating fraction for most rates, is never
+  /// cut short: an interest of exactly half a unit rounds away from zero as every amount does. A payment that does not cover the
   /// first month's interest never pays the debt off, and neither does one that needs more
   /// than `horizonMonths`. Without a rate (`nil` or zero) it is ⌈balance ÷ payment⌉ months
   /// and no interest. A balance at or below zero is already paid: zero months.
   public static func scenario(
     balance: AmountE4, annualRatePercent: Decimal?, monthlyPayment: AmountE4, extra: AmountE4
   ) -> PayoffScenario {
-    let rate = monthlyRate(annualRatePercent)
-    let without = run(balance: balance, monthlyRate: rate, payment: monthlyPayment)
+    let rate = annualRate(annualRatePercent)
+    let without = run(balance: balance, annualRatePercent: rate, payment: monthlyPayment)
     let with = run(
-      balance: balance, monthlyRate: rate,
+      balance: balance, annualRatePercent: rate,
       payment: monthlyPayment.adding(extra.magnitude) ?? AmountE4(raw: .max))
     let saved: Int?
     if let monthsWithout = without?.months, let monthsWith = with?.months {
@@ -74,15 +76,16 @@ public enum DebtPayoff {
     AdviceRules.payoffExtra(payment, currency: currency)
   }
 
-  /// r = rate ÷ 100 ÷ 12; zero without a rate or with a negative one.
-  static func monthlyRate(_ annualRatePercent: Decimal?) -> Decimal {
+  /// The rate in percent a year; zero without a rate or with a negative one.
+  static func annualRate(_ annualRatePercent: Decimal?) -> Decimal {
     guard let annualRatePercent, annualRatePercent > 0 else { return 0 }
-    return annualRatePercent / 100 / 12
+    return annualRatePercent
   }
 
-  /// Months and interest to bring `balance` to zero, or `nil` for «never».
+  /// Months and interest to bring `balance` to zero at `rate` percent a year, or `nil` for
+  /// «never».
   static func run(
-    balance: AmountE4, monthlyRate rate: Decimal, payment: AmountE4
+    balance: AmountE4, annualRatePercent rate: Decimal, payment: AmountE4
   ) -> (months: Int, interest: AmountE4)? {
     guard balance.raw > 0 else { return (0, .zero) }
     guard payment.raw > 0 else { return nil }
@@ -94,7 +97,9 @@ public enum DebtPayoff {
     var left = balance
     var interest = AmountE4.zero
     for month in 1...horizonMonths {
-      guard let charged = try? AmountE4(decimal: left.decimal * rate) else { return nil }
+      guard let charged = try? AmountE4(decimal: left.decimal * rate / 1_200) else {
+        return nil
+      }
       // The payment has to beat the interest, or the balance never goes down.
       if month == 1 && charged >= payment { return nil }
       guard let grown = left.adding(charged), let total = interest.adding(charged) else {

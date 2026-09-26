@@ -15,7 +15,7 @@ struct PlanningView: View {
     GeometryReader { proxy in
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-          FreeToSpendBlock()
+          FreeMoneyBlock()
           ScheduledBlock(sheet: $sheet)
           grid(columns: OverviewCard.columns(forWidth: proxy.size.width - 40))
           EventsBlock()

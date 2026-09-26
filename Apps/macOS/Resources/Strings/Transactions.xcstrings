@@ -319,13 +319,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment method"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способ оплаты"
+            "value": "Счёт"
           }
         }
       }
@@ -432,6 +432,23 @@
         }
       }
     },
+    "bulk.reason.fieldNotForKind": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "income and money given back have no such field"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "у дохода и возврата денег нет такого поля"
+          }
+        }
+      }
+    },
     "bulk.reason.goalContribution": {
       "extractionState": "manual",
       "localizations": {
@@ -445,6 +462,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "это взнос на цель"
+          }
+        }
+      }
+    },
+    "bulk.reason.hasRefunds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a refund takes money back from it — delete the refund first"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "по покупке оформлен возврат — сначала удалите возврат"
           }
         }
       }
@@ -496,6 +530,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "у дохода и возврата денег нет оценки"
+          }
+        }
+      }
+    },
+    "bulk.reason.noRateForCharge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no rate yet to work out what the account is charged"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ещё нет курса, чтобы посчитать, сколько списано со счёта"
           }
         }
       }
@@ -1447,13 +1498,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Оплата"
+            "value": "Счёт"
           }
         }
       }
@@ -1573,6 +1624,176 @@
           "stringUnit": {
             "state": "translated",
             "value": "Операций пока нет. Введите первую в плавающей строке ввода внизу окна."
+          }
+        }
+      }
+    },
+    "transactions.error.linkedRefundChanged": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund cannot be more than what is left of the purchase to refund, and keeps the purchase’s currency and type."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат не может быть больше того, что осталось вернуть по покупке, и остаётся в её валюте и типе."
+          }
+        }
+      }
+    },
+    "transactions.error.partlyReturnedPartChanged": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some money for this part has come back already: its amount, currency, type and “paid for someone else” stay as they are — delete that money back first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "За эту часть уже вернули часть денег: её сумма, валюта, тип и «за другого» не меняются — сначала удалите этот возврат денег."
+          }
+        }
+      }
+    },
+    "transactions.error.purchaseHasRefunds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund takes money back from this purchase — delete the refund first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По покупке оформлен возврат — сначала удалите возврат."
+          }
+        }
+      }
+    },
+    "transactions.error.refundExceedsRemaining": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That is more than is left of the purchase to refund."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это больше, чем осталось вернуть по покупке."
+          }
+        }
+      }
+    },
+    "transactions.error.refundNotPositive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund must be more than zero."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сумма возврата должна быть больше нуля."
+          }
+        }
+      }
+    },
+    "transactions.error.refundNotRefundable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This purchase cannot be refunded: it is paid for someone else, on credit, a debt payment or a goal contribution."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эту покупку нельзя вернуть: она за другого, в кредит, платёж по долгу или взнос на цель."
+          }
+        }
+      }
+    },
+    "transactions.error.refundOtherCurrency": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund is made in the currency of the purchase."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возврат делается в валюте покупки."
+          }
+        }
+      }
+    },
+    "transactions.error.refundedPartChanged": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund takes money back from this purchase: its currency, type, “paid for someone else” and credit stay as they are — delete the refund first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По покупке оформлен возврат: её валюта, тип, «за другого» и «В кредит» не меняются — сначала удалите возврат."
+          }
+        }
+      }
+    },
+    "transactions.error.refundedPartReduced": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The part cannot be less than what its refunds already took back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Часть не может стать меньше того, что по ней уже вернули."
+          }
+        }
+      }
+    },
+    "transactions.error.refundedPartRemoved": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A refund takes money back from this part — delete the refund first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По этой части покупки оформлен возврат — сначала удалите возврат."
           }
         }
       }
@@ -1766,6 +1987,40 @@
         }
       }
     },
+    "transactions.refundOf": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "refund of “%1$@”, %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "к покупке «%1$@», %2$@"
+          }
+        }
+      }
+    },
+    "transactions.refunded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ refunded"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "вернули %@"
+          }
+        }
+      }
+    },
     "transactions.search": {
       "extractionState": "manual",
       "localizations": {
@@ -1830,6 +2085,180 @@
           "stringUnit": {
             "state": "translated",
             "value": "Операции"
+          }
+        }
+      }
+    },
+    "transactions.transfer.exchange": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exchange in “%1$@”: %2$@ → %3$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обмен в «%1$@»: %2$@ → %3$@"
+          }
+        }
+      }
+    },
+    "transactions.transfer.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer: %1$@ → %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перевод: %1$@ → %2$@"
+          }
+        }
+      }
+    },
+    "transactions.transfers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfers"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переводы"
+          }
+        }
+      }
+    },
+    "transactions.transfers.alsoDeleted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "And %lld transfer."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "And %lld transfers."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "И %lld перевода."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "И %lld переводов."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "И %lld перевод."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "И %lld перевода."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "transactions.transfers.confirmDelete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Delete %lld transfer?"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Delete %lld transfers?"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld перевода?"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld переводов?"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld перевод?"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld перевода?"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "transactions.transfers.feesDeleted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Their fees, %@, are deleted with them."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Их комиссии, %@, удаляются вместе с ними."
           }
         }
       }

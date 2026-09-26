@@ -317,7 +317,9 @@ struct BulkEditRuleTests {
 
   // MARK: Event, place, payment method
 
-  @Test func anEventGoesOnEveryKindAndCanBeTakenAway() {
+  /// An event goes on a purchase and a refund, and can be taken away; income and money back
+  /// have no event, so they are left as they are and say why.
+  @Test func anEventGoesOnSpendingOnlyAndCanBeTakenAway() {
     let salary = entry(
       id(1), kind: .income, parts: [part(id(11), amount: money(5000), category: categories.salary)])
     let moneyBack = entry(id(2), kind: .reimbursement, parts: [part(id(21), amount: money(300))])
@@ -327,15 +329,31 @@ struct BulkEditRuleTests {
         part(id(31), amount: money(600), category: categories.groceries),
         part(id(32), amount: money(400), category: categories.goalsTrip),
       ])
+    let refund = entry(
+      id(4), kind: .refund,
+      parts: [part(id(41), amount: money(100), category: categories.groceries)])
 
-    let result = plan(.event(id(80)), [salary, moneyBack, split])
-    #expect(result.changedIds == [id(1), id(2), id(3)])
-    #expect(result.changed[2].parts.map(\.eventId) == [id(80), id(80)])
-    #expect(result.skipped.isEmpty)
+    let result = plan(.event(id(80)), [salary, moneyBack, split, refund])
+    #expect(result.changedIds == [id(3), id(4)])
+    #expect(result.changed[0].parts.map(\.eventId) == [id(80), id(80)])
+    #expect(result.skipped.map(\.transactionId) == [id(1), id(2)])
+    #expect(result.skipped.allSatisfy { $0.reason == .fieldNotForKind && !$0.isPartial })
     #expect(result.splitCount == 1)
 
     let cleared = plan(.event(nil), result.changed)
     #expect(cleared.changed.allSatisfy { $0.parts.allSatisfy { $0.eventId == nil } })
+  }
+
+  /// Income has no «на кого», and money back has no place: both are left as they are.
+  @Test func incomeHasNoForWhomAndMoneyBackHasNoPlace() {
+    let salary = entry(
+      id(1), kind: .income, parts: [part(id(11), amount: money(5000), category: categories.salary)])
+    let moneyBack = entry(id(2), kind: .reimbursement, parts: [part(id(21), amount: money(300))])
+    #expect(plan(.forWhom(.family), [salary]).skipped.map(\.reason) == [.fieldNotForKind])
+    #expect(plan(.forPerson(id(61)), [salary]).skipped.map(\.reason) == [.fieldNotForKind])
+    #expect(plan(.place(id(51)), [moneyBack]).skipped.map(\.reason) == [.fieldNotForKind])
+    #expect(plan(.place(id(51)), [salary]).skipped.map(\.reason) == [.incomeHasNoPlace])
+    #expect(plan(.forWhom(.family), [moneyBack]).skipped.map(\.reason) == [.moneyReturned])
   }
 
   /// Place and payment method are fields of the operation: a split changes once, and the
@@ -422,6 +440,142 @@ struct BulkEditRuleTests {
     #expect(reverted.parts[1].reimbursementStatus == .writtenOff)
     #expect(reverted.parts[0].amountRubE4 == money(612))
     #expect(reverted.transaction.placeId == id(81))
+  }
+
+  // MARK: The account and what it is charged
+
+  let rubleCard = PaymentMethod(id: id(82), name: "Card", currency: .rub, isDefault: true)
+  let dollarCash = PaymentMethod(id: id(83), name: "Cash", kind: .cash, currency: .usd)
+  let tengeCard = PaymentMethod(id: id(84), name: "Tenge", currency: CurrencyCode("KZT"))
+  let rates = DayRates(series: [
+    CurrencyCode.usd: [DayRate(day: DateOnly(year: 2026, month: 3, day: 1), perUnit: 90)],
+    CurrencyCode("KZT"): [DayRate(day: DateOnly(year: 2026, month: 3, day: 1), perUnit: 2)],
+  ])
+
+  /// 50 dollars at 90 on the dollar cash: 4 500 rubles.
+  func dollarDinner(_ number: Int, leg: (CurrencyCode, Int)? = nil) -> TransactionEntry {
+    var dinner = entry(
+      id(number), parts: [part(id(number * 10), amount: money(50), category: categories.groceries)])
+    dinner.transaction.currency = .usd
+    dinner.transaction.rate = 90
+    dinner.transaction.amountRubE4 = money(4500)
+    dinner.parts[0].amountRubE4 = money(4500)
+    dinner.transaction.paymentMethodId = id(83)
+    dinner.transaction.accountCurrency = leg?.0
+    dinner.transaction.accountAmountE4 = leg.map { money($0.1) }
+    return dinner
+  }
+
+  func accountPlan(
+    _ edit: BulkEdit, _ entries: [TransactionEntry], rates: DayRates? = nil
+  )
+    -> BulkEditPlan
+  {
+    BulkEditRule.plan(
+      edit, entries: entries, tree: categories.tree, accounts: [rubleCard, dollarCash, tengeCard],
+      rates: rates ?? self.rates, calendar: .utc)
+  }
+
+  /// On a ruble card a dollar operation is charged its own rubles, so no ruble figure moves; on
+  /// an account that holds dollars nothing is charged apart.
+  @Test func anAccountThatDoesNotHoldTheCurrencyIsChargedItsRubles() {
+    let moved = accountPlan(.paymentMethod(id(82)), [dollarDinner(1)])
+    #expect(moved.changed.first?.transaction.paymentMethodId == id(82))
+    #expect(moved.changed.first?.transaction.accountCurrency == .rub)
+    #expect(moved.changed.first?.transaction.accountAmountE4 == money(4500))
+    #expect(moved.changed.first?.transaction.amountRubE4 == money(4500))
+
+    let back = accountPlan(.paymentMethod(id(83)), moved.changed)
+    #expect(back.changed.first?.transaction.accountCurrency == nil)
+    #expect(back.changed.first?.transaction.accountAmountE4 == nil)
+  }
+
+  @Test func aChargeGoesThroughRublesAtTheRatesOfItsDay() {
+    let moved = accountPlan(.paymentMethod(id(84)), [dollarDinner(1)])
+    #expect(moved.changed.first?.transaction.accountCurrency == CurrencyCode("KZT"))
+    #expect(moved.changed.first?.transaction.accountAmountE4 == money(2250))
+  }
+
+  /// A figure already in the currency the new account is charged in stays: it may have been
+  /// typed from the statement.
+  @Test func aChargeAlreadyInTheRightCurrencyIsKept() {
+    let typed = dollarDinner(1, leg: (.rub, 4620))
+    let moved = accountPlan(.paymentMethod(id(82)), [typed])
+    #expect(moved.changed.first?.transaction.accountAmountE4 == money(4620))
+  }
+
+  @Test func withoutTheRateOfTheDayTheOperationIsLeftAsItIs() {
+    let moved = accountPlan(.paymentMethod(id(84)), [dollarDinner(1)], rates: .empty)
+    #expect(moved.changed.isEmpty)
+    #expect(moved.skipped == [BulkSkip(transactionId: id(1), reason: .noRateForCharge)])
+  }
+
+  /// A refund of 40 dollars taken back from a purchase keeps the purchase's rate, 90, for its
+  /// rubles; moved to a ruble card, it is credited at the rate of its own day, 95: 3 800, not the
+  /// 3 600 of its rubles.
+  @Test func aRefundMovedToARubleCardIsCreditedAtTheRateOfItsDay() {
+    var refund = entry(
+      id(5), kind: .refund, on: "2026-03-20",
+      parts: [part(id(51), amount: money(40), category: categories.groceries)])
+    refund.transaction.currency = .usd
+    refund.transaction.rate = 90
+    refund.transaction.amountRubE4 = money(3600)
+    refund.parts[0].amountRubE4 = money(3600)
+    refund.parts[0].refundOfPartId = id(99)
+    refund.transaction.paymentMethodId = id(83)
+    let dayRates = DayRates(series: [
+      .usd: [
+        DayRate(day: DateOnly(year: 2026, month: 3, day: 1), perUnit: 90),
+        DayRate(day: DateOnly(year: 2026, month: 3, day: 20), perUnit: 95),
+      ]
+    ])
+    let moved = accountPlan(.paymentMethod(id(82)), [refund], rates: dayRates)
+    #expect(moved.changed.first?.transaction.accountCurrency == .rub)
+    #expect(moved.changed.first?.transaction.accountAmountE4 == money(3800))
+    #expect(moved.changed.first?.transaction.amountRubE4 == money(3600))
+    // Without the rate of its day it is left as it is.
+    let noRate = accountPlan(.paymentMethod(id(82)), [refund], rates: .empty)
+    #expect(noRate.skipped == [BulkSkip(transactionId: id(5), reason: .noRateForCharge)])
+  }
+
+  @Test func aContributionToAGoalIsChargedNothing() {
+    var contribution = dollarDinner(1)
+    contribution.parts[0].categoryId = categories.goalsTrip
+    let moved = accountPlan(.paymentMethod(id(82)), [contribution])
+    #expect(moved.changed.first?.transaction.paymentMethodId == id(82))
+    #expect(moved.changed.first?.transaction.accountCurrency == nil)
+  }
+
+  /// Every operation has an account: «no account» moves the operations to the main one.
+  @Test func noAccountMeansTheMainAccount() {
+    let moved = accountPlan(.paymentMethod(nil), [dollarDinner(1)])
+    #expect(moved.changed.first?.transaction.paymentMethodId == id(82))
+    #expect(moved.changed.first?.transaction.accountCurrency == .rub)
+  }
+
+  /// Undo puts the account back with what it was charged: never the old account with the
+  /// charge of the new one.
+  @Test func revertingPutsTheChargeBackWithTheAccount() throws {
+    let before = dollarDinner(1)
+    let moved = try #require(accountPlan(.paymentMethod(id(82)), [before]).changed.first)
+    let reverted = BulkEditRule.revert(moved, to: before)
+    #expect(reverted.transaction.paymentMethodId == id(83))
+    #expect(reverted.transaction.accountCurrency == nil)
+    #expect(reverted.transaction.accountAmountE4 == nil)
+  }
+
+  /// A purchase refunds take back from stays while they are there, unless they go with it.
+  @Test func aPurchaseWithRefundsIsNotDeletedFromUnderThem() {
+    let purchase = groceries(1, amount: 600)
+    var refund = entry(
+      id(2), kind: .refund,
+      parts: [part(id(21), amount: money(100), category: categories.groceries)])
+    refund.parts[0].refundOfPartId = purchase.parts[0].id
+    let index = RefundIndex(entries: [purchase, refund], debts: [:])
+    let alone = BulkEditRule.deletion(of: [purchase], refunds: index)
+    #expect(alone.skipped == [BulkSkip(transactionId: id(1), reason: .hasRefunds)])
+    let together = BulkEditRule.deletion(of: [purchase, refund], refunds: index)
+    #expect(together.changedIds == [id(1), id(2)])
   }
 
   @Test func theReasonsAreListedOnceInAFixedOrder() {

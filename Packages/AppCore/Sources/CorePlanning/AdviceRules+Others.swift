@@ -11,12 +11,25 @@ extension AdviceRules {
   /// Payment methods the cashback names at most.
   static let methodsShown = 5
 
+  /// What came back for a closed part: its links, plus the drift of rates that closed it when
+  /// nothing — no shortfall, no remainder written off — was written for the rest.
+  private static func returnedOfClosed(_ row: LedgerRow, ledger: Ledger) -> AmountE4 {
+    let links = ledger.returned(forPart: row.partId)
+    let written = ledger.companionsRub(forPart: row.partId)
+    let drift = row.amountRubE4 - links - written.shortfall - written.writtenOff
+    guard drift.raw > 0, written.shortfall.isZero, written.writtenOff.isZero,
+      drift <= MoneyBack.tolerance(partRub: row.amountRubE4, foreignInvolved: true)
+    else { return links }
+    return links + drift
+  }
+
   /// Subscriptions («сумма в месяц и в год»): the running subscriptions, what their next
   /// charges come to a month and a year (the snapshot's totals). None running: no suggestion.
+  /// A one-off is one charge and not a running subscription, as in the totals.
   static func subscriptions(
     scheduled: [ScheduledStatus], monthly: AmountE4, yearly: AmountE4
   ) -> [Advice] {
-    let count = scheduled.filter { $0.payment.kind == .subscription }.count
+    let count = scheduled.filter { $0.payment.kind == .subscription && !$0.isOneOff }.count
     guard count > 0 else { return [] }
     return [
       Advice(
@@ -34,11 +47,13 @@ extension AdviceRules {
   ///
   /// The operations are the ones «Mark as paid» wrote for a payment the owner gets back
   /// (`sched:` links of a reimbursable payment). Paid is their rubles, all parts; returned is
-  /// the money that came back for the parts closed as returned (`Ledger.returned(forPart:)`,
-  /// Σ of live links, so a part closed short counts what really came); waiting —
-  /// the parts still expected; what it cost me is the rest: my own share, what was written
-  /// off, what a closed part fell short by. No such payment: no suggestion; no
-  /// operation yet: «not enough data».
+  /// the money that came back for the parts (`Ledger.returned(forPart:)`, Σ of live links, so
+  /// a part closed short counts what really came); waiting — what is left of the parts still
+  /// expected, since money back may cover only some of a part; what it cost me is the rest: my
+  /// own share, what was written off, what a closed part fell short by. A part closed within the
+  /// drift of rates (`MoneyBack.tolerance`) with nothing written for the rest counts as all
+  /// returned: the drift is no spending, as «За других» shows no shortfall for it. No such
+  /// payment: no suggestion; no operation yet: «not enough data».
   static func subscriptionsForOthers(_ context: AdviceContext, book: PlanningBook) -> [Advice] {
     let payments = Set(book.scheduled.filter(\.reimbursable).map(\.id))
     guard !payments.isEmpty else { return [] }
@@ -56,8 +71,10 @@ extension AdviceRules {
       paid += row.amountRubE4
       guard row.reimbursable else { continue }
       switch row.reimbursementStatus {
-      case .returned: returned += context.ledger.returned(forPart: row.partId)
-      case .expected: waiting += row.amountRubE4
+      case .returned: returned += returnedOfClosed(row, ledger: context.ledger)
+      case .expected:
+        returned += context.ledger.returned(forPart: row.partId)
+        waiting += context.ledger.remaining(ofPart: row)
       case .writtenOff, nil: break
       }
     }

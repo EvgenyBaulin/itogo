@@ -182,12 +182,14 @@ struct RateRefinementTests {
     let repository = TransactionRepository(writer: stack.writer)
     let entry = try dinner(reimbursable: 1)
     try repository.save(entry)
-    var money = TransactionDraft(kind: .reimbursement, amount: AmountE4(whole: 267))
+    // The money back covers the part's rubles of the day it was bought: a link never comes to
+    // more than what is left of its part.
+    let returned = entry.parts[1].amountRubE4
+    var money = TransactionDraft(kind: .reimbursement, amount: returned)
     money.normalizeSinglePart()
     let reimbursement = try money.materialize()
     let link = ReimbursementLink(
-      reimbursementTxId: reimbursement.id, partId: entry.parts[1].id,
-      amountE4: AmountE4(whole: 267))
+      reimbursementTxId: reimbursement.id, partId: entry.parts[1].id, amountE4: returned)
     try repository.apply(
       ReimbursementOutcome(
         reimbursementTxId: reimbursement.id, allocations: [], links: [link],
@@ -210,6 +212,63 @@ struct RateRefinementTests {
 
     let links = try stack.writer.read { db in try ReimbursementLink.fetchAll(db) }
     #expect(links == [link])
+  }
+
+  /// Money back typed part by part can reach a part still on a provisional rate. The day's own
+  /// rate turns out lower: 3.33 $ were 266.73 ₽ at the 15th's 80.10 and are 265.07 ₽ at the
+  /// 17th's 79.60. A part 266 ₽ already came back for has nothing more to wait for — it is
+  /// settled, not left waiting for less than nothing, where nobody could close or write it off.
+  /// A part 200 ₽ came back for keeps waiting for the rest, 65.07 ₽. The links keep their
+  /// rubles: they are the money that came back.
+  @Test func aPartTheDaysRateLeavesNothingToWaitForIsSettled() throws {
+    let stack = try TestSupport.makeStack()
+    let repository = TransactionRepository(writer: stack.writer)
+    let covered = try dinner(reimbursable: 1)
+    let waiting = try dinner(reimbursable: 1)
+    try repository.save(covered)
+    try repository.save(waiting)
+    #expect(covered.parts[1].amountRubE4 == AmountE4(raw: 2_667_330))
+
+    var links: [ReimbursementLink] = []
+    for (entry, rubles) in [(covered, 266), (waiting, 200)] {
+      var money = TransactionDraft(kind: .reimbursement, amount: AmountE4(whole: Int64(rubles)))
+      money.normalizeSinglePart()
+      let reimbursement = try money.materialize()
+      let link = ReimbursementLink(
+        reimbursementTxId: reimbursement.id, partId: entry.parts[1].id,
+        amountE4: AmountE4(whole: Int64(rubles)))
+      links.append(link)
+      try repository.apply(
+        ReimbursementOutcome(
+          reimbursementTxId: reimbursement.id, allocations: [], links: [link],
+          closedPartIds: []),
+        reimbursement: reimbursement)
+    }
+
+    let lower = RateTable(rates: [usd(15, "80.1000"), usd(17, "79.6000")])
+    #expect(try refine(repository, with: lower) == 2)
+
+    let settled = try #require(try repository.entry(id: covered.id))
+    #expect(settled.parts[1].amountRubE4 == AmountE4(raw: 2_650_680))
+    #expect(settled.parts[1].reimbursementStatus == .returned)
+    let open = try #require(try repository.entry(id: waiting.id))
+    #expect(open.parts[1].reimbursementStatus == .expected)
+    let left = try stack.writer.read { db in
+      try TransactionRepository.remainingRub(ofPart: waiting.parts[1].id, db: db)
+    }
+    #expect(left == AmountE4(raw: 650_680))
+    // Only the part that came back is touched: the others were never anybody's to return.
+    #expect(settled.parts[0].reimbursementStatus == nil)
+    #expect(
+      try stack.writer.read { db in try ReimbursementLink.fetchAll(db) }.sorted {
+        $0.id.uuidString < $1.id.uuidString
+      } == links.sorted { $0.id.uuidString < $1.id.uuidString })
+
+    // The money back deleted, the part waits for all of its rubles again.
+    let effects = try repository.softDelete(ids: [links[0].reimbursementTxId])
+    #expect(effects.reopenedPartIds == [covered.parts[1].id])
+    let reopened = try #require(try repository.entry(id: covered.id))
+    #expect(reopened.parts[1].reimbursementStatus == .expected)
   }
 
   /// What was read is what gets compared. Between reading the usages and writing the
@@ -274,5 +333,54 @@ struct RateRefinementTests {
     try repository.softDelete(id: deleted.id)
 
     #expect(try repository.provisionalUsages(calendar: calendar).map(\.id) == [refinable.id])
+  }
+
+  // MARK: Charges and refunds
+
+  /// What a ruble card was charged is the operation's rubles: refined with the rate, it stays
+  /// them. A charge typed from the statement gave a rate of its own and is never refined.
+  @Test func aRubleChargeFollowsTheRate() throws {
+    let stack = try TestSupport.makeStack()
+    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
+    try ReferenceRepository(writer: stack.writer).save(card)
+    let repository = TransactionRepository(writer: stack.writer)
+    var entry = try dinner()
+    entry.transaction.paymentMethodId = card.id
+    entry.transaction.accountCurrency = .rub
+    entry.transaction.accountAmountE4 = entry.transaction.amountRubE4
+    try repository.save(entry)
+
+    #expect(try refine(repository, through: 17) == 1)
+    let stored = try #require(try repository.entry(id: entry.id))
+    #expect(stored.transaction.amountRubE4 == AmountE4(whole: 820))
+    #expect(stored.transaction.accountCurrency == .rub)
+    #expect(stored.transaction.accountAmountE4 == AmountE4(whole: 820))
+  }
+
+  /// A refund taken back from a purchase keeps the purchase's rate: it is never refined by the
+  /// rate of its own day, and follows the purchase when that is refined.
+  @Test func aRefundFollowsItsPurchase() throws {
+    let repository = try makeRepository()
+    let purchase = try dinner()
+    try repository.save(purchase)
+    let jacket = purchase.parts[0]
+    var draft = TransactionDraft(
+      kind: .refund, occurredAt: purchase.transaction.occurredAt.addingTimeInterval(86_400),
+      currency: .usd, amount: jacket.amountE4, rate: purchase.transaction.rate,
+      rateDate: purchase.transaction.rateDate, rateSource: purchase.transaction.rateSource,
+      rateProvisional: true)
+    draft.parts = [PartDraft(amount: jacket.amountE4, refundOfPartId: jacket.id)]
+    let refund = try draft.materialize(rublesConverter: { _ in jacket.amountRubE4 })
+    try repository.save(refund)
+    #expect(try repository.provisionalUsages(calendar: calendar).map(\.id) == [purchase.id])
+
+    #expect(try refine(repository, through: 17) == 1)
+    let refinedPurchase = try #require(try repository.entry(id: purchase.id))
+    let refinedRefund = try #require(try repository.entry(id: refund.id))
+    #expect(refinedRefund.transaction.rate == refinedPurchase.transaction.rate)
+    #expect(refinedRefund.transaction.rateDate == day(17))
+    #expect(!refinedRefund.transaction.rateProvisional)
+    #expect(refinedRefund.parts[0].amountRubE4 == refinedPurchase.parts[0].amountRubE4)
+    #expect(refinedRefund.transaction.amountRubE4 == refinedPurchase.parts[0].amountRubE4)
   }
 }

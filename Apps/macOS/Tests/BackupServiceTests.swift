@@ -1,5 +1,6 @@
 import AppCore
 import AppDatabase
+import SQLite3
 import XCTest
 
 @testable import Itogo
@@ -571,5 +572,165 @@ final class MirrorFolderAtLaunchTests: XCTestCase {
         XCTAssertNotEqual(language(key, table: "Settings"), key, "\(key) in \(choice.rawValue)")
       }
     }
+  }
+}
+
+// MARK: The copy before an update
+
+/// «Перед миграцией — именованная копия `-before-migration`, проверенная: открывается,
+/// integrity_check, число строк совпадает; ротация её не удаляет. Нет копии — нет миграции».
+extension BackupServiceTests {
+  private var databaseURL: URL { directory.appendingPathComponent("finance.sqlite") }
+
+  /// The copy is named as every copy is, with its own label; it opens, passes its check, has
+  /// the rows of its source table by table, and the Backups tab lists it like any other.
+  func testTheCopyBeforeAnUpdateIsCheckedAndListed() async throws {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+
+    let copy = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: now)
+
+    XCTAssertEqual(
+      copy.lastPathComponent, BackupService.fileName(at: now, label: "before-migration"))
+    XCTAssertTrue(copy.lastPathComponent.hasSuffix("-before-migration.sqlite"))
+    XCTAssertTrue(DatabaseStack.integrityCheckPassed(at: copy))
+    let counts = try DatabaseStack.rowCounts(fileAt: copy)
+    XCTAssertEqual(counts, try DatabaseStack.rowCounts(fileAt: databaseURL))
+    XCTAssertEqual(counts["transactions"], 1)
+    XCTAssertEqual(contents(of: backupsFolder), [copy.lastPathComponent], "a partial file was left")
+    let listed = try await BackupService(stack: stack, directory: backupsFolder).backups()
+    XCTAssertEqual(listed, [copy])
+  }
+
+  /// The copy of a database that has not changed since is that database still: asked again —
+  /// the update stopped and is tried anew — the service gives the copy it has, and writes none.
+  func testTheCopyOfAnUnchangedDatabaseIsNotWrittenTwice() throws {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let first = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: now)
+
+    let again = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: now.addingTimeInterval(60))
+
+    XCTAssertEqual(again, first)
+    XCTAssertEqual(contents(of: backupsFolder), [first.lastPathComponent])
+  }
+
+  /// A database changed since its copy — a row more, or one value edited with every count the
+  /// same — gets a copy of its own: the earlier one is no way back to it.
+  func testADatabaseChangedSinceItsCopyGetsANewOne() throws {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let first = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: now)
+    // One value edited, the way another connection writes: every table keeps its rows.
+    var handle: OpaquePointer?
+    XCTAssertEqual(sqlite3_open(databaseURL.path, &handle), SQLITE_OK)
+    XCTAssertEqual(
+      sqlite3_exec(handle, "UPDATE transactions SET note = 'edited'", nil, nil, nil), SQLITE_OK)
+    sqlite3_close(handle)
+
+    let edited = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: now.addingTimeInterval(60))
+
+    XCTAssertNotEqual(edited, first)
+    XCTAssertEqual(DatabaseStack.integrityCheckPassed(at: edited), true)
+    XCTAssertEqual(contents(of: backupsFolder).count, 2)
+    // Its own copy is found again, the earlier one is not.
+    XCTAssertEqual(
+      try BackupService.copyBeforeMigration(
+        of: databaseURL, into: backupsFolder, now: now.addingTimeInterval(120)),
+      edited)
+    XCTAssertEqual(contents(of: backupsFolder).count, 2)
+  }
+
+  /// A copy found beside the database is checked before it stands for it: one that no longer
+  /// passes is not taken, and a sound one is written.
+  func testACopyThatNoLongerPassesIsNotTaken() throws {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let first = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: now)
+    try Data("SQLite format 3\u{0}, and nothing else".utf8).write(to: first)
+
+    let second = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: now.addingTimeInterval(60))
+
+    XCTAssertNotEqual(second, first)
+    XCTAssertTrue(DatabaseStack.integrityCheckPassed(at: second))
+  }
+
+  /// No copy, no update: a copy that cannot be written throws, and nothing is left under a
+  /// copy's name.
+  func testACopyThatCannotBeWrittenThrows() throws {
+    // A file where the folder of the copies should be: no folder can be made there.
+    let blocked = directory.appendingPathComponent("not-a-folder")
+    try Data("x".utf8).write(to: blocked)
+
+    XCTAssertThrowsError(
+      try BackupService.copyBeforeMigration(of: databaseURL, into: blocked, now: Date())
+    ) { error in
+      XCTAssertTrue(error is BeforeMigrationCopyFailed, "\(error)")
+      XCTAssertEqual(StartFailure(error), .copyBeforeUpdate)
+    }
+  }
+
+  /// The copy is checked, not trusted: one that is not a database, or one that lost rows, is
+  /// thrown away and the update does not happen.
+  func testACopyThatFailsItsCheckIsNotKept() throws {
+    let empty = directory.appendingPathComponent("empty.sqlite")
+    try DatabaseStack(url: empty, schema: BundleSchemaSource(bundle: .main)).close()
+    let writers: [(String, @Sendable (URL, URL) throws -> Void)] = [
+      (
+        "not a database",
+        { _, destination in
+          try Data("SQLite format 3\u{0}, and nothing else".utf8).write(to: destination)
+        }
+      ),
+      ("rows lost", { _, destination in try DatabaseStack.backup(fileAt: empty, to: destination) }),
+    ]
+    for (name, write) in writers {
+      XCTAssertThrowsError(
+        try BackupService.copyBeforeMigration(
+          of: databaseURL, into: backupsFolder, now: Date(), copying: write),
+        name
+      ) { error in
+        XCTAssertTrue(error is BeforeMigrationCopyFailed, "\(name): \(error)")
+      }
+      XCTAssertEqual(contents(of: backupsFolder), [], "\(name): something was left")
+    }
+  }
+
+  /// «Хранение: последние 50 копий и одна в день за 90 дней» never takes the copy before an
+  /// update: it is the way back to the older version of the app. It is not one of the fifty
+  /// either, in the folder of copies and in the mirrored one alike.
+  func testTheCopyBeforeAnUpdateIsNeverPruned() async throws {
+    let manager = FileManager.default
+    let mirror = directory.appendingPathComponent("iCloud", isDirectory: true)
+    try manager.createDirectory(at: backupsFolder, withIntermediateDirectories: true)
+    try manager.createDirectory(at: mirror, withIntermediateDirectories: true)
+    let moscow = try XCTUnwrap(TimeZone(identifier: "Europe/Moscow"))
+    let start = Date(timeIntervalSince1970: 1_789_000_000)
+    // Half a year older than every other copy, and older than the ninety days.
+    let update = BackupService.fileName(
+      at: start.addingTimeInterval(-180 * 86_400), label: "before-migration", in: moscow)
+    for folder in [backupsFolder, mirror] {
+      try Data("the older version".utf8).write(to: folder.appendingPathComponent(update))
+      for index in 0..<60 {
+        let name = BackupService.fileName(
+          at: start.addingTimeInterval(Double(index) * 60), in: moscow)
+        try Data("x".utf8).write(to: folder.appendingPathComponent(name))
+      }
+    }
+
+    let service = BackupService(stack: stack, directory: backupsFolder)
+    await service.setMirror(mirror)
+    try await service.applyRetention(now: start.addingTimeInterval(3_600))
+
+    for folder in [backupsFolder, mirror] {
+      let left = contents(of: folder)
+      XCTAssertTrue(left.contains(update), "the copy before the update was pruned in \(folder)")
+      XCTAssertEqual(left.filter { $0 != update }.count, 50, "it took the place of a copy")
+    }
+    let listed = try await service.backups().map(\.lastPathComponent)
+    XCTAssertTrue(listed.contains(update), "the copy before the update cannot be restored")
   }
 }

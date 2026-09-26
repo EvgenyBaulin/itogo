@@ -26,7 +26,11 @@ public final class EntryDraftModel {
   /// поступлению»). Saved with the operation in one write.
   public var expectedIncomeId: UUID?
   public var places: [Place] = []
+  /// The live accounts, the ones the account picker offers.
   public var paymentMethods: [PaymentMethod] = []
+  /// Every account, archived ones too: a saved operation may sit on one retired since, and
+  /// what it was charged is still worked out from its currencies.
+  private var allAccounts: [PaymentMethod] = []
   public var events: [Event] = []
   public var goals: [Goal] = []
   public var debts: [Debt] = []
@@ -95,6 +99,36 @@ public final class EntryDraftModel {
   /// While the draft still holds it, a better default replaces it (another place was chosen);
   /// a method the line named or the owner picked is never replaced.
   private var paymentMethodFromDefaults: UUID?
+  /// The account the defaults laid is the one whose screen is open: that one counts as chosen
+  /// — its currency is the operation's — while the place's last account and the main account,
+  /// which come by themselves, do not.
+  private var accountFromTheScreen = false
+  /// The currency the defaults last laid: the default currency, or the main currency of the
+  /// account chosen. While the draft still holds it, the defaults lay another; a currency the
+  /// line named or the panel picked stays.
+  private var currencyFromDefaults: CurrencyCode?
+  /// «Списано со счёта» was typed from the statement: it stays while the account is charged in
+  /// the same currency, instead of being worked out again from the rates.
+  private var chargeTyped = false
+  /// What a typed «Списано со счёта» was typed for: the amount, currency, day and account of
+  /// that moment. When any of them changes the figure stays, and the panel asks to check it.
+  private var chargeTypedFor: ChargeBasis?
+  /// The operation's rate is the one a typed figure in rubles implies, laid because the bank
+  /// has no rate for its currency: it goes when the figure goes.
+  private var rateFromTheCharge = false
+  /// The saved operation as the editor opened it, kept from the first change of what the
+  /// account is charged by — the account, the currency, the amount, the day, the rate or the
+  /// figure itself: what the figure is worked out again against (`AccountRules.legAfterEdit`).
+  private var openedDraft: TransactionDraft?
+  /// The bank's rates «Списано со счёта» is prefilled from, read once and kept until the rates
+  /// may have changed: a reload, the moment of saving, or a new computation of the data.
+  private var cachedRates: (table: RateTable, days: DayRates)?
+  /// The count the owner has answered «Это было до сверки?» about for this draft: the save
+  /// that follows the answer does not ask again.
+  private var answeredCount: Date?
+  /// The amount is zero because a zero was typed — «кофе 0» in the line, «0» in the field —
+  /// not because none was: the save says it must be above zero instead of asking for one.
+  private var zeroWasTyped = false
   /// «For whom» of the first part as the defaults last laid it: «Me» for a new operation, then
   /// the last choice made for the operation most like it. While the part still holds it, the
   /// defaults lay another; a value the line named or the owner chose stays, and so does the one
@@ -123,17 +157,39 @@ public final class EntryDraftModel {
     transactions: TransactionRepository?,
     calendar: CalendarContext,
     assignsEventAutomatically: Bool = false,
-    editsSavedOperation: Bool = false
+    editsSavedOperation: Bool = false,
+    defaultCurrency: CurrencyCode = .rub
   ) {
     self.references = references
     self.transactions = transactions
     self.calendar = calendar
     self.assignsEventAutomatically = assignsEventAutomatically
     self.editsSavedOperation = editsSavedOperation
+    self.fixedDefaultCurrency = defaultCurrency
     self.forWhomFromDefaults = editsSavedOperation ? nil : .me
     self.draft.normalizeSinglePart()
     self.dateFromTheLine = draft.occurredAt
+    // A new operation starts in the default currency; a saved one keeps its own.
+    if !editsSavedOperation {
+      draft.currency = defaultCurrency
+      currencyFromDefaults = defaultCurrency
+    }
   }
+
+  /// The default currency given when the model was made; the app reads the setting afresh
+  /// instead (`readsDefaultCurrency`), since Settings may change it while the line lives.
+  private let fixedDefaultCurrency: CurrencyCode
+  /// Where the default currency is read from: the app's setting, handed over in
+  /// `init(environment:)`.
+  var readsDefaultCurrency: (() -> CurrencyCode)?
+  /// The currency of everything new («Валюта по умолчанию»).
+  private var defaultCurrency: CurrencyCode { readsDefaultCurrency?() ?? fixedDefaultCurrency }
+  /// The account whose screen is open, if any: a new operation goes to it unless the line or
+  /// the panel names another. The app hands it over in `init(environment:)`.
+  var openAccountScreen: (() -> UUID?)?
+  /// The cache of the bank's rates, which «Списано со счёта» is prefilled from. The app hands
+  /// it over in `init(environment:)`; without it nothing in another currency is prefilled.
+  var rateTable: (() -> RateTable)?
 
   /// The panel as the application makes it — for the entry line and for the editor of a
   /// saved operation alike: the repositories, the calendar, the owner's setting for events,
@@ -145,7 +201,14 @@ public final class EntryDraftModel {
       transactions: environment.transactions,
       calendar: environment.calendar,
       assignsEventAutomatically: environment.assignsEventAutomatically,
-      editsSavedOperation: editsSavedOperation)
+      editsSavedOperation: editsSavedOperation,
+      defaultCurrency: environment.defaultCurrency)
+    readsDefaultCurrency = { [weak environment] in environment?.defaultCurrency ?? .rub }
+    // Only a new operation follows the account screen: a saved one keeps its account.
+    if !editsSavedOperation {
+      openAccountScreen = { [weak environment] in environment?.focusedAccountId }
+    }
+    rateTable = { [weak environment] in (try? environment?.rates?.table()) ?? RateTable() }
     predictor = environment.categoryModel
     // The rate is read from the cache only: asking the bank is the save's business, not a
     // keystroke's.
@@ -165,10 +228,12 @@ public final class EntryDraftModel {
 
   public func reload() {
     reloadQualityRules()
+    cachedRates = nil
     guard let references else { return }
     people = (try? references.people()) ?? []
     places = (try? references.places()) ?? []
-    paymentMethods = (try? references.paymentMethods()) ?? []
+    allAccounts = (try? references.paymentMethods(includeArchived: true)) ?? []
+    paymentMethods = allAccounts.filter { !$0.archived }
     events = (try? references.events()) ?? []
     goals = (try? references.goals()) ?? []
     debts = (try? references.debts()) ?? []
@@ -195,34 +260,42 @@ public final class EntryDraftModel {
   /// takes over only while the panel has left them as the line wrote them. A date the line
   /// names always wins.
   public func apply(_ parsed: ParsedInput, amount: AmountE4, today: DateOnly) {
+    // A purchase picked for a refund — or «Без покупки» — belongs to the line it was picked
+    // for: Enter on that line again keeps it, any other line starts without it, so a refund
+    // of headphones is never saved against the sneakers picked for the line before.
+    if refundTarget != nil || refundWithoutPurchase || pickBase != nil {
+      if parsed == lineOfThePick { return }
+      forgetTheRefundedPurchase()
+      refundWithoutPurchase = false
+    }
+    defer { lastLine = parsed }
     // A kind chosen in the panel is not overwritten by a line that says nothing about it:
     // the parser reports `.expense` both when it read nothing and when it read "расход".
     if parsed.kind != .expense || draft.kind == .expense {
       draft.kind = parsed.kind
     }
     draft.amount = amount
+    zeroWasTyped = amount.isZero
     followTheAmountInTheCreditPlan()
     // Kept with its numbers written the way the app writes them: «1500,5+2» is «1,500.5+2».
     draft.amountExpression = parsed.amountExpression.map {
       ExpressionEvaluator.canonical($0) ?? $0
     }
-    draft.currency = parsed.currency ?? draft.currency
+    // A currency the line names is the owner's: it beats the account's and the default one.
+    if let typed = parsed.currency {
+      draft.currency = typed
+      currencyFromDefaults = nil
+    }
     // A name the dictionaries do not know leaves the note like every word the parser read,
     // but nothing else keeps it: it goes back into the note as typed, and Enter no longer
     // saves «кофе» for «кофе 300 в Кофемании».
     unmatchedPersonPhrase = parsed.unknownPersonName == nil ? nil : parsed.unknownPersonPhrase
     unmatchedPlacePhrase = parsed.unknownPlaceName == nil ? nil : parsed.unknownPlacePhrase
-    let lineNote = [parsed.note, unmatchedPersonPhrase ?? "", unmatchedPlacePhrase ?? ""]
-      .filter { !$0.isEmpty }
-      .joined(separator: " ")
-    if !lineNote.isEmpty, draft.note == noteFromTheLine {
-      draft.note = lineNote
-      noteFromTheLine = lineNote
-    }
     draft.placeId = parsed.placeId ?? draft.placeId
     if let named = parsed.paymentMethodId {
       draft.paymentMethodId = named
       paymentMethodFromDefaults = nil
+      accountFromTheScreen = false
     }
     draft.debtId = parsed.debtId ?? draft.debtId
     if parsed.date != nil || draft.occurredAt == dateFromTheLine {
@@ -235,12 +308,80 @@ public final class EntryDraftModel {
     draft.normalizeSinglePart()
     draft.parts[0].forWhom = parsed.forWhom ?? draft.parts[0].forWhom
     draft.parts[0].forPersonId = parsed.personId ?? draft.parts[0].forPersonId
+    if let person = parsed.personId,
+      let words = parsed.tokens.first(where: { $0.role == .person })?.text
+    {
+      personPhraseFromTheLine = (person, words)
+    }
     // «Для кого» the line names — «себе» too — is the owner's word, not history's.
     if parsed.forWhom != nil || parsed.personId != nil { forWhomFromDefaults = nil }
     draft.parts[0].eventId = parsed.eventId ?? draft.parts[0].eventId
     // A goal the line names files the part under it, as a contribution from Planning is.
     if let goalId = parsed.goalId { setGoal(goalId, forPartAt: 0) }
+    // What the kind has no field for is left out, and the words that named it go to the note:
+    // «+5000 для мамы» is income of 5 000 noted «для мамы».
+    let leftOut = leaveOutWhatTheKindHasNot(saying: parsed)
+    let lineNote = [parsed.note, unmatchedPersonPhrase ?? "", unmatchedPlacePhrase ?? ""]
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
+    let fullNote = ([lineNote] + leftOut).filter { !$0.isEmpty }.joined(separator: " ")
+    if !fullNote.isEmpty, draft.note == noteFromTheLine {
+      draft.note = fullNote
+      noteFromTheLine = fullNote
+    } else if !leftOut.isEmpty, let note = draft.note {
+      // A note of the owner's keeps its words, and gets the left-out ones once.
+      let missing = leftOut.filter { !note.contains($0) }
+      if !missing.isEmpty { draft.note = ([note] + missing).joined(separator: " ") }
+    }
     applyDefaults(today: today)
+  }
+
+  // MARK: Fields of the kind
+
+  /// The fields an operation of this kind has (`KindFields`): the panel shows these and no
+  /// other, and the save leaves every other one out. Income has no place, event, «на кого»,
+  /// «за другого» or credit; a contribution to a goal has nothing charged on its account.
+  public var fields: Set<OperationField> {
+    KindFields.fields(of: draft.kind, goalOnly: isGoalOnly)
+  }
+
+  public func has(_ field: OperationField) -> Bool { fields.contains(field) }
+
+  /// Takes away what the kind of the draft has no field for, and returns the words of the line
+  /// that had named it, for the note. A name the dictionaries did not know is in the note
+  /// already, and is no longer offered for a field the kind does not have.
+  private func leaveOutWhatTheKindHasNot(saying parsed: ParsedInput) -> [String] {
+    var words: [OperationField: [String]] = [:]
+    for token in parsed.tokens {
+      guard let field = Self.field(of: token.role) else { continue }
+      words[field, default: []].append(token.text)
+    }
+    let (stripped, toNote) = KindFields.stripped(draft, words: words, tree: categoryTree)
+    draft = stripped
+    if !has(.forPerson), !has(.fromPerson) { suggestedPersonName = nil }
+    if !has(.place) { suggestedPlaceName = nil }
+    return toNote
+  }
+
+  /// The field a word of the line set.
+  private static func field(of role: ParsedRole) -> OperationField? {
+    switch role {
+    case .place: .place
+    case .event: .event
+    case .forWhom: .forWhom
+    case .person: .forPerson
+    case .goal: .goal
+    case .debt: .debt
+    case .paymentMethod: .account
+    case .amount, .currency, .date, .kind, .note: nil
+    }
+  }
+
+  /// The draft as it is written: without what its kind has no field for — a place chosen in
+  /// the panel before the kind became income stays out of the income. Stored rows keep what
+  /// they have; this is for a new operation only.
+  public var draftForSaving: TransactionDraft {
+    KindFields.stripped(draft, tree: categoryTree).draft
   }
 
   /// Defaults from history and from the dictionaries, in the order the specification lists.
@@ -248,6 +389,7 @@ public final class EntryDraftModel {
     guard !draft.parts.isEmpty else { return }
     reloadQualityRules()
     dropTheCreditTheKindCannotCarry()
+    dropTheRefundTheKindCannotCarry()
 
     // A category of the other kind is dropped first: after switching an expense to income
     // it would match nothing the picker offers and file the money on the wrong side.
@@ -270,17 +412,17 @@ public final class EntryDraftModel {
     // выбор); из строки ввода».
     layForWhom(from: history)
 
-    // The payment method: the last one used at that place, otherwise the one marked as
-    // default — unless the line named one or the owner chose one by hand.
+    // The account, unless the line named one or the owner chose one by hand: the one whose
+    // screen is open, else the last one used at that place, else the main account.
     if draft.paymentMethodId == nil || draft.paymentMethodId == paymentMethodFromDefaults {
-      let atThePlace = draft.placeId.flatMap { place in
-        history.first { $0.transaction.placeId == place }
-      }
-      let chosen =
-        atThePlace?.transaction.paymentMethodId ?? paymentMethods.first(where: \.isDefault)?.id
+      // A place the kind has no field for — chosen before the kind became income — is hidden,
+      // and chooses nothing.
+      let (chosen, screen) = accountByDefault(at: has(.place) ? draft.placeId : nil, in: history)
       draft.paymentMethodId = chosen
       paymentMethodFromDefaults = chosen
+      accountFromTheScreen = screen != nil && chosen == screen
     }
+    layTheCurrency()
 
     // An event covering the date of the operation is offered; it is applied only when
     // the owner turned that on in the settings.
@@ -312,6 +454,8 @@ public final class EntryDraftModel {
     }
 
     refreshSuggestions()
+    // Last: whether the operation moves money at all depends on the categories just laid.
+    refreshCharge()
   }
 
   /// Income and a reimbursement have no quality; a goal contribution is always good and
@@ -772,6 +916,9 @@ public final class EntryDraftModel {
   /// moment its draft was made, the morning the window opened, and after midnight on the day
   /// before. A saved operation in the editor keeps its own date.
   public func takeTheMomentOfSaving(now: Date = Date()) {
+    // The save lays the rate of the day from the cache as it is now: «Списано со счёта» is
+    // worked out from the same.
+    cachedRates = nil
     guard !editsSavedOperation, dateFollowsTheClock, draft.occurredAt == dateFromTheLine else {
       return
     }
@@ -787,15 +934,359 @@ public final class EntryDraftModel {
     applyDefaults(today: today)
   }
 
-  /// A payment method chosen by hand stays whatever place is chosen after it.
+  /// An account chosen by hand stays whatever place is chosen after it, and its main currency
+  /// becomes the operation's unless a currency was named.
   public func setPaymentMethod(_ id: UUID?) {
+    noteTheOpenedDraft()
     draft.paymentMethodId = id
     paymentMethodFromDefaults = nil
+    accountFromTheScreen = false
+    layTheCurrency()
+    refreshCharge()
+  }
+
+  /// A currency picked in the panel is the owner's, as one named in the line is.
+  public func setCurrency(_ currency: CurrencyCode) {
+    guard draft.currency != currency || currencyFromDefaults != nil else { return }
+    noteTheOpenedDraft()
+    draft.currency = currency
+    currencyFromDefaults = nil
+    refreshCharge()
+  }
+
+  // MARK: Account, currency and «Списано со счёта»
+
+  /// The words of the account field: «Со счёта» for spending, «На счёт» for money that comes
+  /// in — income, a refund, money back — and just «Счёт» for a contribution to a goal, whose
+  /// money stays on the account.
+  public var accountFieldKey: String {
+    if isGoalOnly { return "entry.paymentMethod" }
+    return draft.kind == .expense ? "entry.account.from" : "entry.account.to"
+  }
+
+  /// The account the draft is on, live or archived. Every operation has one: a draft that names
+  /// none is written on the main account, and that is the account it charges.
+  public var selectedAccount: PaymentMethod? {
+    guard let id = draft.paymentMethodId else { return mainAccount }
+    return account(withId: id)
+  }
+
+  private var mainAccount: PaymentMethod? { paymentMethods.first(where: \.isDefault) }
+
+  /// What the account picker offers, the main account first and the rest in the owner's order.
+  /// There is no «none»: every operation has an account. An operation saved on an account
+  /// archived since is offered that account too, so the picker still shows where it is.
+  public func accountChoices(locale: Locale) -> [PaymentMethod] {
+    let live = AccountRules.ordered(paymentMethods, locale: locale)
+    guard let current = selectedAccount, current.archived else { return live }
+    return live + [current]
+  }
+
+  /// The account the owner chose — named in the line, picked in the panel, or the one whose
+  /// screen is open — as opposed to one the defaults laid by themselves, or the main one a
+  /// draft without an account falls back to: only a chosen account gives the operation its
+  /// currency.
+  public var chosenAccount: PaymentMethod? {
+    guard draft.paymentMethodId != nil, paymentMethodFromDefaults == nil || accountFromTheScreen
+    else { return nil }
+    return selectedAccount
+  }
+
+  /// Whether the account has to be told what it was charged: it does not hold the currency of
+  /// an operation that moves money on it. A purchase on credit moves the debt, not the account,
+  /// and a contribution to a goal leaves its money where it is.
+  public var needsCharge: Bool {
+    guard let account = selectedAccount, !isOnCredit, !isGoalOnly else { return false }
+    return AccountRules.legCurrency(for: draft.currency, account: account) != nil
+  }
+
+  /// The prefill of «Списано со счёта» rests on a rate the bank has not published for that day
+  /// yet: it is refined later, and the statement is the one to believe.
+  public private(set) var chargeIsProvisional = false
+
+  /// Whether every part goes to a goal: such an operation moves no money.
+  private var isGoalOnly: Bool { KindFields.isGoalOnly(draft, tree: categoryTree) }
+
+  /// A typed «Списано со счёта» was typed for another amount, currency, day or account than the
+  /// draft has now: it is kept — the statement is the one to believe — and the panel says it
+  /// was not worked out again («Списано со счёта не пересчитано — проверьте»).
+  public private(set) var chargeNeedsCheck = false
+
+  /// What a typed figure was typed for.
+  private struct ChargeBasis: Equatable {
+    let amount: AmountE4
+    let currency: CurrencyCode
+    let day: DateOnly
+    let account: UUID?
+  }
+
+  private var chargeBasis: ChargeBasis {
+    ChargeBasis(
+      amount: draft.amount, currency: draft.currency, day: calendar.day(of: draft.occurredAt),
+      account: selectedAccount?.id)
+  }
+
+  /// «Списано со счёта» typed from the statement: the figure, in the currency the account is
+  /// charged in. Zero hands the field back to the prefill. The field writing back the figure it
+  /// shows is not typing.
+  public func setCharge(_ amount: AmountE4) {
+    guard amount != (draft.accountAmount ?? .zero) else { return }
+    noteTheOpenedDraft()
+    guard !amount.isZero else {
+      dropTheTypedCharge()
+      refreshCharge()
+      return
+    }
+    guard let account = selectedAccount,
+      let leg = AccountRules.legCurrency(for: draft.currency, account: account)
+    else { return }
+    draft.accountCurrency = leg
+    draft.accountAmount = amount
+    chargeTyped = true
+    chargeTypedFor = chargeBasis
+    chargeNeedsCheck = false
+    chargeIsProvisional = false
+    rateFromTheTypedRubles()
+  }
+
+  /// Works «Списано со счёта» out again from what the draft holds now: nothing when the
+  /// account holds the currency; otherwise the account's main currency and — unless the owner
+  /// typed it for that currency — the prefill from the bank's rates (`AccountRules.prefillLeg`).
+  /// A figure in rubles uses the rate the save lays, so an untouched prefill changes no ruble
+  /// figure; without a rate the figure stays empty and has to be typed. The save calls this
+  /// again once it has laid the rate, so a rate refined meanwhile is the one the figure uses.
+  public func refreshCharge() {
+    if editsSavedOperation {
+      refreshTheChargeOfTheSavedOperation()
+      return
+    }
+    guard needsCharge, let account = selectedAccount,
+      let leg = AccountRules.legCurrency(for: draft.currency, account: account)
+    else {
+      clearTheCharge()
+      return
+    }
+    if keepsTheTypedCharge(in: leg) { return }
+    dropTheTypedCharge()
+    let rates = ratesNow()
+    let rated = ratedDraft(rates.table)
+    draft.accountCurrency = leg
+    // A refund taken back from a purchase carries the purchase's rate for its rubles, while the
+    // bank converts what comes onto the card at the rates of the day it arrives.
+    draft.accountAmount =
+      RefundRules.takesBack(draft)
+      ? RefundRules.prefillLeg(
+        amount: draft.amount, currency: draft.currency, day: calendar.day(of: draft.occurredAt),
+        account: account, rates: rates.days)
+      : AccountRules.prefillLeg(
+        amount: draft.amount, currency: draft.currency, rate: rated.rate,
+        day: calendar.day(of: draft.occurredAt), account: account, rates: rates.days)
+    chargeIsProvisional =
+      draft.accountAmount != nil && isProvisional(leg: leg, rated: rated, table: rates.table)
+  }
+
+  /// A saved operation keeps what it was charged until the account, the currency, the amount,
+  /// the day, the rate or the figure is changed in the editor; then the figure follows
+  /// `AccountRules.legAfterEdit` against the operation as it was opened: cleared when the
+  /// account holds the currency, worked out again when it was the prefill, kept and flagged
+  /// when it was typed from the statement.
+  private func refreshTheChargeOfTheSavedOperation() {
+    guard let opened = openedDraft else { return }
+    guard needsCharge, let account = selectedAccount,
+      let leg = AccountRules.legCurrency(for: draft.currency, account: account)
+    else {
+      clearTheCharge()
+      return
+    }
+    if keepsTheTypedCharge(in: leg) { return }
+    dropTheTypedCharge()
+    guard let before = try? opened.materialize(now: opened.occurredAt) else { return }
+    let rates = ratesNow()
+    let rated = ratedDraft(rates.table)
+    let edit = AccountRules.legAfterEdit(
+      before: before, after: rated, account: account, rates: rates.days, calendar: calendar)
+    draft.accountCurrency = edit.currency
+    draft.accountAmount = edit.amount
+    chargeNeedsCheck = edit.outcome == .keptTyped
+    chargeIsProvisional =
+      edit.outcome == .prefilled && edit.amount != nil
+      && isProvisional(leg: leg, rated: rated, table: rates.table)
+  }
+
+  /// A figure the owner typed for the currency the account is still charged in stays; it is
+  /// flagged once what it was typed for has changed.
+  private func keepsTheTypedCharge(in leg: CurrencyCode) -> Bool {
+    guard chargeTyped, draft.accountCurrency == leg, draft.accountAmount != nil else {
+      return false
+    }
+    chargeNeedsCheck = chargeTypedFor != chargeBasis
+    rateFromTheTypedRubles()
+    return true
+  }
+
+  /// Nothing is charged apart: the account holds the currency, or no money moves on it.
+  private func clearTheCharge() {
+    dropTheTypedCharge()
+    draft.accountCurrency = nil
+    draft.accountAmount = nil
+    chargeIsProvisional = false
+  }
+
+  /// Forgets a typed figure, and the rate it implied when the bank had none.
+  private func dropTheTypedCharge() {
+    chargeTyped = false
+    chargeTypedFor = nil
+    chargeNeedsCheck = false
+    guard rateFromTheCharge else { return }
+    rateFromTheCharge = false
+    draft.rate = nil
+    draft.rateDate = nil
+    draft.rateSource = nil
+    draft.rateProvisional = false
+  }
+
+  /// A typed figure in rubles is the operation's rubles (`TransactionDraft.materialize`). When
+  /// the bank has no rate at all for the operation's currency, the rate is the one the figure
+  /// implies — six places, set by hand — or the save could not convert the amount and would
+  /// refuse the very figure the panel asked for. A rate the owner typed is never replaced.
+  private func rateFromTheTypedRubles() {
+    guard chargeTyped, draft.accountCurrency == .rub, let rubles = draft.accountAmount,
+      draft.currency != .rub, !draft.amount.isZero
+    else { return }
+    if !rateFromTheCharge {
+      guard draft.rate == nil,
+        ratesNow().table.resolve(draft.currency, on: calendar.day(of: draft.occurredAt)) == nil
+      else { return }
+    }
+    draft.rate = DecimalMath.round(rubles.decimal / draft.amount.decimal, scale: 6)
+    draft.rateDate = calendar.day(of: draft.occurredAt)
+    draft.rateSource = .manual
+    draft.rateProvisional = false
+    rateFromTheCharge = true
+  }
+
+  /// The draft with the rate the save would lay on it.
+  private func ratedDraft(_ table: RateTable) -> TransactionDraft {
+    var rated = draft
+    AppEnvironment.applyRate(to: &rated, from: table, calendar: calendar)
+    return rated
+  }
+
+  /// Whether the figure rests on a rate the bank has not published for the day yet: the
+  /// operation's own, or that of the currency the account is charged in.
+  private func isProvisional(
+    leg: CurrencyCode, rated: TransactionDraft, table: RateTable
+  ) -> Bool {
+    let day = calendar.day(of: draft.occurredAt)
+    // A refund of a purchase carries the purchase's rate, but what came onto the account is
+    // prefilled at the rates of the refund's own day: those are the ones that may be early.
+    let ownIsProvisional =
+      draft.currency != .rub
+      && (takesBackFromAPurchase
+        ? (table.resolve(draft.currency, on: day)?.isProvisional ?? true)
+        : rated.rateProvisional)
+    let legIsProvisional = leg != .rub && (table.resolve(leg, on: day)?.isProvisional ?? true)
+    return ownIsProvisional || legIsProvisional
+  }
+
+  /// The rates, read from the cache once until they may have changed.
+  private func ratesNow() -> (table: RateTable, days: DayRates) {
+    if let cachedRates { return cachedRates }
+    let table = rateTable?() ?? RateTable()
+    let rates = (table: table, days: Self.dayRates(table))
+    cachedRates = rates
+    return rates
+  }
+
+  /// The rates may have changed — the data was computed again: the next figure reads them
+  /// afresh.
+  public func ratesMayHaveChanged() {
+    cachedRates = nil
+  }
+
+  /// The editor keeps the operation as it was opened, from the first change that moves what the
+  /// account is charged: what `AccountRules.legAfterEdit` compares the edit with.
+  private func noteTheOpenedDraft() {
+    guard editsSavedOperation, openedDraft == nil else { return }
+    openedDraft = draft
+  }
+
+  /// A saved operation on the account, in the currency, of the amount and on the day it was
+  /// opened with: it moves money as it did.
+  private var movesLikeTheOpenedOperation: Bool {
+    guard editsSavedOperation else { return false }
+    guard let opened = openedDraft else { return true }
+    return opened.paymentMethodId == draft.paymentMethodId && opened.currency == draft.currency
+      && opened.amount == draft.amount
+      && calendar.day(of: opened.occurredAt) == calendar.day(of: draft.occurredAt)
+  }
+
+  /// The bank's rates by day, for one unit.
+  private static func dayRates(_ table: RateTable) -> DayRates {
+    var series: [CurrencyCode: [DayRate]] = [:]
+    for rate in table.rates {
+      series[rate.currency, default: []].append(DayRate(day: rate.date, perUnit: rate.perUnit))
+    }
+    return DayRates(series: series)
+  }
+
+  /// A currency laid by the defaults follows the account: the main currency of an account the
+  /// owner chose, otherwise the default currency. A saved operation keeps its own.
+  private func layTheCurrency() {
+    guard !editsSavedOperation, let laid = currencyFromDefaults, draft.currency == laid else {
+      return
+    }
+    let currency = AccountRules.currencyForNewOperation(
+      typed: nil, chosenAccount: chosenAccount, default: defaultCurrency)
+    draft.currency = currency
+    currencyFromDefaults = currency
+  }
+
+  private func account(withId id: UUID) -> PaymentMethod? {
+    paymentMethods.first { $0.id == id } ?? allAccounts.first { $0.id == id }
+  }
+
+  private func isLiveAccount(_ id: UUID) -> Bool {
+    paymentMethods.contains { $0.id == id }
+  }
+
+  // MARK: Before the count
+
+  /// The count the save has to ask «Это было до сверки в 14:05?» about: the operation is dated
+  /// on the day of the latest count of a balance it moves, and is saved after that count
+  /// (`AccountReconciliation.beforeTheCount`). `nil` when nothing asks, or the owner has
+  /// answered about that count already. Money back is asked too, before its confirmation opens:
+  /// the confirmation writes it at the moment the answer gave.
+  public func countToAskAbout(savedAt: Date, balances: AccountBalances) -> Date? {
+    guard let entry = try? draftForSaving.materialize(now: savedAt) else { return nil }
+    let keys = AccountReconciliation.movedKeys(
+      of: entry, mainId: paymentMethods.first(where: \.isDefault)?.id, tree: categoryTree)
+    guard
+      let count = AccountReconciliation.beforeTheCount(
+        occurredAt: draft.occurredAt, savedAt: savedAt, keys: keys, balances: balances,
+        calendar: calendar),
+      count != answeredCount
+    else { return nil }
+    return count
+  }
+
+  /// The answer: «Да» dates the operation a second before the count, so its money is inside
+  /// what was counted — unless it is dated before the count already, a time set in the panel,
+  /// which is kept; «Нет» dates it after the count. Either way the date is the owner's now, and
+  /// it stays on the day of the count: a count at 00:00:00 answered «Да», or at 23:59:59
+  /// answered «Нет», would otherwise put the operation into another day and month.
+  public func answerCount(_ count: Date, wasBefore: Bool) {
+    let stamped = AccountReconciliation.stamped(
+      occurredAt: draft.occurredAt, count: count, wasBefore: wasBefore, calendar: calendar)
+    draft.occurredAt = wasBefore ? min(draft.occurredAt, stamped) : stamped
+    dateFollowsTheClock = false
+    answeredCount = count
   }
 
   /// A new date is a new day: the event covering it is offered instead of the old one's.
   public func setDate(_ date: Date, today: DateOnly) {
     guard draft.occurredAt != date else { return }
+    noteTheOpenedDraft()
     draft.occurredAt = date
     applyDefaults(today: today)
   }
@@ -827,19 +1318,33 @@ public final class EntryDraftModel {
   /// text leaves the rate exactly as it was, because a draft with no rate and the source
   /// set to `manual` is the one combination that converts a foreign amount one to one.
   /// An empty field means "use the rate of the bank again", not "there is no rate".
+  ///
+  /// «Списано со счёта» follows the rate: a figure in rubles is the operation's rubles, so a
+  /// rate typed after a figure typed in rubles is the owner's later word, and the figure is
+  /// worked out from it again.
   public func setManualRate(_ text: String) {
+    // A refund of a purchase is at the purchase's rate: its rubles are the purchase's.
+    guard canTypeRate else { return }
     let trimmed = text.trimmingCharacters(in: .whitespaces)
     if trimmed.isEmpty {
+      noteTheOpenedDraft()
+      rateFromTheCharge = false
       draft.rate = nil
       draft.rateDate = nil
       draft.rateSource = nil
+      refreshCharge()
       return
     }
     guard let value = DecimalMath.parse(trimmed), value > 0 else { return }
+    guard value != draft.rate || draft.rateSource != .manual || rateFromTheCharge else { return }
+    noteTheOpenedDraft()
+    rateFromTheCharge = false
     draft.rate = value
     draft.rateDate = calendar.day(of: draft.occurredAt)
     draft.rateSource = .manual
     draft.rateProvisional = false
+    if draft.accountCurrency == .rub { dropTheTypedCharge() }
+    refreshCharge()
   }
 
   // MARK: Creating on the spot
@@ -1061,6 +1566,8 @@ public final class EntryDraftModel {
   /// A new part takes what is left of the total and starts with a quality, like every
   /// other part of an operation.
   public func addPart() {
+    // A refund of a purchase takes back one amount of one part.
+    guard !takesBackFromAPurchase else { return }
     let remainder = draft.unallocated
     draft.parts.append(PartDraft(amount: remainder.isNegative ? .zero : remainder))
     resolveQuality(ofPartAt: draft.parts.count - 1, in: categoryTree)
@@ -1071,6 +1578,7 @@ public final class EntryDraftModel {
   /// An empty part is never saved (`saveRefusalKey`: every part above zero), so the button
   /// cannot leave an owed part of nothing in «Owed to me».
   public func markLastPartPaidForSomeone() {
+    guard !takesBackFromAPurchase else { return }
     if !isSplit { addPart() }
     guard let last = draft.parts.indices.last else { return }
     draft.parts[last].reimbursable = true
@@ -1105,7 +1613,7 @@ public final class EntryDraftModel {
   }
 
   public func splitEqually(into count: Int) {
-    guard count > 1 else { return }
+    guard count > 1, !takesBackFromAPurchase else { return }
     let shares = draft.amount.split(into: count)
     let template = draft.parts.first ?? PartDraft()
     draft.parts = shares.map { share in
@@ -1127,12 +1635,30 @@ public final class EntryDraftModel {
   /// `SplitValidator`'s. A missing category is not one of them: an operation may stay
   /// uncategorised.
   public var saveRefusalKey: String? {
-    guard !draft.amount.isZero else { return "entry.error.amountMissing" }
+    guard !draft.amount.isZero else {
+      return zeroWasTyped ? "entry.error.amountNotPositive" : "entry.error.amountMissing"
+    }
     guard !draft.amount.isNegative else { return "entry.error.amountNotPositive" }
     guard !isOnCredit || draft.kind.canBeBoughtOnCredit || keepsTheSavedCredit else {
       return "entry.error.creditNotPurchase"
     }
-    for problem in SplitValidator.validate(draft, categories: categoryTree).problems {
+    // The account does not hold the currency and no rate gave what it was charged: the figure
+    // from the statement is typed, or nothing is saved. A saved operation whose account,
+    // currency, amount and day stay as they were is not asked: a row of the time before
+    // accounts has no figure, and the write lets it be.
+    let charged = draft.accountAmount.map { !$0.isZero } ?? false
+    guard movesLikeTheOpenedOperation || !needsCharge || charged else {
+      return "entry.error.chargeMissing"
+    }
+    // A refund of a purchase takes back one amount of one part at its rubles: a part beside
+    // it would be refunded with no purchase to check it against.
+    guard !(takesBackFromAPurchase && draft.parts.count > 1) else {
+      return "entry.error.refundOneAmount"
+    }
+    // What is checked is what is written: a part «за другого» left without its debtor stops a
+    // purchase, not the income it became, which has no such field.
+    let written = draftForSaving
+    for problem in SplitValidator.validate(written, categories: categoryTree).problems {
       switch problem {
       case .noParts, .unbalanced: return "entry.error.notBalanced"
       case .emptyPart: return "entry.error.amountNotPositive"
@@ -1151,7 +1677,8 @@ public final class EntryDraftModel {
   public var shownRefusalKey: String? {
     switch saveRefusalKey {
     case "entry.error.amountNotPositive", "entry.error.debtorMissing", "entry.error.goalMissing",
-      "entry.error.goalCategoryMismatch", "entry.error.creditNotPurchase":
+      "entry.error.goalCategoryMismatch", "entry.error.creditNotPurchase",
+      "entry.error.chargeMissing", "entry.error.refundOneAmount":
       saveRefusalKey
     default: nil
     }
@@ -1168,7 +1695,8 @@ public final class EntryDraftModel {
     let first = draft.parts.first ?? PartDraft()
     let byTheDraft =
       draft.kind != .expense || isSplit || draft.placeId != nil || draft.debtId != nil
-      || draft.currency != .rub || draft.periodMonth != nil
+      || draft.currency != (currencyFromDefaults ?? defaultCurrency) || chargeTyped
+      || draft.periodMonth != nil
       || (draft.paymentMethodId != nil && draft.paymentMethodId != paymentMethodFromDefaults)
       || (draft.note != nil && draft.note != noteFromTheLine)
       || draft.occurredAt != dateFromTheLine
@@ -1188,6 +1716,63 @@ public final class EntryDraftModel {
   /// with the line.
   public var recordsThroughReimbursementSheet: Bool {
     draft.kind == .reimbursement && draft.debtId == nil
+  }
+
+  /// What money back the confirmation turned away becomes instead: income — the person owes
+  /// nothing — or the repayment of a «Мне должны» debt the person owes on.
+  public enum MoneyBackInstead: Hashable, Sendable {
+    case income
+    case debtRepayment(UUID)
+  }
+
+  /// Money back the confirmation turned away, recorded the other way it offered: the person,
+  /// amount, currency, account and what the account received are the ones the sheet held.
+  /// Income names no person, so whom it came from goes to its note — `fromNote` words it.
+  public func recordMoneyBackInstead(
+    _ route: MoneyBackInstead, from sheet: TransactionDraft,
+    fromNote: (String) -> String, today: DateOnly
+  ) {
+    let person = sheet.parts.first?.forPersonId
+    draft.amount = sheet.amount
+    draft.amountExpression = nil
+    draft.currency = sheet.currency
+    draft.rate = sheet.rate
+    draft.rateDate = sheet.rateDate
+    draft.rateSource = sheet.rateSource
+    draft.rateProvisional = sheet.rateProvisional
+    draft.paymentMethodId = sheet.paymentMethodId
+    draft.parts = [PartDraft(amount: sheet.amount, forPersonId: person)]
+    // What the sheet held is the owner's: no default laid later replaces it.
+    currencyFromDefaults = nil
+    paymentMethodFromDefaults = nil
+    accountFromTheScreen = false
+    switch route {
+    case .income:
+      if let person {
+        let words =
+          personPhraseFromTheLine.flatMap { $0.id == person ? $0.text : nil }
+          ?? people.first { $0.id == person }.map { fromNote($0.name) }
+        if let words, !(draft.note ?? "").contains(words) {
+          draft.note = [draft.note, words].compactMap { $0 }.joined(separator: " ")
+        }
+      }
+      draft.kind = .income
+      applyDefaults(today: today)
+    case .debtRepayment(let debt):
+      draft.debtId = debt
+      refreshCharge()
+    }
+    // What the account received, typed or prefilled in the sheet, stays as it was there.
+    if let received = sheet.accountAmount, !received.isZero { setCharge(received) }
+  }
+
+  /// The debt the written operation pays or grows, if any: the one the operation as written
+  /// names — a refund names none, whatever the panel held before the kind changed — read
+  /// afresh, so a debt made in Debts since the line last read its dictionaries gets its line.
+  public func debtPaid(by entry: TransactionEntry) -> Debt? {
+    guard let id = entry.transaction.debtId else { return nil }
+    if let current = try? references?.debts() { debts = current }
+    return debts.first { $0.id == id }
   }
 
   /// Whether the purchase is on credit: a plan being made in the line, or a debt the saved
@@ -1263,11 +1848,15 @@ public final class EntryDraftModel {
   /// comes to the total goes, instead of standing in the table over another amount. The field
   /// writing back the amount it shows is not a correction and keeps it.
   public func setTotal(_ amount: AmountE4, typed text: String? = nil) {
+    if amount != draft.amount { noteTheOpenedDraft() }
     draft.amount = amount
+    // An emptied field reads as zero too; only a number typed there is a zero typed.
+    zeroWasTyped = amount.isZero && !(text ?? "").trimmingCharacters(in: .whitespaces).isEmpty
     if draft.parts.count == 1 { draft.parts[0].amount = amount }
     draft.amountExpression = Self.formula(
       typed: text, keeping: draft.amountExpression, for: amount)
     followTheAmountInTheCreditPlan()
+    refreshCharge()
   }
 
   /// The formula behind `amount`: the one typed, when the text is one, its numbers written the
@@ -1319,17 +1908,29 @@ public final class EntryDraftModel {
     creditPlan = CreditPlan(
       debtId: nil, payments: payments,
       monthlyAmount: Self.instalment(of: draft.amount, over: payments))
+    // A purchase on credit moves the debt, not the account.
+    refreshCharge()
   }
 
   public func stopCreditPlan() {
     guard canChangeCredit else { return }
     creditPlan = nil
     draft.creditDebtId = nil
+    refreshCharge()
   }
 
   public func reset() {
-    draft = TransactionDraft()
+    draft = TransactionDraft(currency: defaultCurrency)
     draft.normalizeSinglePart()
+    currencyFromDefaults = defaultCurrency
+    accountFromTheScreen = false
+    chargeTyped = false
+    chargeTypedFor = nil
+    chargeNeedsCheck = false
+    rateFromTheCharge = false
+    chargeIsProvisional = false
+    answeredCount = nil
+    zeroWasTyped = false
     // The names belonged to the line just saved: the next operation is not offered them.
     suggestedPersonName = nil
     suggestedPlaceName = nil
@@ -1349,6 +1950,222 @@ public final class EntryDraftModel {
     creditPlan = nil
     expectedIncomeId = nil
     creationFailureKey = nil
+    refundTarget = nil
+    refundWithoutPurchase = false
+    refundPicking = nil
+    pickBase = nil
+    lineOfThePick = nil
+    lastLine = nil
+    personPhraseFromTheLine = nil
+  }
+
+  // MARK: Refund of a purchase
+
+  /// The purchase part a refund takes money back from, as picked: the refund is made in the
+  /// purchase's currency at the purchase's rate, so taking back the whole part takes it to zero
+  /// exactly.
+  public struct RefundTarget: Hashable, Sendable {
+    public var purchase: TransactionEntry
+    public var part: TransactionPart
+
+    public init(purchase: TransactionEntry, part: TransactionPart) {
+      self.purchase = purchase
+      self.part = part
+    }
+  }
+
+  /// The purchase the refund takes back from, once picked.
+  public private(set) var refundTarget: RefundTarget?
+  /// «Без покупки»: a refund of something bought before the ledger, or taken out of a goal —
+  /// counted on its own, as refunds always were. Chosen after a purchase was picked, it takes
+  /// nothing back from that purchase any more.
+  public var refundWithoutPurchase = false {
+    didSet {
+      guard refundWithoutPurchase, !oldValue else { return }
+      if refundTarget != nil || pickBase != nil {
+        forgetTheRefundedPurchase()
+        refreshCharge()
+      }
+      lineOfThePick = lastLine
+    }
+  }
+  /// The draft as it was before a purchase was picked, and what its defaults were: another
+  /// purchase is picked from it, and forgetting the purchase — another kind, «Без покупки»,
+  /// another line — brings it back, so nothing the purchase brought (its currency, rate,
+  /// account, category) stays behind.
+  private var pickBase: PickBase?
+  private struct PickBase {
+    var draft: TransactionDraft
+    var paymentMethodFromDefaults: UUID?
+    var currencyFromDefaults: CurrencyCode?
+    var forWhomFromDefaults: ForWhomChoice?
+    var accountFromTheScreen: Bool
+  }
+  /// The line the purchase was picked for, and the line applied last.
+  private var lineOfThePick: ParsedInput?
+  private var lastLine: ParsedInput?
+  /// Whom the line named and in its own words — «от Ани» —, for the note of money back
+  /// recorded as income instead.
+  private var personPhraseFromTheLine: (id: UUID, text: String)?
+  /// The picker of purchases is asked for; whoever holds the line presents it.
+  public var refundPicking: RefundPickerRequest?
+
+  /// The panel offers to pick the purchase a new refund takes money back from. A saved refund
+  /// keeps the purchase it was recorded against.
+  public var offersRefundPurchase: Bool { !editsSavedOperation && draft.kind == .refund }
+
+  /// A new refund that has not been told its purchase yet: Enter opens the picker first.
+  public var needsRefundPurchase: Bool {
+    !editsSavedOperation && draft.kind == .refund && refundTarget == nil && !refundWithoutPurchase
+  }
+
+  /// What the picker narrows the purchases by: the words, the place and the amount of the line.
+  public var refundQuery: RefundQuery {
+    let base = pickBase?.draft ?? draft
+    return RefundQuery(
+      words: noteFromTheLine ?? base.note, placeId: base.placeId,
+      amount: base.amount.raw > 0 ? base.amount : nil, currency: base.currency,
+      latestDay: calendar.day(of: draft.occurredAt))
+  }
+
+  /// The refund takes back `amount` of the part — all that is left of it when nil. The draft
+  /// becomes that refund: the purchase's currency and rate, its category, quality, «на кого»,
+  /// person, event and place; its account unless the owner chose one; the note and the date
+  /// stay the line's.
+  public func chooseRefund(of candidate: RefundCandidate, amount: AmountE4?) {
+    // Another purchase is picked from the draft as it was before the first one: the account
+    // the first purchase brought is not the owner's choice.
+    let base =
+      pickBase
+      ?? PickBase(
+        draft: draft, paymentMethodFromDefaults: paymentMethodFromDefaults,
+        currencyFromDefaults: currencyFromDefaults, forWhomFromDefaults: forWhomFromDefaults,
+        accountFromTheScreen: accountFromTheScreen)
+    let accountChosen =
+      base.draft.paymentMethodId != nil && base.paymentMethodFromDefaults == nil
+    let refund = try? RefundRules.draft(
+      refunding: candidate.part, of: candidate.purchase, amount: amount ?? candidate.remaining,
+      occurredAt: draft.occurredAt,
+      accountId: accountChosen ? base.draft.paymentMethodId : nil,
+      index: RefundIndex.empty, tree: categoryTree)
+    guard var refund else { return }
+    // The words of the line describe the refund; with none, the purchase's do.
+    refund.note = base.draft.note ?? refund.note
+    refund.amountExpression = nil
+    // The purchase's account is archived since: money on it would count nowhere, so it comes
+    // onto the account a new operation would take.
+    var accountByDefault: UUID?
+    if !accountChosen, let id = refund.paymentMethodId, !isLiveAccount(id) {
+      accountByDefault = self.accountByDefault(at: refund.placeId, in: otherOperations()).chosen
+      refund.paymentMethodId = accountByDefault
+    }
+    draft = refund
+    pickBase = base
+    lineOfThePick = lastLine
+    // The purchase's currency, account and «на кого» are the refund's own now: no default
+    // laid later — another place, another day — replaces them.
+    currencyFromDefaults = nil
+    paymentMethodFromDefaults = accountByDefault
+    forWhomFromDefaults = nil
+    accountFromTheScreen = false
+    refundWithoutPurchase = false
+    refundTarget = RefundTarget(purchase: candidate.purchase, part: candidate.part)
+    refreshCharge()
+  }
+
+  /// The refund stops taking back from the purchase: an ordinary refund again, as the draft was
+  /// before the purchase was picked — in its kind and on its day of now.
+  public func forgetTheRefundedPurchase() {
+    refundTarget = nil
+    lineOfThePick = nil
+    if let base = pickBase {
+      let kind = draft.kind
+      let occurredAt = draft.occurredAt
+      draft = base.draft
+      draft.kind = kind
+      draft.occurredAt = occurredAt
+      paymentMethodFromDefaults = base.paymentMethodFromDefaults
+      currencyFromDefaults = base.currencyFromDefaults
+      forWhomFromDefaults = base.forWhomFromDefaults
+      accountFromTheScreen = base.accountFromTheScreen
+      pickBase = nil
+    }
+    for index in draft.parts.indices { draft.parts[index].refundOfPartId = nil }
+  }
+
+  /// A refund that takes money back from a purchase part — picked here, or saved so.
+  public var takesBackFromAPurchase: Bool { RefundRules.takesBack(draft) }
+
+  /// «Разделить»: a kind that is split, and not a refund of a purchase, which takes back one
+  /// amount of one part.
+  public var canSplit: Bool { has(.split) && !takesBackFromAPurchase }
+
+  /// «За другого»: a kind that has it, and not a refund of a purchase.
+  public var canMarkPaidForSomeone: Bool { has(.reimbursable) && !takesBackFromAPurchase }
+
+  /// The rate can be typed — not on a refund of a purchase, which is at the purchase's rate.
+  public var canTypeRate: Bool { !takesBackFromAPurchase }
+
+  /// The account a new operation takes by itself: the one whose screen is open, else the last
+  /// one used at `place`, else the main account. Only live accounts.
+  private func accountByDefault(
+    at place: UUID?, in history: [TransactionEntry]
+  ) -> (chosen: UUID?, screen: UUID?) {
+    let atThePlace = place.flatMap { place in
+      history.first { $0.transaction.placeId == place }
+    }?.transaction.paymentMethodId
+    let screen = openAccountScreen?().flatMap { isLiveAccount($0) ? $0 : nil }
+    let chosen = AccountRules.accountForNewOperation(
+      typed: nil, openAccountScreen: screen,
+      lastAtPlace: atThePlace.flatMap { isLiveAccount($0) ? $0 : nil },
+      main: paymentMethods.first(where: \.isDefault)?.id)
+    return (chosen, screen)
+  }
+
+  /// A kind other than a refund takes nothing back.
+  private func dropTheRefundTheKindCannotCarry() {
+    guard draft.kind != .refund, refundTarget != nil || refundWithoutPurchase else { return }
+    forgetTheRefundedPurchase()
+    refundWithoutPurchase = false
+  }
+
+  /// What refunds already took back from the purchase, read at this moment: the purchase and
+  /// everything saved after it.
+  public func refundIndexNow() -> RefundIndex {
+    guard let target = refundTarget else { return .empty }
+    // Every operation, not only those after the purchase: a refund may be dated earlier on
+    // the purchase's day, or before it.
+    let entries = (try? transactions?.entries(from: .distantPast, to: .distantFuture)) ?? nil
+    return RefundIndex(entries: entries ?? [target.purchase], debts: [:])
+  }
+
+  /// The rubles the refund is written with: what is left of the part's rubles when it takes the
+  /// rest of the part, otherwise its share at the purchase's rate — never the rubles of the day
+  /// (`RefundRules.rubles`). `index` knows the refunds already made, read at the moment of
+  /// saving. Refused when the amount is more than what is left.
+  public func refundRubles(index: RefundIndex) throws -> (AmountE4) throws -> AmountE4 {
+    guard let target = refundTarget else { throw RefundError.notRefundable }
+    guard RefundRules.isRefundable(part: target.part, in: target.purchase, tree: categoryTree)
+    else { throw RefundError.notRefundable }
+    let left = RefundRules.remaining(part: target.part, index: index)
+    guard draft.amount.raw > 0 else { throw RefundError.notPositive }
+    guard draft.amount <= left else { throw RefundError.exceedsRemaining }
+    let before = RefundRules.refundedBefore(part: target.part, index: index)
+    let part = target.part
+    return { amount in
+      RefundRules.rubles(refundAmount: amount, part: part, refundedBefore: before)
+    }
+  }
+}
+
+/// The picker of purchases, asked for by Enter on a refund or by the ↓ panel.
+public struct RefundPickerRequest: Identifiable, Hashable, Sendable {
+  public let id = UUID()
+  /// Enter asked: once a purchase is picked — or «Без покупки» — the refund is saved.
+  public var savesAfterChoice: Bool
+
+  public init(savesAfterChoice: Bool) {
+    self.savesAfterChoice = savesAfterChoice
   }
 }
 

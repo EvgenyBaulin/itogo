@@ -80,14 +80,17 @@
       else { return }
 
       // Today only as far as it has been lived: an operation typed next is the latest one.
+      // With its accounts, as a data set has them (`DataSetGeneration.generate`).
       let now = Date()
-      let set = SampleDataGenerator(seed: 20_260_918).generate(
+      let language = environment.language.resolvedCode
+      let set = SampleDataGenerator(seed: Self.seed).generate(
         months: months,
         endingOn: environment.calendar.day(of: now),
         now: now,
         calendar: environment.calendar,
-        language: environment.language.resolvedCode,
-        density: density)
+        language: language,
+        density: density
+      ).withAccounts(seed: Self.seed, calendar: environment.calendar, language: language, now: now)
       // One transaction: the sample lands whole or not at all. A refused one says so in the
       // journal, with the kind of failure and the size only, instead of the menu doing
       // nothing without a word.
@@ -106,6 +109,9 @@
       compute.run()
     }
 
+    /// The seed of the menu's samples: fixed, so a second run writes over its own rows.
+    static let seed: UInt64 = 20_260_918
+
     /// Writes a sample next to what the database already holds, in one transaction
     /// (`TransactionRepository.save(_: HistoryBatch)`): twenty thousand operations are one
     /// commit, and a refused row leaves nothing half-written. The seed is fixed, so a second
@@ -118,6 +124,8 @@
       var set = set
       adoptSystemCategories(
         of: &set, existing: (try? references.categories(includeArchived: true)) ?? [])
+      keepTheMainAccount(
+        of: &set, existing: (try? references.paymentMethods(includeArchived: false)) ?? [])
       // Categories generated for the sample may differ from the ones already seeded, so
       // parts point at whatever the generator created; both sets live side by side, except
       // the system ones, which exist once (see `adoptSystemCategories`). A reimbursement's
@@ -125,6 +133,32 @@
       // sample files its cashback under its own «Cashback», next to the starter one, and the
       // setting of Analytics is pointed there in the same write.
       try transactions.save(HistoryBatch(sample: set))
+    }
+
+    /// A database has one main account. When it has one already — the one the owner set up in
+    /// the Debug database — it stays the main one: the sample's accounts come as ordinary ones,
+    /// its operations still on them, and the database keeps its own settings of accounts — the
+    /// setup, the default currency, and the categories its fees and the differences of its counts
+    /// go to — so the owner's next fee is not filed under the sample's «Комиссии».
+    nonisolated private static func keepTheMainAccount(
+      of set: inout SampleDataSet, existing: [PaymentMethod]
+    ) {
+      let own = Set(set.paymentMethods.map(\.id))
+      guard existing.contains(where: { $0.isDefault && !own.contains($0.id) }) else { return }
+      // Every operation on an account of the sample first, while its main account is known.
+      set = set.assigningAccounts()
+      set.paymentMethods = set.paymentMethods.map { account in
+        var account = account
+        account.isDefault = false
+        return account
+      }
+      for key in [
+        AccountSettings.setupKey, AccountSettings.defaultCurrencyKey,
+        AccountSettings.transferFeeCategoryKey, PlanningSettings.reconcileExpenseCategoryKey,
+        PlanningSettings.reconcileIncomeCategoryKey,
+      ] {
+        set.settings[key] = nil
+      }
     }
 
     /// The starter tree is already in the database, and a system role exists once per kind

@@ -39,6 +39,16 @@ public final class AppEnvironment {
   public private(set) var planning: PlanningRepository?
   /// «Это нормально» on an anomaly.
   public private(set) var anomalies: AnomalyRepository?
+  /// The accounts and their groups, and the writes of them that are no step of ⌘Z.
+  public private(set) var accounts: AccountRepository?
+  /// The currency of everything new (`currencies.default`), read at every open; a screen that
+  /// changes it reads it again (`refreshAccountSettings()`).
+  public internal(set) var defaultCurrency: CurrencyCode = .rub
+  /// Where the setup of the accounts stands (`accounts.setup`); `nil` while it is still due.
+  public internal(set) var accountSetup: AccountSettings.Setup?
+  /// The account whose screen is open: a new operation typed in the entry line goes to it
+  /// unless the line or the panel names another.
+  public var focusedAccountId: UUID?
   /// Names the entry line can recognise: people, places, payment methods, events,
   /// goals and debts. Refreshed whenever a dictionary changes.
   public private(set) var vocabulary = ParserVocabulary.empty
@@ -288,6 +298,8 @@ public final class AppEnvironment {
   /// provisional, and a background refresh fills the gap for the next one. A rate the owner
   /// typed by hand, or one that came with an import, is never touched.
   public func applyRate(to draft: inout TransactionDraft) {
+    // A refund of a purchase is at the purchase's rate, whatever the day of the refund says.
+    guard !Self.takesBackFromAPurchase(draft) else { return }
     let day = calendar.day(of: draft.occurredAt)
     let table = (try? rates?.table()) ?? RateTable()
     Self.applyRate(to: &draft, from: table, calendar: calendar)
@@ -305,6 +317,9 @@ public final class AppEnvironment {
   nonisolated static func applyRate(
     to draft: inout TransactionDraft, from table: RateTable, calendar: CalendarContext
   ) {
+    // A refund taken back from a purchase part keeps the purchase's rate, so taking back the
+    // whole part takes it to zero exactly: the rate of the refund's own day never replaces it.
+    guard !takesBackFromAPurchase(draft) else { return }
     guard draft.currency != .rub else {
       draft.rate = nil
       draft.rateDate = nil
@@ -325,6 +340,11 @@ public final class AppEnvironment {
       // the owner is told rather than handed a one-to-one total.
       draft.rateProvisional = true
     }
+  }
+
+  /// A refund that takes money back from a part of a purchase.
+  nonisolated static func takesBackFromAPurchase(_ draft: TransactionDraft) -> Bool {
+    draft.parts.contains { $0.refundOfPartId != nil }
   }
 
   /// Whether the cache can give `currency` a rate on the day of `date` — the one thing an
@@ -368,7 +388,13 @@ public final class AppEnvironment {
   /// away, and the first attaches what a start attaches (`AppLaunch`).
   public func start() async {
     let staging = StagingNotes()
-    guard await start(preparing: { try Self.openDatabase(noting: staging) }), !isClosed else {
+    // The name of a main account the update may have to make, in the language of the
+    // interface: the preparation runs off the main actor and cannot ask for it there.
+    let context = MigrationContext(mainAccountName: language("accounts.mainDefaultName"))
+    guard
+      await start(preparing: { try Self.openDatabase(noting: staging, context: context) }),
+      !isClosed
+    else {
       return
     }
     // What the staged database came to is said once the start is over, open or not: the
@@ -383,8 +409,14 @@ public final class AppEnvironment {
   }
 
   /// The database of this launch, from its folder: off the main thread.
+  ///
+  /// A database a newer build has to migrate — the owner's own after an update, a restored copy
+  /// or an imported archive of an older version — is copied first, into the folder of copies,
+  /// and the copy is checked (`BackupService.copyBeforeMigration`): it is the way back to the
+  /// older version, which refuses the migrated file. No copy, no migration: the start fails
+  /// with `StartFailure.copyBeforeUpdate` and the file stays as it was.
   private nonisolated static func openDatabase(
-    noting staging: StagingNotes
+    noting staging: StagingNotes, context: MigrationContext
   ) throws -> DatabaseStack {
     // A data set that was not generated at this launch must be there already: the
     // Release build never makes one.
@@ -400,7 +432,13 @@ public final class AppEnvironment {
     let replacement = AppPaths.applyPendingReplacement()
     let imported = AppPaths.takeImportMark(after: replacement)
     staging.note(.init(refused: refused, replacement: replacement, imported: imported))
-    return try DatabaseStack(url: AppPaths.databaseURL, schema: BundleSchemaSource())
+    let schema = BundleSchemaSource()
+    if !(try DatabaseStack.pendingMigrations(fileAt: AppPaths.databaseURL, schema: schema)).isEmpty
+    {
+      _ = try BackupService.copyBeforeMigration(
+        of: AppPaths.databaseURL, into: AppPaths.backupsDirectory, now: Date())
+    }
+    return try DatabaseStack(url: AppPaths.databaseURL, schema: schema, context: context)
   }
 
   /// The start failed: said in the journal, and kept for the window by what it means. The
@@ -545,6 +583,7 @@ public final class AppEnvironment {
     rates = nil
     planning = nil
     anomalies = nil
+    accounts = nil
     // The services were built on this stack too, and a caller that holds the environment
     // reaches them directly: `scheduleBackup()`, `applyRate(...)`. Left wired, they went on
     // writing through a closed connection for the whole terminate-later window (SQLITE_MISUSE,
@@ -593,6 +632,14 @@ public final class AppEnvironment {
         LogPair("migrated", .count(stack.applied.applied)),
         LogPair("ms", .milliseconds(stack.applied.milliseconds)),
       ])
+    // What the update did to the accounts, when this open migrated: counts only.
+    if !stack.applied.dataSteps.isEmpty {
+      AppLog.info(
+        "db.migrationStep", .db, "the data step of the update ran",
+        stack.applied.dataSteps.sorted { $0.key < $1.key }.map {
+          LogPair($0.key, .count($0.value))
+        })
+    }
     self.stack = stack
     self.transactions = TransactionRepository(writer: stack.writer)
     self.references = ReferenceRepository(writer: stack.writer)
@@ -600,6 +647,7 @@ public final class AppEnvironment {
     self.rates = RateRepository(writer: stack.writer)
     self.planning = PlanningRepository(writer: stack.writer)
     self.anomalies = AnomalyRepository(writer: stack.writer)
+    self.accounts = AccountRepository(writer: stack.writer)
     let exportRepository = ExportRepository(writer: stack.writer)
     self.csvExport = CSVExportService(repository: exportRepository)
     self.archives = ArchiveService(stack: stack, appVersion: Self.appVersion)
@@ -625,6 +673,10 @@ public final class AppEnvironment {
         references: references, settings: settings, language: language.resolvedCode,
         isDataSet: AppPaths.dataSet != nil)
     }
+    // The accounts first: every repair of the open after this one may write operations, and
+    // an operation written without an account is given the main one.
+    ensureMainAccount()
+    refreshAccountSettings()
     dropFormulasThatNoLongerAddUp()
     chooseCashbackCategoryIfMissing()
     rolloverYearlyEvents()
@@ -632,6 +684,37 @@ public final class AppEnvironment {
     refreshForWhomLabels()
     assignsEventAutomatically = (try? settings?.string("events.automatic")) == "1"
     state = .ready
+  }
+
+  /// Exactly one live account is main at every open (`AccountRepository.ensureMainAccount`):
+  /// a write cut short can leave two, an archived one flagged or none. A failure costs nothing
+  /// but the repair, which the next open makes again; it is in the journal.
+  private func ensureMainAccount() {
+    guard let accounts else { return }
+    do {
+      guard let repair = try accounts.ensureMainAccount() else { return }
+      AppLog.info(
+        "accounts.mainRepaired", .db, "the accounts were left with one main account",
+        [
+          LogPair("account", .id(repair.mainId)), LogPair("madeMain", .flag(repair.madeMain)),
+          LogPair("cleared", .count(repair.cleared)),
+        ])
+    } catch {
+      AppLog.error(
+        "accounts.repairFailed", .db, "the main account could not be checked",
+        [LogPair("error", .error(error))])
+    }
+  }
+
+  /// The default currency and the state of the setup of the accounts, read from the database
+  /// again: at every open, and by a screen that has just changed one of them.
+  public func refreshAccountSettings() {
+    guard let settings else { return }
+    defaultCurrency = (try? settings.defaultCurrency()) ?? .rub
+    let stored = (try? settings.string(AccountSettings.setupKey)) ?? nil
+    accountSetup = stored.flatMap {
+      AccountSettings(storedValues: [AccountSettings.setupKey: $0]).setup
+    }
   }
 
   /// The formulas kept with operations are read again at every open — a restore and an
@@ -756,7 +839,12 @@ public final class AppEnvironment {
     }
     if try settings.string("app.seeded") == nil {
       try settings.set("app.seeded", to: "1")
-      try settings.setEnabledCurrencies(CurrencyCode.defaultEnabled)
+      // The ten of a fresh install, after whatever is on already: a currency an account holds
+      // or the default one is never switched off here — the settings refuse that, and the
+      // refusal would stop the start.
+      let enabled = try settings.enabledCurrencies()
+      try settings.setEnabledCurrencies(
+        enabled + CurrencyCode.defaultEnabled.filter { !enabled.contains($0) })
     }
   }
 }

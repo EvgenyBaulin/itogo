@@ -1,4 +1,5 @@
 import AppCore
+import AppDatabase
 import SwiftUI
 
 /// The sheet «Add…» of a menu opens: the name of the new record and, for an event and a
@@ -9,6 +10,7 @@ import SwiftUI
 /// it is laid out in a host of its own and gets the app's dependencies handed to it there.
 struct AddRecordSheet: View {
   @Dependency(\.environment) private var environment
+  @Dependency(\.store) private var store
   let model: EntryDraftModel
   /// Closes the sheet: the panel clears what it was presented for.
   let close: () -> Void
@@ -16,8 +18,9 @@ struct AddRecordSheet: View {
   /// «Save» was asked for: from then on the sheet says why nothing was added, an empty name
   /// included, which says nothing while the field is simply not typed into yet.
   @State private var asked = false
-  /// Why the last «Save» wrote nothing, when the database refused it.
-  @State private var failureKey: String?
+  /// Why the last «Save» wrote nothing, in words: a write the database refused, a name a live
+  /// row has, an account in the archive that cannot come back.
+  @State private var failure: String?
   /// Written once: Return in the field and the default button can both ask.
   @State private var saved = false
 
@@ -70,7 +73,7 @@ struct AddRecordSheet: View {
       .formStyle(.columns)
 
       if let refusal {
-        Text(verbatim: t(refusal))
+        Text(verbatim: refusal)
           .font(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
@@ -98,10 +101,11 @@ struct AddRecordSheet: View {
   private func save() {
     guard !saved else { return }
     asked = true
-    failureKey = nil
+    failure = nil
     guard form.refusalKey(in: model) == nil else { return }
-    guard form.save(into: model, today: environment.today) else {
-      failureKey = model.creationFailureKey
+    let saveContext = NewRecordForm.Context.app(environment, store: store)
+    if let refused = form.commit(into: model, today: environment.today, context: saveContext) {
+      failure = refused.text(environment)
       return
     }
     saved = true
@@ -116,9 +120,9 @@ struct AddRecordSheet: View {
   /// write the database refused.
   private var refusal: String? {
     if let key = form.refusalKey(in: model), asked || key != "entry.add.nameMissing" {
-      return key
+      return t(key)
     }
-    return failureKey
+    return failure
   }
 
   private var title: String {

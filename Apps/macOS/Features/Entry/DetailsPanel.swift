@@ -2,8 +2,11 @@ import AppCore
 import SwiftUI
 
 /// The ↓ panel. Every field of an operation is here: type, category with suggestions,
-/// quality, for whom, place, event, payment method, goal, debt, note, date, currency and
-/// rate — plus splitting, paying for somebody else and buying on credit.
+/// quality, for whom, place, event, the account and what it was charged, goal, debt, note,
+/// date, currency and rate — plus splitting, paying for somebody else and buying on credit.
+/// Only the fields the kind has are shown (`EntryDraftModel.fields`): income has no place,
+/// event, «на кого», «за другого» or credit; money back has its person and its account; a
+/// refund names the purchase it takes money back from.
 struct DetailsPanel: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -19,7 +22,9 @@ struct DetailsPanel: View {
       typeRow
       Divider()
       mainFields
-      if model.isSplit {
+      // Money back is never split: a split held before the kind changed stays out of sight,
+      // and out of what is written.
+      if model.isSplit && model.has(.split) {
         Divider()
         splitEditor
       }
@@ -42,6 +47,9 @@ struct DetailsPanel: View {
     }
     .frame(maxWidth: 720, alignment: .leading)
     .onSubmit { submit?() }
+    // The data was computed again — the bank's rates among it: «Списано со счёта» reads them
+    // afresh the next time it is worked out.
+    .onChange(of: compute.generation) { _, _ in model.ratesMayHaveChanged() }
     // «Add…» of a menu: a record of its kind, chosen in that menu once it is saved.
     .sheet(item: $model.adding) { kind in
       AddRecordSheet(kind: kind, model: model, today: environment.today) {
@@ -103,72 +111,106 @@ struct DetailsPanel: View {
           closedPartCaption
         }
       }
-      GridRow {
-        fieldLabel("entry.category")
-        categoryPicker(forPartAt: 0)
-      }
-      GridRow {
-        fieldLabel("entry.subcategory")
-        subcategoryPicker(forPartAt: 0)
-      }
-      if !model.categorySuggestions.isEmpty {
+      if model.offersRefundPurchase {
         GridRow {
-          Color.clear.frame(width: 1, height: 1)
-          suggestionChips
+          fieldLabel("entry.refund.purchase")
+          refundPurchaseRow
         }
       }
-      if model.hasQuality {
+      if model.has(.category) {
+        GridRow {
+          fieldLabel("entry.category")
+          categoryPicker(forPartAt: 0)
+        }
+        GridRow {
+          fieldLabel("entry.subcategory")
+          subcategoryPicker(forPartAt: 0)
+        }
+        if !model.categorySuggestions.isEmpty {
+          GridRow {
+            Color.clear.frame(width: 1, height: 1)
+            suggestionChips
+          }
+        }
+      }
+      if model.hasQuality && model.has(.quality) {
         GridRow {
           fieldLabel("entry.quality")
           qualityPicker(for: partBinding(0))
         }
       }
-      GridRow {
-        fieldLabel(forWhomKey)
-        forWhomPicker(forPartAt: 0)
-      }
-      GridRow {
-        fieldLabel("entry.place")
-        // Through the model, like a place the line names: it brings its category and its
-        // payment method. A place not been to yet is added from the menu, and the name the line
-        // could not match is where its sheet starts.
-        referencePicker(
-          selection: Binding(
-            get: { model.draft.placeId },
-            set: { model.setPlace($0, today: environment.today) }),
-          options: model.places.map { ($0.id, $0.name) }, adding: .place)
-      }
-      GridRow {
-        fieldLabel("entry.event")
-        HStack(spacing: 8) {
+      if model.has(.fromPerson) {
+        // Money back names the person it came from, and nothing else about them.
+        GridRow {
+          fieldLabel("entry.fromWhom")
           referencePicker(
-            selection: partBinding(0).eventId,
-            options: model.events.map { ($0.id, $0.name) }, adding: .event(part: 0))
-          if let suggested = model.suggestedEvent, model.draft.parts.first?.eventId == nil {
-            Button {
-              model.draft.parts[0].eventId = suggested.id
-            } label: {
-              Label {
-                Text(verbatim: suggested.name)
-              } icon: {
-                Image(systemName: "calendar.badge.plus")
+            selection: partBinding(0).forPersonId,
+            options: model.people.map { ($0.id, $0.name) }, adding: .person(part: 0))
+        }
+      } else if model.has(.forWhom) {
+        GridRow {
+          fieldLabel(forWhomKey)
+          forWhomPicker(forPartAt: 0)
+        }
+      }
+      if model.has(.place) {
+        GridRow {
+          fieldLabel("entry.place")
+          // Through the model, like a place the line names: it brings its category and its
+          // payment method. A place not been to yet is added from the menu, and the name the
+          // line could not match is where its sheet starts.
+          referencePicker(
+            selection: Binding(
+              get: { model.draft.placeId },
+              set: { model.setPlace($0, today: environment.today) }),
+            options: model.places.map { ($0.id, $0.name) }, adding: .place)
+        }
+      }
+      if model.has(.event) {
+        GridRow {
+          fieldLabel("entry.event")
+          HStack(spacing: 8) {
+            referencePicker(
+              selection: partBinding(0).eventId,
+              options: model.events.map { ($0.id, $0.name) }, adding: .event(part: 0))
+            if let suggested = model.suggestedEvent, model.draft.parts.first?.eventId == nil {
+              Button {
+                model.draft.parts[0].eventId = suggested.id
+              } label: {
+                Label {
+                  Text(verbatim: suggested.name)
+                } icon: {
+                  Image(systemName: "calendar.badge.plus")
+                }
               }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+              .help(t("entry.eventSuggested"))
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help(t("entry.eventSuggested"))
           }
         }
       }
       GridRow {
-        fieldLabel("entry.paymentMethod")
-        // A method chosen here is the owner's: no place chosen after it replaces it.
+        // «Со счёта» for spending, «На счёт» for money that comes in, «Счёт» for a goal.
+        fieldLabel(model.accountFieldKey)
+        // An account chosen here is the owner's: no place chosen after it replaces it. The
+        // main account first, the rest in the owner's order, and no «none»: an operation that
+        // names no account is on the main one, and the picker says so. Only a database with no
+        // account yet shows «—», with «Add…» to make one.
         referencePicker(
           selection: Binding(
-            get: { model.draft.paymentMethodId }, set: { model.setPaymentMethod($0) }),
-          options: model.paymentMethods.map { ($0.id, $0.name) }, adding: .paymentMethod)
+            get: { model.selectedAccount?.id }, set: { model.setPaymentMethod($0) }),
+          options: model.accountChoices(locale: environment.language.locale)
+            .map { ($0.id, $0.name) },
+          adding: .paymentMethod, offersNone: model.selectedAccount == nil)
       }
-      if model.isGoalContribution(model.part(at: 0)) {
+      if model.needsCharge {
+        GridRow {
+          fieldLabel("entry.accountCharge")
+          AccountChargeField(model: model)
+        }
+      }
+      if model.has(.goal) && model.isGoalContribution(model.part(at: 0)) {
         GridRow {
           fieldLabel("entry.goal")
           referencePicker(
@@ -181,7 +223,7 @@ struct DetailsPanel: View {
             options: model.goals.map { ($0.id, $0.name) })
         }
       }
-      if model.draft.kind == .expense || model.draft.debtId != nil {
+      if model.has(.debt) && (model.draft.kind == .expense || model.draft.debtId != nil) {
         GridRow {
           fieldLabel("entry.debt")
           referencePicker(
@@ -276,11 +318,13 @@ struct DetailsPanel: View {
         VStack(alignment: .leading, spacing: 4) {
           HStack(spacing: 10) {
             // Stacked rather than side by side: a split row has to fit the panel as well.
-            VStack(alignment: .leading, spacing: 4) {
-              categoryPicker(forPartAt: index)
-              subcategoryPicker(forPartAt: index)
+            if model.has(.category) {
+              VStack(alignment: .leading, spacing: 4) {
+                categoryPicker(forPartAt: index)
+                subcategoryPicker(forPartAt: index)
+              }
+              .frame(maxWidth: 200)
             }
-            .frame(maxWidth: 200)
             // Each part has a quality of its own, so it sits next to the amount.
             VStack(alignment: .leading, spacing: 4) {
               AmountField(amount: partBinding(index).amount)
@@ -307,20 +351,23 @@ struct DetailsPanel: View {
           // showed the middle of the whole editor, «mount» and «ategory» cut at the left
           // (24.09, `testTheEditorFitsTheInspectorBesideTheSidebar`), so there the three groups
           // go one under another.
-          ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-              partForWhom(index)
-              partEvent(index)
-              partPaidForSomeone(index, part)
-              Spacer(minLength: 0)
+          // Income has none of the three: its parts are an amount and a category.
+          if model.has(.forWhom) || model.has(.event) || model.has(.reimbursable) {
+            ViewThatFits(in: .horizontal) {
+              HStack(spacing: 10) {
+                partForWhom(index)
+                partEvent(index)
+                partPaidForSomeone(index, part)
+                Spacer(minLength: 0)
+              }
+              VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) { partForWhom(index) }
+                HStack(spacing: 10) { partEvent(index) }
+                HStack(spacing: 10) { partPaidForSomeone(index, part) }
+              }
             }
-            VStack(alignment: .leading, spacing: 4) {
-              HStack(spacing: 10) { partForWhom(index) }
-              HStack(spacing: 10) { partEvent(index) }
-              HStack(spacing: 10) { partPaidForSomeone(index, part) }
-            }
+            .font(.caption)
           }
-          .font(.caption)
           if model.isClosedPart(id: part.id) {
             closedPartCaption
           }
@@ -342,12 +389,21 @@ struct DetailsPanel: View {
 
   @ViewBuilder
   private func partForWhom(_ index: Int) -> some View {
-    partLabel(forWhomKey)
-    forWhomPicker(forPartAt: index)
+    if model.has(.forWhom) {
+      partLabel(forWhomKey)
+      forWhomPicker(forPartAt: index)
+    }
   }
 
   @ViewBuilder
   private func partEvent(_ index: Int) -> some View {
+    if model.has(.event) {
+      partEventPicker(index)
+    }
+  }
+
+  @ViewBuilder
+  private func partEventPicker(_ index: Int) -> some View {
     partLabel("entry.event")
     referencePicker(
       selection: partBinding(index).eventId,
@@ -358,6 +414,13 @@ struct DetailsPanel: View {
 
   @ViewBuilder
   private func partPaidForSomeone(_ index: Int, _ part: PartDraft) -> some View {
+    if model.has(.reimbursable) {
+      partPaidForSomeonePicker(index, part)
+    }
+  }
+
+  @ViewBuilder
+  private func partPaidForSomeonePicker(_ index: Int, _ part: PartDraft) -> some View {
     Toggle(isOn: partBinding(index).reimbursable) {
       Text(verbatim: t("entry.paidForSomeone"))
     }
@@ -378,15 +441,21 @@ struct DetailsPanel: View {
   private var footer: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack(spacing: 12) {
-        Button(t("entry.split")) {
-          model.addPart()
+        // A refund of a purchase takes back one amount of one part: it is neither split nor
+        // paid for somebody else.
+        if model.canSplit {
+          Button(t("entry.split")) {
+            model.addPart()
+          }
+          .buttonStyle(.bordered)
         }
-        .buttonStyle(.bordered)
 
-        Button(t("entry.paidForSomeone")) {
-          model.markLastPartPaidForSomeone()
+        if model.canMarkPaidForSomeone {
+          Button(t("entry.paidForSomeone")) {
+            model.markLastPartPaidForSomeone()
+          }
+          .buttonStyle(.bordered)
         }
-        .buttonStyle(.bordered)
 
         // In the editor the box only says what the purchase is: a saved purchase is put on
         // credit or taken off it in Debts, never by a plan the editor would not write. A plain
@@ -614,11 +683,16 @@ struct DetailsPanel: View {
   /// A menu of a dictionary. Given `adding`, «Add…» ends it and opens the sheet of that kind,
   /// and the menu is never off for want of rows: «Add…» is always there to choose. The goal and
   /// the debt have no «Add…» and are off while there is nothing to choose.
+  /// `offersNone` false leaves out «—»: the account, which every operation has once there is
+  /// one.
   private func referencePicker(
-    selection: Binding<UUID?>, options: [(UUID, String)], adding kind: AddFromPicker.Kind? = nil
+    selection: Binding<UUID?>, options: [(UUID, String)], adding kind: AddFromPicker.Kind? = nil,
+    offersNone: Bool = true
   ) -> some View {
     Picker(selection: kind.map { addingSelection(selection, $0) } ?? selection) {
-      Text(verbatim: "—").tag(UUID?.none)
+      if offersNone {
+        Text(verbatim: "—").tag(UUID?.none)
+      }
       ForEach(options, id: \.0) { option in
         Text(verbatim: option.1).tag(UUID?.some(option.0))
       }
@@ -666,8 +740,11 @@ struct DetailsPanel: View {
     .labelsHidden()
   }
 
+  /// A currency picked here is the owner's: the account chosen after it does not replace it.
   private var currencyPicker: some View {
-    Picker(selection: $model.draft.currency) {
+    Picker(
+      selection: Binding(get: { model.draft.currency }, set: { model.setCurrency($0) })
+    ) {
       ForEach(environment.vocabulary.enabledCurrencies, id: \.code) { currency in
         Text(verbatim: currency.code).tag(currency)
       }
@@ -675,7 +752,39 @@ struct DetailsPanel: View {
       EmptyView()
     }
     .labelsHidden()
-    .disabled(model.hasClosedPart)
+    // A refund of a purchase is in the purchase's currency.
+    .disabled(model.hasClosedPart || model.refundTarget != nil)
+  }
+
+  /// The purchase a refund takes money back from: picked, «без покупки», or still to pick.
+  private var refundPurchaseRow: some View {
+    HStack(spacing: 8) {
+      if let target = model.refundTarget {
+        Label {
+          Text(verbatim: purchaseTitle(target))
+        } icon: {
+          Image(systemName: "arrow.uturn.left.circle")
+        }
+        .accessibilityIdentifier("entry.refund.purchase")
+      } else if model.refundWithoutPurchase {
+        Text(verbatim: t("entry.refund.none"))
+          .foregroundStyle(.secondary)
+      }
+      Button(t(model.refundTarget == nil ? "entry.refund.pick" : "entry.refund.change")) {
+        model.refundPicking = RefundPickerRequest(savesAfterChoice: false)
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+    }
+  }
+
+  /// «кроссовки · 12 September 2026 · 7,000.00 ₽».
+  private func purchaseTitle(_ target: EntryDraftModel.RefundTarget) -> String {
+    let transaction = target.purchase.transaction
+    let day = environment.dates.longDay(environment.calendar.day(of: transaction.occurredAt))
+    let amount = environment.money.exact(target.part.amountE4, currency: transaction.currency)
+    return [target.part.note ?? transaction.note, day, amount].compactMap { $0 }
+      .joined(separator: " · ")
   }
 
   /// Why the money of a part cannot be changed: someone gave it back.
@@ -693,6 +802,8 @@ struct DetailsPanel: View {
       RateField(model: model, title: t("entry.rate"))
         .labelsHidden()
         .frame(width: 120)
+        // A refund of a purchase is at the purchase's rate.
+        .disabled(!model.canTypeRate)
       if model.draft.rateSource == .manual {
         Text(verbatim: t("entry.rateManual"))
           .font(.caption)

@@ -39,7 +39,8 @@ public struct ExpectedOccurrence: Hashable, Sendable {
 public struct ExpectedIncomeStatus: Hashable, Sendable, Identifiable {
   public var income: ExpectedIncome
   /// A one-off income has one, at its due date (none when it has no date). A recurring one
-  /// has every due date from the first through the end of the current month, the latest 24.
+  /// has every due date from the first through the end of the current month — or through the
+  /// horizon the statuses were built for — the latest 24.
   public var occurrences: [ExpectedOccurrence]
   public var received: AmountE4
   /// The rubles of the operations counted in `received`, at their own rates.
@@ -94,7 +95,8 @@ public struct ExpectedIncomeStatus: Hashable, Sendable, Identifiable {
 ///   another currency is compared through rubles: its rubles at its own rate, converted at
 ///   the latest rate of the expectation's currency (rubles need none).
 /// * A recurring income is due from its first due date every week, month or year of its
-///   frequency, through the end of the current month, the latest 24 due dates at most. An
+///   frequency, through the end of the current month (or a later horizon: the free sum looks
+///   up to a year ahead), the latest 24 due dates at most. An
 ///   operation counts towards the due date of its own month — the month it is for
 ///   (`period_month`), else the month of its date; towards the due date of its year for a
 ///   yearly income; of its week, by date, for a weekly one. An operation of no listed due
@@ -103,11 +105,14 @@ public enum ExpectedIncomeRules {
   /// Due dates a recurring expectation lists at most.
   public static let maxOccurrences = 24
 
-  /// The expectations that are not closed, in the order of the book.
+  /// The expectations that are not closed, in the order of the book. A recurring one lists
+  /// its due dates through `through`, the end of today's month by default; a horizon before
+  /// that is taken as the end of the month.
   public static func statuses(
     book: PlanningBook, ledger: Ledger, today: DateOnly,
-    rubPerUnit: [CurrencyCode: Decimal] = [:]
+    rubPerUnit: [CurrencyCode: Decimal] = [:], through: DateOnly? = nil
   ) -> [ExpectedIncomeStatus] {
+    let horizon = max(through ?? today.monthKey.lastDay, today.monthKey.lastDay)
     var linked: [UUID: Set<UUID>] = [:]
     for link in book.expectedLinks {
       linked[link.expectedIncomeId, default: []].insert(link.transactionId)
@@ -118,7 +123,7 @@ public enum ExpectedIncomeRules {
         .filter { $0.transaction.kind == .income && !$0.transaction.isDeleted }
         .sorted(by: oldestFirst)
       return status(
-        of: income, operations: operations, ledger: ledger, today: today,
+        of: income, operations: operations, ledger: ledger, today: today, through: horizon,
         rate: rate(of: income.currency, in: rubPerUnit))
     }
   }
@@ -160,7 +165,7 @@ public enum ExpectedIncomeRules {
 
   private static func status(
     of income: ExpectedIncome, operations: [TransactionEntry], ledger: Ledger,
-    today: DateOnly, rate: Decimal?
+    today: DateOnly, through horizon: DateOnly, rate: Decimal?
   ) -> ExpectedIncomeStatus {
     var withoutRate = rate == nil
     let total = income.totalE4
@@ -201,7 +206,7 @@ public enum ExpectedIncomeRules {
       partsExpected = perDue
     case .recurring:
       let freq = income.freq ?? .monthly
-      let dues = dueDates(of: income, freq: freq, through: today.monthKey.lastDay, today: today)
+      let dues = dueDates(of: income, freq: freq, through: horizon, today: today)
       var buckets: [[TransactionEntry]] = Array(repeating: [], count: dues.count)
       for entry in operations {
         guard let row = firstRow(of: entry, ledger) else { continue }
@@ -253,17 +258,22 @@ public enum ExpectedIncomeRules {
   ) -> [DateOnly] {
     let first = income.dueDate ?? defaultFirstDue(of: income, freq: freq, today: today)
     guard first <= last else { return [] }
-    let steps: Int
-    switch freq {
-    case .monthly: steps = first.monthKey.months(to: last.monthKey)
-    case .yearly: steps = last.year - first.year
-    case .weekly: steps = first.days(to: last) / 7 + 1
+    func steps(to end: DateOnly) -> Int {
+      switch freq {
+      case .monthly: first.monthKey.months(to: end.monthKey)
+      case .yearly: end.year - first.year
+      case .weekly: first.days(to: end) / 7 + 1
+      }
     }
-    let lower = max(0, steps - maxOccurrences - 1)
-    let dues = (lower...max(lower, steps))
+    // The latest `maxOccurrences` through the end of this month, and every one after it up to
+    // a later horizon: looking ahead never pushes this month's due dates out.
+    let monthEnd = min(today.monthKey.lastDay, last)
+    let lower = max(0, steps(to: monthEnd) - maxOccurrences - 1)
+    let dues = (lower...max(lower, steps(to: last)))
       .map { dueDate(first: first, step: $0, freq: freq, day: income.day) }
       .filter { $0 <= last }
-    return Array(dues.suffix(maxOccurrences))
+    return Array(dues.filter { $0 <= monthEnd }.suffix(maxOccurrences))
+      + dues.filter { $0 > monthEnd }
   }
 
   private static func dueDate(

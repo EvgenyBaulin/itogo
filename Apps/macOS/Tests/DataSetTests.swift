@@ -210,6 +210,158 @@ final class DataSetTests: XCTestCase {
       XCTAssertFalse(set.entries.contains { $0.transaction.occurredAt > now })
     }
 
+    /// A set comes with its accounts, the way an app with accounts keeps its books: two groups,
+    /// one of them out of the summary, accounts in several currencies, transfers and counts,
+    /// every operation on an account, the accounts set up — so the setup is never offered on a
+    /// set — and the money on every account and currency read back as the set was made with.
+    func testASetComesWithItsAccountsSetUpAndCounted() async throws {
+      let directory = scratch.appendingPathComponent("Sets/sample", isDirectory: true)
+      let set = DataSetGeneration.generate(
+        .months(2), today: DateOnly(year: 2026, month: 9, day: 18), calendar: .utc,
+        language: "en")
+      XCTAssertEqual(set.accountGroups.count, 2)
+      XCTAssertEqual(set.accountGroups.filter { !$0.inSummary }.count, 1)
+      XCTAssertFalse(set.transfers.isEmpty)
+      XCTAssertEqual(Set(set.reconciliations.map(\.kind)), [.opening, .accounts])
+
+      let stack = try prepare(directory)
+      let counts = try ExportRepository(writer: stack.writer).rowCounts()
+      XCTAssertEqual(counts["transactions"], set.entries.count)
+      XCTAssertEqual(counts["account_groups"], set.accountGroups.count)
+      XCTAssertEqual(counts["payment_methods"], set.paymentMethods.count)
+      XCTAssertEqual(counts["transfers"], set.transfers.count)
+      XCTAssertEqual(counts["reconciliations"], set.reconciliations.count)
+      XCTAssertEqual(counts["reconciliation_balances"], set.reconciledBalances.count)
+      XCTAssertEqual(counts["scheduled_payments"], set.planning.scheduled.count)
+
+      let accounts = try AccountRepository(writer: stack.writer).accounts()
+      XCTAssertEqual(accounts.filter(\.isMain).count, 1, "one main account")
+      XCTAssertTrue(accounts.contains { $0.currencies.count == 4 })
+
+      let settings = SettingsRepository(writer: stack.writer)
+      XCTAssertEqual(try settings.string(AccountSettings.setupKey), "done")
+      XCTAssertEqual(try settings.defaultCurrency(), .rub)
+
+      let dataset = try await DatasetRepository(writer: stack.writer).load(version: 1)
+      XCTAssertEqual(dataset.accountSettings.setup, .done)
+      // Set up already: even opened as an ordinary database, it would not ask.
+      XCTAssertFalse(
+        AccountSetupOffer.asks(
+          setup: dataset.accountSettings.setup, isOpen: true, isTestHost: false, dataSet: nil))
+      let balances = AccountBalances.build(
+        entries: dataset.entries, transfers: dataset.transfers,
+        debtEntries: dataset.planning.debtEntries,
+        debts: Dictionary(uniqueKeysWithValues: dataset.debts.map { ($0.id, $0) }),
+        reconciliations: dataset.planning.reconciliations,
+        balances: dataset.planning.reconciledBalances, accounts: dataset.paymentMethods,
+        tree: CategoryTree(dataset.categories),
+        now: CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 19)),
+        calendar: .utc)
+      XCTAssertEqual(balances.unassignedOperations, 0, "every operation is on an account")
+      XCTAssertEqual(Set(balances.keys), Set(set.accountExpectations.keys))
+      for (key, amount) in set.accountExpectations {
+        XCTAssertEqual(balances[key]?.amountE4, amount, "\(key)")
+      }
+    }
+
+    /// The Debug menu writes its sample next to what the Debug database holds. When the owner
+    /// has set up an account there, it stays the one main account, and the setup and the
+    /// default currency stay the owner's: the sample's accounts come as ordinary ones, with
+    /// every operation of the sample still on them.
+    func testTheMenusSampleKeepsTheMainAccountTheDatabaseHas() throws {
+      let stack = try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+      let references = ReferenceRepository(writer: stack.writer)
+      let transactions = TransactionRepository(writer: stack.writer)
+      let settings = SettingsRepository(writer: stack.writer)
+      try references.seedCategoriesIfEmpty(StarterCategories.tree(language: "en"))
+      let own = PaymentMethod(name: "Owner card", kind: .card, currency: .eur, isDefault: true)
+      try references.save(own)
+      try settings.set(AccountSettings.setupKey, to: AccountSettings.Setup.later.rawValue)
+      try settings.setDefaultCurrency(.eur)
+      // The categories the owner's fees and differences of counts go to.
+      let starter = try references.categories(includeArchived: false)
+      let fees = try XCTUnwrap(starter.first { $0.kind == .expense && $0.parentId != nil })
+      let income = try XCTUnwrap(starter.first { $0.kind == .income })
+      let owners = [
+        AccountSettings.transferFeeCategoryKey: fees.id.uuidString,
+        PlanningSettings.reconcileExpenseCategoryKey: fees.id.uuidString,
+        PlanningSettings.reconcileIncomeCategoryKey: income.id.uuidString,
+      ]
+      for (key, value) in owners { try settings.set(key, to: value) }
+      let today = DateOnly(year: 2026, month: 9, day: 18)
+      let set = SampleDataGenerator(seed: DebugCommands.seed).generate(
+        months: 2, endingOn: today, calendar: .utc, language: "en"
+      ).withAccounts(seed: DebugCommands.seed, calendar: .utc, language: "en")
+
+      try DebugCommands.write(set, references: references, transactions: transactions)
+
+      let accounts = try AccountRepository(writer: stack.writer).accounts()
+      XCTAssertEqual(accounts.filter(\.isMain).map(\.id), [own.id])
+      XCTAssertEqual(accounts.count, set.paymentMethods.count + 1)
+      XCTAssertEqual(try settings.string(AccountSettings.setupKey), "later")
+      XCTAssertEqual(try settings.defaultCurrency(), .eur)
+      for (key, value) in owners {
+        XCTAssertEqual(try settings.string(key), value, "\(key) is the owner's")
+      }
+      let written = try transactions.entries(ids: set.entries.map(\.id))
+      XCTAssertEqual(written.count, set.entries.count)
+      let sampleAccounts = Set(set.paymentMethods.map(\.id))
+      XCTAssertTrue(
+        written.allSatisfy { $0.transaction.paymentMethodId.map(sampleAccounts.contains) == true },
+        "every operation of the sample on an account of the sample")
+
+      // Written again, as a second click of the menu: still the owner's main account.
+      try DebugCommands.write(set, references: references, transactions: transactions)
+      XCTAssertEqual(
+        try AccountRepository(writer: stack.writer).accounts().filter(\.isMain).map(\.id),
+        [own.id])
+    }
+
+    /// The menu clicked on one day and again two weeks later writes the second sample over the
+    /// first: the rows of the accounts layer both days hold are the same rows, so no purchase
+    /// loses a part its refund points at and the write is not refused.
+    func testTheMenusSampleWrittenAgainOnAnotherDayLands() throws {
+      let stack = try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+      let references = ReferenceRepository(writer: stack.writer)
+      let transactions = TransactionRepository(writer: stack.writer)
+      try references.seedCategoriesIfEmpty(StarterCategories.tree(language: "en"))
+      var last: SampleDataSet?
+      for day in [6, 20] {
+        let set = SampleDataGenerator(seed: DebugCommands.seed).generate(
+          months: 6, endingOn: DateOnly(year: 2026, month: 8, day: day), calendar: .moscow,
+          language: "en"
+        ).withAccounts(seed: DebugCommands.seed, calendar: .moscow, language: "en")
+        XCTAssertNoThrow(
+          try DebugCommands.write(set, references: references, transactions: transactions),
+          "the sample up to the \(day)th")
+        last = set
+      }
+      let set = try XCTUnwrap(last)
+      XCTAssertEqual(
+        try transactions.entries(ids: set.entries.map(\.id)).count, set.entries.count,
+        "the second sample is there whole")
+    }
+
+    /// Into a database with no account yet, the menu's sample brings its own main account and
+    /// the setup of its accounts, as a data set does.
+    func testTheMenusSampleIntoADatabaseWithoutAccountsBringsItsOwn() throws {
+      let stack = try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+      let references = ReferenceRepository(writer: stack.writer)
+      let transactions = TransactionRepository(writer: stack.writer)
+      try references.seedCategoriesIfEmpty(StarterCategories.tree(language: "en"))
+      let set = SampleDataGenerator(seed: DebugCommands.seed).generate(
+        months: 2, endingOn: DateOnly(year: 2026, month: 9, day: 18), calendar: .utc,
+        language: "en"
+      ).withAccounts(seed: DebugCommands.seed, calendar: .utc, language: "en")
+
+      try DebugCommands.write(set, references: references, transactions: transactions)
+
+      let main = try AccountRepository(writer: stack.writer).accounts().filter(\.isMain)
+      XCTAssertEqual(main.map(\.id), set.paymentMethods.filter(\.isDefault).map(\.id))
+      XCTAssertEqual(
+        try SettingsRepository(writer: stack.writer).string(AccountSettings.setupKey), "done")
+    }
+
     /// Only a folder under `Sets/` is ever emptied: never the Debug or Release data.
     func testAFolderThatIsNotASetIsNeverEmptied() throws {
       let debug = scratch.appendingPathComponent("Debug", isDirectory: true)

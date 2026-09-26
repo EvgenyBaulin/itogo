@@ -11,8 +11,8 @@ extension CoreKit.Category: @retroactive FetchableRecord, @retroactive Persistab
       parentId: RowMapping.optionalUUID(row, "parent_id"),
       kind: CategoryKind(rawValue: row["kind"] ?? "expense") ?? .expense,
       name: row["name"] ?? "",
-      sort: row["sort"] ?? 0,
-      archived: row["archived"] ?? false,
+      sort: try RowMapping.optionalInteger(row, "sort") ?? 0,
+      archived: try RowMapping.flag(row, "archived", fallback: false),
       quality: (row["quality"] as String?).flatMap(Quality.init(rawValue:)),
       systemRole: (row["system_role"] as String?).flatMap(SystemRole.init(rawValue:)))
   }
@@ -38,7 +38,7 @@ extension Person: @retroactive FetchableRecord, @retroactive PersistableRecord {
       name: row["name"] ?? "",
       relation: PersonRelation(rawValue: row["relation"] ?? "other") ?? .other,
       aliases: RowMapping.aliases(row, "aliases"),
-      archived: row["archived"] ?? false)
+      archived: try RowMapping.flag(row, "archived", fallback: false))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -58,7 +58,7 @@ extension Place: @retroactive FetchableRecord, @retroactive PersistableRecord {
       id: try RowMapping.uuid(row, "id"),
       name: row["name"] ?? "",
       aliases: RowMapping.aliases(row, "aliases"),
-      archived: row["archived"] ?? false)
+      archived: try RowMapping.flag(row, "archived", fallback: false))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -83,10 +83,10 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
       kind: PaymentMethodKind(rawValue: row["kind"] ?? "card") ?? .card,
       currency: RowMapping.currency(row, "currency"),
       aliases: RowMapping.aliases(row, "aliases"),
-      isDefault: row["is_default"] ?? false,
-      archived: row["archived"] ?? false,
+      isDefault: try RowMapping.flag(row, "is_default", fallback: false),
+      archived: try RowMapping.flag(row, "archived", fallback: false),
       groupId: RowMapping.optionalUUID(row, "group_id"),
-      sort: row["sort"] ?? 0,
+      sort: try RowMapping.optionalInteger(row, "sort") ?? 0,
       otherCurrencies: RowMapping.currencies(row, "other_currencies"))
   }
 
@@ -114,10 +114,10 @@ extension Event: @retroactive FetchableRecord, @retroactive PersistableRecord {
       kind: EventKind(rawValue: row["kind"] ?? "other") ?? .other,
       startDate: RowMapping.day(row, "start_date") ?? DateOnly(year: 1970, month: 1, day: 1),
       endDate: RowMapping.day(row, "end_date") ?? DateOnly(year: 1970, month: 1, day: 1),
-      budgetE4: RowMapping.optionalAmount(row, "budget_e4"),
-      recurringYearly: row["recurring_yearly"] ?? false,
+      budgetE4: try RowMapping.optionalAmount(row, "budget_e4"),
+      recurringYearly: try RowMapping.flag(row, "recurring_yearly", fallback: false),
       seriesId: RowMapping.optionalUUID(row, "series_id"),
-      archived: row["archived"] ?? false)
+      archived: try RowMapping.flag(row, "archived", fallback: false))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -141,11 +141,11 @@ extension Template: @retroactive FetchableRecord, @retroactive PersistableRecord
       id: try RowMapping.uuid(row, "id"),
       text: row["text"] ?? "",
       categoryId: RowMapping.optionalUUID(row, "category_id"),
-      amountE4: RowMapping.optionalAmount(row, "amount_e4"),
+      amountE4: try RowMapping.optionalAmount(row, "amount_e4"),
       currency: (row["currency"] as String?).map(CurrencyCode.init),
-      pinned: row["pinned"] ?? false,
-      useCount: row["use_count"] ?? 0,
-      archived: row["archived"] ?? false)
+      pinned: try RowMapping.flag(row, "pinned", fallback: false),
+      useCount: try RowMapping.optionalInteger(row, "use_count") ?? 0,
+      archived: try RowMapping.flag(row, "archived", fallback: false))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -167,11 +167,11 @@ extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
     self.init(
       id: try RowMapping.uuid(row, "id"),
       name: row["name"] ?? "",
-      targetE4: RowMapping.amount(row, "target_e4"),
+      targetE4: try RowMapping.amount(row, "target_e4"),
       targetDate: RowMapping.day(row, "target_date"),
-      monthlyPlanE4: RowMapping.optionalAmount(row, "monthly_plan_e4"),
+      monthlyPlanE4: try RowMapping.optionalAmount(row, "monthly_plan_e4"),
       subcategoryId: RowMapping.optionalUUID(row, "subcategory_id"),
-      archived: row["archived"] ?? false,
+      archived: try RowMapping.flag(row, "archived", fallback: false),
       currency: CurrencyCode(row["currency"] ?? "RUB"))
   }
 
@@ -195,9 +195,9 @@ extension Rate: @retroactive FetchableRecord, @retroactive PersistableRecord {
       date: RowMapping.day(row, "date") ?? DateOnly(year: 1970, month: 1, day: 1),
       currency: CurrencyCode(row["currency"] ?? "RUB"),
       rubPerUnit: RowMapping.decimal(row, "rub_per_unit") ?? 0,
-      nominal: row["nominal"] ?? 1,
+      nominal: try RowMapping.optionalInteger(row, "nominal") ?? 1,
       source: RateSource(rawValue: row["source"] ?? "cbr") ?? .cbr,
-      fetchedAt: row["fetched_at"])
+      fetchedAt: RowMapping.readableInstant(row, "fetched_at"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {

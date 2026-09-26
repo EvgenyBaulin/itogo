@@ -60,9 +60,13 @@ public enum SubscriptionCandidates {
   ///   need a window of more than two years, so the default window finds none.
   /// * A group that is already a payment — by name (normalized the same way), or by the
   ///   same category and currency with an amount within 10 % of the payment's price today —
-  ///   is left out.
+  ///   is left out. So is every operation that pays a scheduled payment by matching one of its
+  ///   due dates (`paidOperations`, `ScheduledMatches.operationIds`): it is that payment's
+  ///   charge, as one «Провести» wrote is — a dollar subscription typed in rubles included,
+  ///   which neither its currency nor its name would give away.
   public static func find(
-    ledger: Ledger, book: PlanningBook, today: DateOnly, months: Int = 12
+    ledger: Ledger, book: PlanningBook, today: DateOnly, months: Int = 12,
+    paidOperations: Set<UUID> = []
   ) -> [SubscriptionCandidate] {
     struct Item {
       let day: DateOnly
@@ -80,6 +84,7 @@ public enum SubscriptionCandidates {
     for row in ledger.rows(in: window) where row.isFirstPart && row.kind == .expense {
       guard row.link == nil, row.debtId == nil, row.creditDebtId == nil,
         !row.isGoalContribution, row.systemRole == nil,
+        !paidOperations.contains(row.transactionId),
         let entry = ledger.entry(row.transactionId)
       else { continue }
       let transaction = entry.transaction

@@ -1,6 +1,23 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "accounts.mainDefaultName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Main account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Основной счёт"
+          }
+        }
+      }
+    },
     "action.add": {
       "extractionState": "manual",
       "localizations": {
@@ -1023,6 +1040,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Приложение неполное: в нём нет описания базы данных. Установите Итого заново."
+          }
+        }
+      }
+    },
+    "error.database.copyBeforeUpdate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A copy of the database could not be saved before the update. The database was not changed."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перед обновлением базы не удалось сохранить её копию. База не изменена."
           }
         }
       }

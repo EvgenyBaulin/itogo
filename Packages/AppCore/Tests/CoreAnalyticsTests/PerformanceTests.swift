@@ -29,6 +29,31 @@ struct PerformanceTests {
     #expect(times.median < .milliseconds(500))
   }
 
+  /// The money on every account and currency — the latest count of each and every movement
+  /// after it — on the large set with its accounts, as the snapshot works it out after every
+  /// change: one pass over the operations, the transfers and the journals. The target is under
+  /// 50 ms.
+  @Test func buildingTheBalancesOfTheAccounts() {
+    let set = Self.set.withAccounts(
+      seed: 20_260_918, calendar: Synthetic.calendar, language: "en")
+    let debts = Dictionary(uniqueKeysWithValues: set.debts.map { ($0.id, $0) })
+    let tree = CategoryTree(set.categories)
+    let now = Synthetic.calendar.startOfDay(Synthetic.calendar.adding(days: 1, to: set.lastDay))
+    var keys = 0
+    let times = Bench.measure(
+      "account balances, \(set.entries.count) operations, \(set.transfers.count) transfers"
+    ) {
+      keys =
+        AccountBalances.build(
+          entries: set.entries, transfers: set.transfers, debtEntries: set.debtEntries,
+          debts: debts, reconciliations: set.reconciliations, balances: set.reconciledBalances,
+          accounts: set.paymentMethods, tree: tree, now: now, calendar: Synthetic.calendar
+        ).keys.count
+    }
+    #expect(keys == set.accountExpectations.count)
+    #expect(times.median < .milliseconds(50))
+  }
+
   /// Every slice the Analytics window shows for the last twelve months, from a built
   /// ledger — what a change of period costs. The target is under 500 ms.
   @Test func everyAnalyticsSectionForTwelveMonths() {

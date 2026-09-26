@@ -77,30 +77,18 @@ struct PlanningActions {
     return place == .form ? "form.rateMissing" : "form.rateMissing.\(place.rawValue)"
   }
 
-  /// «Mark as paid». `rate` is one typed by hand, for a currency the cache has no rate for.
+  /// «Mark as paid» without a form: on the payment's account (the main one when it has none
+  /// or it is archived), with «Списано со счёта» prefilled when that account does not hold the
+  /// payment's currency — the form's `markAsPaid(…account:charged:…)` with nothing typed.
+  /// `rate` is one typed by hand, for a currency the cache has no rate for.
   @discardableResult
   func markAsPaid(
     _ payment: ScheduledPayment, due: DateOnly, amount: AmountE4, on day: Date,
     paymentMethodId: UUID?, updatePrice: Bool, rate: Decimal? = nil
   ) -> Bool {
-    do {
-      let plan = try ScheduledRules.markAsPaid(
-        payment, due: due, amount: amount, occurredAt: day, paidAt: rate, rubPerUnit: rubPerUnit,
-        updatePrice: updatePrice, prices: snapshot?.dataset.planning.prices ?? [],
-        categories: tree ?? CategoryTree(), history: qualityHistory())
-      // The card of this one payment; the payment keeps its own (review of the app, 19.09).
-      var draft = plan.draft
-      draft.paymentMethodId = paymentMethodId
-      // A rate by hand is the rate of the day it was typed for, like one in the entry line.
-      if draft.rateSource == .manual { draft.rateDate = environment.calendar.day(of: day) }
-      let entry = try operation(draft, link: .scheduled(paymentId: payment.id, due: due))
-      var rows = PlanningRows.empty
-      rows.scheduled = [plan.payment]
-      if let price = plan.newPrice { rows.prices = [price] }
-      return apply(PlanningChange(created: [entry], upsert: rows))
-    } catch {
-      return false
-    }
+    markAsPaid(
+      payment, due: due, amount: amount, on: day, account: paymentMethodId, charged: nil,
+      updatePrice: updatePrice, rate: rate)
   }
 
   /// The moment «Провести» dates a payment of `due` with: an overdue one on its due day, at
@@ -119,7 +107,59 @@ struct PlanningActions {
   func skip(_ payment: ScheduledPayment, due: DateOnly) -> Bool {
     var rows = PlanningRows.empty
     rows.scheduled = [ScheduledRules.skip(payment, due: due)]
-    return apply(PlanningChange(upsert: rows))
+    return apply(
+      PlanningChange(upsert: rows, rewritten: matchedOperations(of: payment, before: due)))
+  }
+
+  /// The ordinary operations that pay the due dates of `payment` from its `next_date` up to
+  /// `due` by matching them, each keyed to its due date — as «Привязать» would — in the write
+  /// that moves the payment past `due`. Once `next_date` is past them nothing matches them any
+  /// more: unkeyed, what they paid would drop out of the month's funding, «проведено».
+  func matchedOperations(
+    of payment: ScheduledPayment, before due: DateOnly
+  )
+    -> [TransactionEntry]
+  {
+    guard let snapshot, let next = payment.nextDate else { return [] }
+    let matches = snapshot.planning.matches
+    return matches.matchedDues(of: payment.id).keys
+      .filter { $0 >= next && $0 < due }
+      .sorted()
+      .compactMap { earlier in
+        guard let operationId = matches.operation(for: payment.id, earlier),
+          let entry = snapshot.ledger.entry(operationId)
+        else { return nil }
+        return ScheduledMatching.bind(entry, to: payment, due: earlier).operation
+      }
+  }
+
+  /// «Привязать»: the ordinary operation that pays `due` of `payment` by matching it is keyed
+  /// to that due date for good (`sched:<payment>:<due>`), as «Провести» would have written it;
+  /// the payment moves past the due date when it was its next one (`ScheduledMatching.bind`).
+  /// One write, one step of ⌘Z.
+  @discardableResult
+  func bind(_ operationId: UUID, to payment: ScheduledPayment, due: DateOnly) -> Bool {
+    guard let snapshot, let entry = snapshot.ledger.entry(operationId) else { return false }
+    let bound = ScheduledMatching.bind(
+      entry, to: payment, due: due, matches: snapshot.planning.matches)
+    var rows = PlanningRows.empty
+    if bound.payment != payment { rows.scheduled = [bound.payment] }
+    return apply(PlanningChange(upsert: rows, rewritten: [bound.operation]))
+  }
+
+  /// «Это другое»: the operation does not pay `due` of `payment`; the due date waits for its
+  /// payment again. Kept in the settings of planning, the ones more than 400 days old let go,
+  /// and — unlike a reminder put off — one step of ⌘Z: it changes what the plan counts.
+  @discardableResult
+  func reject(_ operationId: UUID, for payment: ScheduledPayment, due: DateOnly) -> Bool {
+    // What is stored now, not the snapshot: two in a row must both stay.
+    let key = PlanningSettings.scheduledMatchRejectionsKey
+    let text = (try? environment.settings?.string(key)) ?? nil
+    let stored = Set((text ?? "").split(whereSeparator: \.isNewline).map(String.init))
+    let kept = ScheduledMatching.rejections(
+      adding: ScheduledMatching.rejectionKey(operation: operationId, payment: payment.id, due: due),
+      to: stored, today: environment.today)
+    return apply(PlanningChange(settings: [key: kept.sorted().joined(separator: "\n")]))
   }
 
   /// A new or edited payment. One whose price changed today gets rows of its price history,
@@ -198,6 +238,56 @@ struct PlanningActions {
     var ids = PlanningRowIDs.empty
     ids.budgets = [budget.id]
     return apply(PlanningChange(delete: ids))
+  }
+
+  // MARK: Events
+
+  /// Why an event cannot be saved: a key of the Planning table under `events.issue.`.
+  enum EventIssue: String {
+    case emptyName
+    /// Another live event of that name covers some of the same days: the entry line could not
+    /// tell them apart.
+    case sameNameAndDays
+  }
+
+  static func issue(of event: Event, among events: [Event]) -> EventIssue? {
+    guard !event.name.isEmpty else { return .emptyName }
+    let clash = events.contains { other in
+      other.id != event.id && !other.archived
+        && other.name.compare(event.name, options: [.caseInsensitive]) == .orderedSame
+        && other.startDate <= event.endDate && event.startDate <= other.endDate
+    }
+    return clash ? .sameNameAndDays : nil
+  }
+
+  /// A new or edited event with its budget, one write and one step of ⌘Z. A new one under the
+  /// name of an event in the archive whose days meet its own brings that one back instead of
+  /// making a second beside it.
+  @discardableResult
+  func save(_ event: Event) -> Bool {
+    var event = event
+    event.name = Self.trimmed(event.name)
+    let known = (try? environment.references?.events(includeArchived: true)) ?? []
+    guard Self.issue(of: event, among: known) == nil else { return false }
+    if !known.contains(where: { $0.id == event.id }),
+      let archived = known.first(where: { other in
+        other.archived
+          && other.name.compare(event.name, options: [.caseInsensitive]) == .orderedSame
+          && other.startDate <= event.endDate && event.startDate <= other.endDate
+      })
+    {
+      var revived = archived
+      revived.archived = false
+      revived.startDate = event.startDate
+      revived.endDate = event.endDate
+      revived.budgetE4 = event.budgetE4
+      event = revived
+    }
+    var rows = PlanningRows.empty
+    rows.events = [event]
+    guard apply(PlanningChange(upsert: rows)) else { return false }
+    environment.refreshVocabulary()
+    return true
   }
 
   // MARK: Goals
@@ -295,74 +385,107 @@ struct PlanningActions {
 
   // MARK: Reconciliation
 
-  /// Saves the reconciliation, and with `recordDifference` the difference as an operation in
-  /// «Сверка» — both in one write and one step of ⌘Z.
+  /// Why saving the reconciliation sheet wrote nothing: a key of the Planning table.
+  enum ReconcileFailure: String, Equatable {
+    /// The write was refused; nothing was saved.
+    case notSaved = "reconcile.notSaved"
+    /// A difference asked for could not be written, so nothing was.
+    case notRecorded = "reconcile.notRecorded"
+    /// A difference in a currency without a rate today cannot be written in rubles.
+    case rateMissing = "reconcile.rateMissing"
+    /// No balance was counted.
+    case nothingCounted = "reconcile.nothingCounted"
+    /// A difference on an archived account or in a currency the account does not hold has no
+    /// account to be written on.
+    case notHeld = "reconcile.cannotRecord"
+  }
+
+  /// Saves the reconciliation sheet at `t0`: a counted balance for every account and currency
+  /// in `counted`, and with `recordDifference` every difference as an operation in «Сверка» on
+  /// its account, in its currency (`AccountReconciliation.record`) — all in one write and one
+  /// step of ⌘Z. A balance counted for the first time is its starting point: nothing is
+  /// compared and nothing else is written. Nil when it landed.
   ///
-  /// One thing is deliberately outside that write: the «Сверка» categories themselves. They
-  /// are made the first time a difference is recorded, through the reference book, so ⌘Z of
-  /// the reconciliation takes the operation back and leaves the two categories standing. That
-  /// is the intent — they are the owner's categories now, to rename or to delete — and it is
-  /// why deleting them is safe: the next difference makes them again.
+  /// `t0` is the moment the sheet counted the expected balances for, not the later instant of
+  /// saving: an operation entered in between — through «Найти пропущенные…» while the sheet
+  /// stood open — comes with new data and moves the sheet's moment, so it is either inside the
+  /// expected balance or after the count, never written again as the difference.
   ///
-  /// A reconciliation measured against an expectation is stamped with the moment that
-  /// expectation was counted for (`expectation.to`), not with `now`: the next window starts
-  /// where this one ended. Stamped with the later instant of saving, an operation dated in
-  /// between — entered through «Найти пропущенные…» while the sheet stood open — fell into
-  /// neither window, and its money was written a second time as the difference. `now` is the
-  /// moment of the starting point, which has no expectation.
+  /// The «Сверка» categories themselves are outside that write: they are made the first time a
+  /// difference is recorded, through the reference book, so ⌘Z takes the operations back and
+  /// leaves the categories standing — the owner's categories now, to rename or to delete; the
+  /// next difference makes them again.
   @discardableResult
   func reconcile(
-    actual: AmountE4, breakdown: [ReconciliationAmount], expectation: ReconciliationExpectation?,
-    recordDifference: Bool, now: Date = Date()
-  ) -> Bool {
-    // The journal gets the shape of it, never an amount: how many amounts were counted,
-    // whether there was an expectation, whether the difference was asked for
-    // («сверка: начало, результат, … число записей»).
+    counted: [BalanceKey: AmountE4], rows: [ReconcileRow], recordDifference: Bool, at t0: Date
+  ) -> ReconcileFailure? {
+    // The journal gets the shape of it, never an amount: how many balances were counted and
+    // compared, whether the differences were asked for.
+    let compared = rows.filter { $0.expected != nil && counted[$0.key] != nil }.count
     let shape = [
-      LogPair("breakdown", .count(breakdown.count)),
-      LogPair("expectation", .flag(expectation != nil)),
+      LogPair("balances", .count(counted.count)), LogPair("compared", .count(compared)),
       LogPair("record", .flag(recordDifference)),
     ]
     AppLog.info("reconcile.started", .db, "a reconciliation is being saved", shape)
-    let id = UUID()
-    let at = expectation?.to ?? now
-    var reconciliation = Reconciliation(
-      id: id, date: environment.calendar.day(of: at), reconciledAt: at,
-      actualTotalRubE4: actual, breakdown: breakdown)
-    var created: [TransactionEntry] = []
-    if let expectation {
-      let difference = actual - expectation.expected
-      reconciliation.expectedTotalRubE4 = expectation.expected
-      reconciliation.differenceE4 = difference
-      // A difference asked for and not written fails the whole reconciliation: saved without
-      // it, the sheet would close as if the operation were there, and the books would stay
-      // short by the difference with nothing on screen to say so.
-      if recordDifference, !difference.isZero {
-        guard let where_ = reconciliationCategories(),
-          let draft = ReconciliationRules.differenceDraft(
-            difference: difference, occurredAt: at, expenseCategoryId: where_.expense,
-            incomeCategoryId: where_.income, categories: tree ?? CategoryTree()),
-          let entry = try? operation(draft, link: .reconciliation(id))
-        else {
-          AppLog.error(
-            "reconcile.failed", .db, "the difference could not be written; nothing was saved",
-            shape)
-          return false
-        }
-        reconciliation.transactionId = entry.id
-        created = [entry]
+    let differs = rows.contains { row in
+      guard let expected = row.expected, let actual = counted[row.key] else { return false }
+      return actual != expected
+    }
+    let writes = recordDifference && differs
+    // The categories are looked up only when an operation is written: a count without a
+    // difference to record makes nothing — nor one whose difference cannot be written.
+    var categories: (expense: UUID, income: UUID)?
+    if writes {
+      guard ReconcileSheet.differencesNotHeld(rows: rows, counted: counted).isEmpty else {
+        AppLog.error(
+          "reconcile.failed", .db, "a difference has no account to be written on; nothing saved",
+          shape)
+        return .notHeld
+      }
+      guard
+        ReconcileSheet.differencesWithoutRate(rows: rows, counted: counted, rubPerUnit: rubPerUnit)
+          .isEmpty
+      else {
+        AppLog.error(
+          "reconcile.failed", .db, "a difference has no rate today; nothing was saved", shape)
+        return .rateMissing
+      }
+      categories = reconciliationCategories()
+      guard categories != nil else {
+        AppLog.error(
+          "reconcile.failed", .db, "the difference could not be written; nothing was saved",
+          shape)
+        return .notRecorded
       }
     }
-    var rows = PlanningRows.empty
-    rows.reconciliations = [reconciliation]
-    guard apply(PlanningChange(created: created, upsert: rows)) else {
+    let record = AccountReconciliation.record(
+      counted: counted, rows: rows, writeDifference: writes, kind: .accounts, at: t0,
+      calendar: environment.calendar, tree: tree ?? CategoryTree(),
+      categories: categories ?? (UUID(), UUID()), rubPerUnit: rubPerUnit, makeId: { UUID() })
+    guard !record.balances.isEmpty else { return .nothingCounted }
+    // A difference asked for and not written fails the whole reconciliation: saved without
+    // it, the sheet would close as if the operation were there.
+    guard record.withoutRate.isEmpty else {
+      AppLog.error(
+        "reconcile.failed", .db, "a difference has no rate today; nothing was saved",
+        shape + [LogPair("withoutRate", .count(record.withoutRate.count))])
+      return .rateMissing
+    }
+    var written = PlanningRows.empty
+    written.reconciliations = [record.reconciliation]
+    written.reconciledBalances = record.balances
+    guard apply(PlanningChange(created: record.differences, upsert: written)) else {
       AppLog.error("reconcile.failed", .db, "the reconciliation was not saved", shape)
-      return false
+      return writes ? .notRecorded : .notSaved
     }
     AppLog.info(
       "reconcile.saved", .db, "the reconciliation was saved",
-      [LogPair("reconciliation", .id(id)), LogPair("operations", .count(created.count))])
-    return true
+      [
+        LogPair("reconciliation", .id(record.reconciliation.id)),
+        LogPair("balances", .count(record.balances.count)),
+        LogPair("operations", .count(record.differences.count)),
+      ])
+    return nil
   }
 
   /// Where the difference of a reconciliation goes: «Сверка», a category of its own, one for

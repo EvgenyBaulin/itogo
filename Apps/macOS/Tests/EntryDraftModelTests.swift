@@ -237,9 +237,10 @@ final class EntryDraftModelTests: XCTestCase {
   }
 
   /// A line that comes to nothing is told about its amount, not that its parts «do not add
-  /// up»: a single part of zero is balanced, and the zero is what is wrong.
+  /// up»: a single part of zero is balanced, and the zero is what is wrong. A number was
+  /// typed, so the answer is that an amount has to be above zero, not that there is none.
   func testALineThatComesToZeroIsRefusedForItsAmount() throws {
-    for line in ["кофе 0", "кофе 250-250"] {
+    for line in ["кофе 0", "кофе -0", "кофе 0,00", "кофе 250-250"] {
       let model = makeModel()
       let parsed = InputLineParser(vocabulary: .empty, calendar: .utc).parse(line, today: today)
       let amount = try XCTUnwrap(parsed.amount, line)
@@ -247,8 +248,30 @@ final class EntryDraftModelTests: XCTestCase {
       model.apply(parsed, amount: try AmountE4(decimal: amount), today: today)
 
       XCTAssertFalse(model.canSave, line)
-      XCTAssertEqual(model.saveRefusalKey, "entry.error.amountMissing", line)
+      XCTAssertEqual(model.saveRefusalKey, "entry.error.amountNotPositive", line)
     }
+  }
+
+  /// Only an amount nobody typed asks for one: the field of the panel emptied by hand, or a
+  /// draft that has just started over. A zero typed in the field is a number too.
+  func testAnAmountLeftEmptyAsksForOneAndAZeroTypedInTheFieldIsRefusedAsZero() throws {
+    let model = makeModel()
+    let parsed = InputLineParser(vocabulary: .empty, calendar: .utc).parse("кофе 0", today: today)
+    model.apply(parsed, amount: .zero, today: today)
+    XCTAssertEqual(model.saveRefusalKey, "entry.error.amountNotPositive")
+
+    model.setTotal(.zero, typed: "")
+    XCTAssertEqual(model.saveRefusalKey, "entry.error.amountMissing")
+
+    model.setTotal(.zero, typed: "0")
+    XCTAssertEqual(model.saveRefusalKey, "entry.error.amountNotPositive")
+
+    model.setTotal(AmountE4(whole: 250), typed: "250")
+    XCTAssertNil(model.saveRefusalKey)
+
+    model.setTotal(.zero, typed: "0")
+    model.reset()
+    XCTAssertEqual(model.saveRefusalKey, "entry.error.amountMissing")
   }
 }
 
@@ -2249,5 +2272,46 @@ extension EntryDraftModelTests {
 
     XCTAssertEqual(editor.draft.parts[0].forWhom, .me)
     XCTAssertNil(editor.draft.parts[0].forPersonId)
+  }
+
+  // MARK: What the kind has no field for chooses nothing and stops nothing
+
+  /// A place chosen before the kind became income is hidden, and no longer chooses the account
+  /// the money comes onto: the main account does.
+  func testAPlaceHiddenByIncomeChoosesNoAccount() throws {
+    let place = Place(name: "Пятёрочка")
+    let card = PaymentMethod(name: "Карта", isDefault: true)
+    let cash = PaymentMethod(name: "Наличные", kind: .cash)
+    try references.save(place)
+    try references.save(card)
+    try references.save(cash)
+    var past = TransactionDraft(
+      amount: AmountE4(whole: 700), placeId: place.id, paymentMethodId: cash.id)
+    past.normalizeSinglePart()
+    try transactions.save(try past.materialize())
+
+    let model = makeModel()
+    model.draft.amount = AmountE4(whole: 300)
+    model.draft.normalizeSinglePart()
+    model.setPlace(place.id, today: today)
+    XCTAssertEqual(model.draft.paymentMethodId, cash.id)
+    model.draft.kind = .income
+    model.applyDefaults(today: today)
+    XCTAssertEqual(model.draft.paymentMethodId, card.id)
+  }
+
+  /// A part «за другого» with nobody named yet stops a purchase; turned into income, which has
+  /// no such field, it stops nothing.
+  func testTheSaveIsCheckedOnWhatTheKindWrites() throws {
+    let model = makeModel()
+    model.draft.amount = AmountE4(whole: 3000)
+    var theirs = PartDraft(amount: AmountE4(whole: 2000))
+    theirs.reimbursable = true
+    theirs.reimbursementStatus = .expected
+    model.draft.parts = [PartDraft(amount: AmountE4(whole: 1000)), theirs]
+    XCTAssertEqual(model.saveRefusalKey, "entry.error.debtorMissing")
+    model.draft.kind = .income
+    model.applyDefaults(today: today)
+    XCTAssertNil(model.saveRefusalKey)
   }
 }

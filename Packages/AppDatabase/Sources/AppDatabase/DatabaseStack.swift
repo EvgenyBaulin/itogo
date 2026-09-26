@@ -1,6 +1,27 @@
 import CoreKit
 import Foundation
 import GRDB
+import Synchronization
+
+/// What the data steps of the migrations need from the app (`MigrationDataSteps`): the name of
+/// a main account made for the operations of an older build, in the language of the interface
+/// — the package cannot know it — and where its id comes from.
+public struct MigrationContext: Sendable {
+  /// «Основной счёт» / "Main account".
+  public var mainAccountName: String
+  public var makeId: @Sendable () -> UUID
+  /// The data step throws once the SQL has run: how the tests prove that a migration that
+  /// stops leaves nothing behind.
+  var failAfterSQL = false
+
+  public init(mainAccountName: String, makeId: @escaping @Sendable () -> UUID = { UUID() }) {
+    self.mainAccountName = mainAccountName
+    self.makeId = makeId
+  }
+
+  /// For stacks nobody's history goes through — tests, tools, generated data sets.
+  public static let tests = MigrationContext(mainAccountName: "Main account")
+}
 
 /// Opens the database, applies the SQL migrations and hands out repositories.
 /// Debug builds work in their own directory so synthetic data can never reach the real
@@ -19,11 +40,18 @@ public final class DatabaseStack: Sendable {
     /// How many of them this open had to apply.
     public var applied: Int
     public var milliseconds: Int
+    /// What the data steps of the migrations applied this time did (`MigrationDataSteps`),
+    /// counts only: `mainKept`, `mainChosen`, `mainCreated`, `defaultsCleared`, `assigned`.
+    /// Empty when no migration with a step ran.
+    public var dataSteps: [String: Int]
 
-    public init(onDisk: Int = 0, applied: Int = 0, milliseconds: Int = 0) {
+    public init(
+      onDisk: Int = 0, applied: Int = 0, milliseconds: Int = 0, dataSteps: [String: Int] = [:]
+    ) {
       self.onDisk = onDisk
       self.applied = applied
       self.milliseconds = milliseconds
+      self.dataSteps = dataSteps
     }
   }
 
@@ -51,7 +79,9 @@ public final class DatabaseStack: Sendable {
     }
   }
 
-  public init(url: URL, schema: any SchemaSource) throws {
+  public init(
+    url: URL, schema: any SchemaSource, context: MigrationContext = .tests
+  ) throws {
     self.url = url
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -83,17 +113,17 @@ public final class DatabaseStack: Sendable {
       try db.execute(sql: "PRAGMA synchronous = FULL")
     }
     self.writer = pool
-    self.applied = try Self.migrate(pool, schema: schema)
+    self.applied = try Self.migrate(pool, schema: schema, context: context)
   }
 
   /// In-memory stack for tests.
-  public init(inMemory schema: any SchemaSource) throws {
+  public init(inMemory schema: any SchemaSource, context: MigrationContext = .tests) throws {
     self.url = URL(fileURLWithPath: ":memory:")
     var configuration = Configuration()
     configuration.foreignKeysEnabled = true
     let queue = try DatabaseQueue(configuration: configuration)
     self.writer = queue
-    self.applied = try Self.migrate(queue, schema: schema)
+    self.applied = try Self.migrate(queue, schema: schema, context: context)
   }
 
   /// Closes every connection. Reads and the write in flight finish first — GRDB waits for
@@ -103,17 +133,28 @@ public final class DatabaseStack: Sendable {
     try writer.close()
   }
 
-  /// Every file in `Schema/` is one migration, applied in file-name order. Returns what it
+  /// Every file in `Schema/` is one migration, applied in file-name order, each in a
+  /// transaction of its own together with its data step (`MigrationDataSteps`). Returns what it
   /// had to do, so the app can write it in the journal.
+  ///
+  /// From `0004` on, the foreign keys are checked as each statement runs (`.immediate`), for
+  /// the rows it writes. GRDB's default checks every key of the whole file before the commit,
+  /// so one key an older build left pointing nowhere — anywhere, in any table — would stop the
+  /// update for good. The earlier migrations keep the check they were applied with.
   private static func migrate(
-    _ writer: any DatabaseWriter, schema: any SchemaSource
+    _ writer: any DatabaseWriter, schema: any SchemaSource, context: MigrationContext
   ) throws -> Migrations {
     let migrations = try schema.migrations()
     try refuseUnknownMigrations(writer, onDisk: migrations.map(\.name))
     var migrator = DatabaseMigrator()
+    let steps = StepCounts()
     for migration in migrations {
-      migrator.registerMigration(migration.name) { db in
+      migrator.registerMigration(
+        migration.name, foreignKeyChecks: migration.name >= "0004" ? .immediate : .deferred
+      ) { db in
         try db.execute(sql: migration.sql)
+        let counts = try MigrationDataSteps.after(migration.name, db: db, context: context)
+        steps.add(counts)
       }
     }
     let alreadyApplied = (try? writer.read { try migrator.appliedIdentifiers($0) }) ?? []
@@ -135,7 +176,19 @@ public final class DatabaseStack: Sendable {
     return Migrations(
       onDisk: migrations.count,
       applied: migrations.filter { !alreadyApplied.contains($0.name) }.count,
-      milliseconds: elapsed)
+      milliseconds: elapsed, dataSteps: steps.total)
+  }
+
+  /// The counts of the data steps, added up across the migrations of one open. GRDB runs the
+  /// migrations one after another on its writer; the lock is for the compiler's sake.
+  private final class StepCounts: Sendable {
+    private let counts = Mutex<[String: Int]>([:])
+
+    func add(_ more: [String: Int]) {
+      counts.withLock { $0.merge(more) { $0 + $1 } }
+    }
+
+    var total: [String: Int] { counts.withLock { $0 } }
   }
 
   /// Refuses a database that was migrated by a build whose migrations we do not have.
@@ -241,28 +294,24 @@ public final class DatabaseStack: Sendable {
   /// A consistent snapshot of a database file this build did not open as its own — one written
   /// by a newer build, one a migration failed on. Nothing is applied to it and nothing is
   /// written into it: it is read as it is, through the backup API, log included, so the copy
-  /// is the state the owner had. Throws when SQLite cannot read the file at all.
+  /// is the state the owner had (`reading(fileAt:)`). Throws when SQLite cannot read the file
+  /// at all.
   public static func backup(fileAt source: URL, to destination: URL) throws {
     guard FileManager.default.fileExists(atPath: source.path) else {
       throw DatabaseError.notFound
     }
     try FileManager.default.createDirectory(
       at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-    for path in Self.databaseFiles(of: destination)
-    where FileManager.default.fileExists(atPath: path) {
-      try FileManager.default.removeItem(atPath: path)
+    try reading(fileAt: source) { queue in
+      // Each attempt starts from nothing: a first one that failed halfway leaves no page behind.
+      for path in Self.databaseFiles(of: destination)
+      where FileManager.default.fileExists(atPath: path) {
+        try FileManager.default.removeItem(atPath: path)
+      }
+      let target = try DatabaseQueue(path: destination.path)
+      defer { try? target.close() }
+      try queue.backup(to: target)
     }
-    // Not read-only: a database in WAL mode needs its `-shm`, which a read-only connection
-    // cannot make. `query_only` keeps it from writing instead (see `integrityCheckPassed(at:)`).
-    var configuration = Configuration()
-    configuration.prepareDatabase { db in
-      try db.execute(sql: "PRAGMA query_only = ON")
-    }
-    let queue = try DatabaseQueue(path: source.path, configuration: configuration)
-    defer { try? queue.close() }
-    let target = try DatabaseQueue(path: destination.path)
-    defer { try? target.close() }
-    try queue.backup(to: target)
   }
 
   /// The database file together with the journals SQLite keeps next to it.
@@ -315,6 +364,82 @@ public final class DatabaseStack: Sendable {
     return verdict ?? .damaged
   }
 
+  /// The migrations of `schema` a database file nobody has open has not had yet: what opening
+  /// it would apply. Empty when there is nothing to apply, and also when there is nothing to
+  /// keep a copy of — no file, a file without a schema (it is made anew) — or when the file
+  /// records a migration this build does not have: the opening refuses it then
+  /// (`DatabaseError.migrationMismatch`) and writes nothing.
+  ///
+  /// A file that is there but cannot be read throws what SQLite said: never «nothing to apply»
+  /// for a file the opening might still migrate.
+  public static func pendingMigrations(
+    fileAt url: URL, schema: any SchemaSource
+  ) throws -> [String] {
+    let names = try schema.migrations().map(\.name)
+    guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+    let recorded = try read(fileAt: url) { db -> [String]? in
+      guard try db.tableExists("grdb_migrations") else { return nil }
+      return try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
+    }
+    guard let recorded else { return [] }
+    let known = Set(names)
+    guard recorded.allSatisfy(known.contains) else { return [] }
+    let applied = Set(recorded)
+    return names.filter { !applied.contains($0) }
+  }
+
+  /// The rows of every table of a database file nobody has open, by table — SQLite's own and
+  /// GRDB's list of migrations left out. A copy holds what its source held when these agree.
+  public static func rowCounts(fileAt url: URL) throws -> [String: Int] {
+    try read(fileAt: url) { db in
+      let tables = try String.fetchAll(
+        db,
+        sql: """
+          SELECT name FROM sqlite_master
+          WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'grdb_migrations'
+          """)
+      var counts: [String: Int] = [:]
+      for table in tables {
+        let quoted = "\"" + table.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        counts[table] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(quoted)") ?? 0
+      }
+      return counts
+    }
+  }
+
+  /// Whether two database files nobody has open hold the same data: the same schema — every
+  /// table, index and trigger, GRDB's list of migrations included — and every table the same
+  /// rows, value for value, in the order of their keys. A copy of a database is a copy of the
+  /// state it holds now exactly when this is true, whenever the copy was taken; the dates of the
+  /// files could not tell, since a file put back from elsewhere keeps an old one.
+  public static func sameData(fileAt first: URL, as second: URL) throws -> Bool {
+    try read(fileAt: first) { one in
+      try read(fileAt: second) { other in
+        let schema = """
+          SELECT type, name, tbl_name, sql FROM sqlite_master
+          WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name
+          """
+        let objects = try Row.fetchAll(one, sql: schema)
+        guard try objects == Row.fetchAll(other, sql: schema) else { return false }
+        for object in objects where object["type"] == "table" {
+          let name: String = object["name"]
+          let sql: String = object["sql"] ?? ""
+          let quoted = "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+          // A table without a rowid is read in the order of its key, which a full scan is.
+          let order = sql.uppercased().contains("WITHOUT ROWID") ? "" : " ORDER BY rowid"
+          let query = "SELECT * FROM \(quoted)\(order)"
+          let left = try Row.fetchCursor(one, sql: query)
+          let right = try Row.fetchCursor(other, sql: query)
+          while let row = try left.next() {
+            guard let twin = try right.next(), row == twin else { return false }
+          }
+          guard try right.next() == nil else { return false }
+        }
+        return true
+      }
+    }
+  }
+
   private static func isSound(_ db: Database) throws -> Bool {
     let tables = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sqlite_master") ?? 0
     let result = try String.fetchOne(db, sql: "PRAGMA integrity_check")
@@ -322,17 +447,43 @@ public final class DatabaseStack: Sendable {
   }
 
   /// Reads a database file nobody has open; nil when it does not open or the reading throws.
-  ///
-  /// The connection is not opened read-only: a copy of a database in WAL mode is in WAL mode
-  /// too, and a read-only connection cannot make the `-shm` it needs, so it would call every
-  /// good copy unreadable. It is kept from writing by `query_only` instead. The folder is left
-  /// as it was found: a `-wal` or `-shm` the check made is removed, so no log is left for the
-  /// next file of that name to read as its own.
   private static func inspect<T>(
     fileAt url: URL, _ read: (Database) throws -> T
   ) -> T? {
+    try? Self.read(fileAt: url, read)
+  }
+
+  /// Reads a database file nobody has open, and says why it could not: `DatabaseError.notFound`
+  /// when there is no file, what SQLite said when it does not open or the reading fails.
+  private static func read<T>(
+    fileAt url: URL, _ read: (Database) throws -> T
+  ) throws -> T {
+    guard FileManager.default.fileExists(atPath: url.path) else { throw DatabaseError.notFound }
+    return try reading(fileAt: url) { queue in try queue.read(read) }
+  }
+
+  /// Runs `body` over a connection to a database file nobody has open, one that writes nothing
+  /// into the file.
+  ///
+  /// Read-only. A connection that may write checkpoints the log it finds beside the file into
+  /// the file when it closes — as the last connection to a database in WAL mode does — so
+  /// reading a file left with rows in its `-wal` that way would write into it: the copy kept
+  /// before an update, taken of a file the update then refuses, would no longer be the file the
+  /// owner had, and a damaged file would get its log moved into its damaged pages.
+  ///
+  /// A read-only connection cannot always open a file in WAL mode, though: not when its `-shm`
+  /// cannot be made or used, not with a log only a writer may recover. Only then — SQLite says
+  /// it cannot open the file, or cannot do it read-only — is the file read from a copy of it
+  /// and its log, in a folder of its own that goes afterwards; the file itself is still never
+  /// opened by a connection that may write. Any other failure — a damaged page, a body that
+  /// throws — is thrown as it is, and the body is not run twice.
+  ///
+  /// The folder is left as it was found: a `-wal` or `-shm` the reading made is removed, so no
+  /// log is left for the next file of that name to read as its own.
+  private static func reading<T>(
+    fileAt url: URL, _ body: (DatabaseQueue) throws -> T
+  ) throws -> T {
     let manager = FileManager.default
-    guard manager.fileExists(atPath: url.path) else { return nil }
     let beside = [url.path + "-wal", url.path + "-shm"]
     let there = beside.filter { manager.fileExists(atPath: $0) }
     defer {
@@ -340,14 +491,41 @@ public final class DatabaseStack: Sendable {
         try? manager.removeItem(atPath: path)
       }
     }
+    var readOnly = Configuration()
+    readOnly.readonly = true
+    do {
+      let queue = try DatabaseQueue(path: url.path, configuration: readOnly)
+      defer { try? queue.close() }
+      return try body(queue)
+    } catch let error as GRDB.DatabaseError
+      where [.SQLITE_CANTOPEN, .SQLITE_READONLY].contains(error.resultCode)
+    {
+      return try readingACopy(of: url, body)
+    }
+  }
+
+  /// `reading(fileAt:)` for a file a read-only connection cannot open: the file and its `-wal`
+  /// are copied into a folder of their own — never the `-shm`, which the copy makes anew — and
+  /// the copy is read, kept from writing by `query_only`; the folder goes afterwards.
+  private static func readingACopy<T>(
+    of url: URL, _ body: (DatabaseQueue) throws -> T
+  ) throws -> T {
+    let manager = FileManager.default
+    let folder = manager.temporaryDirectory.appendingPathComponent(
+      "itogo-read-\(UUID().uuidString)", isDirectory: true)
+    try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? manager.removeItem(at: folder) }
+    let copy = folder.appendingPathComponent(url.lastPathComponent)
+    try manager.copyItem(at: url, to: copy)
+    if manager.fileExists(atPath: url.path + "-wal") {
+      try manager.copyItem(atPath: url.path + "-wal", toPath: copy.path + "-wal")
+    }
     var configuration = Configuration()
     configuration.prepareDatabase { db in
       try db.execute(sql: "PRAGMA query_only = ON")
     }
-    guard let queue = try? DatabaseQueue(path: url.path, configuration: configuration) else {
-      return nil
-    }
+    let queue = try DatabaseQueue(path: copy.path, configuration: configuration)
     defer { try? queue.close() }
-    return try? queue.read(read)
+    return try body(queue)
   }
 }

@@ -16,10 +16,13 @@ struct ComputeSources: Sendable {
   /// the model leaves it out.
   var models: CategoryModelService?
 
-  /// The app's sources: the database of `stack` and the rate service.
+  /// The app's sources: the database of `stack` and the rate service. `language` gives the
+  /// language the names of the accounts are ordered in, read at every load, so a language
+  /// switched while the app runs orders them from the next read on.
   static func live(
     stack: DatabaseStack, rateService: RateService, calendar: CalendarContext,
-    models: CategoryModelService? = nil
+    models: CategoryModelService? = nil,
+    language: @escaping @Sendable () -> String = { ComputeSources.interfaceLanguage() }
   ) -> ComputeSources {
     let datasets = DatasetRepository(writer: stack.writer)
     let settings = SettingsRepository(writer: stack.writer)
@@ -27,15 +30,23 @@ struct ComputeSources: Sendable {
     return ComputeSources(
       loadData: { mark, today, now in
         let dataset = try await datasets.load(version: mark)
+        // Rates for one unit, the nominal applied, both for today and by day.
         let context = SnapshotContext(
           dataset: dataset, rates: RateTable(rates: try rates.allRates()), today: today,
-          also: enabledCurrencies(settings))
+          also: enabledCurrencies(settings), localeIdentifier: language())
         try Task.checkCancellation()
         return DataSnapshot.build(
           dataset: dataset, calendar: calendar, today: today, context: context,
           version: DataVersion(load: mark), now: now)
       },
       refineRates: { try await rateService.refine() }, models: models)
+  }
+
+  /// The two-letter code of the interface language, read where the choice is stored so a step
+  /// off the main thread can have it: Russian or English as chosen, and for «System» the first
+  /// language of the Mac itself — `AppLanguage`'s own rule, not a copy of it.
+  static func interfaceLanguage(_ defaults: UserDefaults = .standard) -> String {
+    AppLanguage.storedCode(in: defaults)
   }
 
   /// The currencies enabled in the settings, whose rates the reconciliation asks for. A read
@@ -85,9 +96,9 @@ struct ComputeSources: Sendable {
       PipelineStep(ComputeStep.forecast, dependsOn: [ComputeStep.data]) { inputs in
         try await faults.hold(ComputeStep.forecast)
         let snapshot = try inputs.value(of: ComputeStep.data, as: DataSnapshot.self)
-        let ledger = latest.newest(than: snapshot).ledger
+        let newest = latest.newest(than: snapshot)
         try Task.checkCancellation()
-        return MonthForecast.remainder(ledger: ledger, today: today())
+        return ComputeSources.forecast(of: newest, today: today())
       },
       // Step 4: the category model. It trains on the freshest ledger the store has, and
       // only when what it would learn from has changed.
@@ -147,6 +158,18 @@ struct ComputeSources: Sendable {
         })
     }
     return steps
+  }
+}
+
+extension ComputeSources {
+  /// The remainder of the month the forecast step gives. An ordinary operation that pays a
+  /// scheduled due by matching it (`PlanningSnapshot.matches`) is a planned payment, not daily
+  /// spending: the plan counts it already, so it stays out of the daily average — counted in
+  /// both, the payment would be forecast twice.
+  static func forecast(of snapshot: DataSnapshot, today: DateOnly) -> MonthForecast.Remainder {
+    MonthForecast.remainder(
+      ledger: snapshot.ledger, today: today,
+      scheduledOperations: snapshot.planning.matches.operationIds)
   }
 }
 

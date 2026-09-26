@@ -4,6 +4,10 @@ import SwiftUI
 /// Parts I paid for somebody else that have not come back. When nobody owes anything the
 /// card stays and says so — the grid does not rearrange itself — and offers no button, as
 /// there is nothing to close.
+///
+/// Money back may cover a part only in part: the part waits for the rest, and the card counts
+/// what is left of it, never the whole part again. What came back of such parts is said under
+/// the figure, so 1 500 ₽ owed with 700 ₽ back reads «800 ₽ · уже вернули часть: 700 ₽».
 struct OwedCard: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -27,6 +31,12 @@ struct OwedCard: View {
             .foregroundStyle(.secondary)
           }
           .accessibilityElement(children: .combine)
+          if let partly = partlyReturned(under: owed) {
+            Text(verbatim: partly)
+              .font(.caption)
+              .monospacedDigit()
+              .foregroundStyle(.secondary)
+          }
           // Content, not a floating control: a plain small button, never glass.
           Button(environment.language("reimbursement.title", table: "Entry")) {
             actions.recordingReimbursement = true
@@ -39,5 +49,51 @@ struct OwedCard: View {
           .foregroundStyle(.secondary)
       }
     }
+  }
+
+  /// «уже вернули часть: 700 ₽» while some owed part has had money back and waits for the
+  /// rest; `nil` otherwise, and while the figure above is of other data than the lists'.
+  private func partlyReturned(under figure: OwedSummary) -> String? {
+    guard let ledger = compute.snapshot?.ledger,
+      let returned = OwedPartly(ledger).returned(under: figure)
+    else { return nil }
+    return environment.language.format(
+      "overview.owedPartlyReturned", table: "Overview", environment.money.rounded(returned))
+  }
+}
+
+/// The owed parts some money already came back for, which wait for the rest: how many, what
+/// came back and what is left. The rule of «owed» is `OverviewSummary`'s — an expected part
+/// with something left of it — so the card and the summary agree.
+struct OwedPartly: Hashable, Sendable {
+  var count = 0
+  var returnedRub: AmountE4 = .zero
+  var remainingRub: AmountE4 = .zero
+  /// Everything owed by that rule, in the same pass: what the card's figure says when it is
+  /// of the same data.
+  var owed = OwedSummary()
+
+  init(_ ledger: Ledger) {
+    for row in ledger.rows
+    where row.kind == .expense && row.reimbursable && row.reimbursementStatus == .expected {
+      let remaining = ledger.remaining(ofPart: row)
+      guard remaining.raw > 0 else { continue }
+      owed.amount += remaining
+      owed.count += 1
+      let returned = ledger.returned(forPart: row.partId)
+      guard returned.raw > 0 else { continue }
+      count += 1
+      returnedRub += returned
+      remainingRub += remaining
+    }
+  }
+
+  /// What came back of the parts still owed, to say under `figure` — the card's figure,
+  /// counted by a step of its own. `nil` when nothing came back, or when the figure is of
+  /// other data than this ledger (a step counted from an older read): the line would tell
+  /// another story than the number above it.
+  func returned(under figure: OwedSummary) -> AmountE4? {
+    guard returnedRub.raw > 0, figure == owed else { return nil }
+    return returnedRub
   }
 }

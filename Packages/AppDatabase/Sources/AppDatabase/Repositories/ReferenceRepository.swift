@@ -2,6 +2,49 @@ import CoreKit
 import Foundation
 import GRDB
 
+/// The dictionaries of Settings → Справочники whose rows can be deleted, archived and brought
+/// back by these rules. Accounts have rules of their own (`AccountRepository`).
+public enum ReferenceBook: String, Sendable, CaseIterable {
+  case people, places, events
+}
+
+/// What still points at a person, a place or an event.
+public struct ReferenceUsage: Hashable, Sendable {
+  /// Operations that name it, the deleted ones in the bin included: undoing their deletion
+  /// would bring them back naming a row that is not there.
+  public var operations: Int
+  /// Debts, scheduled payments, expected income and import rules that name it.
+  public var planning: Int
+
+  public init(operations: Int = 0, planning: Int = 0) {
+    self.operations = operations
+    self.planning = planning
+  }
+
+  public var isUsed: Bool { operations + planning > 0 }
+}
+
+/// What a deletion of several rows did: the rows nothing pointed at are gone, the rest stayed
+/// with what points at them — something may have come to point at a row since it was asked.
+public struct ReferenceDeletion: Hashable, Sendable {
+  public var deleted: [UUID]
+  public var kept: [UUID: ReferenceUsage]
+
+  public init(deleted: [UUID] = [], kept: [UUID: ReferenceUsage] = [:]) {
+    self.deleted = deleted
+    self.kept = kept
+  }
+}
+
+/// Why a row of a dictionary was not put in the archive or brought back from it.
+public enum ReferenceWriteError: Error, Equatable, Sendable {
+  /// A live row of the same dictionary already has its name: the entry line could not tell
+  /// the two apart.
+  case nameTaken
+  /// There is no such row: another window deleted it.
+  case notFound
+}
+
 /// Categories, people, places, payment methods, events, templates and goals.
 public struct ReferenceRepository: Sendable {
   private let writer: any DatabaseWriter
@@ -50,6 +93,17 @@ public struct ReferenceRepository: Sendable {
     try writer.write { db in try category.save(db) }
   }
 
+  /// «Добавить» with the name of a category in the archive brings that one back instead of a
+  /// second of the same name: only its flag is written, so it comes back with its quality, its
+  /// place and what is filed under it. Throws `notFound` when there is no such category.
+  public func restoreCategory(_ id: UUID) throws {
+    try writer.write { db in
+      try db.execute(
+        sql: "UPDATE categories SET archived = 0 WHERE id = ?", arguments: [id.uuidString])
+      guard db.changesCount > 0 else { throw ReferenceWriteError.notFound }
+    }
+  }
+
   // MARK: Simple dictionaries
 
   public func people(includeArchived: Bool = false) throws -> [Person] {
@@ -72,9 +126,16 @@ public struct ReferenceRepository: Sendable {
     try fetchAll(Goal.self, includeArchived: includeArchived)
   }
 
-  public func templates() throws -> [Template] {
+  /// The templates, pinned first, then the most used. A template in the archive is put away,
+  /// not forgotten: it is listed with the others — it travels in the archive of the data and its
+  /// words still count on it —, and the chips ask for the live ones only.
+  public func templates(includeArchived: Bool = true) throws -> [Template] {
     try writer.read { db in
-      try Template.order(Column("pinned").desc, Column("use_count").desc).fetchAll(db)
+      var request = Template.all()
+      if !includeArchived {
+        request = request.filter(Column("archived") == false)
+      }
+      return try request.order(Column("pinned").desc, Column("use_count").desc).fetchAll(db)
     }
   }
 
@@ -122,6 +183,50 @@ public struct ReferenceRepository: Sendable {
 
   public func save(_ entry: DebtEntry) throws {
     try writer.write { db in try entry.save(db) }
+  }
+
+  /// Puts a template in the archive — out of the chips, still counted on by the words it
+  /// holds — or brings it back with «Вернуть», pin and count as they were. Only the flag is
+  /// written: what the row on screen holds besides it may be older than the database.
+  public func setTemplate(_ id: UUID, archived: Bool) throws {
+    try writer.write { db in
+      try db.execute(
+        sql: "UPDATE templates SET archived = ? WHERE id = ?", arguments: [archived, id.uuidString])
+      guard db.changesCount > 0 else { throw ReferenceWriteError.notFound }
+    }
+  }
+
+  /// A chip picked counts one more use. Only the count is written, by the database itself: the
+  /// copy the chip was made from may be older than the row — put in the archive, pinned,
+  /// renamed since — and writing it back would undo that. A template deleted meanwhile stays
+  /// deleted.
+  public func countTemplateUse(_ id: UUID) throws {
+    try writer.write { db in
+      try db.execute(
+        sql: "UPDATE templates SET use_count = use_count + 1 WHERE id = ?",
+        arguments: [id.uuidString])
+    }
+  }
+
+  /// Pins a template or takes its pin off, and nothing else. Throws `notFound` when there is no
+  /// such template: another window deleted it.
+  public func setTemplate(_ id: UUID, pinned: Bool) throws {
+    try writer.write { db in
+      try db.execute(
+        sql: "UPDATE templates SET pinned = ? WHERE id = ?", arguments: [pinned, id.uuidString])
+      guard db.changesCount > 0 else { throw ReferenceWriteError.notFound }
+    }
+  }
+
+  /// Gives a template new words, without the spaces around them, and nothing else. Throws
+  /// `notFound` when there is no such template.
+  public func renameTemplate(_ id: UUID, to text: String) throws {
+    try writer.write { db in
+      try db.execute(
+        sql: "UPDATE templates SET text = ? WHERE id = ?",
+        arguments: [text.trimmingCharacters(in: .whitespacesAndNewlines), id.uuidString])
+      guard db.changesCount > 0 else { throw ReferenceWriteError.notFound }
+    }
   }
 
   /// Templates are only shortcuts for the entry line: deleting one loses no money data.
@@ -236,27 +341,244 @@ public struct ReferenceRepository: Sendable {
     }
   }
 
-  /// The name of the row that disappears becomes an alias of the row that stays, so the
-  /// entry line still recognises what I used to type.
+  // MARK: Usage, deleting and the archive
+
+  /// The rows of `book` something points at, with what points at them. A row that is not
+  /// here is used by nothing and can be deleted. Every column that points at the dictionary
+  /// counts (`mergedColumns`), and so do the operations in the bin.
+  public func usage(in book: ReferenceBook) throws -> [UUID: ReferenceUsage] {
+    try writer.read { db in try Self.usage(in: book, only: nil, db: db) }
+  }
+
+  public func usage(of id: UUID, in book: ReferenceBook) throws -> ReferenceUsage {
+    try writer.read { db in try Self.usage(in: book, only: id, db: db)[id] ?? ReferenceUsage() }
+  }
+
+  static func usage(
+    in book: ReferenceBook, only id: UUID?, db: Database
+  ) throws -> [UUID: ReferenceUsage] {
+    var operations: [String] = []
+    var planning: [String] = []
+    for (table, column) in mergedColumns[book.rawValue] ?? [] {
+      switch table {
+      case "transaction_parts":
+        operations.append(
+          "SELECT \(column) AS ref, transaction_id AS op FROM transaction_parts"
+            + " WHERE \(column) IS NOT NULL")
+      case "transactions":
+        operations.append(
+          "SELECT \(column) AS ref, id AS op FROM transactions WHERE \(column) IS NOT NULL")
+      default:
+        planning.append("SELECT \(column) AS ref FROM \(table) WHERE \(column) IS NOT NULL")
+      }
+    }
+    var arguments = StatementArguments()
+    var only = ""
+    if let id {
+      only = " WHERE ref = :id"
+      arguments = ["id": id.uuidString]
+    }
+    var usage: [UUID: ReferenceUsage] = [:]
+    // An operation that names a person twice — for whom and who gives back — is one operation.
+    if !operations.isEmpty {
+      let sql = """
+        SELECT ref, COUNT(DISTINCT op) AS n
+        FROM (\(operations.joined(separator: " UNION ALL ")))\(only) GROUP BY ref
+        """
+      for row in try Row.fetchAll(db, sql: sql, arguments: arguments) {
+        guard let text: String = row["ref"], let key = UUID(uuidString: text) else { continue }
+        usage[key, default: ReferenceUsage()].operations = row["n"]
+      }
+    }
+    if !planning.isEmpty {
+      let sql = """
+        SELECT ref, COUNT(*) AS n
+        FROM (\(planning.joined(separator: " UNION ALL ")))\(only) GROUP BY ref
+        """
+      for row in try Row.fetchAll(db, sql: sql, arguments: arguments) {
+        guard let text: String = row["ref"], let key = UUID(uuidString: text) else { continue }
+        usage[key, default: ReferenceUsage()].planning = row["n"]
+      }
+    }
+    return usage
+  }
+
+  /// Deletes, for good and in one write, the rows of `ids` nothing points at; a row something
+  /// points at stays and is named in `kept` with what points at it. The columns pointing at
+  /// these tables would be emptied by the schema, not refused, so the check is made here,
+  /// inside the write. No step of ⌘Z.
+  public func delete(_ ids: [UUID], from book: ReferenceBook) throws -> ReferenceDeletion {
+    try writer.write { db in
+      var result = ReferenceDeletion()
+      for id in ids {
+        let usage = try Self.usage(in: book, only: id, db: db)[id] ?? ReferenceUsage()
+        guard !usage.isUsed else {
+          result.kept[id] = usage
+          continue
+        }
+        try db.execute(
+          sql: "DELETE FROM \(book.rawValue) WHERE id = ?", arguments: [id.uuidString])
+        if db.changesCount > 0 { result.deleted.append(id) }
+      }
+      return result
+    }
+  }
+
+  /// «Добавить» with a name the archive holds brings that row back instead of making a second
+  /// one of the same name, and returns its id. Nil when no archived row answers to the name,
+  /// and when a live row already does: then there is nothing to bring back.
+  ///
+  /// A person or a place answers to its name and to its other names, compared as the entry
+  /// line compares them (`nameKey`), its name first. An event answers to its name only, and —
+  /// a yearly event is made again every year under the same name — only when its days meet
+  /// `days`. A row whose own name a live row has taken meanwhile stays in the archive; its other
+  /// names a live row has taken are dropped from it as it comes back.
+  public func revive(
+    named name: String, in book: ReferenceBook, days: ClosedRange<DateOnly>? = nil
+  ) throws -> UUID? {
+    let key = Self.nameKey(name)
+    guard !key.isEmpty else { return nil }
+    return try writer.write { db in
+      let rows = try Self.spelled(book, db: db)
+      let taken = Self.liveKeys(rows, except: nil)
+      guard book == .events || !taken.contains(key) else { return nil }
+      let archived = rows.filter { row in
+        guard row.archived else { return false }
+        guard book == .events, let days else { return true }
+        return row.meets(days)
+      }
+      let byName = archived.filter { Self.nameKey($0.name) == key }
+      let byOtherName = archived.filter { $0.aliases.contains { Self.nameKey($0) == key } }
+      guard
+        let row = (byName + byOtherName).first(where: {
+          book == .events || !taken.contains(Self.nameKey($0.name))
+        })
+      else { return nil }
+      try Self.bringBack(row, book: book, taken: taken, db: db)
+      return row.id
+    }
+  }
+
+  /// «В архив»: the row leaves every menu and the vocabulary of the entry line, and keeps
+  /// everything else — what points at it still does. Only the flag is written, so an edit of
+  /// the row the owner has not saved does not slip in with it. Throws `notFound` when there is
+  /// no such row.
+  public func archive(_ id: UUID, in book: ReferenceBook) throws {
+    try writer.write { db in
+      try db.execute(
+        sql: "UPDATE \(book.rawValue) SET archived = 1 WHERE id = ?", arguments: [id.uuidString])
+      guard db.changesCount > 0 else { throw ReferenceWriteError.notFound }
+    }
+  }
+
+  /// «Вернуть»: the row is live again. Its other names a live row has taken meanwhile are
+  /// dropped, so one name is never on two live rows. Throws `nameTaken` when a live row has its
+  /// name — an event is the exception, as events may share a name — and `notFound` when there
+  /// is no such row.
+  public func restore(_ id: UUID, in book: ReferenceBook) throws {
+    try writer.write { db in
+      let rows = try Self.spelled(book, db: db)
+      guard let row = rows.first(where: { $0.id == id }) else {
+        throw ReferenceWriteError.notFound
+      }
+      guard row.archived else { return }
+      let taken = Self.liveKeys(rows, except: id)
+      if book != .events, taken.contains(Self.nameKey(row.name)) {
+        throw ReferenceWriteError.nameTaken
+      }
+      try Self.bringBack(row, book: book, taken: taken, db: db)
+    }
+  }
+
+  /// A name as the entry line compares names: the case, «ё» against «е» and the spaces around
+  /// it do not count.
+  public static func nameKey(_ name: String) -> String {
+    String(name.trimmingCharacters(in: .whitespaces).lowercased().map { $0 == "ё" ? "е" : $0 })
+  }
+
+  /// A row of a dictionary as far as its names and its days go.
+  private struct Spelled {
+    let id: UUID
+    let name: String
+    let aliases: [String]
+    let archived: Bool
+    let start: String?
+    let end: String?
+
+    func meets(_ days: ClosedRange<DateOnly>) -> Bool {
+      guard let start, let end else { return true }
+      return start <= days.upperBound.iso && end >= days.lowerBound.iso
+    }
+  }
+
+  private static func spelled(_ book: ReferenceBook, db: Database) throws -> [Spelled] {
+    let columns =
+      book == .events
+      ? "id, name, '' AS aliases, archived, start_date, end_date"
+      : "id, name, aliases, archived, NULL AS start_date, NULL AS end_date"
+    return try Row.fetchAll(
+      db, sql: "SELECT \(columns) FROM \(book.rawValue) ORDER BY name, id"
+    ).compactMap { row in
+      guard let text: String = row["id"], let id = UUID(uuidString: text) else { return nil }
+      return Spelled(
+        id: id, name: row["name"] ?? "", aliases: RowMapping.split(row["aliases"] ?? ""),
+        archived: row["archived"] ?? false, start: row["start_date"], end: row["end_date"])
+    }
+  }
+
+  /// Every name and other name of the live rows but `except`.
+  private static func liveKeys(_ rows: [Spelled], except: UUID?) -> Set<String> {
+    Set(
+      rows.filter { !$0.archived && $0.id != except }
+        .flatMap { [$0.name] + $0.aliases }
+        .map(nameKey))
+  }
+
+  private static func bringBack(
+    _ row: Spelled, book: ReferenceBook, taken: Set<String>, db: Database
+  ) throws {
+    guard book != .events else {
+      try db.execute(
+        sql: "UPDATE events SET archived = 0 WHERE id = ?", arguments: [row.id.uuidString])
+      return
+    }
+    let kept = row.aliases.filter { !taken.contains(nameKey($0)) }
+    try db.execute(
+      sql: "UPDATE \(book.rawValue) SET archived = 0, aliases = ? WHERE id = ?",
+      arguments: [RowMapping.join(kept), row.id.uuidString])
+  }
+
+  /// The name of the row that disappears, and its other names, become other names of the row
+  /// that stays, so the entry line still recognises what I used to type. A name is compared as
+  /// the entry line compares names (`nameKey`): one the row that stays answers to already is
+  /// not added twice, and one another live row answers to is left out — two live rows with one
+  /// name are two rows the entry line cannot tell apart. The row merged away may come from the
+  /// archive, whose names are free for any live row to take.
   private static func mergeAliases<T: FetchableRecord & TableRecord>(
     _ type: T.Type, source: UUID, into target: UUID, db: Database
   ) throws {
     let table = T.databaseTableName
-    guard
-      let sourceName = try String.fetchOne(
-        db, sql: "SELECT name FROM \(table) WHERE id = ?", arguments: [source.uuidString]),
-      let sourceAliases = try String.fetchOne(
-        db, sql: "SELECT aliases FROM \(table) WHERE id = ?", arguments: [source.uuidString]),
-      let targetAliases = try String.fetchOne(
-        db, sql: "SELECT aliases FROM \(table) WHERE id = ?", arguments: [target.uuidString])
+    let rows = try Row.fetchAll(db, sql: "SELECT id, name, aliases, archived FROM \(table)")
+    func names(_ row: Row) -> [String] {
+      [row["name"] ?? ""] + RowMapping.split(row["aliases"] ?? "")
+    }
+    func id(_ row: Row) -> String { row["id"] ?? "" }
+    guard let sourceRow = rows.first(where: { id($0) == source.uuidString }),
+      let targetRow = rows.first(where: { id($0) == target.uuidString })
     else { return }
-
-    var merged = RowMapping.split(targetAliases)
-    for alias in ([sourceName] + RowMapping.split(sourceAliases)) {
+    let others = Set(
+      rows.filter { row in
+        let rowId = id(row)
+        let archived: Bool = row["archived"] ?? false
+        return !archived && rowId != source.uuidString && rowId != target.uuidString
+      }
+      .flatMap(names).map(nameKey))
+    var merged = RowMapping.split(targetRow["aliases"] ?? "")
+    var known = Set(names(targetRow).map(nameKey))
+    for alias in names(sourceRow) {
       let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty,
-        !merged.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame })
-      else { continue }
+      let key = nameKey(trimmed)
+      guard !key.isEmpty, !others.contains(key), known.insert(key).inserted else { continue }
       merged.append(trimmed)
     }
     try db.execute(

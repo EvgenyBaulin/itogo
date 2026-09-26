@@ -190,4 +190,58 @@ struct IncomeEstimateTests: SavingsFixtures {
     #expect(IncomeEstimate.median(["1", "4"].map(rub)) == rub("2.5"))
     #expect(IncomeEstimate.median(["0.0001", "0.0002"].map(rub)) == rub("0.0002"))
   }
+
+  /// «ещё ждём до D» with D two months ahead: the salaries of 25 September and 25 October and
+  /// a one-off 20 000 due on 10 October. October's salary was entered ahead, dated the 24th:
+  /// its money has not come yet, so it is still waited for. Statuses built only through the
+  /// month would miss October.
+  @Test func stillExpectedReachesMonthsAhead() {
+    var book = SavingsBook()
+    let salary = ExpectedIncome(
+      id: uid(620), name: "Salary", kind: .recurring, totalE4: rub("100000"),
+      dueDate: date("2026-01-25"), freq: .monthly, day: 25)
+    let project = ExpectedIncome(
+      id: uid(621), name: "Project", totalE4: rub("20000"), dueDate: date("2026-10-10"))
+    let ahead = book.income("2026-10-24", "100000")
+    let planning = PlanningBook(
+      expected: [salary, project],
+      expectedLinks: [ExpectedIncomeLink(expectedIncomeId: salary.id, transactionId: ahead)])
+    let ledger = book.ledger
+    let through = date("2026-11-19")
+    let statuses = ExpectedIncomeRules.statuses(
+      book: planning, ledger: ledger, today: today, through: through)
+    let still = IncomeEstimate.stillExpected(
+      statuses: statuses, today: today, through: through, ledger: ledger)
+    #expect(still.amount == rub("220000"))
+    #expect(still.withoutRate.isEmpty)
+
+    let monthOnly = ExpectedIncomeRules.statuses(book: planning, ledger: ledger, today: today)
+    #expect(
+      IncomeEstimate.stillExpected(
+        statuses: monthOnly, today: today, through: through, ledger: ledger
+      ).amount == rub("120000"))
+  }
+
+  /// A weekly expectation looked at a year ahead keeps the due dates of this month: the latest
+  /// 24 are kept through the end of the month, and every one after it up to the horizon.
+  @Test func aYearAheadKeepsThisMonthsWeeks() {
+    let book = SavingsBook()
+    let lessons = ExpectedIncome(
+      id: uid(630), name: "Lessons", kind: .recurring, totalE4: rub("1000"),
+      dueDate: date("2026-01-05"), freq: .weekly, day: 1)
+    let planning = PlanningBook(expected: [lessons])
+    let ledger = book.ledger
+    let through = date("2027-09-19")
+    let statuses = ExpectedIncomeRules.statuses(
+      book: planning, ledger: ledger, today: today, through: through)
+    let dues = statuses.first?.occurrences.map(\.due) ?? []
+    #expect(dues.contains(date("2026-09-07")))
+    #expect(dues.last == date("2027-09-13"))
+    #expect(dues.filter { $0 <= date("2026-09-30") }.count == 24)
+    // 7, 14, 21 and 28 September, then 50 Mondays through 13 September 2027.
+    #expect(
+      IncomeEstimate.stillExpected(
+        statuses: statuses, today: today, through: through, ledger: ledger
+      ).amount == rub("54000"))
+  }
 }

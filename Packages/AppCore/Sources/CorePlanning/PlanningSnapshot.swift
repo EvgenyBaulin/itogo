@@ -44,7 +44,8 @@ public struct UpcomingPayment: Hashable, Sendable {
 ///
 /// All amounts are rubles unless a field says otherwise; a foreign amount is converted at
 /// `rubPerUnit`, the last rate the caller knows, or left out and listed by the rule that met
-/// it — never guessed.
+/// it — never guessed. What happened on a day in another currency — a contribution to a goal
+/// in dollars made in rubles — counts at the rate of that day (`dayRates`).
 public struct PlanningSnapshot: Hashable, Sendable {
   /// Days after today the upcoming payments reach, today + 7 included.
   public static let upcomingDays = 7
@@ -56,13 +57,19 @@ public struct PlanningSnapshot: Hashable, Sendable {
   /// The moment the snapshot was built for.
   public var now: Date
   public var rubPerUnit: [CurrencyCode: Decimal]
+  /// The rates by day, rubles for one unit: what a day in another currency counts at.
+  public var dayRates: DayRates
   /// The planning records of the dataset (`ledger.dataset.planning`).
   public var book: PlanningBook
 
-  /// Every active payment with a due date, the soonest first, then by name
+  /// Every active payment with a due date, the soonest unpaid one first, then by name
   /// (`ScheduledRules.statuses`).
   public var scheduled: [ScheduledStatus]
-  /// What each payment method needs this month, by currency (`Funding.month`).
+  /// The due dates paid by a link or by a matching ordinary operation (`ScheduledMatching`):
+  /// every figure of the snapshot takes them as paid, and the forecast leaves the matching
+  /// operations out of its daily average (`matches.operationIds`).
+  public var matches: ScheduledMatches
+  /// What each account needs this month, by currency (`Funding.month`).
   public var funding: [FundingLine]
   public var candidates: [SubscriptionCandidate]
   /// The expectations that are not closed (`ExpectedIncomeRules.statuses`).
@@ -74,17 +81,24 @@ public struct PlanningSnapshot: Hashable, Sendable {
   public var planned: PlannedMonth
   /// Every limit of the book for this month, in the book's order.
   public var limits: [LimitLine]
-  /// The goals that are not archived; `coveredByCanSave` is unknown here, since «can save»
-  /// needs the forecast of the month.
+  /// The goals that are not archived, each in its own currency; `coveredByCanSave` is
+  /// unknown here, since «can save» needs the forecast of the month.
   public var goals: [GoalStatus]
   public var events: EventsPlanning
-  /// What the goals' monthly plans still ask this month (`FreeToSpend.goalReserve`).
+  /// Every live event with a budget under way or ahead, however far
+  /// (`EventPlanning.budgetedAhead`): what the free sum keeps back for.
+  public var budgetedEvents: [EventPlan]
+  /// What the goals' monthly plans still ask this month (`GoalRules.planStillDue`), each in
+  /// its goal's currency converted to rubles at today's rate; a goal without a rate is left
+  /// out (the planned month lists it).
   public var goalReserve: AmountE4
   public var debts: DebtsOverview
   /// Every reminder that is not put off, the most pressing first (`ReminderRules.build`).
   public var reminders: [Reminder]
+  /// The reconciliation the reminder counts from (`AccountReconciliation.reminderAnchor`):
+  /// the latest of every account or of one total, else the first opening count.
   public var lastReconciliation: Reconciliation?
-  /// Time to reconcile: never reconciled, or the last one is older than the setting.
+  /// Time to reconcile: never reconciled, or that one is older than the setting.
   public var reconciliationDue: Bool
   /// Unpaid due dates of scheduled payments and next payments of debts I owe, from any
   /// overdue one through today + `upcomingDays`: the overdue ones first, then by date.
@@ -100,9 +114,14 @@ public struct PlanningSnapshot: Hashable, Sendable {
   /// year, in rubles; a subscription in a currency without a rate is left out.
   public var subscriptionsMonthly: AmountE4
   public var subscriptionsYearly: AmountE4
-  /// What people give back for the scheduled payments still due this month — the line of
-  /// «free to spend» that is shown and never subtracted.
+  /// What people give back for the scheduled payments still due this month — shown and never
+  /// subtracted.
   public var forOthersThisMonth: AmountE4
+  /// The money on the accounts, per currency, the sidebar sections and «Всего».
+  public var accounts: AccountsSnapshot
+  /// The free sum through the end of the month (`FreeMoney`); another day D —
+  /// `freeMoney(until:ledger:)`.
+  public var freeMoney: FreeMoney
 
   public init(
     today: DateOnly, now: Date, rubPerUnit: [CurrencyCode: Decimal], book: PlanningBook,
@@ -112,11 +131,15 @@ public struct PlanningSnapshot: Hashable, Sendable {
     debts: DebtsOverview, reminders: [Reminder], lastReconciliation: Reconciliation?,
     reconciliationDue: Bool, upcoming: [UpcomingPayment], spentThisMonth: AmountE4,
     spentWithoutGoals: AmountE4, goalsNetThisMonth: AmountE4, subscriptionsMonthly: AmountE4,
-    subscriptionsYearly: AmountE4, forOthersThisMonth: AmountE4
+    subscriptionsYearly: AmountE4, forOthersThisMonth: AmountE4,
+    accounts: AccountsSnapshot = .empty, dayRates: DayRates = .empty,
+    matches: ScheduledMatches = .empty, budgetedEvents: [EventPlan] = [],
+    freeMoney: FreeMoney? = nil
   ) {
     self.today = today
     self.now = now
     self.rubPerUnit = rubPerUnit
+    self.dayRates = dayRates
     self.book = book
     self.scheduled = scheduled
     self.funding = funding
@@ -139,6 +162,14 @@ public struct PlanningSnapshot: Hashable, Sendable {
     self.subscriptionsMonthly = subscriptionsMonthly
     self.subscriptionsYearly = subscriptionsYearly
     self.forOthersThisMonth = forOthersThisMonth
+    self.accounts = accounts
+    self.matches = matches
+    self.budgetedEvents = budgetedEvents
+    self.freeMoney =
+      freeMoney
+      ?? FreeMoney(
+        accounts: accounts, plan: CashPlan(), stillExpected: .zero, today: today,
+        until: today.monthKey.lastDay)
   }
 
   /// Nothing known yet: empty lists, zeros and no reminder — what a screen holds before the
@@ -173,24 +204,42 @@ public struct PlanningSnapshot: Hashable, Sendable {
   /// payment (filed under the system Loans) or a goal contribution as spent, so it must not
   /// count them as still to be spent either — a «for me» limit would otherwise be pushed
   /// towards «over» by the loan and the goal plans.
+  ///
+  /// `dayRates` are the rates by day a goal in another currency counts its contributions at;
+  /// `localeIdentifier` orders the names of the accounts the way the interface language does.
   public static func build(
-    ledger: Ledger, today: DateOnly, now: Date, rubPerUnit: [CurrencyCode: Decimal]
+    ledger: Ledger, today: DateOnly, now: Date, rubPerUnit: [CurrencyCode: Decimal],
+    dayRates: DayRates = .empty, localeIdentifier: String = "en"
   ) -> PlanningSnapshot {
     let book = ledger.dataset.planning
     let month = today.monthKey
     let toDate = DayRange(month.firstDay, today)
 
+    let matches = ScheduledMatching.matches(
+      book: book, ledger: ledger, today: today,
+      rejections: book.settings.scheduledMatchRejections, dayRates: dayRates,
+      rubPerUnit: rubPerUnit)
     let scheduled = ScheduledRules.statuses(
-      book: book, ledger: ledger, today: today, rubPerUnit: rubPerUnit)
+      book: book, ledger: ledger, today: today, rubPerUnit: rubPerUnit, matches: matches)
     let expected = ExpectedIncomeRules.statuses(
       book: book, ledger: ledger, today: today, rubPerUnit: rubPerUnit)
     let planned = PlannedMonth.build(
-      ledger: ledger, book: book, today: today, rubPerUnit: rubPerUnit)
+      ledger: ledger, book: book, today: today, rubPerUnit: rubPerUnit, dayRates: dayRates,
+      matches: matches)
     let limitPlan = scheduledShares(of: planned)
     let debts = DebtsOverview.build(
       ledger: ledger, book: book, today: today, rubPerUnit: rubPerUnit)
-    let last = ReconciliationRules.latest(book.reconciliations)
+    let last = AccountReconciliation.reminderAnchor(book: book)
     let subscriptions = subscriptionTotals(scheduled, rubPerUnit: rubPerUnit)
+    let goals = GoalRules.statuses(
+      goals: ledger.dataset.goals, ledger: ledger, today: today, rates: dayRates,
+      rubPerUnit: rubPerUnit)
+    let eventPlans = EventPlanning.plans(ledger: ledger, today: today)
+    let budgetedEvents = EventPlanning.budgetedAhead(eventPlans, today: today)
+    let accounts = AccountsSnapshot.build(
+      dataset: ledger.dataset, now: now, calendar: ledger.calendar, rubPerUnit: rubPerUnit,
+      localeIdentifier: localeIdentifier)
+    let mainId = ledger.dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id
 
     // My expenses of the month to date in one pass; goal contributions set apart the way
     // `CanSaveInputs(ledger:)` sets them apart.
@@ -203,78 +252,98 @@ public struct PlanningSnapshot: Hashable, Sendable {
 
     return PlanningSnapshot(
       today: today, now: now, rubPerUnit: rubPerUnit, book: book, scheduled: scheduled,
-      funding: Funding.month(month, book: book, ledger: ledger, today: today),
-      candidates: SubscriptionCandidates.find(ledger: ledger, book: book, today: today),
+      funding: Funding.month(
+        month, book: book, ledger: ledger, today: today, accounts: ledger.dataset.paymentMethods,
+        mainId: mainId, rubPerUnit: rubPerUnit, matches: matches,
+        locale: Locale(identifier: localeIdentifier)),
+      candidates: SubscriptionCandidates.find(
+        ledger: ledger, book: book, today: today, paidOperations: matches.operationIds),
       expected: expected,
       income: IncomeEstimate.month(ledger: ledger, statuses: expected, today: today),
       planned: planned,
       limits: LimitRules.lines(
         book: book, ledger: ledger, today: today, plannedByCategory: limitPlan.byCategory,
-        plannedByForWhom: limitPlan.byForWhom),
-      goals: GoalRules.statuses(goals: ledger.dataset.goals, ledger: ledger, today: today),
-      events: EventPlanning.build(ledger: ledger, today: today),
-      goalReserve: FreeToSpend.goalReserve(
-        goals: ledger.dataset.goals, ledger: ledger, today: today),
+        plannedByForWhom: limitPlan.byForWhom, scheduledOperations: matches.operationIds),
+      goals: goals,
+      events: EventPlanning.build(plans: eventPlans, today: today),
+      goalReserve: goalReserve(
+        ledger: ledger, today: today, dayRates: dayRates, rubPerUnit: rubPerUnit),
       debts: debts,
       reminders: ReminderRules.build(
-        book: book, debts: ledger.dataset.debts, ledger: ledger, today: today),
+        book: book, debts: ledger.dataset.debts, ledger: ledger, today: today, matches: matches),
       lastReconciliation: last,
-      reconciliationDue: ReconciliationRules.isDue(
-        last: last, today: today, everyDays: book.settings.reconcileEveryDays),
-      upcoming: upcoming(scheduled: scheduled, debts: debts, ledger: ledger, today: today),
+      reconciliationDue: AccountReconciliation.isDue(
+        book: book, today: today, everyDays: book.settings.reconcileEveryDays),
+      upcoming: upcoming(
+        scheduled: scheduled, debts: debts, ledger: ledger, today: today, matches: matches),
       spentThisMonth: spent,
       spentWithoutGoals: spent - spentOnGoals,
       goalsNetThisMonth: GoalRules.netContributions(ledger: ledger, in: toDate),
       subscriptionsMonthly: subscriptions.monthly,
       subscriptionsYearly: subscriptions.yearly,
-      forOthersThisMonth: expectedReturns(of: planned, book: book, rubPerUnit: rubPerUnit))
+      forOthersThisMonth: expectedReturns(of: planned, book: book, rubPerUnit: rubPerUnit),
+      accounts: accounts,
+      dayRates: dayRates,
+      matches: matches,
+      budgetedEvents: budgetedEvents,
+      freeMoney: freeMoney(
+        until: nil, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
+        matches: matches, goals: goals, debts: debts, events: budgetedEvents,
+        expected: expected))
   }
 
-  // MARK: - Free to spend
-
-  /// «Free to spend» through the end of the month, the goal reserve as the setting has it.
-  public var freeToSpend: FreeToSpend {
-    monthFreeToSpend(reserve: book.settings.reserveGoalPlan)
+  /// What the goals' monthly plans still ask this month, in rubles at today's rate: each
+  /// goal's `GoalRules.planStillDue` in its own currency converted on its own, so dollars are
+  /// never added to rubles. A goal without a rate today adds nothing.
+  private static func goalReserve(
+    ledger: Ledger, today: DateOnly, dayRates: DayRates, rubPerUnit: [CurrencyCode: Decimal]
+  ) -> AmountE4 {
+    let stillDue = GoalRules.planStillDue(
+      goals: ledger.dataset.goals, ledger: ledger, today: today, rates: dayRates)
+    return AmountE4.sum(
+      ledger.dataset.goals.compactMap { goal in
+        stillDue[goal.id].flatMap {
+          GoalMath.rubles($0, in: goal.currency, rubPerUnit: rubPerUnit)
+        }
+      })
   }
 
-  /// «Free to spend» through `until`, clipped to [today, end of the month]:
-  ///
-  /// * income received this month, and what the expectations due from the 1st through
-  ///   `until` still wait for — an expectation of this month that is late still counts, as
-  ///   a late payment still counts on the other side (`IncomeEstimate.month(until:)`);
-  /// * my expenses since the 1st, goal contributions included;
-  /// * my share of the scheduled payments and the payments on debts that are expenses still
-  ///   due through `until` (`PlannedMonth.build(until:)`);
-  /// * the goal reserve when `reserve` is on;
-  /// * what people give back for the scheduled payments due through `until`, listed apart.
-  ///
-  /// Through the end of the month the figures of the snapshot are used as they are; an
-  /// earlier day counts the payments and the expectations of its shorter window again.
-  public func freeToSpend(until: DateOnly, reserve: Bool, ledger: Ledger) -> FreeToSpend {
-    let end = FreeToSpend.window(today: today, until: until).end
-    guard end < today.monthKey.lastDay else { return monthFreeToSpend(reserve: reserve) }
-    let window = PlannedMonth.build(
-      ledger: ledger, book: book, today: today, until: end, rubPerUnit: rubPerUnit)
-    let expectedUntil = IncomeEstimate.month(
-      ledger: ledger, statuses: expected, today: today, until: end)
-    return FreeToSpend(
-      FreeToSpendInputs(
-        today: today, until: end, incomeReceived: income.received,
-        expectedIncome: expectedUntil.expectedRemaining, spentThisMonth: spentThisMonth,
-        plannedScheduled: window.scheduled,
-        plannedDebts: window.debts + window.debtsDueByToday,
-        goalReserve: goalReserve, reserveEnabled: reserve,
-        forOthersUntil: Self.expectedReturns(of: window, book: book, rubPerUnit: rubPerUnit)))
+  // MARK: - The free sum
+
+  /// The free sum through `until` — D, the end of the month when `nil`, at most 12 months
+  /// ahead (`FreeMoney.window`). The snapshot keeps the one of the month; the block asks for
+  /// another D here, with the ledger it was built from.
+  public func freeMoney(until: DateOnly?, ledger: Ledger) -> FreeMoney {
+    let end = FreeMoney.window(today: today, until: until).end
+    guard end != freeMoney.until else { return freeMoney }
+    let expected =
+      end <= today.monthKey.lastDay
+      ? self.expected
+      : ExpectedIncomeRules.statuses(
+        book: book, ledger: ledger, today: today, rubPerUnit: rubPerUnit, through: end)
+    return Self.freeMoney(
+      until: end, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
+      matches: matches, goals: goals, debts: debts, events: budgetedEvents,
+      expected: expected)
   }
 
-  private func monthFreeToSpend(reserve: Bool) -> FreeToSpend {
-    FreeToSpend(
-      FreeToSpendInputs(
-        today: today, until: nil, incomeReceived: income.received,
-        expectedIncome: income.expectedRemaining, spentThisMonth: spentThisMonth,
-        plannedScheduled: planned.scheduled,
-        plannedDebts: planned.debts + planned.debtsDueByToday,
-        goalReserve: goalReserve, reserveEnabled: reserve, forOthersUntil: forOthersThisMonth))
+  private static func freeMoney(
+    until: DateOnly?, ledger: Ledger, today: DateOnly, rubPerUnit: [CurrencyCode: Decimal],
+    accounts: AccountsSnapshot, matches: ScheduledMatches, goals: [GoalStatus],
+    debts: DebtsOverview, events: [EventPlan], expected: [ExpectedIncomeStatus]
+  ) -> FreeMoney {
+    let book = ledger.dataset.planning
+    let end = FreeMoney.window(today: today, until: until).end
+    let plan = CashPlan.build(
+      ledger: ledger, book: book, accounts: accounts, today: today, until: end,
+      rubPerUnit: rubPerUnit, matches: matches, goals: goals, debts: debts, events: events,
+      reserveGoalPlan: book.settings.reserveGoalPlan,
+      subtractGoalSavings: book.settings.reconcileIncludesGoalSavings)
+    let still = IncomeEstimate.stillExpected(
+      statuses: expected, today: today, through: end, ledger: ledger)
+    return FreeMoney(
+      accounts: accounts, plan: plan, stillExpected: still.amount,
+      stillExpectedWithoutRate: still.withoutRate, today: today, until: end)
   }
 
   // MARK: - Can save
@@ -329,13 +398,14 @@ public struct PlanningSnapshot: Hashable, Sendable {
   }
 
   /// Σ of the monthly and yearly equivalents of the next charge of every running
-  /// subscription, the charge converted to rubles first (`SubscriptionMath`).
+  /// subscription, the charge converted to rubles first (`SubscriptionMath`). A one-off is one
+  /// charge, not a running subscription: it adds nothing.
   private static func subscriptionTotals(
     _ scheduled: [ScheduledStatus], rubPerUnit: [CurrencyCode: Decimal]
   ) -> (monthly: AmountE4, yearly: AmountE4) {
     var monthly = AmountE4.zero
     var yearly = AmountE4.zero
-    for status in scheduled where status.payment.kind == .subscription {
+    for status in scheduled where status.payment.kind == .subscription && !status.isOneOff {
       guard
         let charge = SubscriptionMath.rubles(
           status.amountNext, in: status.payment.currency, rubPerUnit: rubPerUnit)
@@ -350,16 +420,18 @@ public struct PlanningSnapshot: Hashable, Sendable {
   /// The payments of the Overview card.
   ///
   /// * Scheduled — every due date from `next_date` through today + `upcomingDays` that no
-  ///   operation paid (`sched:<payment>:<due>`), at most `upcomingPerPayment` of one
-  ///   payment, at the price on the date, in the currency of the payment. The dates before
-  ///   today are overdue.
+  ///   operation paid (`sched:<payment>:<due>`, or an ordinary one that matches it:
+  ///   `ScheduledMatches`), the first `upcomingPerPayment` unpaid ones of one payment, at the
+  ///   price on the date, in the currency of the payment. The dates before today are overdue.
   /// * Debts — the next payment of every open debt I owe that has a monthly payment
   ///   (`DebtLine.nextPayment`): this month's day while this month is unpaid, overdue once
-  ///   it has passed; next month's once this month is paid, unless next month is paid ahead
-  ///   too — the rule of the reminders. A debt without a monthly payment has no amount to
-  ///   show and stays on the Debts screen.
+  ///   it has passed; next month's once this month is paid or when this month's day came
+  ///   before the debt began, unless that month is paid ahead too — the rule of the
+  ///   reminders. A debt without a monthly payment has no amount to show and stays on the
+  ///   Debts screen.
   private static func upcoming(
-    scheduled: [ScheduledStatus], debts: DebtsOverview, ledger: Ledger, today: DateOnly
+    scheduled: [ScheduledStatus], debts: DebtsOverview, ledger: Ledger, today: DateOnly,
+    matches: ScheduledMatches
   ) -> [UpcomingPayment] {
     let horizon = today.adding(days: upcomingDays)
     let prices = ledger.dataset.planning.prices
@@ -367,19 +439,17 @@ public struct PlanningSnapshot: Hashable, Sendable {
 
     let soon = scheduled.filter { $0.nextDue <= horizon }
     if !soon.isEmpty {
-      // «Mark as paid» moves `next_date` on; a due date paid while it did not stays paid.
-      var paid: [UUID: Set<DateOnly>] = [:]
-      for row in ledger.rows where row.isFirstPart {
-        if case .scheduled(let paymentId, let due) = row.link {
-          paid[paymentId, default: []].insert(due)
-        }
-      }
+      // «Mark as paid» moves `next_date` on; a due date paid while it did not stays paid, and
+      // so does one an ordinary operation matches.
       for status in soon {
         let payment = status.payment
+        // The paid ones are dropped before the limit: a payment paid by ordinary operations
+        // keeps its `next_date` far behind, and its unpaid due must not fall off the card.
         let dates = Recurrence.occurrences(
           from: status.nextDue, through: horizon, rule: RecurrenceRule(payment: payment),
-          end: payment.endDate, limit: upcomingPerPayment)
-        for date in dates where paid[payment.id]?.contains(date) != true {
+          end: payment.endDate, limit: ScheduledMatching.duesPerPayment
+        ).filter { !matches.isPaid(payment.id, $0) }.prefix(upcomingPerPayment)
+        for date in dates {
           result.append(
             UpcomingPayment(
               kind: .scheduled, id: payment.id, name: payment.name, due: date,
@@ -390,23 +460,28 @@ public struct PlanningSnapshot: Hashable, Sendable {
       }
     }
 
-    let nextMonth = today.monthKey.next
-    var paidNextMonth: Set<UUID>?
+    var paidIn: [MonthKey: Set<UUID>] = [:]
     for line in debts.iOwe {
       guard let due = line.nextPayment, due <= horizon,
         let amount = line.debt.monthlyPaymentE4, amount.raw > 0
       else { continue }
-      if line.paidThisMonth {
-        let byOperation =
-          paidNextMonth
-          ?? DebtSchedule.debtsPaid(
-            in: nextMonth, ledger: ledger, journal: ledger.dataset.planning.debtEntries)
-        paidNextMonth = byOperation
-        if DebtSchedule.isPaid(
-          line.debt.id, in: nextMonth, paidByOperation: byOperation, journal: line.entries)
-        {
-          continue
+      // A payment of a later month — this one is paid, or its day came before the debt
+      // began — paid ahead in its own month is not shown either.
+      if due.monthKey != today.monthKey {
+        let paid = DebtSchedule.isPaid(
+          line.debt, for: due.monthKey,
+          startsOn: DebtSchedule.start(of: line.entries, calendar: ledger.calendar),
+          calendar: ledger.calendar
+        ) { month in
+          let byOperation =
+            paidIn[month]
+            ?? DebtSchedule.debtsPaid(
+              in: month, ledger: ledger, journal: ledger.dataset.planning.debtEntries)
+          paidIn[month] = byOperation
+          return DebtSchedule.isPaid(
+            line.debt.id, in: month, paidByOperation: byOperation, journal: line.entries)
         }
+        if paid { continue }
       }
       result.append(
         UpcomingPayment(

@@ -1,6 +1,7 @@
 import AppCore
 import CoreKit
 import Foundation
+import GRDB
 
 @testable import AppDatabase
 
@@ -35,6 +36,69 @@ enum TestSupport {
       kind: kind, occurredAt: occurredAt, amount: AmountE4(raw: amount), note: note)
     draft.normalizeSinglePart()
     return try draft.materialize()
+  }
+}
+
+/// The schema up to one migration, that one included: what an older build shipped.
+/// `FilteredSchemaSource(upTo: "0003_model")` is the schema of 1.0.0.
+struct FilteredSchemaSource: SchemaSource {
+  let last: String
+
+  init(upTo last: String) {
+    self.last = last
+  }
+
+  func migrations() throws -> [SchemaMigration] {
+    try TestSupport.schemaSource.migrations().filter { $0.name <= last }
+  }
+}
+
+/// Writes records the way an older build wrote them: only the columns their table has in the
+/// database at hand, in one plain `INSERT`, with no rule of today's repositories in between.
+/// The record's own encoding gives the values (`databaseDictionary`), so a value is written
+/// exactly as the current build would write it into that column.
+enum LegacyWriter {
+  static func insert(_ record: some EncodableRecord & TableRecord, db: Database) throws {
+    let table = type(of: record).databaseTableName
+    let known = Set(try db.columns(in: table).map(\.name))
+    let values = try record.databaseDictionary.filter { known.contains($0.key) }
+      .sorted { $0.key < $1.key }
+    let names = values.map { "\"\($0.key)\"" }.joined(separator: ", ")
+    let marks = databaseQuestionMarks(count: values.count)
+    try db.execute(
+      sql: "INSERT INTO \"\(table)\" (\(names)) VALUES (\(marks))",
+      arguments: StatementArguments(values.map(\.value)))
+  }
+}
+
+/// A table of a database as it is: its columns, and each row by rowid with the values of those
+/// columns — the rowid first.
+struct TableContents: Equatable {
+  var columns: [String]
+  var rows: [[DatabaseValue]]
+}
+
+extension TestSupport {
+  /// Every table of a database but SQLite's and GRDB's own, as it is; `columns` names the
+  /// columns to read of a table, all of them otherwise.
+  static func contents(
+    _ db: Database, columns: [String: [String]]? = nil
+  ) throws -> [String: TableContents] {
+    let tables = try String.fetchAll(
+      db,
+      sql: """
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'grdb_%'
+        """)
+    var result: [String: TableContents] = [:]
+    for table in tables {
+      let names = try columns?[table] ?? db.columns(in: table).map(\.name)
+      let list = (["rowid"] + names).map { "\"\($0)\"" }.joined(separator: ", ")
+      let rows = try Row.fetchAll(db, sql: "SELECT \(list) FROM \"\(table)\" ORDER BY rowid")
+        .map { row in Array(row.databaseValues) }
+      result[table] = TableContents(columns: names, rows: rows)
+    }
+    return result
   }
 }
 
@@ -120,9 +184,12 @@ extension TestSupport {
       density: density)
   }
 
-  /// A generated history as one batch, for an empty database.
+  /// A generated history as one batch, for an empty database, the way accounts keep it
+  /// (`SampleDataSet.assigningAccounts`): every write names its account, and one in a currency
+  /// its account does not hold says what the account was charged.
   static func batch(_ set: SampleDataSet) -> HistoryBatch {
-    HistoryBatch(
+    let set = set.assigningAccounts()
+    return HistoryBatch(
       categories: set.categories, people: set.people, places: set.places,
       paymentMethods: set.paymentMethods, events: set.events, templates: set.templates,
       goals: set.goals, debts: set.debts, entries: set.entries, debtEntries: set.debtEntries,

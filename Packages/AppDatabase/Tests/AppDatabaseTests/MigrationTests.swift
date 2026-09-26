@@ -202,55 +202,6 @@ extension MigrationTests {
 
 // MARK: - The accounts migration
 
-/// The schema up to one migration, that one included: what an older build had.
-private struct MigrationsUpTo: SchemaSource {
-  let last: String
-  func migrations() throws -> [SchemaMigration] {
-    try TestSupport.schemaSource.migrations().filter { $0.name <= last }
-  }
-}
-
-/// Every table of a database as it is: its columns, and each row by rowid with the values of
-/// those columns.
-private struct TableContents: Equatable {
-  var columns: [String]
-  var rows: [[DatabaseValue]]
-}
-
-private func contents(
-  _ db: Database, columns: [String: [String]]? = nil
-) throws
-  -> [String: TableContents]
-{
-  let tables = try String.fetchAll(
-    db,
-    sql: """
-      SELECT name FROM sqlite_master
-      WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'grdb_%'
-      """)
-  var result: [String: TableContents] = [:]
-  for table in tables {
-    let names = try columns?[table] ?? db.columns(in: table).map(\.name)
-    let list = (["rowid"] + names).map { "\"\($0)\"" }.joined(separator: ", ")
-    let rows = try Row.fetchAll(db, sql: "SELECT \(list) FROM \"\(table)\" ORDER BY rowid")
-      .map { row in Array(row.databaseValues) }
-    result[table] = TableContents(columns: names, rows: rows)
-  }
-  return result
-}
-
-/// Writes a record the way an older build did: only the columns its table has there.
-private func insertAsBefore(_ record: some EncodableRecord & TableRecord, db: Database) throws {
-  let known = Set(try db.columns(in: type(of: record).databaseTableName).map(\.name))
-  let values = try record.databaseDictionary.filter { known.contains($0.key) }
-    .sorted { $0.key < $1.key }
-  let names = values.map { "\"\($0.key)\"" }.joined(separator: ", ")
-  let marks = databaseQuestionMarks(count: values.count)
-  try db.execute(
-    sql: "INSERT INTO \"\(type(of: record).databaseTableName)\" (\(names)) VALUES (\(marks))",
-    arguments: StatementArguments(values.map(\.value)))
-}
-
 extension MigrationTests {
   /// The owner's data survives the migration of the accounts: a database of the schema before
   /// it, filled with half a year of history and with the odd rows only an older build could
@@ -259,8 +210,8 @@ extension MigrationTests {
   /// one below zero, income with a place, an event and a person, a total reconciliation with
   /// its breakdown and one made before the moment was kept, rows of the import and of the
   /// model — opens with every row, in its order, and every value of every column it had,
-  /// exactly as it was. The new columns come with their defaults, and the foreign keys still
-  /// hold.
+  /// exactly as it was, but for one main account and an account for every operation. The new
+  /// columns come with their defaults, and the foreign keys still hold.
   @Test func theAccountsMigrationKeepsEveryRowAndValueOfAnOlderDatabase() throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("itogo-db-tests")
@@ -273,38 +224,38 @@ extension MigrationTests {
 
     let before: [String: TableContents]
     do {
-      let old = try DatabaseStack(url: url, schema: MigrationsUpTo(last: "0003_model"))
+      let old = try DatabaseStack(url: url, schema: FilteredSchemaSource(upTo: "0003_model"))
       #expect(try old.appliedMigrations() == ["0001_initial", "0002_planning", "0003_model"])
       try old.writer.write { db in
         for category in set.categories where category.parentId == nil {
-          try insertAsBefore(category, db: db)
+          try LegacyWriter.insert(category, db: db)
         }
         for category in set.categories where category.parentId != nil {
-          try insertAsBefore(category, db: db)
+          try LegacyWriter.insert(category, db: db)
         }
-        for person in set.people { try insertAsBefore(person, db: db) }
-        for place in set.places { try insertAsBefore(place, db: db) }
-        for method in set.paymentMethods { try insertAsBefore(method, db: db) }
-        for event in set.events { try insertAsBefore(event, db: db) }
-        for template in set.templates { try insertAsBefore(template, db: db) }
-        for goal in set.goals { try insertAsBefore(goal, db: db) }
-        for debt in set.debts { try insertAsBefore(debt, db: db) }
-        for payment in planning.scheduled { try insertAsBefore(payment, db: db) }
-        for price in planning.prices { try insertAsBefore(price, db: db) }
-        for income in planning.expected { try insertAsBefore(income, db: db) }
-        for budget in planning.budgets { try insertAsBefore(budget, db: db) }
+        for person in set.people { try LegacyWriter.insert(person, db: db) }
+        for place in set.places { try LegacyWriter.insert(place, db: db) }
+        for method in set.paymentMethods { try LegacyWriter.insert(method, db: db) }
+        for event in set.events { try LegacyWriter.insert(event, db: db) }
+        for template in set.templates { try LegacyWriter.insert(template, db: db) }
+        for goal in set.goals { try LegacyWriter.insert(goal, db: db) }
+        for debt in set.debts { try LegacyWriter.insert(debt, db: db) }
+        for payment in planning.scheduled { try LegacyWriter.insert(payment, db: db) }
+        for price in planning.prices { try LegacyWriter.insert(price, db: db) }
+        for income in planning.expected { try LegacyWriter.insert(income, db: db) }
+        for budget in planning.budgets { try LegacyWriter.insert(budget, db: db) }
         for entry in set.entries {
-          try insertAsBefore(entry.transaction, db: db)
-          for part in entry.parts { try insertAsBefore(part, db: db) }
+          try LegacyWriter.insert(entry.transaction, db: db)
+          for part in entry.parts { try LegacyWriter.insert(part, db: db) }
         }
-        for line in set.debtEntries { try insertAsBefore(line, db: db) }
-        for link in set.links { try insertAsBefore(link, db: db) }
-        for link in planning.expectedLinks { try insertAsBefore(link, db: db) }
+        for line in set.debtEntries { try LegacyWriter.insert(line, db: db) }
+        for link in set.links { try LegacyWriter.insert(link, db: db) }
+        for link in planning.expectedLinks { try LegacyWriter.insert(link, db: db) }
         try odd.write(
           into: db, operation: set.entries[0].id, part: set.entries[0].parts[0].id,
           category: set.categories[0].id)
       }
-      before = try old.writer.read { db in try contents(db) }
+      before = try old.writer.read { db in try TestSupport.contents(db) }
       try old.close()
     }
     #expect(before["transactions"]?.rows.count ?? 0 > 100)
@@ -319,12 +270,40 @@ extension MigrationTests {
     #expect(try stack.appliedMigrations().last == "0004_accounts")
     #expect(stack.applied.applied == 1)
 
+    // The two values the update may change are the flag of the main account and the account
+    // of an operation that had none; they are checked on their own below.
+    let sanctioned = ["payment_methods": "is_default", "transactions": "payment_method_id"]
+    func withoutTheFills(_ tables: [String: TableContents]) -> [String: TableContents] {
+      var result = tables
+      for (table, column) in sanctioned {
+        guard var contents = result[table], let index = contents.columns.firstIndex(of: column)
+        else { continue }
+        contents.columns.remove(at: index)
+        // The rowid is the first value of every row.
+        contents.rows = contents.rows.map { row in
+          var row = row
+          row.remove(at: index + 1)
+          return row
+        }
+        result[table] = contents
+      }
+      return result
+    }
+    let main = try #require(set.paymentMethods.first { $0.isDefault })
     try stack.writer.read { db in
-      let after = try contents(db, columns: before.mapValues(\.columns))
-      for (table, old) in before {
-        #expect(after[table] == old, "\(table) changed")
+      let after = try TestSupport.contents(db, columns: before.mapValues(\.columns))
+      let kept = withoutTheFills(after)
+      for (table, old) in withoutTheFills(before) {
+        #expect(kept[table] == old, "\(table) changed")
       }
       #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+      // Of the three accounts flagged main, the one with the operations stays main.
+      #expect(
+        try String.fetchAll(db, sql: "SELECT id FROM payment_methods WHERE is_default = 1")
+          == [main.id.uuidString])
+      #expect(
+        try Int.fetchOne(
+          db, sql: "SELECT COUNT(*) FROM transactions WHERE payment_method_id IS NULL") == 0)
 
       // What the older build never wrote comes with its default.
       #expect(
@@ -517,7 +496,8 @@ struct AccountsSchemaChecksTests {
     try ReferenceRepository(writer: stack.writer).save(card)
     try ReferenceRepository(writer: stack.writer).save(dollars)
     var draft = TransactionDraft(
-      currency: .usd, amount: AmountE4(whole: 10), rate: 90, paymentMethodId: card.id)
+      currency: .usd, amount: AmountE4(whole: 10), rate: 90, paymentMethodId: card.id,
+      accountCurrency: .rub, accountAmount: AmountE4(whole: 900))
     draft.normalizeSinglePart()
     let purchase = try draft.materialize(rublesConverter: { AmountE4(raw: $0.raw * 90) })
     try TransactionRepository(writer: stack.writer).save(purchase)
@@ -638,7 +618,7 @@ struct AccountsSchemaChecksTests {
 
     var draft = TransactionDraft(
       kind: .refund, currency: .usd, amount: AmountE4(whole: 4), rate: 90,
-      paymentMethodId: card)
+      paymentMethodId: card, accountCurrency: .rub, accountAmount: AmountE4(whole: 360))
     draft.parts = [PartDraft(amount: AmountE4(whole: 4), refundOfPartId: part.id)]
     let refund = try draft.materialize(rublesConverter: { AmountE4(raw: $0.raw * 90) })
     try transactions.save(refund)

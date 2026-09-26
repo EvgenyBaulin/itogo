@@ -14,14 +14,64 @@ public enum DebtSchedule {
   /// * Once this month's payment is made, the next one is next month's.
   /// * A payment not made yet stays on this month's day even after that day has passed: it
   ///   is overdue, not skipped, so the reminder keeps pointing at it.
+  /// * A payment day before the debt began (`start`, the earliest day of its journal:
+  ///   `start(of:calendar:)`) owed nothing: a phone bought in parts on the 15th, paid on the
+  ///   5th, first owes on the 5th of the next month. A debt that began on its payment day
+  ///   owes that day.
+  /// * A payment made in the month the debt began, when that month owed nothing, has nothing
+  ///   to pay but the first due: the phone paid on 25 September next owes on 5 November.
+  ///
+  /// `paidThisMonth` is whether this month's payment is made — `isPaid(_:for:startsOn:…)`,
+  /// which knows that rule for the first month that owes.
   public static func nextPaymentDate(
-    of debt: Debt, today: DateOnly, paidThisMonth: Bool, calendar: CalendarContext
+    of debt: Debt, today: DateOnly, paidThisMonth: Bool, calendar: CalendarContext,
+    startsOn start: DateOnly? = nil
   ) -> DateOnly? {
     guard !debt.closed, let paymentDay = debt.paymentDay, paymentDay >= 1 else { return nil }
-    let month = paidThisMonth ? today.monthKey.next : today.monthKey
-    return DateOnly(
-      year: month.year, month: month.month,
-      day: min(paymentDay, calendar.daysInMonth(month)))
+    func payday(_ month: MonthKey) -> DateOnly {
+      DateOnly(
+        year: month.year, month: month.month,
+        day: min(paymentDay, calendar.daysInMonth(month)))
+    }
+    let current = today.monthKey
+    if let start, let first = firstMonth(of: debt, startsOn: start, calendar: calendar),
+      current < first
+    {
+      // Nothing is owed before the first month; what was paid in the month the debt began
+      // pays the first due.
+      return payday(paidThisMonth && current == start.monthKey ? first.next : first)
+    }
+    return payday(paidThisMonth ? current.next : current)
+  }
+
+  /// The first month a debt owes: the month it began, or the next one when the payment day of
+  /// that month came before the start. `nil` for a debt without a payment day. The rule lives
+  /// in `DebtStart`, which the forecast of the month shares.
+  public static func firstMonth(
+    of debt: Debt, startsOn start: DateOnly, calendar: CalendarContext
+  ) -> MonthKey? {
+    DebtStart.firstMonth(of: debt, startsOn: start, calendar: calendar)
+  }
+
+  /// Whether the payment of `month` is made: a payment dated in that month (`paidIn`, the
+  /// month rule of `isPaid(_:in:paidByOperation:journal:)`) — or, for the first month a debt
+  /// owes when the month it began owed nothing, one dated in the month it began. Every screen
+  /// that asks whether a month of a debt is paid asks here, so the Debts screen, the 7-day
+  /// card, the reminders, the planned month and the free sum agree.
+  public static func isPaid(
+    _ debt: Debt, for month: MonthKey, startsOn start: DateOnly?, calendar: CalendarContext,
+    paidIn: (MonthKey) -> Bool
+  ) -> Bool {
+    DebtStart.isPaid(debt, for: month, startsOn: start, calendar: calendar, paidIn: paidIn)
+  }
+
+  /// The day a debt began: the earliest day of its own journal — a line's date, else the day
+  /// of its moment; `nil` for a journal with neither (`DebtStart.day(of:calendar:)`, the rule
+  /// the forecast of the month shares).
+  public static func start(
+    of journal: some Sequence<DebtEntry>, calendar: CalendarContext
+  ) -> DateOnly? {
+    DebtStart.day(of: journal, calendar: calendar)
   }
 
   /// Was the debt paid in the calendar month of `today`?

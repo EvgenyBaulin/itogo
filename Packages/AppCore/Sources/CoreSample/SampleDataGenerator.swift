@@ -28,6 +28,23 @@ public struct SampleDataSet: Sendable {
   public var lastDay: DateOnly
   public var expectations: SampleExpectations
 
+  // What the accounts add (`withAccounts`); the history alone leaves all of it empty.
+
+  /// The groups the accounts are filed under.
+  public var accountGroups: [AccountGroup] = []
+  /// Money moved between the accounts, oldest first.
+  public var transfers: [Transfer] = []
+  /// The counts of the accounts, oldest first, and the balances each counted, in that order.
+  public var reconciliations: [Reconciliation] = []
+  public var reconciledBalances: [ReconciledBalance] = []
+  /// Settings the rows point at or depend on, by their keys in the `settings` table.
+  public var settings: [String: String] = [:]
+  /// Scheduled payments due once, added to the planning (`SampleDataSet.planning`).
+  public var oneOffPayments: [ScheduledPayment] = []
+  /// The money on every account and currency once the whole history has happened, as the
+  /// accounts layer kept it while it wrote — never read back through a rule of the app.
+  public var accountExpectations: [BalanceKey: AmountE4] = [:]
+
   public init(
     categories: [CoreKit.Category],
     people: [Person],

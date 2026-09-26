@@ -1,0 +1,287 @@
+import CoreKit
+import Foundation
+
+/// What is still owed on one part after a money back that does not close it.
+public struct OwedRemainder: Hashable, Sendable {
+  public var partId: UUID
+  /// In rubles.
+  public var remainingRubE4: AmountE4
+
+  public init(partId: UUID, remainingRubE4: AmountE4) {
+    self.partId = partId
+    self.remainingRubE4 = remainingRubE4
+  }
+}
+
+/// Why money back cannot be recorded as it is.
+public enum MoneyBackRefusal: Hashable, Sendable {
+  /// The person owes nothing: the money is income, and is recorded as income.
+  case owesNothing
+  /// The person owes no part, but owes on an open «Мне должны» debt: the money is a repayment
+  /// of that debt.
+  case owesOnDebt(UUID)
+  /// Every part the person owes is on a rate still provisional: the rubles a link fixes now
+  /// would drift from the refined ones.
+  case onlyProvisional
+  /// The money back's own rate is still provisional and was not typed by hand: the rubles it
+  /// closes parts with are not known yet.
+  case provisionalRate
+  /// The money is more than the parts it can close, while other parts of the person wait on a
+  /// rate still provisional: the money over would be income now and close those parts later
+  /// all the same — counted twice. It is recorded once their rates are known, or by hand.
+  case provisionalPartsOwed
+}
+
+/// How a money back is spread over what the person owes, before anything is written.
+public struct MoneyBackPlan: Hashable, Sendable {
+  /// The currency the money came in.
+  public var currency: CurrencyCode
+  /// One share per part the money reaches, oldest first; `amountE4` is the rubles of its link.
+  public var allocations: [ReimbursementAllocation]
+  /// The parts that are settled: `returned` from now on.
+  public var closes: [UUID]
+  /// «Останется должен»: what is still owed on every part that stays open, in rubles.
+  public var stillOwed: [OwedRemainder]
+  /// Money on top of everything owed, in the money back's currency: income in «Доплаты».
+  public var surplus: AmountE4
+  public var surplusRub: AmountE4
+  /// Parts left alone because their rate is still provisional; the sheet says so.
+  public var skippedProvisional: [UUID]
+  /// Set when the money back cannot be recorded as it is; nothing else is filled then.
+  public var refusal: MoneyBackRefusal?
+
+  public init(
+    currency: CurrencyCode = .rub, allocations: [ReimbursementAllocation] = [],
+    closes: [UUID] = [], stillOwed: [OwedRemainder] = [], surplus: AmountE4 = .zero,
+    surplusRub: AmountE4 = .zero, skippedProvisional: [UUID] = [],
+    refusal: MoneyBackRefusal? = nil
+  ) {
+    self.currency = currency
+    self.allocations = allocations
+    self.closes = closes
+    self.stillOwed = stillOwed
+    self.surplus = surplus
+    self.surplusRub = surplusRub
+    self.skippedProvisional = skippedProvisional
+    self.refusal = refusal
+  }
+
+  /// The rubles that reach the parts.
+  public var allocatedRubE4: AmountE4 { AmountE4.sum(allocations.map(\.amountE4)) }
+}
+
+/// Money a person gives back for what I paid for them.
+///
+/// The money closes the person's parts oldest first. A part it covers only partly stays open,
+/// waiting for the rest — nothing is counted short. Money on top of everything owed is income
+/// in «Доплаты». Everything is worked out in the currency the money came in, at its own rate:
+/// 50 dollars back for a part of 50 dollars close it exactly, whatever the rates did in
+/// between, and leave nothing over.
+///
+/// A small tolerance keeps the drift of rates from leaving crumbs: a part that falls short of
+/// its rubles by no more than that is closed, and money over by no more than that is no income.
+/// Rate drift is neither spending nor income.
+public enum MoneyBack {
+  /// One ruble.
+  static let toleranceFloor = AmountE4(whole: 1)
+  /// Fifty rubles.
+  static let toleranceCeiling = AmountE4(whole: 50)
+
+  /// How far the rubles of a part may miss and still be settled: nothing when the part and the
+  /// money are both in rubles, otherwise 1 % of the part's rubles, never below 1 ₽ and never
+  /// above 50 ₽.
+  public static func tolerance(partRub: AmountE4, foreignInvolved: Bool) -> AmountE4 {
+    guard foreignInvolved else { return .zero }
+    let share = (try? AmountE4(decimal: partRub.magnitude.decimal / 100)) ?? toleranceCeiling
+    return min(max(toleranceFloor, share), toleranceCeiling)
+  }
+
+  /// Spreads `received` — in `currency`, `receivedRub` in rubles — from `person` over the parts
+  /// the person owes (`owed`: that person's parts), oldest first.
+  ///
+  /// * The money back's own rate is `receivedRub ÷ received`. When it is still provisional
+  ///   and was not typed (`rateProvisional`), nothing is spread: `.provisionalRate`.
+  /// * A part on a provisional rate is left alone and listed in `skippedProvisional`.
+  /// * Each part needs what is left of it in `currency`: its own remaining amount when it was
+  ///   bought in that currency, otherwise its remaining rubles at the money back's rate. The
+  ///   money takes what it can; a part it covers closes, and its link is exactly what was
+  ///   left of its rubles. A part it covers only partly keeps waiting with the rest — unless
+  ///   the rest is within the tolerance, which closes it.
+  /// * What is left over is the surplus; within the tolerance of the last part it reached it
+  ///   is drift and no income. Money over while parts on a provisional rate are still owed is
+  ///   not income either: nothing is spread, `.provisionalPartsOwed`.
+  /// * No part owed: `.owesOnDebt` when the person has an open «Мне должны» debt among
+  ///   `openDebts` — theirs, never another person's —, otherwise `.owesNothing`.
+  public static func plan(
+    received: AmountE4, currency: CurrencyCode, receivedRub: AmountE4, rateProvisional: Bool,
+    person: UUID, owed: [OwedPart], openDebts: [Debt]
+  ) -> MoneyBackPlan {
+    let waiting = owed.filter { $0.remainingRubE4.raw > 0 }.sorted(by: MyExpensesRule.oldestFirst)
+    guard !waiting.isEmpty else {
+      let debt = openDebts.filter {
+        !$0.closed && $0.direction == .owedToMe && $0.personId == person
+      }
+      .min { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
+      return MoneyBackPlan(
+        currency: currency, refusal: debt.map { .owesOnDebt($0.id) } ?? .owesNothing)
+    }
+    guard !rateProvisional else {
+      return MoneyBackPlan(currency: currency, refusal: .provisionalRate)
+    }
+    let skipped = waiting.filter(\.rateProvisional)
+    let parts = waiting.filter { !$0.rateProvisional }
+    guard !parts.isEmpty else {
+      return MoneyBackPlan(
+        currency: currency, stillOwed: remainders(of: skipped),
+        skippedProvisional: skipped.map(\.partId), refusal: .onlyProvisional)
+    }
+
+    let rate =
+      currency == .rub || received.isZero
+      ? Decimal(1) : receivedRub.decimal / received.decimal
+    var plan = MoneyBackPlan(currency: currency, skippedProvisional: skipped.map(\.partId))
+    var left = max(received, .zero)
+    var lastTouched: OwedPart?
+    for part in parts {
+      let need = need(of: part, in: currency, rate: rate)
+      let take = min(need, left)
+      guard take.raw > 0 || need.isZero else {
+        plan.stillOwed.append(
+          OwedRemainder(partId: part.partId, remainingRubE4: part.remainingRubE4))
+        continue
+      }
+      left = left - take
+      let link =
+        take == need
+        ? part.remainingRubE4 : rubles(of: take, for: part, in: currency, rate: rate)
+      plan.allocations.append(ReimbursementAllocation(partId: part.partId, amountE4: link))
+      lastTouched = part
+      let rest = part.remainingRubE4 - link
+      let foreign = part.currency != .rub || currency != .rub
+      if take == need || rest <= tolerance(partRub: part.amountRubE4, foreignInvolved: foreign) {
+        plan.closes.append(part.partId)
+      } else {
+        plan.stillOwed.append(OwedRemainder(partId: part.partId, remainingRubE4: rest))
+      }
+    }
+    plan.stillOwed += remainders(of: skipped)
+
+    let surplusRub = convert(left, rate: rate)
+    if let last = lastTouched, left.raw > 0, last.currency != .rub || currency != .rub,
+      surplusRub <= tolerance(partRub: last.amountRubE4, foreignInvolved: true)
+    {
+      left = .zero
+    }
+    if left.raw > 0, !skipped.isEmpty {
+      return MoneyBackPlan(
+        currency: currency, stillOwed: remainders(of: waiting),
+        skippedProvisional: skipped.map(\.partId), refusal: .provisionalPartsOwed)
+    }
+    plan.surplus = left
+    plan.surplusRub = left.isZero ? .zero : surplusRub
+    return plan
+  }
+
+  /// The records a plan asks to write: a link for every part the money reached, the parts it
+  /// settles, and the surplus — income in «Доплаты», in the money back's currency, on the
+  /// account the money came onto. Money back spread automatically is never short.
+  public static func outcome(
+    _ plan: MoneyBackPlan, reimbursementTxId: UUID, accountId: UUID?,
+    makeId: () -> UUID = { UUID() }
+  ) -> ReimbursementOutcome {
+    let links = plan.allocations.map {
+      ReimbursementLink(
+        id: makeId(), reimbursementTxId: reimbursementTxId, partId: $0.partId,
+        amountE4: $0.amountE4)
+    }
+    let surplus =
+      plan.surplus.raw > 0
+      ? SurchargeIncome(
+        amountE4: plan.surplus, currency: plan.currency, amountRubE4: plan.surplusRub,
+        accountId: accountId)
+      : nil
+    return ReimbursementOutcome(
+      reimbursementTxId: reimbursementTxId, allocations: plan.allocations, links: links,
+      closedPartIds: plan.closes, surplus: surplus, shortfalls: [])
+  }
+
+  /// «Списать остаток»: what is left of a part some money already came back for becomes my
+  /// spending — an expense in rubles of what is left, in the part's category, from the account
+  /// the purchase was paid from, with the purchase's description, «на кого», person and event,
+  /// like a shortfall. It is a line of the books (`writeoff:<part>:<operation>`): the money left
+  /// my pocket at the purchase, so it moves no money now.
+  ///
+  /// `operationId` is the id of the operation written; the key goes with it.
+  public static func remainderWriteOff(
+    part: OwedPart, occurredAt: Date, operationId: UUID, tree: CategoryTree,
+    history: ManualQualityHistory = .empty, now: Date = Date()
+  ) -> TransactionEntry {
+    let remaining = part.remainingRubE4
+    var draft = TransactionDraft(
+      kind: .expense, occurredAt: occurredAt, currency: .rub, amount: remaining, note: part.note,
+      paymentMethodId: part.accountId)
+    draft.normalizeSinglePart()
+    draft.parts[0].categoryId = part.categoryId
+    draft.parts[0].categorySource = .system
+    draft.parts[0].forWhom = part.forWhom
+    draft.parts[0].forPersonId = part.forPersonId ?? part.debtorPersonId
+    draft.parts[0].eventId = part.eventId
+    let decision = QualityResolver.resolve(
+      categoryId: part.categoryId, description: part.note, categories: tree, history: history)
+    draft.parts[0].quality = decision.quality
+    draft.parts[0].qualitySource = decision.source
+    var entry =
+      (try? draft.materialize(id: operationId, now: now))
+      ?? TransactionEntry(
+        transaction: Transaction(
+          id: operationId, kind: .expense, occurredAt: occurredAt, amountE4: remaining,
+          createdAt: now, updatedAt: now),
+        parts: [])
+    entry.transaction.externalId = writeOffKey(part: part.partId, operation: operationId)
+    return entry
+  }
+
+  /// The key a remainder written off keeps in `external_id`.
+  public static func writeOffKey(part: UUID, operation: UUID) -> String {
+    OperationLink.remainderWriteOff(
+      part: part.uuidString.lowercased(), operation: operation.uuidString.lowercased()
+    ).externalId
+  }
+
+  // MARK: - Arithmetic
+
+  /// What is left of the part, in `currency`.
+  private static func need(of part: OwedPart, in currency: CurrencyCode, rate: Decimal) -> AmountE4
+  {
+    if part.currency == currency {
+      guard !part.amountRubE4.isZero else { return part.amountE4 }
+      let returnedOwn =
+        part.returnedRubE4.decimal * part.amountE4.decimal
+        / part.amountRubE4.decimal
+      let rounded = (try? AmountE4(decimal: returnedOwn)) ?? .zero
+      return max(.zero, part.amountE4 - rounded)
+    }
+    guard rate > 0 else { return part.remainingRubE4 }
+    return (try? AmountE4(decimal: part.remainingRubE4.decimal / rate)) ?? part.remainingRubE4
+  }
+
+  /// The rubles of `take` in `currency` for the part: at the part's own rate when it was bought
+  /// in that currency, at the money back's rate otherwise.
+  private static func rubles(
+    of take: AmountE4, for part: OwedPart, in currency: CurrencyCode, rate: Decimal
+  ) -> AmountE4 {
+    if part.currency == currency, !part.amountE4.isZero {
+      let exact = take.decimal * part.amountRubE4.decimal / part.amountE4.decimal
+      return min((try? AmountE4(decimal: exact)) ?? .zero, part.remainingRubE4)
+    }
+    return min(convert(take, rate: rate), part.remainingRubE4)
+  }
+
+  private static func convert(_ amount: AmountE4, rate: Decimal) -> AmountE4 {
+    (try? AmountE4(decimal: amount.decimal * rate)) ?? .zero
+  }
+
+  private static func remainders(of parts: [OwedPart]) -> [OwedRemainder] {
+    parts.map { OwedRemainder(partId: $0.partId, remainingRubE4: $0.remainingRubE4) }
+  }
+}

@@ -37,11 +37,12 @@ public enum TypedNumber {
     /// a point before the fraction, the digits of the fraction as typed — «1500,5» becomes
     /// «1,500.5», «1.234,56» becomes «1,234.56», «250,00» becomes «250.00». Read again by
     /// `TypedNumber`, it is the same number. The sign is the ASCII hyphen-minus, so the text
-    /// can be typed on and read back as it is.
+    /// can be typed on and read back as it is; a zero has none, as nowhere in the app does —
+    /// «-0,00» becomes «0.00».
     public var canonical: String {
       let grouped = NumberText.grouped(integerDigits)
       let body = fractionDigits.isEmpty ? grouped : grouped + "." + fractionDigits
-      return isNegative ? "-" + body : body
+      return isNegative && !value.isZero ? "-" + body : body
     }
   }
 
@@ -123,13 +124,29 @@ public enum TypedNumber {
   /// Whether the text is one number with a point before exactly three digits and one to three
   /// digits, the first not a zero, before it — «1.500», «15.000». It reads as 1.5 and 15, while
   /// a reader used to a point between the thousands sees 1 500 and 15 000, so the entry line
-  /// shows what such a number comes to before Enter. A leading zero («0.500») or a longer first
-  /// part («1500.500») leaves no doubt; a comma before three digits groups them already.
+  /// shows what such a number comes to before Enter. A `k` of thousands behind it changes
+  /// nothing: «1.500k» is 1 500 and may be taken for a million and a half. A leading zero
+  /// («0.500», «01.500») or a longer first part («1500.500») leaves no doubt; a comma before
+  /// three digits groups them already.
   public static func mayBeTakenForThousands(_ text: String) -> Bool {
-    guard let reading = read(text) else { return false }
-    return reading.fractionDigits.count == 3 && (1...3).contains(reading.integerDigits.count)
-      && reading.integerDigits != "0"
+    var body = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    if let last = body.last, thousandSuffixes.contains(last) { body = body.dropLast() }
+    guard let reading = read(String(body)), reading.fractionDigits.count == 3 else {
+      return false
+    }
+    // Told by the digits as typed: the reading has dropped the zeros in front already.
+    if let sign = body.first, sign == "-" || sign == "+" || sign == "\u{2212}" {
+      body = body.dropFirst()
+    }
+    guard let point = body.firstIndex(of: ".") else { return false }
+    let before = body[..<point]
+    let after = body[body.index(after: point)...]
+    return (1...3).contains(before.count) && before.first != "0"
+      && before.allSatisfy(isASCIIDigit) && after.count == 3 && after.allSatisfy(isASCIIDigit)
   }
+
+  /// The `k` of thousands and its Russian twin, both cases, as the formula reads them.
+  private static let thousandSuffixes: Set<Character> = ["k", "K", "\u{043A}", "\u{041A}"]
 
   /// The characters with the spaces that group thousands taken out, or nil when a space does
   /// not group them: it must follow a digit, stand before three digits and no fourth, and come

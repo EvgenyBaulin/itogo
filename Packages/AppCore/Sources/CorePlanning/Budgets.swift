@@ -70,6 +70,18 @@ public enum BudgetIssue: String, Hashable, Sendable, CaseIterable {
   case nonPositive
 }
 
+/// What an amount typed into a limit's field asks to write: one change, one step of ⌘Z.
+public enum LimitChange: Hashable, Sendable {
+  /// Nothing new: the same amount, or an empty field where there is no limit.
+  case unchanged
+  /// The limit to write, new or over the stored one, its start month already set.
+  case save(Budget)
+  /// The limit to delete: its field was emptied.
+  case delete(Budget)
+  /// Why nothing is written.
+  case refused(BudgetIssue)
+}
+
 /// The rules of monthly limits. Every figure comes from the `Ledger`, so a limit spends
 /// exactly what Overview and Analytics call my expenses.
 public enum LimitRules {
@@ -82,16 +94,21 @@ public enum LimitRules {
   /// filed under (its own id, a subcategory's or a parent's); a limit takes what falls in its
   /// scope, so a limit on a parent also takes what is due under its subcategories.
   /// `plannedByForWhom` does the same for «for whom» limits. Bad spending has no plan.
+  /// `scheduledOperations` are the ordinary operations that pay a scheduled payment
+  /// (`ScheduledMatches.operationIds`): planned money like a charge «Провести» wrote, so they
+  /// stay out of the daily rate as that charge does.
   public static func lines(
     book: PlanningBook, ledger: Ledger, today: DateOnly,
-    plannedByCategory: [UUID: AmountE4] = [:], plannedByForWhom: [ForWhom: AmountE4] = [:]
+    plannedByCategory: [UUID: AmountE4] = [:], plannedByForWhom: [ForWhom: AmountE4] = [:],
+    scheduledOperations: Set<UUID> = []
   ) -> [LimitLine] {
     book.budgets.map { budget in
       line(
         budget: budget, ledger: ledger, today: today,
         planned: planned(
           for: budget, tree: ledger.tree, byCategory: plannedByCategory,
-          byForWhom: plannedByForWhom))
+          byForWhom: plannedByForWhom),
+        scheduledOperations: scheduledOperations)
     }
   }
 
@@ -104,7 +121,8 @@ public enum LimitRules {
   /// * status: `over` when spent exceeds what is available; `warning` when the forecast does,
   ///   or 90 % of a positive limit is spent; `ok` otherwise.
   public static func line(
-    budget: Budget, ledger: Ledger, today: DateOnly, planned: AmountE4 = .zero
+    budget: Budget, ledger: Ledger, today: DateOnly, planned: AmountE4 = .zero,
+    scheduledOperations: Set<UUID> = []
   ) -> LimitLine {
     let month = today.monthKey
     let daysInMonth = month.dayCount
@@ -122,7 +140,8 @@ public enum LimitRules {
           / (Decimal(available.raw) * Decimal(today.day)))
       : nil
 
-    let rate = meanDaily(of: budget, ledger: ledger, today: today)
+    let rate = meanDaily(
+      of: budget, ledger: ledger, today: today, scheduledOperations: scheduledOperations)
     let daysLeft = daysInMonth - today.day
     let forecast = spent + planned + rounded(max(0, rate.amount * Decimal(daysLeft)))
 
@@ -157,10 +176,14 @@ public enum LimitRules {
     guard !row.isGoalContribution, row.systemRole == nil else { return false }
     // The difference a reconciliation wrote is the books catching up with the money, not
     // spending a limit is about. It was kept out by its category while that was «Не помню», a
-    // system one; it lives in «Сверка» now, an ordinary category, so it is
-    // named here. Only this link: a shortfall is real money the owner is out of pocket, and
-    // a charge of a scheduled payment is real spending too.
-    if case .reconciliation = row.link { return false }
+    // system one; it lives in «Сверка» now, an ordinary category, so it is named here — the
+    // difference of one total and the difference of one counted balance alike. Only these
+    // links: a shortfall is real money the owner is out of pocket, and a charge of a
+    // scheduled payment is real spending too.
+    switch row.link {
+    case .reconciliation, .reconciledBalance: return false
+    default: break
+    }
     switch budget.scope {
     case .category:
       guard let categoryId = budget.categoryId else { return false }
@@ -174,12 +197,19 @@ public enum LimitRules {
   }
 
   /// A row the daily rate is taken from: under the limit and not a payment that comes on its
-  /// own schedule — a scheduled payment marked as paid, or a debt payment — since those are
-  /// planned rather than spent day by day.
-  public static func isVariable(_ row: LedgerRow, for budget: Budget) -> Bool {
+  /// own schedule — a scheduled payment marked as paid, an ordinary operation that pays one
+  /// (`scheduledOperations`), or a debt payment — since those are planned rather than spent
+  /// day by day. Nor a record the app wrote to square the books — the shortfall of money back,
+  /// «Списать остаток»: money that left at the purchase, written down at once. The limit
+  /// counts it as spent in its month, but spread over the days it would be a spending pace the
+  /// owner never had, as the month forecast and the anomalies say too.
+  public static func isVariable(
+    _ row: LedgerRow, for budget: Budget, scheduledOperations: Set<UUID> = []
+  ) -> Bool {
     guard counts(row, for: budget), row.debtId == nil else { return false }
     if case .scheduled = row.link { return false }
-    return true
+    if row.link?.isBookkeeping == true { return false }
+    return !scheduledOperations.contains(row.transactionId)
   }
 
   /// Σ of the contributions to my expenses of the rows under the limit dated in the month:
@@ -236,7 +266,7 @@ public enum LimitRules {
   /// history: the rate is then the variable spending since the 1st through today ÷ today's
   /// day.
   public static func meanDaily(
-    of budget: Budget, ledger: Ledger, today: DateOnly
+    of budget: Budget, ledger: Ledger, today: DateOnly, scheduledOperations: Set<UUID> = []
   ) -> (amount: Decimal, lowData: Bool) {
     let windowFloor = today.adding(days: -MonthForecast.windowLength)
     let earlierMatch =
@@ -251,20 +281,24 @@ public enum LimitRules {
     if let start = earlierMatch ? windowFloor : firstInWindow {
       let window = DayRange(start, yesterday)
       if window.dayCount >= MonthForecast.minimumWindow {
-        let sum = variableSpending(of: budget, in: window, ledger: ledger)
+        let sum = variableSpending(
+          of: budget, in: window, ledger: ledger, scheduledOperations: scheduledOperations)
         return (sum / Decimal(window.dayCount), false)
       }
     }
     let sinceFirst = variableSpending(
-      of: budget, in: DayRange(today.monthKey.firstDay, today), ledger: ledger)
+      of: budget, in: DayRange(today.monthKey.firstDay, today), ledger: ledger,
+      scheduledOperations: scheduledOperations)
     return (sinceFirst / Decimal(today.day), true)
   }
 
   private static func variableSpending(
-    of budget: Budget, in range: DayRange, ledger: Ledger
+    of budget: Budget, in range: DayRange, ledger: Ledger, scheduledOperations: Set<UUID>
   ) -> Decimal {
     AmountE4.sum(
-      ledger.rows(in: range).lazy.filter { isVariable($0, for: budget) }.map(\.contribution)
+      ledger.rows(in: range).lazy
+        .filter { isVariable($0, for: budget, scheduledOperations: scheduledOperations) }
+        .map(\.contribution)
     ).decimal
   }
 
@@ -319,6 +353,155 @@ public enum LimitRules {
       }
     }
     return taken ? .duplicate : nil
+  }
+
+  // MARK: - Which limits come first
+
+  /// The limits the lists of limits running out show — the Planning block and the Overview
+  /// card alike — and how many there are to show in all.
+  ///
+  /// * A limit of an archived category, or of a subcategory of one, is hidden: it is kept,
+  ///   and comes back with its category, but a category put away is no longer spent on.
+  /// * Over the limit first, then close to it, then within it; within one status, the bigger
+  ///   share of what is available spent first, compared exactly rather than by the rounded
+  ///   shares; then by name, case aside; the id last, so the order never depends on the
+  ///   order the lines came in.
+  /// * `topN` — how many to show; `nil` shows them all.
+  ///
+  /// `name` names a limit for the last step. The core names a category limit by its path
+  /// («Продукты › Кафе»); a bad-spending or a «for whom» limit is named in the language of
+  /// the app, so the app hands its names in.
+  public static func ranked(
+    _ lines: [LimitLine], topN: Int?, tree: CategoryTree, name: ((LimitLine) -> String)? = nil
+  ) -> (shown: [LimitLine], total: Int) {
+    let visible = lines.filter { !isHidden($0.budget, tree: tree) }
+    let keyed = visible.map { line in
+      (line: line, share: share(of: line), name: fold(name?(line) ?? defaultName(line, tree)))
+    }
+    let ordered = keyed.sorted { left, right in
+      let leftRank = statusRank(left.line.status)
+      let rightRank = statusRank(right.line.status)
+      if leftRank != rightRank { return leftRank < rightRank }
+      if left.share != right.share { return left.share > right.share }
+      if left.name != right.name { return left.name < right.name }
+      return left.line.budget.id.uuidString < right.line.budget.id.uuidString
+    }
+    .map(\.line)
+    let shown = topN.map { Array(ordered.prefix(max($0, 0))) } ?? ordered
+    return (shown, ordered.count)
+  }
+
+  /// A limit no list shows: one on a category that is archived or hangs under an archived
+  /// one. A limit whose category the tree does not know stays visible, named as gone, so it
+  /// can still be deleted.
+  public static func isHidden(_ budget: Budget, tree: CategoryTree) -> Bool {
+    guard budget.scope == .category, let category = tree.category(budget.categoryId) else {
+      return false
+    }
+    return category.archived || tree.root(of: category.id)?.archived == true
+  }
+
+  /// Over first, then on the edge, then within.
+  private static func statusRank(_ status: LimitStatus) -> Int {
+    switch status {
+    case .over: 0
+    case .warning: 1
+    case .ok: 2
+    }
+  }
+
+  /// The share of what is available spent, exactly. Spending with nothing available is
+  /// more than any share; nothing spent of nothing is none.
+  private static func share(of line: LimitLine) -> Decimal {
+    guard line.available.raw > 0 else {
+      return line.spent.raw > 0 ? Decimal.greatestFiniteMagnitude : 0
+    }
+    return Decimal(line.spent.raw) / Decimal(line.available.raw)
+  }
+
+  private static func defaultName(_ line: LimitLine, _ tree: CategoryTree) -> String {
+    switch line.budget.scope {
+    case .category:
+      guard let category = tree.category(line.budget.categoryId) else { return "" }
+      guard let parent = tree.parent(of: category.id) else { return category.name }
+      return "\(parent.name) › \(category.name)"
+    case .forWhom:
+      return line.budget.forWhom?.rawValue ?? ""
+    case .badTotal:
+      return ""
+    }
+  }
+
+  /// A name as it is compared: lower case, «ё» as «е».
+  private static func fold(_ name: String) -> String {
+    name.lowercased().replacingOccurrences(of: "ё", with: "е")
+  }
+
+  // MARK: - An amount typed in place
+
+  /// Whether the row of a category offers a field for its limit: a limit could be saved on
+  /// it — an expense category, not a system one nor under one — and the category is in use,
+  /// neither archived nor under an archived one, where its limit would be hidden.
+  public static func offersLimit(on categoryId: UUID, tree: CategoryTree) -> Bool {
+    guard let category = tree.category(categoryId), tree.acceptsLimit(categoryId) else {
+      return false
+    }
+    let root = tree.root(of: categoryId) ?? category
+    return category.kind == .expense && root.kind == .expense && !category.archived
+      && !root.archived
+  }
+
+  /// The limit on exactly this category — not one on its parent, nor a bad-spending or a
+  /// «for whom» limit.
+  public static func categoryLimit(of categoryId: UUID, in budgets: [Budget]) -> Budget? {
+    budgets.first { $0.scope == .category && $0.categoryId == categoryId }
+  }
+
+  /// What the field of a category's row writes: `amount` is what was typed, `nil` for an
+  /// empty field; `budgets` is the book as the database has it now.
+  ///
+  /// An empty field deletes the limit (or writes nothing when there is none). Zero or less is
+  /// refused, never taken for «no limit». The same amount writes nothing. A new amount keeps
+  /// the limit's id and rollover and starts its carry again this month (`saving`); a new
+  /// limit starts this month too.
+  public static func settingCategoryLimit(
+    _ categoryId: UUID, to amount: AmountE4?, budgets: [Budget], tree: CategoryTree,
+    in month: MonthKey
+  ) -> LimitChange {
+    let stored = categoryLimit(of: categoryId, in: budgets)
+    guard let amount else { return stored.map(LimitChange.delete) ?? .unchanged }
+    guard let stored else {
+      return saved(
+        Budget(scope: .category, categoryId: categoryId, amountE4: amount), over: nil,
+        budgets: budgets, tree: tree, in: month)
+    }
+    guard stored.amountE4 != amount else { return .unchanged }
+    var budget = stored
+    budget.amountE4 = amount
+    return saved(budget, over: stored, budgets: budgets, tree: tree, in: month)
+  }
+
+  /// What a new amount typed over a limit's amount writes. The limit is taken as `budgets`
+  /// has it — the database now, not the screen, which may not have caught up with the last
+  /// edit — and only its amount changes; a limit that is gone writes nothing.
+  public static func changingAmount(
+    of budgetId: UUID, to amount: AmountE4, budgets: [Budget], tree: CategoryTree,
+    in month: MonthKey
+  ) -> LimitChange {
+    guard let stored = budgets.first(where: { $0.id == budgetId }),
+      stored.amountE4 != amount
+    else { return .unchanged }
+    var budget = stored
+    budget.amountE4 = amount
+    return saved(budget, over: stored, budgets: budgets, tree: tree, in: month)
+  }
+
+  private static func saved(
+    _ budget: Budget, over stored: Budget?, budgets: [Budget], tree: CategoryTree,
+    in month: MonthKey
+  ) -> LimitChange {
+    if let issue = validate(budget, tree: tree, existing: budgets) { return .refused(issue) }
+    return .save(saving(budget, over: stored, in: month))
   }
 
   // MARK: - Rounding

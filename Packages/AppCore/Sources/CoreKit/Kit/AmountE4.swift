@@ -76,9 +76,23 @@ public struct AmountE4: Hashable, Sendable, Comparable, Codable {
   }
 
   /// Sums parts without losing a unit: plain integer addition, no intermediate rounding.
-  /// A total beyond the range stops at its edge, like `+`.
+  /// A total that fits the range is exact whatever order the parts come in — an amount at the
+  /// edge, one unit more and one unit less add up to the edge, not to one unit short of it —
+  /// and a total beyond the range stops at its edge, like `+`.
   public static func sum(_ amounts: some Sequence<AmountE4>) -> AmountE4 {
-    amounts.reduce(AmountE4.zero, +)
+    // The running total wraps around like any two's-complement counter, and the laps it makes
+    // are counted: the true total is the wrapped one plus that many times 2^64. Stopping at the
+    // edge on the way instead would make the total depend on the order of the parts.
+    var total: Int64 = 0
+    var laps = 0
+    for amount in amounts {
+      let (value, overflow) = total.addingReportingOverflow(amount.raw)
+      if overflow { laps += amount.raw < 0 ? -1 : 1 }
+      total = value
+    }
+    if laps > 0 { return AmountE4(raw: .max) }
+    if laps < 0 { return AmountE4(raw: .min) }
+    return AmountE4(raw: total)
   }
 
   // Encoded as a plain integer of stored units: that is what the *_e4 columns, the CSV
@@ -96,7 +110,8 @@ public struct AmountE4: Hashable, Sendable, Comparable, Codable {
   /// Shares of this amount in proportion to `weights`, each weight measured against `whole`
   /// — the rule for the rubles of the parts of an operation: every share but the
   /// last is rounded half away from zero, and the last takes what is left, so the shares add
-  /// up to the amount exactly and rounding never loses a unit.
+  /// up to the amount exactly and rounding never loses a unit. When the parts all lie on the
+  /// side of their whole, no share lies on the other side of zero.
   ///
   /// This is the one place the rule lives: a draft being saved and a provisional rate being
   /// refined must give the parts the same rubles for the same operation. With a zero
@@ -121,7 +136,25 @@ public struct AmountE4: Hashable, Sendable, Comparable, Codable {
       shares.append(share)
       distributed += share
     }
-    shares.append(self - distributed)
+    var last = self - distributed
+    // Every share before the last may round up by half a unit, and when the last is worth only
+    // a unit or two itself it can end up past zero: four parts of 0.0001 ¥ worth 0.0002 ₽ came
+    // out as 1, 1, 1 and −1 units, a part with rubles of the wrong sign. When every part lies
+    // on the side of the whole, the units come back from the shares before the last, one from
+    // each, the latest first — which leaves every other operation as it was.
+    let oneSided = weights.allSatisfy { !$0.isZero && ($0.raw < 0) == (whole.raw < 0) }
+    if oneSided && !isZero {
+      let step: Int64 = raw < 0 ? -1 : 1
+      var index = shares.count - 1
+      while !last.isZero && (last.raw < 0) != (raw < 0) && index >= 0 {
+        if !shares[index].isZero {
+          shares[index].raw -= step
+          last.raw += step
+        }
+        index -= 1
+      }
+    }
+    shares.append(last)
     return shares
   }
 

@@ -104,7 +104,7 @@ extension CategoryFeedback: @retroactive FetchableRecord {
       chosenCategoryId: (row["chosen_category_id"] as String?).flatMap(UUID.init(uuidString:)),
       partId: (row["part_id"] as String?).flatMap(UUID.init(uuidString:)),
       confidenceBp: row["confidence_bp"],
-      at: row["at"] ?? Date(timeIntervalSince1970: 0))
+      at: RowMapping.readableInstant(row, "at") ?? Date(timeIntervalSince1970: 0))
   }
 }
 
@@ -112,7 +112,7 @@ extension ModelRepository.Row: FetchableRecord {
   public init(row: GRDB.Row) {
     self.init(
       id: UUID(uuidString: row["id"]) ?? UUID(), kind: row["kind"], version: row["version"],
-      trainedAt: row["trained_at"] ?? Date(timeIntervalSince1970: 0),
+      trainedAt: RowMapping.readableInstant(row, "trained_at") ?? Date(timeIntervalSince1970: 0),
       metricsJSON: row["metrics_json"], file: row["file"], checksum: row["checksum"])
   }
 }

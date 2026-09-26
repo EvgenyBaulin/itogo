@@ -87,17 +87,27 @@ public struct HistoryBatch: Sendable {
   }
 
   /// A generated sample whole: the history, every row it points at, the planning built on it
-  /// (`SampleDataSet.planning`) and its cashback category.
-  public init(sample set: SampleDataSet) {
+  /// (`SampleDataSet.planning`), its cashback category, and what its accounts add — groups,
+  /// transfers, counts and their settings — when it has them (`withAccounts`).
+  ///
+  /// A history without its accounts is written the way accounts keep it
+  /// (`SampleDataSet.assigningAccounts`): every operation on an account, and a charge wherever
+  /// the account does not hold the operation's currency. Nothing that was drawn changes, so it
+  /// is still the history the generator made.
+  public init(sample: SampleDataSet) {
+    let set = sample.assigningAccounts()
     let planning = set.planning
+    var settings = set.settings
+    settings[AnalyticsSettings.cashbackCategoryKey] = set.cashbackCategoryId.uuidString
     self.init(
       categories: set.categories, people: set.people, places: set.places,
       paymentMethods: set.paymentMethods, events: set.events, templates: set.templates,
       goals: set.goals, debts: set.debts, entries: set.entries, debtEntries: set.debtEntries,
       links: set.links, scheduled: planning.scheduled, prices: planning.prices,
       expected: planning.expected, expectedLinks: planning.expectedLinks,
-      budgets: planning.budgets,
-      settings: [AnalyticsSettings.cashbackCategoryKey: set.cashbackCategoryId.uuidString])
+      budgets: planning.budgets, settings: settings, accountGroups: set.accountGroups,
+      transfers: set.transfers, reconciliations: set.reconciliations,
+      reconciledBalances: set.reconciledBalances)
   }
 }
 
@@ -107,7 +117,11 @@ extension TransactionRepository {
   /// New operations in one write: all of them land, or none does.
   ///
   /// Every operation must add up before anything is written. An id that is already there,
-  /// or a reference to a row that is not, fails the write and rolls all of it back.
+  /// or a reference to a row that is not, fails the write and rolls all of it back. Each is
+  /// held to the rules of a single save: without an account it gets the main one, and it is
+  /// refused when it moves money on an account that does not hold its currency without saying
+  /// what the account was charged (`AccountWriteError.chargeMissing`), or when it is a refund
+  /// its purchase cannot give (`RefundError`).
   public func insert(_ entries: [TransactionEntry]) throws {
     try insert(HistoryBatch(entries: entries))
   }
@@ -140,9 +154,17 @@ extension TransactionRepository {
   /// A limit is unique to its target (`idx_budgets_target`). Written over existing rows, a
   /// limit whose target another limit already holds — one the owner set on bad spending,
   /// say — is left out, and the owner's stays; written as new rows, it fails the write.
+  ///
+  /// Every operation names its account, as every other write does: one without gets the live
+  /// main account — the batch's own, written before the operations, or the database's — and one
+  /// that moves money on an account that does not hold its currency must say what the account
+  /// was charged. Each is asked as a new one, even over a row with its id: a history written
+  /// again is written whole again. A refund is held to its purchase part as the rows are inside
+  /// the write, so the purchases go before their refunds, as they do in time.
   private func write(_ batch: HistoryBatch, overExistingRows: Bool) throws {
     guard batch.entries.allSatisfy(\.isBalanced) else { throw DatabaseError.unbalancedParts }
     try writer.write { db in
+      let lookups = WriteLookups()
       func put(_ record: some PersistableRecord) throws {
         if overExistingRows { try record.save(db) } else { try record.insert(db) }
       }
@@ -163,7 +185,9 @@ extension TransactionRepository {
         if overExistingRows, try Self.isTargetTaken(of: budget, db: db) { continue }
         try put(budget)
       }
-      for entry in batch.entries {
+      for given in batch.entries {
+        let entry = try Self.assigningAccount(given, lookups: lookups, db: db)
+        try Self.refuseUnsoundRefund(entry, over: nil, db: db)
         if overExistingRows {
           try Self.takeKeyOver(for: entry.transaction, db: db)
           try entry.transaction.save(db)

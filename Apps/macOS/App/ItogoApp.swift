@@ -249,14 +249,16 @@ struct MainWindow: View {
 
   /// The window makes its own `OperationActions`; a test hands in the one it holds, so it can
   /// show the selection bar the way a selection does (`MainWindowLayoutTests`). `opensDetails`
-  /// is the same idea for the ↓ panel, which a key press cannot reach without a key window.
+  /// is the same idea for the ↓ panel, which a key press cannot reach without a key window, and
+  /// `selection` for the screen the window opens on, which a click in the sidebar chooses.
   init(
     deps: AppDependencies, actions: OperationActions = OperationActions(),
-    opensDetails: Bool = false
+    opensDetails: Bool = false, selection: SidebarItem = .section(.overview)
   ) {
     self.deps = deps
     self.opensDetails = opensDetails
     _overviewActions = State(initialValue: actions)
+    _selection = State(initialValue: selection)
   }
 
   private let opensDetails: Bool
@@ -269,7 +271,12 @@ struct MainWindow: View {
   /// both go through it, instead of the private selector the menu used to send.
   @Environment(\.openSettings) private var openSettings
   @Environment(\.windowWidth) private var windowWidth
-  @State private var section: Section = .overview
+  /// What the sidebar has chosen: a section, an account or a group.
+  @State private var selection: SidebarItem = .section(.overview)
+  /// The account this window last gave the entry line; `nil` for none.
+  @State private var focusGiven: UUID?
+  /// Whether this is the window the owner works in.
+  @Environment(\.appearsActive) private var appearsActive
   /// The selection of the Overview list and everything opened from it. It lives here
   /// because its bar floats in the entry bar and its sheets hang on the window's root.
   @State private var overviewActions: OperationActions
@@ -293,12 +300,19 @@ struct MainWindow: View {
     return nil
   }
 
+  /// The entry line of the app puts a new operation on the account this window shows.
+  private func pointEntryLine(at chosen: SidebarItem) {
+    focusGiven = chosen.focusedAccountId
+    environment.focusedAccountId = chosen.focusedAccountId
+  }
+
   private func showRemindersOnce() {
     guard case .ready(let reminders, _) = compute.states.reminders, !reminders.isEmpty,
       !AppEnvironment.isTestHost, !LaunchOptions.current.suppressesReminders,
-      // One question at a time: the offer of a report after a crash is answered first, then
-      // the currencies the bank does not publish, and the reminders follow.
-      !environment.offersProblemReport, environment.currenciesMissingAtBank.isEmpty
+      // One question at a time: the setup of the accounts is answered first, then the offer
+      // of a report after a crash, then the currencies the bank does not publish, and the
+      // reminders follow.
+      !asksSetup, !environment.offersProblemReport, environment.currenciesMissingAtBank.isEmpty
     else { return }
     let today = environment.today.iso
     let defaults = UserDefaults.standard
@@ -340,7 +354,7 @@ struct MainWindow: View {
 
   var body: some View {
     NavigationSplitView {
-      MainSidebar(section: $section)
+      MainSidebar(selection: $selection)
         .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
         // Every column of a split view is laid out in a host of its own, and on macOS 26 a
         // host of its own does not always get the environment of the scene — the crash of
@@ -362,7 +376,7 @@ struct MainWindow: View {
             EntryBar(
               windowWidth: windowWidth, detailWidth: proxy.size.width, opensDetails: opensDetails
             ) {
-              if showsOverview {
+              if showsOperations {
                 SelectionBar(actions: overviewActions)
               }
             }
@@ -384,13 +398,26 @@ struct MainWindow: View {
     }
     .navigationTitle(windowTitle)
     .navigationSubtitle(RecomputeText.subtitle(compute: compute, environment: environment))
-    .journalsSection(section.rawValue, in: .main)
+    .journalsSection(selection.journalToken, in: .main)
     .task {
       LaunchWindows.open(with: openWindow, today: environment.today)
       if let name = LaunchOptions.current.section, let chosen = Section(rawValue: name) {
-        section = chosen
+        selection = .section(chosen)
       }
     }
+    // The entry line puts a new operation on the account whose screen is open, in the window
+    // the owner works in: a choice made here, or this window coming to the front, gives it the
+    // account; a window closed takes back only the account it gave, never another window's.
+    .onChange(of: selection, initial: true) { _, chosen in pointEntryLine(at: chosen) }
+    .onChange(of: appearsActive) { _, active in
+      if active { pointEntryLine(at: selection) }
+    }
+    .onDisappear {
+      if environment.focusedAccountId == focusGiven { environment.focusedAccountId = nil }
+    }
+    // An account or a group archived, merged away or deleted — here, in the settings or by
+    // ⌘Z — takes its screen along, and the window goes back to Overview.
+    .onChange(of: compute.generation) { _, _ in leaveWhatIsGone() }
     // Sheets are laid out by hosts of their own: they get the dependencies handed over.
     .sheet(
       isPresented: Binding(
@@ -400,15 +427,19 @@ struct MainWindow: View {
       ReconcileSheet().appDependencies(deps)
     }
     .sheet(item: $remindersShown) { shown in
-      RemindersSheet(reminders: shown.reminders) { section = $0 }
+      RemindersSheet(reminders: shown.reminders) { selection = .section($0) }
         .appDependencies(deps)
     }
     // A restore or an import this launch could not put in place: said once, with the way on,
-    // instead of tried again in silence at every launch.
+    // instead of tried again in silence at every launch. This alert and the two after it wait
+    // for the setup of the accounts, the first question of the window.
     .alert(
       environment.language("replacement.notApplied.title"),
       isPresented: Binding(
-        get: { environment.replacementProblem == .notApplied },
+        get: {
+          AccountSetupOffer.lets(
+            environment.replacementProblem == .notApplied, asksSetup: asksSetup)
+        },
         set: { if !$0 { environment.replacementProblem = nil } })
     ) {
       Button(environment.language("action.retry")) { AppRestart.relaunch() }
@@ -423,7 +454,9 @@ struct MainWindow: View {
     .alert(
       environment.language("replacement.refused.title"),
       isPresented: Binding(
-        get: { environment.replacementProblem == .refused },
+        get: {
+          AccountSetupOffer.lets(environment.replacementProblem == .refused, asksSetup: asksSetup)
+        },
         set: { if !$0 { environment.replacementProblem = nil } })
     ) {
       Button(environment.language("action.ok")) {}
@@ -434,7 +467,7 @@ struct MainWindow: View {
     .alert(
       environment.language("backups.afterImport.title", table: "Settings"),
       isPresented: Binding(
-        get: { environment.asksForMirrorFolder },
+        get: { AccountSetupOffer.lets(environment.asksForMirrorFolder, asksSetup: asksSetup) },
         set: { if !$0 { environment.asksForMirrorFolder = false } })
     ) {
       Button(environment.language("settings.backups.choose", table: "Settings")) {
@@ -451,11 +484,24 @@ struct MainWindow: View {
     .onChange(of: environment.state, initial: true) { _, _ in
       Task { @MainActor in ArchiveImportFlow.resumeDeferred(in: environment) }
     }
-    .modifier(ProblemReportOffer(deps: deps))
+    // The first question of the window: the setup of the accounts, while it is due.
+    .modifier(AccountSetupOffer(deps: deps))
+    .onChange(of: asksSetup) { _, asks in
+      if !asks { showRemindersOnce() }
+    }
+    // The offer of a report waits for the start, for an archive from Finder and for the
+    // setup: raised before the window knows whether the setup comes, it would be taken down
+    // by the sheet with the report it led to. It hangs on a view of its own behind the
+    // window, so the window's content keeps its identity when the offer comes.
+    .background {
+      if AccountSetupOffer.letsReportOffer(environment, setupIsUp: asksSetup) {
+        Color.clear.modifier(ProblemReportOffer(deps: deps))
+      }
+    }
     .onChange(of: environment.offersProblemReport) { _, offers in
       if !offers { showRemindersOnce() }
     }
-    .modifier(CurrencyNotice(deps: deps, waits: remindersShown != nil))
+    .modifier(CurrencyNotice(deps: deps, waits: remindersShown != nil || asksSetup))
     .onChange(of: environment.currenciesMissingAtBank) { _, missing in
       if missing.isEmpty { showRemindersOnce() }
     }
@@ -469,21 +515,44 @@ struct MainWindow: View {
     case .failed(let failure):
       DatabaseFailureView(failure: failure, deps: deps)
     case .ready:
-      switch section {
-      case .overview: OverviewView(actions: overviewActions)
-      case .planning: PlanningView()
-      case .debts: DebtsView()
+      switch selection {
+      case .section(.overview): OverviewView(actions: overviewActions)
+      case .section(.planning): PlanningView()
+      case .section(.debts): DebtsView()
+      case .account(let id):
+        AccountScreen(accountId: id, actions: overviewActions)
+          .id(id)
+      case .group(let id):
+        GroupScreen(groupId: id, actions: overviewActions) { selection = .account($0) }
+          .id(id)
       }
     }
   }
 
-  private var showsOverview: Bool {
-    environment.state == .ready && section == .overview
+  /// Back to Overview when the account or the group on screen is no longer among the live ones
+  /// the sidebar lists. Judged by the data once it is there, never before.
+  private func leaveWhatIsGone() {
+    guard let accounts = compute.snapshot?.planning.accounts else { return }
+    let live = Set(accounts.sections.flatMap(\.accounts).map(\.account.id))
+    let groups = Set(accounts.sections.compactMap(\.group?.id))
+    if let fallback = selection.fallback(liveAccounts: live, liveGroups: groups) {
+      selection = fallback
+    }
+  }
+
+  /// The setup of the accounts is on screen — asked by the window or opened from the card of
+  /// Overview: every other question of the window waits.
+  private var asksSetup: Bool { AccountSetupOffer.isUp(environment) }
+
+  /// Overview, or the screen of an account or of a group: operations are listed and selected
+  /// there, and the selection bar floats in the entry bar.
+  private var showsOperations: Bool {
+    environment.state == .ready && selection.listsOperations
   }
 
   /// A selection, or a large write landing with nothing selected (`SelectionBar.Form`).
   private var showsSelectionBar: Bool {
-    showsOverview
+    showsOperations
       && SelectionBar.form(
         selection: overviewActions.selection, writing: store.isWritingInBackground) != .hidden
   }

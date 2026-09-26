@@ -28,7 +28,9 @@ public enum GoalPaceSource: String, Hashable, Sendable, CaseIterable {
   case history
 }
 
-/// One goal with its progress and its outlook. All amounts are rubles.
+/// One goal with its progress and its outlook. Every amount is in the goal's currency
+/// (`currency`): a ruble goal counts rubles, a dollar goal dollars — a contribution in another
+/// currency counts at the rate of its own day (`GoalMath`).
 public struct GoalStatus: Hashable, Sendable, Identifiable {
   public var goal: Goal
   /// Everything contributed, net of withdrawals, over the whole history.
@@ -58,16 +60,29 @@ public struct GoalStatus: Hashable, Sendable, Identifiable {
   /// What will be saved by the target date at `pace`; `nil` without a date, without a pace
   /// or once the date has passed.
   public var amountByTargetDate: AmountE4?
-  /// Whether «can save this month» (P50) covers `neededMonthly`; `nil` when either is unknown.
+  /// Whether «can save this month» (P50) covers `neededMonthly` at today's rate; `nil` when
+  /// either is unknown or the goal's currency has no rate today.
   public var coveredByCanSave: Bool?
+  /// Rubles for one unit of the goal's currency today; 1 for a ruble goal, `nil` when no rate
+  /// is known.
+  public var rubPerUnit: Decimal?
+  /// Contributions and withdrawals left out of the figures: in another currency, on a day no
+  /// rate of the goal's currency is known for.
+  public var withoutRate: Int
 
   public var id: UUID { goal.id }
+  /// The currency every amount of the status is in.
+  public var currency: CurrencyCode { goal.currency }
+  /// What is saved, in rubles at today's rate; `nil` without a rate. The grey line of the free
+  /// sum holds it back (`CashPlan.goalSavings`): the money is on the accounts, but not free.
+  public var savedRubToday: AmountE4? { rubles(saved) }
 
   public init(
     goal: Goal, saved: AmountE4, remaining: AmountE4, progressBp: Int,
     contributedThisMonth: AmountE4, neededMonthly: AmountE4?, monthsLeft: Int?,
     pace: AmountE4?, paceSource: GoalPaceSource?, realism: GoalRealism,
-    projectedCompletion: MonthKey?, amountByTargetDate: AmountE4?, coveredByCanSave: Bool?
+    projectedCompletion: MonthKey?, amountByTargetDate: AmountE4?, coveredByCanSave: Bool?,
+    rubPerUnit: Decimal? = nil, withoutRate: Int = 0
   ) {
     self.goal = goal
     self.saved = saved
@@ -82,6 +97,15 @@ public struct GoalStatus: Hashable, Sendable, Identifiable {
     self.projectedCompletion = projectedCompletion
     self.amountByTargetDate = amountByTargetDate
     self.coveredByCanSave = coveredByCanSave
+    self.rubPerUnit = goal.currency == .rub ? 1 : rubPerUnit
+    self.withoutRate = withoutRate
+  }
+
+  /// An amount of the goal's currency in rubles at today's rate; `nil` without a rate.
+  public func rubles(_ amount: AmountE4) -> AmountE4? {
+    guard currency != .rub else { return amount }
+    guard let rubPerUnit, rubPerUnit > 0 else { return nil }
+    return SavingsMath.rounded(amount.decimal * rubPerUnit)
   }
 }
 
@@ -89,10 +113,12 @@ public struct GoalStatus: Hashable, Sendable, Identifiable {
 /// «Contribute» and «Withdraw» write.
 ///
 /// A row belongs to a goal when it carries the goal's id, or when it carries no goal at all
-/// and is filed under the goal's subcategory — the same test `PlannedPayments` applies to
-/// the forecast, so the reserve of «Free to spend» and the planned goals of the forecast are
-/// one figure. A contribution is an `expense` and adds its rubles; a withdrawal is a `refund`
-/// and takes them off, like `MyExpensesRule.goalProgress`.
+/// and is filed under the goal's subcategory; a contribution is an `expense` and adds, a
+/// withdrawal is a `refund` and takes off. The rule is `GoalMath`, which `PlannedPayments`
+/// applies to the forecast too, so the goals of the planned month and of the forecast are one
+/// figure. Everything is counted in the goal's currency: a contribution in another currency at
+/// the rate of its own day (`rates`, rubles for one unit), and whatever is shown in rubles at
+/// today's rate (`rubPerUnit`).
 public enum GoalRules {
   /// Complete months the pace of a goal without a plan is averaged over.
   public static let historyMonths = 3
@@ -102,9 +128,12 @@ public enum GoalRules {
   /// The statuses of the goals that are not archived, in the order given.
   ///
   /// `canSaveP50` is «can save this month» (`CanSave.p50`) when the caller has it: every
-  /// goal then says whether that covers its needed contribution.
+  /// goal then says whether that covers its needed contribution. `rates` are the rates by day
+  /// a contribution in another currency counts at; `rubPerUnit` today's rates, for what the
+  /// status shows in rubles. A ruble goal needs neither.
   public static func statuses(
-    goals: [Goal], ledger: Ledger, today: DateOnly, canSaveP50: AmountE4? = nil
+    goals: [Goal], ledger: Ledger, today: DateOnly, canSaveP50: AmountE4? = nil,
+    rates: DayRates = .empty, rubPerUnit: [CurrencyCode: Decimal] = [:]
   ) -> [GoalStatus] {
     let live = goals.filter { !$0.archived }
     guard !live.isEmpty else { return [] }
@@ -125,13 +154,7 @@ public enum GoalRules {
     }
     var sums = Array(repeating: Sums(), count: live.count)
     let firstOfMonth = month.firstDay
-    for row in ledger.rows {
-      let sign: Int64
-      switch row.kind {
-      case .expense: sign = 1
-      case .refund: sign = -1
-      case .income, .reimbursement: continue
-      }
+    for row in ledger.rows where row.kind == .expense || row.kind == .refund {
       let index: Int?
       if let goalId = row.goalId {
         index = byId[goalId]
@@ -139,7 +162,10 @@ public enum GoalRules {
         index = row.categoryId.flatMap { bySubcategory[$0] }
       }
       guard let index else { continue }
-      let amount = AmountE4(raw: sign * row.amountRubE4.raw)
+      guard let amount = GoalMath.contribution(of: row, to: live[index], rates: rates) else {
+        sums[index].withoutRate += 1
+        continue
+      }
       sums[index].saved += amount
       if row.day < firstOfMonth {
         sums[index].before += amount
@@ -155,22 +181,18 @@ public enum GoalRules {
     return live.enumerated().map { index, goal in
       status(
         of: goal, sums: sums[index], today: today, historyMonthCount: historyMonths.count,
-        canSaveP50: canSaveP50)
+        canSaveP50: canSaveP50,
+        rubPerUnit: goal.currency == .rub ? 1 : rubPerUnit[goal.currency])
     }
   }
 
-  /// What a row adds to a goal: its rubles for a contribution, minus them for a withdrawal,
-  /// zero for a row of another goal and for anything else.
-  public static func contribution(of row: LedgerRow, to goal: Goal) -> AmountE4 {
-    let belongs =
-      row.goalId == goal.id
-      || (row.goalId == nil && row.categoryId != nil && row.categoryId == goal.subcategoryId)
-    guard belongs else { return .zero }
-    switch row.kind {
-    case .expense: return row.amountRubE4
-    case .refund: return -row.amountRubE4
-    case .income, .reimbursement: return .zero
-    }
+  /// What a row adds to a goal, in the goal's currency (`GoalMath.contribution`): plus for a
+  /// contribution, minus for a withdrawal, zero for a row of another goal and for anything
+  /// else; `nil` when the row is in another currency and no rate of the goal's is known.
+  public static func contribution(
+    of row: LedgerRow, to goal: Goal, rates: DayRates
+  ) -> AmountE4? {
+    GoalMath.contribution(of: row, to: goal, rates: rates)
   }
 
   /// What the monthly plan of each live goal still asks this month, by goal: max(0, plan −
@@ -182,36 +204,15 @@ public enum GoalRules {
   /// of 3 000 and 5 000 withdrawn the goal asks 3 000, not 8 000. Goals
   /// without a plan, or with nothing left to ask, are not in the map.
   ///
-  /// «Free to spend» reserves this (`FreeToSpend.goalReserve`) and the planned month adds
-  /// it (`PlannedMonth.goals`); `PlannedPayments.goals` of the forecast repeats the rule,
-  /// so the three figures stay one.
+  /// Each amount is in its goal's currency (`GoalMath.planLeft`): the planned month turns it
+  /// into rubles at today's rate (`PlannedMonth.goals`), and so do the goal reserve of the
+  /// planning snapshot and `PlannedPayments.goals` of the forecast, which applies the same
+  /// rule — the figures stay one. The free sum asks the rest of this month's plan the same
+  /// way and adds the plans of the later months up to its day (`CashPlan`).
   public static func planStillDue(
-    goals: [Goal], ledger: Ledger, today: DateOnly
+    goals: [Goal], ledger: Ledger, today: DateOnly, rates: DayRates = .empty
   ) -> [UUID: AmountE4] {
-    let planned = goals.filter { goal in
-      guard !goal.archived, let plan = goal.monthlyPlanE4 else { return false }
-      return plan.raw > 0
-    }
-    guard !planned.isEmpty else { return [:] }
-    let month = today.monthKey
-    var saved = Array(repeating: AmountE4.zero, count: planned.count)
-    var thisMonth = Array(repeating: AmountE4.zero, count: planned.count)
-    for row in ledger.rows {
-      for (index, goal) in planned.enumerated() {
-        let amount = contribution(of: row, to: goal)
-        guard !amount.isZero else { continue }
-        saved[index] += amount
-        if row.day.monthKey == month { thisMonth[index] += amount }
-      }
-    }
-    var result: [UUID: AmountE4] = [:]
-    for (index, goal) in planned.enumerated() {
-      let plan = goal.monthlyPlanE4 ?? .zero
-      let left = min(
-        max(.zero, plan - thisMonth[index]), plan, max(.zero, goal.targetE4 - saved[index]))
-      if left.raw > 0 { result[goal.id] = left }
-    }
-    return result
+    GoalMath.planLeft(goals: goals, rows: ledger.rows, month: today.monthKey, rates: rates)
   }
 
   /// Net contributions to all goals — to any goal, or filed anywhere under the system Goals
@@ -237,10 +238,13 @@ public enum GoalRules {
     /// Rows of the complete months the pace is averaged over.
     var history = AmountE4.zero
     var historyRows = 0
+    /// Rows left out for want of a rate.
+    var withoutRate = 0
   }
 
   private static func status(
-    of goal: Goal, sums: Sums, today: DateOnly, historyMonthCount: Int, canSaveP50: AmountE4?
+    of goal: Goal, sums: Sums, today: DateOnly, historyMonthCount: Int, canSaveP50: AmountE4?,
+    rubPerUnit: Decimal?
   ) -> GoalStatus {
     let month = today.monthKey
     let target = goal.targetE4
@@ -281,8 +285,9 @@ public enum GoalRules {
         // Counted from what stood before this month, so the figure does not shrink while
         // this month's own contribution is being made.
         let baseline = sums.before + min(.zero, thisMonth)
-        // Rounded up to whole rubles, the figure the screen shows: paying it every month
-        // must reach the target, so a plan typed from it reads «on track».
+        // Rounded up to whole units of the goal's currency, the figure the screen shows:
+        // paying it every month must reach the target, so a plan typed from it reads
+        // «on track».
         neededMonthly =
           reached
           ? .zero : SavingsMath.ceilingWhole(max(.zero, target - baseline), by: months)
@@ -318,18 +323,18 @@ public enum GoalRules {
       realism = .notEnoughData
     }
 
-    var covered: Bool?
-    if let canSaveP50, let neededMonthly {
-      covered = neededMonthly <= canSaveP50
-    }
-
-    return GoalStatus(
+    var result = GoalStatus(
       goal: goal, saved: saved, remaining: remaining,
       progressBp: progressBasisPoints(saved: saved, target: target),
       contributedThisMonth: thisMonth, neededMonthly: neededMonthly, monthsLeft: monthsLeft,
       pace: pace, paceSource: paceSource, realism: realism,
       projectedCompletion: projectedCompletion, amountByTargetDate: amountByTargetDate,
-      coveredByCanSave: covered)
+      coveredByCanSave: nil, rubPerUnit: rubPerUnit, withoutRate: sums.withoutRate)
+    // «Can save» is in rubles: the goal's need is compared at today's rate.
+    if let canSaveP50, let neededMonthly, let needed = result.rubles(neededMonthly) {
+      result.coveredByCanSave = needed <= canSaveP50
+    }
+    return result
   }
 
   /// saved ÷ target in basis points, rounded down: 99.99 % must not read as 100 %.
@@ -347,30 +352,32 @@ public enum GoalRules {
   /// «Contribute»: an expense of one part in the goal's subcategory, tied to the goal. The
   /// part is `good` with the source `system`, as `QualityResolver` fixes every goal
   /// contribution — the panel must not offer another rating. The category is the app's
-  /// choice, so its source is `system` too. The amount is taken without its sign.
+  /// choice, so its source is `system` too. The amount is taken without its sign, in
+  /// `currency` — rubles unless the form asks for another, such as the goal's own; the
+  /// operation's rubles then come from the rate of its day, as for any operation.
   public static func contributionDraft(
     goal: Goal, subcategoryId: UUID?, amount: AmountE4, occurredAt: Date,
-    paymentMethodId: UUID? = nil, note: String? = nil
+    paymentMethodId: UUID? = nil, note: String? = nil, currency: CurrencyCode = .rub
   ) -> TransactionDraft {
     draft(
       .expense, goal: goal, subcategoryId: subcategoryId, amount: amount,
-      occurredAt: occurredAt, paymentMethodId: paymentMethodId, note: note)
+      occurredAt: occurredAt, paymentMethodId: paymentMethodId, note: note, currency: currency)
   }
 
   /// «Withdraw»: a refund with the same part. It takes the money off the goal's progress and
   /// off my expenses, exactly as the contribution added it.
   public static func withdrawalDraft(
     goal: Goal, subcategoryId: UUID?, amount: AmountE4, occurredAt: Date,
-    paymentMethodId: UUID? = nil, note: String? = nil
+    paymentMethodId: UUID? = nil, note: String? = nil, currency: CurrencyCode = .rub
   ) -> TransactionDraft {
     draft(
       .refund, goal: goal, subcategoryId: subcategoryId, amount: amount,
-      occurredAt: occurredAt, paymentMethodId: paymentMethodId, note: note)
+      occurredAt: occurredAt, paymentMethodId: paymentMethodId, note: note, currency: currency)
   }
 
   private static func draft(
     _ kind: TransactionKind, goal: Goal, subcategoryId: UUID?, amount: AmountE4,
-    occurredAt: Date, paymentMethodId: UUID?, note: String?
+    occurredAt: Date, paymentMethodId: UUID?, note: String?, currency: CurrencyCode
   ) -> TransactionDraft {
     let categoryId = subcategoryId ?? goal.subcategoryId
     let decision = QualityResolver.resolve(goalId: goal.id, categoryId: categoryId)
@@ -379,7 +386,7 @@ public enum GoalRules {
       categoryId: categoryId, categorySource: .system, quality: decision.quality,
       qualitySource: decision.source, amount: amount, forWhom: .me, goalId: goal.id)
     return TransactionDraft(
-      kind: kind, occurredAt: occurredAt, currency: .rub, amount: amount,
+      kind: kind, occurredAt: occurredAt, currency: currency, amount: amount,
       note: note, paymentMethodId: paymentMethodId, parts: [part])
   }
 }

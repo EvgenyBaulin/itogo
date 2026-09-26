@@ -13,12 +13,25 @@ public struct ReimbursementAllocation: Hashable, Sendable {
 }
 
 /// Money that came back on top of what I paid. It is the only part of a reimbursement
-/// that is income, and it always lands in the system Surcharges category.
+/// that is income, and it always lands in the system Surcharges category — in the currency the
+/// money came in, on the account it came onto.
 public struct SurchargeIncome: Hashable, Sendable {
+  /// In `currency`, the currency of the money back.
   public var amountE4: AmountE4
+  public var currency: CurrencyCode
+  /// The same money in rubles, at the rate of the money back.
+  public var amountRubE4: AmountE4
+  /// The account the money back came onto; `nil` — the main account.
+  public var accountId: UUID?
 
-  public init(amountE4: AmountE4) {
+  public init(
+    amountE4: AmountE4, currency: CurrencyCode = .rub, amountRubE4: AmountE4? = nil,
+    accountId: UUID? = nil
+  ) {
     self.amountE4 = amountE4
+    self.currency = currency
+    self.amountRubE4 = amountRubE4 ?? amountE4
+    self.accountId = accountId
   }
 
   public var systemRole: SystemRole { .surcharges }
@@ -32,16 +45,19 @@ public struct ShortfallExpense: Hashable, Sendable {
   public var categoryId: UUID?
   public var forWhom: ForWhom
   public var amountE4: AmountE4
+  /// The account the purchase was paid from: the money that did not come back left it.
+  public var accountId: UUID?
 
   public init(
     partId: UUID, transactionId: UUID, categoryId: UUID?, forWhom: ForWhom,
-    amountE4: AmountE4
+    amountE4: AmountE4, accountId: UUID? = nil
   ) {
     self.partId = partId
     self.transactionId = transactionId
     self.categoryId = categoryId
     self.forWhom = forWhom
     self.amountE4 = amountE4
+    self.accountId = accountId
   }
 }
 
@@ -118,6 +134,12 @@ public enum ReimbursementError: Error, Equatable, Sendable, CustomStringConverti
   /// deleted or taken back by ⌘Z, or the part was written off or closed by another
   /// reimbursement. The storage layer refuses the whole reimbursement, and nothing is written.
   case partNoLongerOwed(UUID)
+  /// «Списать остаток» on a part no money came back for yet: there is no remainder, the whole
+  /// part is written off instead.
+  case nothingReturnedYet(UUID)
+  /// Writing a whole part off when some money already came back for it: only what is left of
+  /// it is written off («Списать остаток»).
+  case partlyReturned(UUID)
 
   public var description: String {
     switch self {
@@ -130,6 +152,8 @@ public enum ReimbursementError: Error, Equatable, Sendable, CustomStringConverti
     case .allocationExceedsAmount: return "The distribution is larger than the money returned."
     case .provisionalRate: return "The rate of this part is still provisional."
     case .partNoLongerOwed: return "The part is no longer waiting for its money."
+    case .nothingReturnedYet: return "Nothing came back for this part yet."
+    case .partlyReturned: return "Some of the money came back for this part already."
     }
   }
 }
@@ -173,11 +197,15 @@ public enum ReimbursementResolver {
   ///
   /// `makeId` exists so the outcome can be reproduced in tests; it defaults to fresh
   /// UUIDs.
+  ///
+  /// The surplus lands on `accountId`, the account the money back came onto; a shortfall is
+  /// spending from the account the purchase was paid from (`OwedPart.accountId`).
   public static func resolve(
     reimbursementTxId: UUID,
     amountE4: AmountE4,
     closing parts: [OwedPart],
     allocation: [ReimbursementAllocation]? = nil,
+    accountId: UUID? = nil,
     makeId: () -> UUID = { UUID() }
   ) throws -> ReimbursementOutcome {
     guard !parts.isEmpty else { throw ReimbursementError.noPartsSelected }
@@ -212,13 +240,14 @@ public enum ReimbursementResolver {
         shortfalls.append(
           ShortfallExpense(
             partId: part.partId, transactionId: part.transactionId,
-            categoryId: part.categoryId, forWhom: part.forWhom, amountE4: missing))
+            categoryId: part.categoryId, forWhom: part.forWhom, amountE4: missing,
+            accountId: part.accountId))
       }
     }
 
     let allocated = AmountE4.sum(allocations.map(\.amountE4))
     let left = amountE4 - allocated
-    let surplus = left.raw > 0 ? SurchargeIncome(amountE4: left) : nil
+    let surplus = left.raw > 0 ? SurchargeIncome(amountE4: left, accountId: accountId) : nil
 
     return ReimbursementOutcome(
       reimbursementTxId: reimbursementTxId,

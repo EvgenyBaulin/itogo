@@ -47,7 +47,12 @@ struct BudgetForm: View {
         LabeledContent(t("form.limit.amount")) {
           AmountField(amount: $budget.amountE4, locale: environment.language.locale)
         }
-        Toggle(t("form.limit.rollover"), isOn: $budget.rollover)
+        Toggle(isOn: $budget.rollover) {
+          Text(verbatim: t("form.limit.rollover"))
+          // The carry is counted with the amount the limit has now: a new amount, or the carry
+          // switched on, starts it again this month (`LimitRules.saving`).
+          Text(verbatim: t("form.limit.rolloverHint"))
+        }
         if let issue = PlanningActions.issue(of: normalized, compute: compute) {
           Text(verbatim: t("limit.issue.\(issue.rawValue)")).font(.caption).foregroundStyle(
             .secondary)
@@ -63,7 +68,7 @@ struct BudgetForm: View {
       }
     }
     .padding(20)
-    .frame(width: 460, height: 360)
+    .frame(width: 460, height: 390)
     .onAppear {
       guard !loaded else { return }
       loaded = true

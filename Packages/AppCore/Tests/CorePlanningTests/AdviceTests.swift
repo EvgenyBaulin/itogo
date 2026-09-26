@@ -406,6 +406,90 @@ struct AdviceTests: SavingsFixtures {
 
   func ids(_ number: Int) -> String { uid(number).uuidString.lowercased() }
 
+  /// A goal in dollars: every amount of its status is dollars, and rubles for one dollar today.
+  func dollarGoal(
+    _ name: String, id: Int, remaining: String, date: String? = nil, monthsLeft: Int? = nil,
+    needed: String? = nil, pace: String? = nil, rate: Decimal? = 95
+  ) -> GoalStatus {
+    GoalStatus(
+      goal: Goal(
+        id: uid(id), name: name, targetE4: rub("2000"), targetDate: date.map(self.date),
+        currency: .usd),
+      saved: rub("2000") - rub(remaining), remaining: rub(remaining), progressBp: 0,
+      contributedThisMonth: .zero, neededMonthly: needed.map(rub), monthsLeft: monthsLeft,
+      pace: pace.map(rub), paceSource: pace == nil ? nil : .plan, realism: .behindPlan,
+      projectedCompletion: nil, amountByTargetDate: nil, coveredByCanSave: nil,
+      rubPerUnit: rate)
+  }
+
+  func dollars(_ text: String) -> AdviceValue { .moneyIn(.usd, rub(text)) }
+
+  /// A goal of 1 000 $ still to save needs 250 $ a month — 23 750 ₽ at today's 95 ₽ — and a
+  /// ruble goal 10 000 ₽: together 33 750 ₽, so «can save» of 20 000 ₽ is 13 750 ₽ short, not
+  /// «10 250, 9 750 left». The dollar goal shows its own amounts in dollars. A goal in a
+  /// currency without a rate today leaves «all goals need» unsaid rather than guessed.
+  @Test func goalsInAnotherCurrencyAreAddedInRubles() {
+    let statuses = [
+      dollarGoal(
+        "Trip", id: 510, remaining: "1000", date: "2026-12-31", monthsLeft: 4, needed: "250",
+        pace: "150"),
+      goalStatus(
+        "Car", id: 511, remaining: "40000", date: "2026-12-31", monthsLeft: 4, needed: "10000"),
+    ]
+    let items = AdviceRules.goals(statuses, canSaveP50: rub("20000"))
+    let trip = items[0]
+    #expect(
+      trip.terms == [
+        term("advice.term.goalRemaining", dollars("1000")),
+        term("advice.term.goalTargetDate", .date(date("2026-12-31"))),
+        term("advice.term.goalMonthsLeft", .months(4)),
+        term("advice.term.goalPace", dollars("150")),
+      ])
+    #expect(trip.result == term("advice.term.goalNeededMonthly", .equals, dollars("250")))
+    #expect(
+      trip.notes == [
+        term("advice.term.allGoalsNeed", money("33750")),
+        term("advice.term.canSaveShort", money("13750")),
+      ])
+    #expect(items[1].notes == trip.notes)
+
+    var noRate = statuses
+    noRate[0] = dollarGoal(
+      "Trip", id: 510, remaining: "1000", date: "2026-12-31", monthsLeft: 4, needed: "250",
+      rate: nil)
+    let unknown = AdviceRules.goals(noRate, canSaveP50: rub("20000"))
+    #expect(unknown.allSatisfy { $0.notes.isEmpty })
+  }
+
+  /// The bad month is 2 000 ₽ on average; at today's 100 ₽ a cut of 10, 25 or 50 % frees 2, 5
+  /// or 10 $ for a dollar goal with 100 $ to go at 10 $ a month: 9, 7 or 5 months instead of
+  /// 10 — one, three and five sooner, not nine each as rubles added to dollars would say. A
+  /// dollar goal without a rate today is left out.
+  @Test func badCutScenarioFreesRublesIntoTheGoalsCurrency() {
+    let trip = dollarGoal("Trip", id: 510, remaining: "100", pace: "10", rate: 100)
+    let items = AdviceRules.badCutScenarios(badBook().context(today), goals: [trip])
+    #expect(items.map(\.id) == ["badCutScenario:\(ids(510))"])
+    #expect(
+      items.first?.terms == [
+        term("advice.term.badMonthlyAverage", money("2000")),
+        term("advice.term.goalRemaining", dollars("100")),
+        term("advice.term.goalPace", dollars("10")),
+        term("advice.term.monthsAtPace", .months(10)),
+        term("advice.term.sooner10", .months(1)),
+        term("advice.term.sooner25", .months(3)),
+        term("advice.term.sooner50", .months(5)),
+      ])
+    #expect(
+      items.first?.notes == [
+        term("advice.term.cut10", money("200")),
+        term("advice.term.cut25", money("500")),
+        term("advice.term.cut50", money("1000")),
+      ])
+
+    let noRate = dollarGoal("Trip", id: 510, remaining: "100", pace: "10", rate: nil)
+    #expect(AdviceRules.badCutScenarios(badBook().context(today), goals: [noRate]).isEmpty)
+  }
+
   // MARK: Limits
 
   /// Food: [10 040, 12 000, 0, 11 000, 9 010, 13 052] → median (10 040 + 11 000) ÷ 2 =
@@ -919,6 +1003,57 @@ struct AdviceTests: SavingsFixtures {
         term("advice.term.forOthersWaiting", .minus, money("0")),
       ])
     #expect(items.first?.result == term("advice.term.forOthersCostMe", .equals, money("300")))
+  }
+
+  /// A share in dollars worth 4 000 ₽, closed by 3 970 ₽ that came back: the 30 ₽ between them
+  /// is the drift of the rate, within what closes a part, not spending. It costs me nothing,
+  /// as «За других» shows no shortfall for it; only my own share of 2 000 is what it cost me.
+  @Test func subscriptionsForOthersCountsNoDriftOfTheRateAsCost() {
+    var data = subscriptionBook()
+    data.add(
+      .expense, "2026-08-05",
+      [
+        AdvicePart(
+          amount: "4000", category: data.fun, forWhom: .friends, reimbursable: true,
+          status: .returned, debtor: data.anna),
+        AdvicePart(amount: "2000", category: data.fun, forWhom: .friends),
+      ],
+      externalId: OperationLink.scheduled(paymentId: uid(800), due: date("2026-08-05")).externalId)
+    data.entries[data.entries.count - 1].transaction.currency = .usd
+    data.entries[data.entries.count - 1].transaction.rate = 100
+    data.giveBack("3970", on: "2026-08-20")
+    let items = AdviceRules.subscriptionsForOthers(data.context(today), book: data.book)
+    #expect(
+      items.first?.terms == [
+        term("advice.term.forOthersPaid", .plus, money("6000")),
+        term("advice.term.forOthersReturned", .minus, money("4000")),
+        term("advice.term.forOthersWaiting", .minus, money("0")),
+      ])
+    #expect(items.first?.result == term("advice.term.forOthersCostMe", .equals, money("2000")))
+  }
+
+  /// A share of 400 still expected after 150 came back: 150 returned, 250 waiting — what is
+  /// left of it —, and the 200 of my own share is what it cost me.
+  @Test func subscriptionsForOthersWaitsForWhatIsLeftOfAShare() {
+    var data = subscriptionBook()
+    data.add(
+      .expense, "2026-08-05",
+      [
+        AdvicePart(
+          amount: "400", category: data.fun, forWhom: .friends, reimbursable: true,
+          status: .expected, debtor: data.anna),
+        AdvicePart(amount: "200", category: data.fun, forWhom: .friends),
+      ],
+      externalId: OperationLink.scheduled(paymentId: uid(800), due: date("2026-08-05")).externalId)
+    data.giveBack("150", on: "2026-08-20")
+    let items = AdviceRules.subscriptionsForOthers(data.context(today), book: data.book)
+    #expect(
+      items.first?.terms == [
+        term("advice.term.forOthersPaid", .plus, money("600")),
+        term("advice.term.forOthersReturned", .minus, money("150")),
+        term("advice.term.forOthersWaiting", .minus, money("250")),
+      ])
+    #expect(items.first?.result == term("advice.term.forOthersCostMe", .equals, money("200")))
   }
 
   @Test func subscriptionsForOthersBeforeTheFirstPayment() {

@@ -4,9 +4,10 @@ import Foundation
 /// Evaluates the small arithmetic a person can type instead of an amount:
 /// `120+80.5+45`, `(1000+600)/2`, `3000÷4`, `1500×3−2000`.
 ///
-/// Everything is computed in `Decimal`; the result is rounded to the four fraction digits
-/// the schema stores in its `*_e4` columns, so an expression can never carry more precision
-/// than the amount it produces.
+/// Everything is computed exactly — as fractions while their terms fit 128 bits, in `Decimal`
+/// beyond that — and the result is rounded once, half away from zero, to the four fraction
+/// digits the schema stores in its `*_e4` columns, so an expression can never carry more
+/// precision than the amount it produces.
 public enum ExpressionEvaluator: Sendable {
   /// Fraction digits kept in the result — the scale of the `*_e4` money columns.
   public static let fractionDigits = 4
@@ -18,9 +19,18 @@ public enum ExpressionEvaluator: Sendable {
   /// must still fit it together, in the total of a day or of a split.
   static let maxMagnitude = AmountE4.inputLimit.decimal
 
+  /// How large a number or an intermediate result of a formula may be on the way. A `Decimal`
+  /// keeps 38 significant digits; beyond 10^33 fewer than five of them are left after the
+  /// point, so the four digits of an amount are no longer exact — two forty-digit numbers that
+  /// differ by one came to 0, not 1, and with 250 added to a plausible, wrong 250. No formula
+  /// of an amount needs a figure that large, so it is refused as too large on the spot,
+  /// whatever the formula would come to in the end.
+  static let maxIntermediate = Decimal(sign: .plus, exponent: 33, significand: 1)
+
   /// - Throws: `CoreError.emptyInput` for blank text, `CoreError.divisionByZero`,
   ///   `CoreError.amountOutOfRange` when the result overflows or is larger than one amount
-  ///   may be, `CoreError.malformedExpression(position:)` with the offset of the offending
+  ///   may be, or a figure on the way is too large to keep exact (`maxIntermediate`),
+  ///   `CoreError.malformedExpression(position:)` with the offset of the offending
   ///   character (the length of the text when the formula ends too early).
   public static func evaluate(_ text: String) throws -> Decimal {
     let characters = Array(text)
@@ -32,8 +42,22 @@ public enum ExpressionEvaluator: Sendable {
     var parser = ExpressionParser(tokens: tokens, endPosition: characters.count)
     let value = try parser.parseExpression()
     try parser.expectEnd()
-    guard !value.isNaN else { throw CoreError.amountOutOfRange }
-    let rounded = DecimalMath.round(value, scale: fractionDigits)
+    let rounded: Decimal
+    if let exact = value.exact {
+      // Rounded on the exact value: a tie behind a quotient that never ends goes away from
+      // zero, as it would on paper.
+      guard let units = exact.units(scale: fractionDigits) else {
+        throw CoreError.amountOutOfRange
+      }
+      rounded = DecimalMath.round(
+        Decimal(
+          sign: units < 0 ? .minus : .plus, exponent: -fractionDigits,
+          significand: Decimal(units.magnitude)),
+        scale: fractionDigits)
+    } else {
+      guard !value.decimal.isNaN else { throw CoreError.amountOutOfRange }
+      rounded = DecimalMath.round(value.decimal, scale: fractionDigits)
+    }
     guard rounded.magnitude <= maxMagnitude else { throw CoreError.amountOutOfRange }
     return rounded
   }
@@ -63,6 +87,47 @@ public enum ExpressionEvaluator: Sendable {
       characters.removeFirst()
     }
     return characters.contains { ExpressionLexer.operatorKind($0) != nil }
+  }
+}
+
+/// A figure of a formula on the way: what `Decimal` makes of it, and the same figure as an
+/// exact fraction for as long as one holds it.
+struct FormulaFigure {
+  var decimal: Decimal
+  var exact: ExactFraction?
+
+  static func + (left: FormulaFigure, right: FormulaFigure) -> FormulaFigure {
+    FormulaFigure(
+      decimal: left.decimal + right.decimal,
+      exact: left.exact.flatMap { a in right.exact.flatMap(a.adding) })
+  }
+
+  static func - (left: FormulaFigure, right: FormulaFigure) -> FormulaFigure {
+    FormulaFigure(
+      decimal: left.decimal - right.decimal,
+      exact: left.exact.flatMap { a in right.exact.flatMap(a.subtracting) })
+  }
+
+  static func * (left: FormulaFigure, right: FormulaFigure) -> FormulaFigure {
+    FormulaFigure(
+      decimal: left.decimal * right.decimal,
+      exact: left.exact.flatMap { a in right.exact.flatMap(a.multiplied(by:)) })
+  }
+
+  static func / (left: FormulaFigure, right: FormulaFigure) -> FormulaFigure {
+    FormulaFigure(
+      decimal: left.decimal / right.decimal,
+      exact: left.exact.flatMap { a in right.exact.flatMap(a.divided(by:)) })
+  }
+
+  static prefix func - (figure: FormulaFigure) -> FormulaFigure {
+    FormulaFigure(decimal: -figure.decimal, exact: figure.exact?.negated())
+  }
+
+  /// Zero exactly when the exact fraction says so; the decimal decides only where there is
+  /// no fraction, since a quotient cut at 38 digits may leave a hair above zero.
+  var isZero: Bool {
+    exact.map(\.isZero) ?? (decimal == Decimal.zero)
   }
 }
 
@@ -98,18 +163,18 @@ struct ExpressionParser {
     }
   }
 
-  mutating func parseExpression() throws -> Decimal {
+  mutating func parseExpression() throws -> FormulaFigure {
     var value = try parseTerm()
     while let token = peek() {
       switch token.kind {
       case .plus:
         advance()
         let right = try parseTerm()
-        value = value + right
+        value = try kept(value + right)
       case .minus:
         advance()
         let right = try parseTerm()
-        value = value - right
+        value = try kept(value - right)
       default:
         return value
       }
@@ -117,19 +182,19 @@ struct ExpressionParser {
     return value
   }
 
-  private mutating func parseTerm() throws -> Decimal {
+  private mutating func parseTerm() throws -> FormulaFigure {
     var value = try parseUnary()
     while let token = peek() {
       switch token.kind {
       case .times:
         advance()
         let right = try parseUnary()
-        value = value * right
+        value = try kept(value * right)
       case .divide:
         advance()
         let right = try parseUnary()
-        guard right != Decimal.zero else { throw CoreError.divisionByZero }
-        value = value / right
+        guard !right.isZero else { throw CoreError.divisionByZero }
+        value = try kept(value / right)
       default:
         return value
       }
@@ -137,7 +202,7 @@ struct ExpressionParser {
     return value
   }
 
-  private mutating func parseUnary() throws -> Decimal {
+  private mutating func parseUnary() throws -> FormulaFigure {
     guard let token = peek() else {
       throw CoreError.malformedExpression(position: endPosition)
     }
@@ -153,6 +218,28 @@ struct ExpressionParser {
     }
   }
 
+  /// A number or an intermediate result small enough to keep every digit an amount needs, or
+  /// a refusal: too large, or no number at all — what `Decimal` gives when it overflows. Told
+  /// by the exact fraction while there is one.
+  private func kept(_ value: FormulaFigure) throws -> FormulaFigure {
+    if let exact = value.exact {
+      guard exact.isBelow(ExpressionParser.maxIntermediate) else {
+        throw CoreError.amountOutOfRange
+      }
+      return value
+    }
+    guard !value.decimal.isNaN, value.decimal.magnitude < ExpressionEvaluator.maxIntermediate
+    else { throw CoreError.amountOutOfRange }
+    return value
+  }
+
+  /// `ExpressionEvaluator.maxIntermediate` as a whole number of 128 bits.
+  static let maxIntermediate: Int128 = {
+    var value: Int128 = 1
+    for _ in 0..<33 { value *= 10 }
+    return value
+  }()
+
   /// Enters one more level of nesting, or refuses to.
   private mutating func descend(from position: Int) throws {
     depth += 1
@@ -161,14 +248,14 @@ struct ExpressionParser {
     }
   }
 
-  private mutating func parsePrimary() throws -> Decimal {
+  private mutating func parsePrimary() throws -> FormulaFigure {
     guard let token = peek() else {
       throw CoreError.malformedExpression(position: endPosition)
     }
     switch token.kind {
-    case .number(let value):
+    case .number(let value, let exact):
       advance()
-      return value
+      return try kept(FormulaFigure(decimal: value, exact: exact))
     case .openParen:
       advance()
       try descend(from: token.position)

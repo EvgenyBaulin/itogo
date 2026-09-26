@@ -79,6 +79,6 @@ extension AnomalyDismissal {
       rule: rule,
       subject: row["subject"] ?? "",
       transactionId: (row["transaction_id"] as String?).flatMap(UUID.init(uuidString:)),
-      at: row["at"] ?? Date(timeIntervalSince1970: 0))
+      at: RowMapping.readableInstant(row, "at") ?? Date(timeIntervalSince1970: 0))
   }
 }

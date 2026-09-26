@@ -24,13 +24,70 @@ enum RowMapping {
     return UUID(uuidString: text)
   }
 
-  static func amount(_ row: Row, _ column: String) -> AmountE4 {
-    AmountE4(raw: row[column] ?? 0)
+  /// An instant, in any form GRDB reads — its own `YYYY-MM-DD HH:MM:SS.SSS`, with a `T`, a
+  /// timestamp —, or `nil` for NULL. A value that is no instant fails the read with
+  /// `UnreadableValue`, as an id that is no UUID does: GRDB's own subscript stops the program
+  /// on it, and the whole history is read at every start.
+  static func optionalInstant(_ row: Row, _ column: String) throws -> Date? {
+    guard row.hasColumn(column) else { return nil }
+    let value: DatabaseValue = row[column]
+    guard !value.isNull else { return nil }
+    guard let instant = Date.fromDatabaseValue(value) else {
+      throw UnreadableValue(column: column)
+    }
+    return instant
   }
 
-  static func optionalAmount(_ row: Row, _ column: String) -> AmountE4? {
-    guard let raw: Int64 = row[column] else { return nil }
-    return AmountE4(raw: raw)
+  /// An instant the row cannot do without; NULL reads as the start of 1970, as it always has.
+  static func instant(_ row: Row, _ column: String) throws -> Date {
+    try optionalInstant(row, column) ?? Date(timeIntervalSince1970: 0)
+  }
+
+  /// An instant where one that cannot be read is no reason to stop reading: it reads as none.
+  static func readableInstant(_ row: Row, _ column: String) -> Date? {
+    (try? optionalInstant(row, column)) ?? nil
+  }
+
+  /// An amount in 1/10000; NULL reads as zero, as it always has.
+  static func amount(_ row: Row, _ column: String) throws -> AmountE4 {
+    try optionalAmount(row, column) ?? .zero
+  }
+
+  /// An amount in 1/10000, or `nil` for NULL (`number`).
+  static func optionalAmount(_ row: Row, _ column: String) throws -> AmountE4? {
+    try number(row, column).map { AmountE4(raw: $0) }
+  }
+
+  /// A count, a day of the month, an order, or `nil` for NULL (`number`).
+  static func optionalInteger(_ row: Row, _ column: String) throws -> Int? {
+    guard let value = try number(row, column) else { return nil }
+    guard let integer = Int(exactly: value) else { throw UnreadableValue(column: column) }
+    return integer
+  }
+
+  /// A flag: `fallback` for NULL, false for zero and true for any other number, as SQLite reads
+  /// a number in a condition (`number`).
+  static func flag(_ row: Row, _ column: String, fallback: Bool) throws -> Bool {
+    guard let value = try number(row, column) else { return fallback }
+    return value != 0
+  }
+
+  /// The integer of an INTEGER column, or `nil` for NULL and for a column the row does not have.
+  ///
+  /// SQLite keeps a value that is no number as it was given, even where an integer belongs — a
+  /// hand edit, another program with the checks of the schema off —, and GRDB reads such a text
+  /// as 0 without a word, or stops the program on it, depending on how the row was fetched. An
+  /// amount read as 0 is money gone from every figure, so it fails the read with
+  /// `UnreadableValue`, as an id that is no UUID does. A real number reads as SQLite's own
+  /// `CAST` reads it, toward zero; one past the range of an integer is unreadable too.
+  private static func number(_ row: Row, _ column: String) throws -> Int64? {
+    guard row.hasColumn(column) else { return nil }
+    let value: DatabaseValue = row[column]
+    guard !value.isNull else { return nil }
+    guard let number = Int64.fromDatabaseValue(value) else {
+      throw UnreadableValue(column: column)
+    }
+    return number
   }
 
   static func decimal(_ row: Row, _ column: String) -> Decimal? {
@@ -104,8 +161,9 @@ enum RowMapping {
   }
 }
 
-/// A value the app cannot read where it needs one: an id that is not a UUID. Only a writer
-/// other than the app makes such a row — a hand edit, another program. The error names the
+/// A value the app cannot read where it needs one: an id that is not a UUID, an instant that is
+/// no instant, a text where an amount, a flag or a count belongs. Only a writer other than the
+/// app makes such a row — a hand edit, another program. The error names the
 /// column, never the value, and its type is what the journal of a failed read records, so
 /// the report says «a damaged row», not «not found».
 public struct UnreadableValue: Error, Equatable, Sendable {

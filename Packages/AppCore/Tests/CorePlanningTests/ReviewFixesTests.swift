@@ -22,70 +22,60 @@ struct ReviewFixesTests {
       calendar: .utc)
   }
 
-  // MARK: - Reconciliation: an opening balance is not money that moved
+  // MARK: - Balances: an opening balance is not money that moved
 
-  /// Reconciled on 1 September with 100 000. On 5 September the owner writes down the
-  /// mortgage he already had (3 000 000) and that Ivan has owed him 20 000 since last year;
-  /// on the 10th the mortgage grows by 1 000 of interest and by a share of 1/2 of a
-  /// 1 000 000 flat. Only the 10 000 spent moved money: 100 000 − 10 000 = 90 000.
-  @Test func anOpeningBalanceAndAGrowthLeaveTheExpectationAlone() throws {
-    var sketch = S()
+  /// What a line of a debt journal moves on the main account (`AccountBalances`).
+  private func moved(_ line: DebtEntry, of debt: Debt) -> AmountE4? {
+    var openings: [CreditOpening: Int] = [:]
+    return AccountBalances.journalMovement(
+      of: line, debt: debt, mainId: S.id(900), openings: &openings, calendar: .utc)?.amountE4
+  }
+
+  /// On 5 September the owner writes down the mortgage he already had (3 000 000) and that
+  /// Ivan has owed him 20 000 since last year; on the 10th the mortgage grows by 1 000 of
+  /// interest and by a share of 1/2 of a 1 000 000 flat. No money moved on any account.
+  @Test func anOpeningBalanceAndAGrowthMoveNoMoney() throws {
     let mortgage = S.loan(301)
     let ivan = S.lentTo(302)
-    sketch.debts = [mortgage, ivan]
-    sketch.add(.expense, "10000")
-    sketch.book.debtEntries = [
-      try DebtRules.opening(of: mortgage, balance: S.money("3000000"), date: S.day("2026-09-05")),
-      try DebtRules.opening(of: ivan, balance: S.money("20000"), date: S.day("2026-09-05")),
-      try DebtRules.growth(on: mortgage, amountE4: S.money("1000"), date: S.day("2026-09-10")),
-      try DebtRules.growth(
-        on: mortgage, amountE4: .zero, fullAmountE4: S.money("1000000"), share: Decimal(1) / 2,
-        date: S.day("2026-09-10")),
+    let lines = [
+      (
+        try DebtRules.opening(of: mortgage, balance: S.money("3000000"), date: S.day("2026-09-05")),
+        mortgage
+      ),
+      (try DebtRules.opening(of: ivan, balance: S.money("20000"), date: S.day("2026-09-05")), ivan),
+      (
+        try DebtRules.growth(on: mortgage, amountE4: S.money("1000"), date: S.day("2026-09-10")),
+        mortgage
+      ),
+      (
+        try DebtRules.growth(
+          on: mortgage, amountE4: .zero, fullAmountE4: S.money("1000000"), share: Decimal(1) / 2,
+          date: S.day("2026-09-10")), mortgage
+      ),
     ]
-    let expectation = sketch.expectation()
-    #expect(expectation?.amount(of: .borrowed) == .zero)
-    #expect(expectation?.amount(of: .lent) == .zero)
-    #expect(expectation?.expected == S.money("90000"))
+    for (line, debt) in lines {
+      #expect(moved(line, of: debt) == nil)
+    }
     // The balances are what was typed.
-    #expect(
-      DebtRules.balance(of: mortgage.id, entries: sketch.book.debtEntries)
-        == S.money("3501000"))
-    #expect(DebtRules.balance(of: ivan.id, entries: sketch.book.debtEntries) == S.money("20000"))
+    let entries = lines.map(\.0)
+    #expect(DebtRules.balance(of: mortgage.id, entries: entries) == S.money("3501000"))
+    #expect(DebtRules.balance(of: ivan.id, entries: entries) == S.money("20000"))
   }
 
   /// Money that changes hands when the debt is written down still counts: 50 000 borrowed
-  /// on the 6th and 5 000 lent to Ivan: 100 000 + 50 000 − 5 000 = 145 000.
+  /// came in, 5 000 lent to Ivan went out.
   @Test func anOpeningWithMoneyThatMovedNowCounts() throws {
-    var sketch = S()
     let loan = S.loan(301)
     let ivan = S.lentTo(302)
-    sketch.debts = [loan, ivan]
-    sketch.book.debtEntries = [
-      try DebtRules.opening(
-        of: loan, balance: S.money("50000"), date: S.day("2026-09-06"), moneyMovedNow: true),
-      try DebtRules.opening(
-        of: ivan, balance: S.money("5000"), date: S.day("2026-09-06"), moneyMovedNow: true),
-    ]
-    let expectation = sketch.expectation()
-    #expect(expectation?.amount(of: .borrowed) == S.money("50000"))
-    #expect(expectation?.amount(of: .lent) == S.money("5000"))
-    #expect(expectation?.expected == S.money("145000"))
+    let borrowed = try DebtRules.opening(
+      of: loan, balance: S.money("50000"), date: S.day("2026-09-06"), moneyMovedNow: true)
+    let lent = try DebtRules.opening(
+      of: ivan, balance: S.money("5000"), date: S.day("2026-09-06"), moneyMovedNow: true)
+    #expect(moved(borrowed, of: loan) == S.money("50000"))
+    #expect(moved(lent, of: ivan) == S.money("-5000"))
     #expect(throws: DebtError.negativeAmount) {
       try DebtRules.opening(of: loan, balance: .zero)
     }
-  }
-
-  /// A line dated on the day of the previous reconciliation (1 September) cannot be placed:
-  /// it stays out of the total, as before, but the sheet is told about it.
-  @Test func aJournalLineOnThePreviousDayIsReported() {
-    var sketch = S()
-    sketch.debts = [S.loan(301)]
-    sketch.journal(S.id(301), "20000", on: "2026-09-01")
-    sketch.journal(S.id(301), "1000", on: "2026-09-10")
-    let expectation = sketch.expectation()
-    #expect(expectation?.amount(of: .borrowed) == S.money("1000"))
-    #expect(expectation?.expected == S.money("101000"))
-    #expect(expectation?.journalLinesOnPreviousDay == 1)
   }
 
   // MARK: - Debts
@@ -146,8 +136,8 @@ struct ReviewFixesTests {
   }
 
   /// Three loans, nothing paid, today the 19th: 20 000 due on the 15th (overdue), 7 000
-  /// today, 3 000 on the 25th. The forecast keeps its rule (3 000 after today); «free to
-  /// spend» and «can save» subtract all 30 000.
+  /// today, 3 000 on the 25th. The forecast keeps its rule (3 000 after today); «can save»
+  /// subtracts all 30 000.
   @Test func aDebtPaymentDueTodayOrOverdueIsStillOwed() {
     var sketch = S()
     func loan(_ number: Int, _ amount: String, day: Int) -> Debt {
@@ -168,10 +158,6 @@ struct ReviewFixesTests {
 
     let snapshot = PlanningSnapshot.build(
       ledger: ledger, today: today, now: S.at("2026-09-19", 12), rubPerUnit: [:])
-    let debtsLine = snapshot.freeToSpend.lines.first { $0.key == FreeToSpend.Key.debts }
-    #expect(debtsLine?.amount == S.money("30000"))
-    let window = snapshot.freeToSpend(until: S.day("2026-09-20"), reserve: false, ledger: ledger)
-    #expect(window.lines.first { $0.key == FreeToSpend.Key.debts }?.amount == S.money("27000"))
     let remainder = MonthForecast.Remainder(
       p10: .zero, middle: .zero, p90: .zero, lowData: false, computedFor: today, daysLeft: 11,
       windowDays: 90)
@@ -187,7 +173,8 @@ struct ReviewFixesTests {
   /// * 97 000 saved before this month — it asks the 3 000 it still needs;
   /// * 97 000 before and 2 000 this month — min(10 000 − 2 000, 100 000 − 99 000) = 1 000.
   ///
-  /// «Free to spend», the planned month and the forecast's planned payments agree.
+  /// The goal reserve of the snapshot, the planned month and the forecast's planned payments
+  /// agree.
   @Test(arguments: [
     (["100000"], "0"),
     (["97000"], "3000"),
@@ -204,7 +191,10 @@ struct ReviewFixesTests {
     }
     let ledger = ledger(sketch, goals: [goal])
     let expected = S.money(reserve)
-    #expect(FreeToSpend.goalReserve(goals: [goal], ledger: ledger, today: today) == expected)
+    #expect(
+      PlanningSnapshot.build(
+        ledger: ledger, today: today, now: S.at("2026-09-19", 12), rubPerUnit: [:]
+      ).goalReserve == expected)
     #expect(PlannedMonth.build(ledger: ledger, book: sketch.book, today: today).goals == expected)
     #expect(PlannedPayments(ledger: ledger, today: today).goals == expected)
   }

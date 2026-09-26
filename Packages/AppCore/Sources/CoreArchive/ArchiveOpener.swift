@@ -120,14 +120,22 @@ public enum ArchiveOpener {
 
   /// Counts data rows in an RFC 4180 file: records separated by line breaks, with breaks
   /// inside quoted fields not counting, minus the header row. A trailing line break does
-  /// not open a record of its own. The CSV export counts its records by it too, so its journal
-  /// and a manifest count the same way.
+  /// not open a record of its own, and neither does a blank line — nothing between two breaks,
+  /// not even quotes — which the CSV reader and `pandas.read_csv` skip as well: a file an
+  /// editor or another implementation ended with an empty line counts the rows anyone reads
+  /// from it. The CSV export counts its records by it too, so its journal and a manifest count
+  /// the same way. A UTF-8 byte-order mark at the very start is skipped, as the reader skips it:
+  /// Numbers, Excel and many editors begin a file with one.
   public static func countCSVRows(_ data: Data) -> Int {
     var records = 0
     var quoted = false
     var sawContent = false
     var previousWasCarriageReturn = false
-    for byte in data {
+    let mark: [UInt8] = [0xEF, 0xBB, 0xBF]
+    let start =
+      data.starts(with: mark)
+      ? data.index(data.startIndex, offsetBy: mark.count) : data.startIndex
+    for byte in data[start...] {
       if quoted {
         if byte == 0x22 { quoted = false }
         sawContent = true
@@ -140,14 +148,14 @@ public enum ArchiveOpener {
         sawContent = true
         previousWasCarriageReturn = false
       case 0x0D:
-        records += 1
+        if sawContent { records += 1 }
         sawContent = false
         previousWasCarriageReturn = true
       case 0x0A:
         if previousWasCarriageReturn {
           previousWasCarriageReturn = false  // the line feed of a CRLF pair
         } else {
-          records += 1
+          if sawContent { records += 1 }
           sawContent = false
         }
       default:

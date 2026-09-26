@@ -149,6 +149,16 @@ final class OverviewCardsTests: XCTestCase {
     XCTAssertEqual(OverviewCard.rows(columns: 1).flatMap { $0 }, OverviewCard.allCases)
   }
 
+  /// The way back to the setup of the accounts is no cell of the grid — the rows above stay as
+  /// they are — and it shows only while the setup is put off: a done setup leaves no empty row,
+  /// and while the setup is asked its sheet is up instead.
+  func testTheSetupCardStandsOutsideTheGridWhileTheSetupIsPutOff() {
+    XCTAssertEqual(OverviewCard.allCases.count, 12)
+    XCTAssertTrue(AccountsSetupCard.shows(setup: .later))
+    XCTAssertFalse(AccountsSetupCard.shows(setup: .done))
+    XCTAssertFalse(AccountsSetupCard.shows(setup: nil))
+  }
+
   /// The bars: a share of the row for each weight, 2 pt between the visible segments, and
   /// no width — and no gap — for a bucket without a share.
   func testTheBarsShareTheRowByTheirWeights() {

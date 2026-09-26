@@ -84,6 +84,14 @@ public struct SampleExpectations: Hashable, Sendable {
     months[month, default: Month()].forOthers.shortfall += shortfall
   }
 
+  /// Money back covered only some of a part bought in `month`: what came back is returned,
+  /// and the part waits for the rest of it — no shortfall, since it is still owed.
+  mutating func settlePartly(returned: AmountE4, purchasedIn month: MonthKey) {
+    months[month, default: Month()].forOthers.returned += returned
+    let waiting = months[month, default: Month()].forOthers.waiting
+    months[month, default: Month()].forOthers.waiting = waiting - returned
+  }
+
   mutating func receive(
     _ amount: AmountE4, for month: MonthKey, cashbackTo method: UUID? = nil,
     isSurplus: Bool = false

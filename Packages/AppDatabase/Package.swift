@@ -26,6 +26,19 @@ let package = Package(
       ],
       swiftSettings: [.swiftLanguageMode(.v6)]
     ),
+    // `make migration-dry-run DB=<file>`: migrates a copy of a database file in a folder of its
+    // own and prints what the update would do to it — table names, row counts and whether the
+    // sums agree, never a value — so the update can be tried on the owner's data before it
+    // ships, without opening the original.
+    .executableTarget(
+      name: "itogo-migration-dry-run",
+      dependencies: [
+        "AppDatabase",
+        .product(name: "AppCore", package: "AppCore"),
+        .product(name: "GRDB", package: "GRDB.swift"),
+      ],
+      swiftSettings: [.swiftLanguageMode(.v6)]
+    ),
     .target(
       name: "AppDatabase",
       dependencies: [

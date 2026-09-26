@@ -26,7 +26,8 @@ public struct OverviewSummary: Hashable, Sendable {
   /// Bad spending this month against the same span of the previous month.
   public var bad: Change
 
-  /// Parts paid for other people that are still expected back.
+  /// Parts paid for other people that are still expected back: what is left of each, since
+  /// money back may cover only some of a part.
   public var owedToMe: AmountE4
   public var owedCount: Int
 
@@ -64,7 +65,9 @@ public struct OverviewSummary: Hashable, Sendable {
     let owed = ledger.rows.filter {
       $0.kind == .expense && $0.reimbursable && $0.reimbursementStatus == .expected
     }
-    owedToMe = AmountE4.sum(owed.map(\.amountRubE4))
+    .map { ledger.remaining(ofPart: $0) }
+    .filter { $0.raw > 0 }
+    owedToMe = AmountE4.sum(owed)
     owedCount = owed.count
   }
 

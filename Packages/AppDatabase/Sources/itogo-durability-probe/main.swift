@@ -11,14 +11,41 @@ import Foundation
 // cannot also be the one checking, and a test cannot kill its own runner and go on.
 //
 // Arguments: <database path> <note> [--commit-only]
+//        or: <database path> --die-in-the-update
+//
+// The second form opens an older database and kills itself inside the update: after the SQL of
+// the migration ran and before its data step wrote anything, inside the one transaction of both
+// — when the data step asks for the id of the account it is about to make. What the test asks
+// afterwards is whether the file is the older database it was.
 let arguments = CommandLine.arguments
 guard arguments.count >= 3 else {
-  FileHandle.standardError.write(Data("usage: probe <database> <note> [--commit-only]\n".utf8))
+  FileHandle.standardError.write(
+    Data("usage: probe <database> <note> [--commit-only] | <database> --die-in-the-update\n".utf8))
   exit(2)
 }
 let url = URL(fileURLWithPath: arguments[1])
 let note = arguments[2]
 let commitOnly = arguments.contains("--commit-only")
+
+if note == "--die-in-the-update" {
+  let dying = MigrationContext(
+    mainAccountName: "Main account",
+    makeId: {
+      FileHandle.standardOutput.write(Data("in the update\n".utf8))
+      kill(getpid(), SIGKILL)
+      return UUID()
+    })
+  do {
+    _ = try DatabaseStack(
+      url: url, schema: DirectorySchemaSource(directory: schemaDirectory()), context: dying)
+    // The update had nothing to make an account for: nothing was killed.
+    FileHandle.standardOutput.write(Data("updated without dying\n".utf8))
+    exit(3)
+  } catch {
+    FileHandle.standardError.write(Data("probe failed: \(type(of: error))\n".utf8))
+    exit(1)
+  }
+}
 
 do {
   let stack = try DatabaseStack(

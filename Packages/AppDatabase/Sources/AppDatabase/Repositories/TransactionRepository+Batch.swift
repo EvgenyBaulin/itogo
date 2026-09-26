@@ -8,10 +8,12 @@ import GRDB
 public struct DeletionEffects: Hashable, Sendable {
   /// The operations the call deleted: those asked for that were still there.
   public var deletedIds: [UUID]
-  /// The surplus and the shortfalls of deleted reimbursements, deleted together with them.
+  /// The surplus and the shortfalls of deleted reimbursements, deleted together with them, and
+  /// the shortfalls and remainders written off of the parts that went back to waiting.
   public var companionIds: [UUID]
-  /// Parts a deleted reimbursement had closed that went back to waiting. Their links stay,
-  /// so undo only has to close them again.
+  /// Parts a deleted reimbursement had closed that went back to waiting, and parts whose
+  /// shortfall or remainder written off was deleted. Their links stay, so undo only has to
+  /// close them again.
   public var reopenedPartIds: [UUID]
   /// The debt movements of deleted debt payments, taken off the debt.
   public var removedDebtEntries: [DebtEntry]
@@ -79,15 +81,23 @@ extension TransactionRepository {
   /// earlier: the list may lag behind the database — a part written off a moment ago, a
   /// rate refined in the background — and writing an old copy back would quietly undo that.
   /// `transform` returns the operation after the change, or `nil` to leave it alone. A
-  /// deleted operation is left alone. Parts must still add up, or nothing is written.
+  /// deleted operation is left alone. Parts must still add up, or nothing is written. An
+  /// operation left without an account gets the main one, and one moved onto an account that
+  /// does not hold its currency must say what the account was charged
+  /// (`AccountWriteError.chargeMissing`) — unless `checkingCharges` is off, which is for ⌘Z
+  /// alone: it writes back what the rows were, and a row of the time before accounts moved in
+  /// bulk had no charge on the account it goes back to.
   @discardableResult
   public func modify(
     ids: [UUID],
     at instant: Date = Date(),
+    checkingCharges: Bool = true,
     transform: (TransactionEntry) throws -> TransactionEntry?
   ) throws -> [TransactionEntry] {
     try writer.write { db in
-      try Self.modify(ids: ids, at: instant, transform: transform, db: db).map(\.before)
+      try Self.modify(
+        ids: ids, at: instant, checkingCharges: checkingCharges, transform: transform, db: db
+      ).map(\.before)
     }
   }
 
@@ -96,19 +106,28 @@ extension TransactionRepository {
   public func modifyInBackground(
     ids: [UUID],
     at instant: Date = Date(),
+    checkingCharges: Bool = true,
     transform: @escaping @Sendable (TransactionEntry) throws -> TransactionEntry?
   ) async throws -> [ModifiedEntry] {
     try await writer.write { db in
-      try Self.modify(ids: ids, at: instant, transform: transform, db: db)
+      try Self.modify(
+        ids: ids, at: instant, checkingCharges: checkingCharges, transform: transform, db: db)
     }
   }
 
   /// Deletes many operations softly, with everything that hangs on them:
   ///
   /// * a reimbursement takes its surplus and shortfalls along — found by the key they keep
-  ///   in `external_id` — and the parts it closed go back to waiting, unless another live
-  ///   reimbursement still closes them. The links stay, for undo;
+  ///   in `external_id` — and each part it closed goes back to waiting unless the live money
+  ///   back still linked to it covers it (within the drift a foreign currency allows,
+  ///   `MoneyBack.tolerance`); a part that goes back takes along what was written for it — its
+  ///   shortfalls and a remainder written off. The links stay, for undo;
+  /// * a shortfall or a remainder written off deleted on its own puts its part back to waiting
+  ///   by the same rule: the part is no longer my spending, so it is owed again;
   /// * a payment on a debt takes its movement off the debt.
+  ///
+  /// A purchase refunds take money back from is refused with `RefundError.purchaseHasRefunds`
+  /// unless those refunds are deleted in the same call.
   ///
   /// Operations already deleted are left as they are. Undo is `restore(ids:at:effects:)`
   /// with what this returns.
@@ -171,10 +190,11 @@ extension TransactionRepository {
   }
 
   static func modify(
-    ids: [UUID], at instant: Date, transform: (TransactionEntry) throws -> TransactionEntry?,
-    db: Database
+    ids: [UUID], at instant: Date, checkingCharges: Bool = true,
+    transform: (TransactionEntry) throws -> TransactionEntry?, db: Database
   ) throws -> [ModifiedEntry] {
     var modified: [ModifiedEntry] = []
+    let lookups = WriteLookups()
     for chunk in distinct(ids).chunked(by: chunkSize) {
       let transactions = try CoreKit.Transaction
         .filter(chunk.map(\.uuidString).contains(Column("id")))
@@ -186,6 +206,9 @@ extension TransactionRepository {
         else { throw DatabaseError.notFound }
         guard changed.isBalanced else { throw DatabaseError.unbalancedParts }
         changed.transaction.updatedAt = instant
+        changed = try assigningAccount(
+          changed, over: fresh, checkingCharge: checkingCharges, lookups: lookups, db: db)
+        try refuseUnsoundRefund(changed, over: fresh, db: db)
         try write(changed, over: fresh, db: db)
         modified.append(ModifiedEntry(before: fresh, after: changed))
       }
@@ -201,11 +224,13 @@ extension TransactionRepository {
         .filter(Column("deleted_at") == nil)
         .fetchAll(db)
     }
+    try refuseDeletingRefundedPurchases(alive, db: db)
     var effects = DeletionEffects(deletedIds: alive.map(\.id))
     try mark(effects.deletedIds, deletedAt: instant, at: instant, db: db)
 
     // Everything asked for is marked first: a reimbursement deleted in the same batch no
-    // longer keeps a part closed.
+    // longer covers a part.
+    var reopened: [UUID] = []
     for reimbursement in alive where reimbursement.kind == .reimbursement {
       let companions = try String.fetchAll(
         db,
@@ -218,22 +243,31 @@ extension TransactionRepository {
       try mark(companions, deletedAt: instant, at: instant, db: db)
       effects.companionIds += companions
 
-      let reopened = try String.fetchAll(
+      let closed = try String.fetchAll(
         db,
         sql: """
           SELECT p.id FROM transaction_parts p
           WHERE p.reimbursement_status = ?
             AND p.id IN (SELECT part_id FROM reimbursement_links WHERE reimbursement_tx_id = ?)
-            AND NOT EXISTS (
-              SELECT 1 FROM reimbursement_links l
-              JOIN transactions t ON t.id = l.reimbursement_tx_id
-              WHERE l.part_id = p.id AND t.deleted_at IS NULL)
+          ORDER BY p.rowid
           """,
         arguments: [ReimbursementStatus.returned.rawValue, reimbursement.id.uuidString]
       ).compactMap(UUID.init(uuidString:))
-      try setStatus(.expected, of: reopened, onlyWhere: .returned, at: instant, db: db)
-      effects.reopenedPartIds += reopened
+      for partId in closed where !reopened.contains(partId) {
+        if try isShortOfItsMoney(partId, db: db) { reopened.append(partId) }
+      }
     }
+    // What was written for a part — a shortfall, a remainder written off — deleted on its own
+    // leaves the part short of the money that settled it, by the same rule.
+    for partId in writtenForParts(alive) where !reopened.contains(partId) {
+      guard try isClosed(partId, db: db), try isShortOfItsMoney(partId, db: db) else { continue }
+      reopened.append(partId)
+    }
+    try setStatus(.expected, of: reopened, onlyWhere: .returned, at: instant, db: db)
+    effects.reopenedPartIds += reopened
+    let written = try liveCompanions(ofParts: reopened, db: db)
+    try mark(written, deletedAt: instant, at: instant, db: db)
+    effects.companionIds += written
 
     let payments = alive.filter { $0.debtId != nil }.map(\.id.uuidString)
     for chunk in payments.chunked(by: chunkSize) {
@@ -321,6 +355,110 @@ extension TransactionRepository {
     }
   }
 
+  // MARK: Refunds and money back
+
+  /// Refuses, with `RefundError.purchaseHasRefunds`, to delete a purchase a live refund takes
+  /// money back from, unless that refund is deleted too.
+  private static func refuseDeletingRefundedPurchases(
+    _ deleting: [CoreKit.Transaction], db: Database
+  ) throws {
+    let purchases = deleting.filter { $0.kind == .expense }.map(\.id.uuidString)
+    guard !purchases.isEmpty else { return }
+    let going = Set(deleting.map(\.id))
+    for chunk in purchases.chunked(by: chunkSize) {
+      let marks = databaseQuestionMarks(count: chunk.count)
+      let refunds = try String.fetchAll(
+        db,
+        sql: """
+          SELECT DISTINCT r.id FROM transactions r
+          JOIN transaction_parts rp ON rp.transaction_id = r.id
+          JOIN transaction_parts pp ON pp.id = rp.refund_of_part_id
+          WHERE r.deleted_at IS NULL AND r.kind = ? AND pp.transaction_id IN (\(marks))
+          """,
+        arguments: [TransactionKind.refund.rawValue] + StatementArguments(chunk)
+      ).compactMap(UUID.init(uuidString:))
+      if refunds.contains(where: { !going.contains($0) }) {
+        throw RefundError.purchaseHasRefunds
+      }
+    }
+  }
+
+  /// Whether a closed part is short of its money once the money back deleted is gone: what the
+  /// live money back still linked to it gives back falls short of its rubles by more than the
+  /// drift allowed when a foreign currency is involved — the part's own, or that of any money
+  /// back ever linked to it.
+  private static func isShortOfItsMoney(_ partId: UUID, db: Database) throws -> Bool {
+    guard
+      let row = try Row.fetchOne(
+        db,
+        sql: """
+          SELECT p.amount_rub_e4 AS rubles, t.currency AS currency,
+            EXISTS (
+              SELECT 1 FROM reimbursement_links l
+              JOIN transactions m ON m.id = l.reimbursement_tx_id
+              WHERE l.part_id = p.id AND m.currency <> ?) AS foreignBack
+          FROM transaction_parts p JOIN transactions t ON t.id = p.transaction_id
+          WHERE p.id = ?
+          """,
+        arguments: [CurrencyCode.rub.code, partId.uuidString])
+    else { return false }
+    let rubles = AmountE4(raw: row["rubles"] ?? 0)
+    let foreign =
+      (row["currency"] as String?) != CurrencyCode.rub.code
+      || (row["foreignBack"] as Bool? ?? false)
+    let covered = try returnedRub(ofPart: partId, db: db)
+    return rubles - covered > MoneyBack.tolerance(partRub: rubles, foreignInvolved: foreign)
+  }
+
+  /// The parts these operations were written for: a shortfall's
+  /// (`reimb:<money back>:shortfall:<part>`) and a remainder written off's
+  /// (`writeoff:<part>:<operation>`), in the order of the operations.
+  private static func writtenForParts(_ operations: [CoreKit.Transaction]) -> [UUID] {
+    var parts: [UUID] = []
+    for operation in operations {
+      switch OperationLink(externalId: operation.externalId) {
+      case .shortfall(_, let part), .remainderWriteOff(let part, _):
+        if let id = UUID(uuidString: part), !parts.contains(id) { parts.append(id) }
+      default:
+        continue
+      }
+    }
+    return parts
+  }
+
+  /// Whether the part is settled as returned.
+  private static func isClosed(_ partId: UUID, db: Database) throws -> Bool {
+    try String.fetchOne(
+      db, sql: "SELECT reimbursement_status FROM transaction_parts WHERE id = ?",
+      arguments: [partId.uuidString]) == ReimbursementStatus.returned.rawValue
+  }
+
+  /// The live operations written for these parts: their shortfalls
+  /// (`reimb:<money back>:shortfall:<part>`) and what was left of them and written off
+  /// (`writeoff:<part>:<operation>`).
+  private static func liveCompanions(ofParts partIds: [UUID], db: Database) throws -> [UUID] {
+    var found: [UUID] = []
+    for partId in partIds {
+      let part = partId.uuidString.lowercased()
+      found += try String.fetchAll(
+        db,
+        sql: """
+          SELECT id FROM transactions
+          WHERE deleted_at IS NULL
+            AND ((substr(external_id, 1, 6) = 'reimb:'
+                  AND substr(external_id, -length(?)) = ?)
+              OR substr(external_id, 1, length(?)) = ?)
+          ORDER BY rowid
+          """,
+        arguments: [
+          ":shortfall:" + part, ":shortfall:" + part, "writeoff:" + part + ":",
+          "writeoff:" + part + ":",
+        ]
+      ).compactMap(UUID.init(uuidString:))
+    }
+    return distinct(found)
+  }
+
   // MARK: Helpers
 
   static func distinct(_ ids: [UUID]) -> [UUID] {
@@ -367,19 +505,24 @@ extension TransactionRepository {
 
   /// Writes a changed operation over the row it was made from. When the parts are the same
   /// ones, only the parts that changed are touched; otherwise they are brought in line the
-  /// way `save` does it, which keeps the links of the parts that stay.
+  /// way `save` does it, which keeps the links of the parts that stay. Returns the refunds in
+  /// the bin that let go of a part that went (`replaceParts`).
+  @discardableResult
   static func write(
     _ entry: TransactionEntry, over previous: TransactionEntry, db: Database
-  ) throws {
+  ) throws -> [UUID: UUID] {
     try entry.transaction.update(db)
     let old = Dictionary(
       previous.parts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     guard Set(entry.parts.map(\.id)) == Set(old.keys) else {
-      try replaceParts(of: entry, db: db)
-      return
+      return try replaceParts(of: entry, db: db)
     }
     for part in entry.parts where old[part.id] != part {
       try part.update(db)
     }
+    if entry.parts.map(\.id) != previous.parts.map(\.id) {
+      try keepOrder(of: entry.parts, db: db)
+    }
+    return [:]
   }
 }

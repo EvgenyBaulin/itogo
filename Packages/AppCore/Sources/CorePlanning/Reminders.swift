@@ -14,7 +14,7 @@ public enum ReminderKind: String, CaseIterable, Hashable, Sendable {
   case priceChange
   /// The monthly payment of a debt I owe is due.
   case debtPayment
-  /// It is time to reconcile the total.
+  /// It is time to reconcile the accounts.
   case reconciliation
 
   public var key: String { "reminders.kind." + rawValue }
@@ -80,21 +80,29 @@ public enum ReminderRules {
   public static let priceChangeDaysAhead = 7
 
   /// Every reminder for `today`, overdue first, then today's, then the coming ones; inside
-  /// each by date. Reminders put off by the owner are left out.
+  /// each by date. Reminders put off by the owner are left out. `matches` are the due dates
+  /// ordinary operations paid (`ScheduledMatching`); without them they are worked out here.
   public static func build(
-    book: PlanningBook, debts: [Debt], ledger: Ledger, today: DateOnly
+    book: PlanningBook, debts: [Debt], ledger: Ledger, today: DateOnly,
+    matches: ScheduledMatches? = nil
   ) -> [Reminder] {
     let dismissed = book.settings.dismissedReminders
-    return all(book: book, debts: debts, ledger: ledger, today: today)
+    return all(book: book, debts: debts, ledger: ledger, today: today, matches: matches)
       .filter { !dismissed.contains($0.id) }
   }
 
   /// Every reminder for `today`, the ones put off included, in the same order.
   public static func all(
-    book: PlanningBook, debts: [Debt], ledger: Ledger, today: DateOnly
+    book: PlanningBook, debts: [Debt], ledger: Ledger, today: DateOnly,
+    matches: ScheduledMatches? = nil
   ) -> [Reminder] {
+    let matches =
+      matches
+      ?? ScheduledMatching.matches(
+        book: book, ledger: ledger, today: today,
+        rejections: book.settings.scheduledMatchRejections)
     var reminders: [Reminder] = []
-    reminders += scheduled(book: book, ledger: ledger, today: today)
+    reminders += scheduled(book: book, today: today, matches: matches)
     reminders += debtPayments(
       debts: debts, journal: book.debtEntries, ledger: ledger, today: today)
     if let reconciliation = reconciliation(book: book, today: today) {
@@ -117,15 +125,13 @@ public enum ReminderRules {
 
   // MARK: - Scheduled payments and subscriptions
 
+  /// The first due date from `next_date` on that nothing paid, while it is within the days
+  /// the payment is reminded ahead. «Mark as paid» writes `sched:<payment>:<due>` and moves
+  /// `next_date` on; if the move did not happen, the operation still says the due date is
+  /// paid, and so does an ordinary operation that matches it — the next one is reminded then.
   private static func scheduled(
-    book: PlanningBook, ledger: Ledger, today: DateOnly
+    book: PlanningBook, today: DateOnly, matches: ScheduledMatches
   ) -> [Reminder] {
-    // «Mark as paid» writes `sched:<payment>:<due>` and moves `next_date` on. If the move
-    // did not happen, the operation still says the due date is paid.
-    var paid: Set<String> = []
-    for row in ledger.rows where row.isFirstPart {
-      if let link = row.link, case .scheduled = link { paid.insert(link.externalId) }
-    }
     let pricesByPayment = Dictionary(grouping: book.prices, by: \.paymentId)
 
     var reminders: [Reminder] = []
@@ -134,10 +140,13 @@ public enum ReminderRules {
       let horizon = today.adding(days: ahead)
       let paymentId = payment.id.uuidString.lowercased()
 
-      if let due = payment.nextDate, due <= horizon,
-        payment.endDate.map({ due <= $0 }) ?? true,
-        !paid.contains(OperationLink.scheduled(paymentId: payment.id, due: due).externalId)
-      {
+      let unpaid = payment.nextDate.flatMap { next in
+        Recurrence.occurrences(
+          from: next, through: horizon, rule: RecurrenceRule(payment: payment),
+          end: payment.endDate, limit: ScheduledMatching.duesPerPayment
+        ).first { !matches.isPaid(payment.id, $0) }
+      }
+      if let due = unpaid {
         reminders.append(
           Reminder(
             id: "pay:\(paymentId):\(due.iso)", kind: .payment, due: due, subjectId: payment.id,
@@ -173,28 +182,38 @@ public enum ReminderRules {
   /// The monthly payment of an open debt I owe, on its payment day — the 31st is the last
   /// day of a shorter month. Paid this month (any live operation on the debt dated in it, or
   /// a journal `payment` line dated in it: `DebtSchedule.isPaid`, the rule of the debt card),
-  /// the next due date is next month's; it is reminded only while its month has no payment.
+  /// the next due date is next month's; so it is when this month's day came before the debt
+  /// began (`DebtSchedule.nextPaymentDate`), and a payment made in the month the debt began,
+  /// which owed nothing, pays its first due (`DebtSchedule.isPaid(_:for:startsOn:…)`). It is
+  /// reminded only while its month has no payment.
   private static func debtPayments(
     debts: [Debt], journal: [DebtEntry], ledger: Ledger, today: DateOnly
   ) -> [Reminder] {
     let month = today.monthKey
-    let paidThisMonth = DebtSchedule.debtsPaid(in: month, ledger: ledger, journal: journal)
-    let paidNextMonth = DebtSchedule.debtsPaid(in: month.next, ledger: ledger, journal: journal)
+    var paidIn: [MonthKey: Set<UUID>] = [:]
+    func paid(_ debt: Debt, in month: MonthKey) -> Bool {
+      if paidIn[month] == nil {
+        paidIn[month] = DebtSchedule.debtsPaid(in: month, ledger: ledger, journal: journal)
+      }
+      return DebtSchedule.isPaid(
+        debt.id, in: month, paidByOperation: paidIn[month] ?? [], journal: journal)
+    }
 
     var reminders: [Reminder] = []
     for debt in debts where !debt.closed && debt.direction == .iOwe {
-      guard let day = debt.paymentDay else { continue }
-      let paidNow = DebtSchedule.isPaid(
-        debt.id, in: month, paidByOperation: paidThisMonth, journal: journal)
-      let dueMonth = paidNow ? month.next : month
-      if paidNow
-        && DebtSchedule.isPaid(
-          debt.id, in: month.next, paidByOperation: paidNextMonth, journal: journal)
-      {
-        continue
+      let start = DebtSchedule.start(
+        of: journal.lazy.filter { $0.debtId == debt.id }, calendar: ledger.calendar)
+      func covered(_ month: MonthKey) -> Bool {
+        DebtSchedule.isPaid(debt, for: month, startsOn: start, calendar: ledger.calendar) {
+          paid(debt, in: $0)
+        }
       }
-      let due = DateOnly(
-        year: dueMonth.year, month: dueMonth.month, day: min(max(day, 1), dueMonth.dayCount))
+      guard
+        let due = DebtSchedule.nextPaymentDate(
+          of: debt, today: today, paidThisMonth: covered(month), calendar: ledger.calendar,
+          startsOn: start)
+      else { continue }
+      if due.monthKey != month, covered(due.monthKey) { continue }
       let ahead = max(0, debt.remindDaysBefore ?? defaultDaysBefore)
       guard due <= today.adding(days: ahead) else { continue }
       reminders.append(
@@ -208,11 +227,12 @@ public enum ReminderRules {
   // MARK: - Reconciliation
 
   /// Due before the first reconciliation, and once more than `reconcileEveryDays` days have
-  /// passed since the last one — from the day after that, which is its due date.
+  /// passed since the one the reminder counts from (`AccountReconciliation.reminderAnchor`) —
+  /// from the day after that, which is its due date.
   private static func reconciliation(book: PlanningBook, today: DateOnly) -> Reminder? {
-    let last = ReconciliationRules.latest(book.reconciliations)
+    let last = AccountReconciliation.reminderAnchor(book: book)
     let everyDays = book.settings.reconcileEveryDays
-    guard ReconciliationRules.isDue(last: last, today: today, everyDays: everyDays) else {
+    guard AccountReconciliation.isDue(book: book, today: today, everyDays: everyDays) else {
       return nil
     }
     guard let last else {

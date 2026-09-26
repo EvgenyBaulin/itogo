@@ -617,9 +617,8 @@ extension RoundTripTests {
     let stack = try TestSupport.makeStack()
     let fixture = try TestSupport.seedReferences(stack)
     let repository = TransactionRepository(writer: stack.writer)
-    var draft = TransactionDraft(
-      currency: .usd, amount: AmountE4(whole: 20), rate: 90,
-      paymentMethodId: fixture.paymentMethod.id)
+    // No account and no main one yet: the purchase is saved with no charge apart.
+    var draft = TransactionDraft(currency: .usd, amount: AmountE4(whole: 20), rate: 90)
     draft.normalizeSinglePart()
     let purchase = try draft.materialize(rublesConverter: { AmountE4(raw: $0.raw * 90) })
     try repository.save(purchase)

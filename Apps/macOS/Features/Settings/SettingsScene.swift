@@ -1,4 +1,5 @@
 import AppCore
+import AppDatabase
 import AppKit
 import SwiftUI
 
@@ -12,10 +13,10 @@ struct SettingsView: View {
 
   private var environment: AppEnvironment { deps.environment }
 
-  /// The smallest the window may be made: the eight tabs of the toolbar in either language.
-  static let minimumSize = CGSize(width: 680, height: 460)
+  /// The smallest the window may be made: the nine tabs of the toolbar in either language.
+  static let minimumSize = CGSize(width: 780, height: 460)
   /// The size it opens at.
-  static let idealSize = CGSize(width: 760, height: 620)
+  static let idealSize = CGSize(width: 840, height: 620)
 
   var body: some View {
     TabView {
@@ -41,6 +42,14 @@ struct SettingsView: View {
             Text(verbatim: environment.language("settings.tab.currencies", table: "Settings"))
           } icon: {
             Image(systemName: "banknote")
+          }
+        }
+      AccountsSettingsView()
+        .tabItem {
+          Label {
+            Text(verbatim: environment.language("settings.tab.accounts", table: "Settings"))
+          } icon: {
+            Image(systemName: "building.columns")
           }
         }
       CategoriesSettingsView()
@@ -312,33 +321,39 @@ struct GeneralSettingsView: View {
     Self.person(toAdd: newPerson, among: people) != nil
   }
 
-  /// The row «Добавить» writes for `name`, or nil when it adds nothing: an empty name, or one
-  /// a live person already answers to, as a name or an alias, by the rule the reference books
-  /// use (`ReferenceNames`: case, «ё»/«е» and the spaces around do not count) — two people
-  /// with one name are two rows the entry line cannot tell apart. A name the archive has
-  /// brings that person back, with the relation and the aliases he had, rather than making a
-  /// second row with the same name.
+  /// The row «Добавить» brings for `name`, or nil when it adds nothing: an empty name, or one
+  /// a live person already answers to, as a name or an other name, by the rule the reference
+  /// books use (`ReferenceNames`: case, «ё»/«е» and the spaces around do not count) — two
+  /// people with one name are two rows the entry line cannot tell apart. A name the archive
+  /// has — his name first, else one of his other names — brings that person back with the
+  /// relation and the other names he had, as `ReferenceRepository.revive` does on the write.
   static func person(toAdd name: String, among people: [Person]) -> Person? {
     let name = name.trimmingCharacters(in: .whitespaces)
     let live = people.filter { !$0.archived }
-    guard
-      ReferenceBooksView.canAdd(name, to: .people, people: live, places: [], methods: [])
-    else { return nil }
+    guard ReferenceBooksView.canAdd(name, to: .people, people: live, places: []) else {
+      return nil
+    }
     let wanted = ReferenceNames.folded(name)
+    let archived = people.filter(\.archived)
     guard
-      var archived = people.first(where: {
-        $0.archived && ReferenceNames.folded($0.name) == wanted
-      })
+      var back = archived.first(where: { ReferenceNames.folded($0.name) == wanted })
+        ?? archived.first(where: { $0.aliases.contains { ReferenceNames.folded($0) == wanted } })
     else { return Person(name: name) }
-    archived.archived = false
-    return archived
+    back.archived = false
+    return back
   }
 
-  /// A new person — or one back from the archive — from the screen the owner was looking at.
+  /// A new person, or the one the archive holds under this name or an other name of his —
+  /// with the relation and the other names he had — by the rule of the reference books
+  /// (`NewReference.add`), rather than a second row with the same name.
   private func addPerson() {
-    guard let person = Self.person(toAdd: newPerson, among: people) else { return }
+    guard canAddPerson else { return }
+    let today = environment.today
     guard
-      environment.attempt("references.add", on: environment.references, { try $0.save(person) })
+      environment.attempt(
+        "references.add", on: environment.references,
+        { _ = try NewReference.add(newPerson, to: .people, from: today, to: today, references: $0) }
+      )
     else {
       refused = true
       return
@@ -353,6 +368,10 @@ struct GeneralSettingsView: View {
 struct CurrenciesSettingsView: View {
   @Dependency(\.environment) private var environment
   @State private var enabled: [CurrencyCode] = []
+  /// The currency of everything new (`currencies.default`).
+  @State private var defaultCurrency: CurrencyCode = .rub
+  /// The live accounts, for the currencies they hold.
+  @State private var accounts: [PaymentMethod] = []
   /// What the latest table of the bank in the cache lacks (`CurrencyCheck`); empty while the
   /// cache holds none — the check of the first launch fills it.
   @State private var notPublished: Set<CurrencyCode> = []
@@ -366,20 +385,69 @@ struct CurrenciesSettingsView: View {
     return CurrencyCode.defaultEnabled + extras.map(CurrencyCode.init)
   }
 
+  /// Why a currency that is on stays on.
+  enum Lock: Equatable {
+    /// The ruble: every total, limit and report is in it.
+    case base
+    /// The currency of everything new.
+    case defaultCurrency
+    /// Live accounts hold it, named here.
+    case held([String])
+  }
+
+  /// Why `currency` cannot be switched off, or nil when it can. A currency that is off has
+  /// nothing to lose, the ruble aside, which is always on.
+  static func lock(
+    for currency: CurrencyCode, isOn: Bool, defaultCurrency: CurrencyCode,
+    accounts: [PaymentMethod]
+  ) -> Lock? {
+    if currency == .rub { return .base }
+    guard isOn else { return nil }
+    if currency == defaultCurrency { return .defaultCurrency }
+    let holders = accounts.filter { !$0.archived && $0.holds(currency) }.map(\.name)
+    return holders.isEmpty ? nil : .held(holders)
+  }
+
   var body: some View {
     Form {
       Section {
+        Picker(selection: defaultBinding) {
+          ForEach(enabled, id: \.code) { currency in
+            Text(verbatim: "\(currency.code)  \(environment.money.symbol(for: currency))")
+              .tag(currency)
+          }
+        } label: {
+          Text(verbatim: t("settings.currencies.default"))
+        }
+      } footer: {
+        Text(verbatim: t("settings.currencies.defaultHint"))
+          .foregroundStyle(.secondary)
+      }
+
+      Section {
         ForEach(offered, id: \.code) { currency in
+          let lock = Self.lock(
+            for: currency, isOn: enabled.contains(currency), defaultCurrency: defaultCurrency,
+            accounts: accounts)
           Toggle(isOn: binding(for: currency)) {
             HStack(spacing: 8) {
               Text(verbatim: currency.code)
               Text(verbatim: environment.money.symbol(for: currency))
                 .foregroundStyle(.secondary)
+              if let lock, let caption = caption(lock) {
+                Label {
+                  Text(verbatim: caption)
+                } icon: {
+                  Image(systemName: "lock")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              }
               if notPublished.contains(currency) {
                 // The daily table of the bank does not carry this currency, so an
                 // operation in it will have to use a rate typed by hand.
                 Label {
-                  Text(verbatim: environment.language("currencies.notAtCBR", table: "Settings"))
+                  Text(verbatim: t("currencies.notAtCBR"))
                 } icon: {
                   Image(systemName: "exclamationmark.triangle")
                 }
@@ -389,10 +457,11 @@ struct CurrenciesSettingsView: View {
             }
           }
           .toggleStyle(.checkbox)
-          .disabled(currency == .rub || (!enabled.contains(currency) && isFull))
+          .disabled(lock != nil || (!enabled.contains(currency) && isFull))
+          .help(lock.map(tooltip) ?? "")
         }
       } header: {
-        Text(verbatim: environment.language("settings.currencies.enabled", table: "Settings"))
+        Text(verbatim: t("settings.currencies.enabled"))
       } footer: {
         Text(
           verbatim: environment.format(
@@ -408,33 +477,91 @@ struct CurrenciesSettingsView: View {
     .refusedWriteAlert($refused, environment)
   }
 
+  private func t(_ key: String) -> String { environment.language(key, table: "Settings") }
+
+  /// The word beside a locked currency: the tooltip says the rest. The ruble needs none.
+  private func caption(_ lock: Lock) -> String? {
+    switch lock {
+    case .base: nil
+    case .defaultCurrency: t("currencies.caption.default")
+    case .held(let names) where names.count == 1:
+      environment.format("currencies.caption.heldOne", table: "Settings", names[0])
+    case .held(let names):
+      environment.format(
+        "currencies.caption.heldMany", table: "Settings", names.joined(separator: ", "))
+    }
+  }
+
+  private func tooltip(_ lock: Lock) -> String {
+    switch lock {
+    case .base: t("currencies.lock.base")
+    case .defaultCurrency: t("currencies.lock.default")
+    case .held: t("currencies.lock.held")
+    }
+  }
+
   private var isFull: Bool { enabled.count >= CurrencyCode.maxEnabled }
+
+  /// A new default is one of the enabled currencies.
+  private var defaultBinding: Binding<CurrencyCode> {
+    Binding(
+      get: { defaultCurrency },
+      set: { currency in
+        guard currency != defaultCurrency else { return }
+        if !Self.chooseDefault(currency, in: environment) { refused = true }
+        reload()
+      })
+  }
 
   private func binding(for currency: CurrencyCode) -> Binding<Bool> {
     Binding(
       get: { enabled.contains(currency) },
       set: { isOn in
-        var updated = enabled.filter { $0 != currency }
-        if isOn {
-          guard updated.count < CurrencyCode.maxEnabled else { return }
-          updated.append(currency)
-        }
-        // The ruble is the base currency and cannot be switched off.
-        if !updated.contains(.rub) {
-          updated.insert(.rub, at: 0)
-        }
-        if !environment.attempt(
-          "settings.currencies", on: environment.settings, { try $0.setEnabledCurrencies(updated) })
-        {
+        if !Self.switchCurrency(currency, on: isOn, enabled: enabled, in: environment) {
           refused = true
         }
-        environment.refreshVocabulary()
         reload()
       })
   }
 
+  /// Makes `currency` the currency of everything new. The window reads the account settings
+  /// again at once, so the next thing made takes it. False when the database refused.
+  static func chooseDefault(_ currency: CurrencyCode, in environment: AppEnvironment) -> Bool {
+    let written = environment.attempt(
+      "currencies.default", on: environment.settings, { try $0.setDefaultCurrency(currency) })
+    environment.refreshAccountSettings()
+    environment.refreshVocabulary()
+    return written
+  }
+
+  /// Switches `currency` on — last, while fewer than ten are on — or off. The ruble always
+  /// stays; the default currency and a currency a live account holds stay too: the database
+  /// refuses to drop them (`SettingsWriteError.currencyInUse`), whatever the checkbox did. True
+  /// when there was nothing to do or the write landed.
+  static func switchCurrency(
+    _ currency: CurrencyCode, on isOn: Bool, enabled: [CurrencyCode],
+    in environment: AppEnvironment
+  ) -> Bool {
+    var updated = enabled.filter { $0 != currency }
+    if isOn {
+      guard updated.count < CurrencyCode.maxEnabled else { return true }
+      updated.append(currency)
+    }
+    // The ruble is the base currency and cannot be switched off.
+    if !updated.contains(.rub) {
+      updated.insert(.rub, at: 0)
+    }
+    let written = environment.attempt(
+      "settings.currencies", on: environment.settings, { try $0.setEnabledCurrencies(updated) })
+    environment.refreshAccountSettings()
+    environment.refreshVocabulary()
+    return written
+  }
+
   private func reload() {
     enabled = (try? environment.settings?.enabledCurrencies()) ?? CurrencyCode.defaultEnabled
+    defaultCurrency = environment.defaultCurrency
+    accounts = (try? environment.accounts?.accounts()) ?? []
     notPublished = Set(
       CurrencyCheck.notPublished(offered, in: (try? environment.rates?.allRates()) ?? []))
   }

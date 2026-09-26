@@ -266,10 +266,112 @@ public actor BackupService {
         .filter { $0.pathExtension == "sqlite" })
   }
 
+  // MARK: Before an update
+
+  /// The label of the copy written before the database is migrated to a newer schema.
+  static let beforeMigration = "before-migration"
+
+  /// A copy of the database file as it is, written before a newer build migrates it: the way
+  /// back to the older version of the app, which refuses the migrated file. Nobody has the file
+  /// open — the start calls this before it opens the database (`AppEnvironment`).
+  ///
+  /// Named as every copy is (`finance-2026-10-02T101500+0300-before-migration.sqlite`), written
+  /// under a name no list shows, and checked before it takes its own: it has to open, pass
+  /// `PRAGMA integrity_check` and hold as many rows as its source, table by table. The retention
+  /// never prunes it. A copy that cannot be written or does not pass is removed and
+  /// `BeforeMigrationCopyFailed` thrown — and then the database is not migrated.
+  ///
+  /// An update that stopped is tried again at the next start, from the same file. The copy the
+  /// first attempt kept is then still the copy of that file, and it is returned instead of a new
+  /// one (`copyStillHolding`): every attempt would otherwise add a whole copy nothing prunes, and
+  /// on a nearly full disk the second would not fit although the first is right there.
+  ///
+  /// A copy that was written but does not pass may be a true copy of a damaged database —
+  /// SQLite copies a broken index as it is — and no retry would give a better one. The database
+  /// itself is asked then, and a damaged one is said to be damaged
+  /// (`BeforeMigrationCopyFailed.databaseIsDamaged`): the owner restores a copy of his own; the
+  /// file is not migrated either way.
+  ///
+  /// `copying` is the backup API of SQLite; a test passes one that writes something else.
+  nonisolated static func copyBeforeMigration(
+    of source: URL, into directory: URL, now: Date,
+    copying: (URL, URL) throws -> Void = { try DatabaseStack.backup(fileAt: $0, to: $1) }
+  ) throws -> URL {
+    let began = DispatchTime.now().uptimeNanoseconds
+    if let kept = copyStillHolding(source, in: directory) {
+      let elapsed = Int((DispatchTime.now().uptimeNanoseconds - began) / 1_000_000)
+      AppLog.info(
+        "db.migrationCopy.reused", .db,
+        "the copy kept before an earlier attempt at the update still holds the database",
+        [LogPair("ms", .milliseconds(elapsed))])
+      return kept
+    }
+    let manager = FileManager.default
+    let name = fileName(at: now, label: beforeMigration)
+    let partial = directory.appendingPathComponent(name + unfinished)
+    let destination = directory.appendingPathComponent(name)
+    defer { removeDatabaseFiles(at: partial) }
+    do {
+      try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+      removeDatabaseFiles(at: partial)
+      try copying(source, partial)
+      guard DatabaseStack.integrityCheckPassed(at: partial) else {
+        throw BackupError.integrityCheckFailed
+      }
+      let rows = try DatabaseStack.rowCounts(fileAt: partial)
+      guard try rows == DatabaseStack.rowCounts(fileAt: source) else {
+        throw BeforeMigrationCopyFailed.RowsDiffer()
+      }
+      removeDatabaseFiles(at: destination, keepingTheFileItself: true)
+      try manager.putInPlace(partial, at: destination)
+    } catch {
+      let writtenButFailed =
+        (error as? BackupError) == .integrityCheckFailed
+        || error is BeforeMigrationCopyFailed.RowsDiffer
+      let damaged = writtenButFailed && !DatabaseStack.integrityCheckPassed(at: source)
+      AppLog.error(
+        "db.migrationCopy.failed", .db, "no copy of the database could be kept before the update",
+        [LogPair("error", .error(error)), LogPair("databaseDamaged", .flag(damaged))])
+      throw BeforeMigrationCopyFailed(underlying: error, databaseIsDamaged: damaged)
+    }
+    let size = (try? manager.attributesOfItem(atPath: destination.path)[.size] as? Int) ?? 0
+    let elapsed = Int((DispatchTime.now().uptimeNanoseconds - began) / 1_000_000)
+    AppLog.info(
+      "db.migrationCopy.written", .db, "a copy of the database was kept before the update",
+      [LogPair("bytes", .bytes(size)), LogPair("ms", .milliseconds(elapsed))])
+    return destination
+  }
+
+  /// Whether a copy is the one written before an update, which is never pruned.
+  static func isBeforeMigration(_ fileName: String) -> Bool {
+    fileName.contains("-" + beforeMigration)
+  }
+
+  /// The copy an earlier attempt at the update kept, when it still holds exactly what the
+  /// database holds: the same schema and every row the same (`DatabaseStack.sameData`). Only
+  /// the newest is asked — an older one is of an older state — and it is checked as a new copy
+  /// is before it stands for the database. `nil` when there is none, or it is of another state:
+  /// the older version was used in between, or a copy was put in place of the database.
+  private static func copyStillHolding(_ source: URL, in directory: URL) -> URL? {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+    let copies =
+      names
+      .filter { $0.hasPrefix("finance-") && $0.hasSuffix("-\(beforeMigration).sqlite") }
+      .map { directory.appendingPathComponent($0) }
+    guard let newest = newestFirst(copies).first,
+      DatabaseStack.integrityCheckPassed(at: newest),
+      (try? DatabaseStack.sameData(fileAt: newest, as: source)) == true
+    else { return nil }
+    return newest
+  }
+
   /// Keeps the newest copies and one per day for the retention window — in the folder of copies
   /// and in the mirrored one alike: «хранение: последние 50 копий и одна в день за 90 дней» is
   /// about the copies, wherever they lie. A prune of the mirrored folder that fails is written
   /// in the journal and costs the copy nothing.
+  ///
+  /// The copy written before an update is not one of them: it is never pruned and takes the
+  /// place of no other copy (`copyBeforeMigration`).
   func applyRetention(now: Date) throws {
     try applyRetention(in: directory, now: now)
     guard let mirror else { return }
@@ -289,7 +391,8 @@ public actor BackupService {
     let files = Self.newestFirst(
       try FileManager.default
         .contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-        .filter { $0.pathExtension == "sqlite" && Self.date(in: $0.lastPathComponent) != nil })
+        .filter { $0.pathExtension == "sqlite" && Self.date(in: $0.lastPathComponent) != nil }
+        .filter { !Self.isBeforeMigration($0.lastPathComponent) })
     guard files.count > policy.keepLatest else { return }
 
     var keep = Set(files.prefix(policy.keepLatest))
@@ -412,4 +515,22 @@ struct UnopenedDatabase: BackupSource {
 public enum BackupError: Error, Sendable {
   case integrityCheckFailed
   case restoreFailed
+}
+
+/// The copy of the database before an update could not be written, or did not pass its check
+/// (`BackupService.copyBeforeMigration`). The database is not migrated then, and the start says
+/// so (`StartFailure.copyBeforeUpdate`) — or, when the database itself fails its integrity
+/// check and so has no sound copy to give, that it is damaged (`StartFailure.damaged`).
+public struct BeforeMigrationCopyFailed: Error {
+  /// The copy holds another number of rows than its source.
+  struct RowsDiffer: Error {}
+
+  public var underlying: any Error
+  /// The copy failed its check because the database it came from fails it too.
+  public var databaseIsDamaged: Bool
+
+  public init(underlying: any Error, databaseIsDamaged: Bool = false) {
+    self.underlying = underlying
+    self.databaseIsDamaged = databaseIsDamaged
+  }
 }

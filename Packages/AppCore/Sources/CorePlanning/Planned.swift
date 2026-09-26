@@ -42,7 +42,8 @@ public struct PlannedItem: Hashable, Sendable {
 
 /// The payments known for the rest of the month — scheduled payments, debts whose payments
 /// are expenses, goals behind their plan — in rubles of my own spending. The forecast, the
-/// limits and «free to spend» all add the same figure.
+/// limits and «can save» all add the same figure. The free sum counts money, not spending,
+/// and has a plan of its own (`CashPlan`).
 public struct PlannedMonth: Hashable, Sendable {
   /// Soonest first; the goals, which have no date, last.
   public var items: [PlannedItem]
@@ -51,12 +52,11 @@ public struct PlannedMonth: Hashable, Sendable {
   public var goals: AmountE4
   /// Payments on debts whose payments are expenses, due this month on or before today and
   /// still unpaid, in rubles. Not in `debts`, `items` or `total`: the forecast counts a debt
-  /// only when its payment day is after today. «Free to spend» and «can save» add it —
-  /// money that still has to leave (due by D and not made yet), as an overdue scheduled
-  /// payment still does.
+  /// only when its payment day is after today. «Can save» adds it — money that still has to
+  /// leave, as an overdue scheduled payment still does.
   public var debtsDueByToday: AmountE4
-  /// Payments and debts in a currency without a known rate: left out of every sum, listed
-  /// here instead of guessed.
+  /// Payments, debts and goals in a currency without a known rate: left out of every sum,
+  /// listed here instead of guessed.
   public var withoutRate: [UUID]
   /// My share still due, by the category each item is filed under — additive, the way
   /// `LimitRules.lines(plannedByCategory:)` takes it: a limit on a parent category adds up
@@ -89,7 +89,8 @@ public struct PlannedMonth: Hashable, Sendable {
   ///   the dates from its `next_date` on, so a date before today that nobody paid is still
   ///   due, while one paid or skipped is not. At the price on the date; my share is the
   ///   rubles minus what the person gives back (`ScheduledRules.share`). A due date that an
-  ///   operation already paid (`sched:<payment>:<due>`) never counts twice.
+  ///   operation already paid — one «Mark as paid» wrote (`sched:<payment>:<due>`), or an
+  ///   ordinary expense that matches it (`matches`) — never counts twice.
   /// * Debts — the rule of `PlannedPayments`: not closed, payments are expenses, a monthly
   ///   payment and a payment day after today's day number, nothing paid on the debt in that
   ///   month yet — neither an operation nor a journal `payment` line (`DebtSchedule`, the
@@ -99,10 +100,13 @@ public struct PlannedMonth: Hashable, Sendable {
   ///   reaches into later months, each of them brings its own payment.
   /// * Goals — max(0, monthly plan − contributions this month), never more than the goal
   ///   still needs (`GoalRules.planStillDue`), as `PlannedPayments` has it, for today's
-  ///   month only: a goal's plan is for a month, not for a day.
+  ///   month only: a goal's plan is for a month, not for a day. The item is in the goal's
+  ///   currency, contributions in another currency counted at the rate of their day
+  ///   (`dayRates`); my share is its rubles at today's rate.
   public static func build(
     ledger: Ledger, book: PlanningBook, today: DateOnly, until: DateOnly? = nil,
-    rubPerUnit: [CurrencyCode: Decimal] = [:]
+    rubPerUnit: [CurrencyCode: Decimal] = [:], dayRates: DayRates = .empty,
+    matches: ScheduledMatches = .empty
   ) -> PlannedMonth {
     let month = today.monthKey
     let last = until ?? month.lastDay
@@ -122,7 +126,8 @@ public struct PlannedMonth: Hashable, Sendable {
         from: next, through: last, rule: RecurrenceRule(payment: payment), end: payment.endDate,
         limit: 10_000)
       for date in dates where date >= month.firstDay {
-        guard paidDues[payment.id]?.contains(date) != true else { continue }
+        guard paidDues[payment.id]?.contains(date) != true, !matches.isPaid(payment.id, date)
+        else { continue }
         let amount = SubscriptionMath.price(of: payment, on: date, prices: book.prices)
         let share = ScheduledRules.share(of: payment, amount: amount, rubPerUnit: rubPerUnit)
         if share == nil { missing.append(payment.id) }
@@ -141,20 +146,27 @@ public struct PlannedMonth: Hashable, Sendable {
       guard !debt.closed, DebtRules.paymentIsExpense(on: debt),
         let payment = debt.monthlyPaymentE4, let day = debt.paymentDay
       else { continue }
+      // A payment day before the debt began owed nothing (`DebtSchedule.nextPaymentDate`).
+      let start = DebtSchedule.start(
+        of: book.debtEntries.lazy.filter { $0.debtId == debt.id }, calendar: ledger.calendar)
       for current in MonthKey.range(month, through: last.monthKey) {
         // This month's payment due today or before: out of the forecast, but
         // still owed while unpaid. The due date is the clipped one: a debt paid «on the
         // 31st» is due today on 30 September.
         let due = Recurrence.clipped(day: day, in: current)
         let byToday = current == month && due <= today
-        guard due <= last else { continue }
-        if paidDebts[current] == nil {
-          paidDebts[current] = DebtSchedule.debtsPaid(
-            in: current, ledger: ledger, journal: book.debtEntries)
-        }
+        guard due <= last, DebtStart.owes(due: due, startsOn: start) else { continue }
         let paid = DebtSchedule.isPaid(
-          debt.id, in: current, paidByOperation: paidDebts[current] ?? [],
-          journal: book.debtEntries)
+          debt, for: current, startsOn: start, calendar: ledger.calendar
+        ) { month in
+          if paidDebts[month] == nil {
+            paidDebts[month] = DebtSchedule.debtsPaid(
+              in: month, ledger: ledger, journal: book.debtEntries)
+          }
+          return DebtSchedule.isPaid(
+            debt.id, in: month, paidByOperation: paidDebts[month] ?? [],
+            journal: book.debtEntries)
+        }
         guard !paid else { continue }
         let rubles = SubscriptionMath.rubles(payment, in: debt.currency, rubPerUnit: rubPerUnit)
         if rubles == nil { missing.append(debt.id) }
@@ -171,13 +183,15 @@ public struct PlannedMonth: Hashable, Sendable {
 
     // Goals behind their monthly plan, never asking more than the goal still needs.
     let goalsDue = GoalRules.planStillDue(
-      goals: ledger.dataset.goals, ledger: ledger, today: today)
+      goals: ledger.dataset.goals, ledger: ledger, today: today, rates: dayRates)
     for goal in ledger.dataset.goals where !goal.archived {
       guard let left = goalsDue[goal.id] else { continue }
+      let rubles = GoalMath.rubles(left, in: goal.currency, rubPerUnit: rubPerUnit)
+      if rubles == nil { missing.append(goal.id) }
       items.append(
         PlannedItem(
-          kind: .goal, id: goal.id, due: nil, currency: .rub, amount: left, myShareRub: left,
-          categoryId: goal.subcategoryId))
+          kind: .goal, id: goal.id, due: nil, currency: goal.currency, amount: left,
+          myShareRub: rubles, categoryId: goal.subcategoryId))
     }
 
     let order: [PlannedKind: Int] = [.scheduled: 0, .debt: 1, .goal: 2]

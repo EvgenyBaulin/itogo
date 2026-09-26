@@ -229,6 +229,38 @@ final class CategoryDeletionTests: XCTestCase {
     XCTAssertTrue(try references.categories().contains { $0.id == category.id })
   }
 
+  /// «Добавить» in Settings → Категории with the name of a category in the archive — «kites»
+  /// for «Kites», beside the same parent — brings that category back rather than making a
+  /// second one; a subcategory comes back under its own parent only.
+  func testAddingTheNameOfAnArchivedCategoryBringsItBack() throws {
+    var kites = try makeCategory("Kites")
+    kites.archived = true
+    try references.save(kites)
+    let home = try makeCategory("Home")
+    var rent = try makeCategory("Rent", parent: home.id)
+    rent.archived = true
+    try references.save(rent)
+
+    XCTAssertEqual(
+      CategoriesSettingsView.add(
+        named: "kites", kind: .expense, parent: nil, references: references),
+      .added(kites.id))
+    XCTAssertEqual(
+      CategoriesSettingsView.add(
+        named: "rent", kind: .expense, parent: home.id, references: references),
+      .added(rent.id))
+    let all = try references.categories(includeArchived: true)
+    XCTAssertEqual(
+      all.filter { $0.name.lowercased() == "kites" }.map(\.id), [kites.id],
+      "a second «Kites» was made")
+    XCTAssertEqual(all.first { $0.id == kites.id }?.archived, false)
+    XCTAssertEqual(all.first { $0.id == rent.id }?.archived, false)
+
+    let income = CategoriesSettingsView.add(
+      named: "Kites", kind: .income, parent: nil, references: references)
+    XCTAssertNotEqual(income, .added(kites.id), "an expense came back for an income")
+  }
+
   /// The bin is the case the app cannot get out of: a deleted operation keeps its parts, and
   /// nothing re-files the parts of an operation in the bin. The count has to come from the
   /// database — the pipeline's data is read with `deleted_at IS NULL` and never holds one.

@@ -19,15 +19,31 @@ final class TransactionEditorModel {
   var errorKey: String?
   /// Deleting asks first, the same question the list asks.
   var confirmation: BulkConfirmation?
+  /// «Это было до сверки в 14:05?», waiting for the owner's answer before the save goes on.
+  var countQuestion: BeforeTheCountQuestion?
+  /// The balances of the accounts as the window showing this editor has them now, read by a
+  /// save that is handed none: «Save» in the questions the Transactions window asks when
+  /// another operation is opened or the inspector is folded away. Set while the editor is
+  /// on screen, so those saves ask about a count as the button does.
+  @ObservationIgnored var balancesNow: (@MainActor () -> AccountBalances)?
 
   /// The operation being edited.
   var id: UUID { entry.id }
 
   /// `tree` names the operation by its category when it has no description.
-  init(entry: TransactionEntry, environment: AppEnvironment, tree: CategoryTree = CategoryTree()) {
+  convenience init(
+    entry: TransactionEntry, environment: AppEnvironment, tree: CategoryTree = CategoryTree()
+  ) {
+    self.init(
+      entry: entry, draft: EntryDraftModel(environment: environment, editsSavedOperation: true),
+      tree: tree)
+  }
+
+  /// The editor over a panel made elsewhere — one that edits a saved operation
+  /// (`editsSavedOperation`); it is loaded and set to the operation here.
+  init(entry: TransactionEntry, draft: EntryDraftModel, tree: CategoryTree = CategoryTree()) {
     self.entry = entry
     self.title = RowTitle.of(entry, tree: tree)
-    let draft = EntryDraftModel(environment: environment, editsSavedOperation: true)
     draft.reload()
     draft.draft = TransactionDraft(entry: entry)
     self.draft = draft
@@ -83,7 +99,22 @@ final class TransactionEditorModel {
   /// Every way to save goes through here — the button, and «Save» in the question asked
   /// when another operation is opened — so the rule of the button is checked here as well.
   /// The edit is laid over the operation as it is now (`TransactionsStore.saveEdit`).
-  func save(store: TransactionsStore, environment: AppEnvironment) -> Bool {
+  ///
+  /// An edit that moves the money to another day, account or currency and lands it on the day
+  /// of the latest count of that account, after the count, asks first whether it was before
+  /// the count (`countQuestion`, answered through `answerCount`); `balances` are the accounts'
+  /// as the data has them — when none are handed in, those of the window showing the editor
+  /// (`balancesNow`) — and `now` the moment of the save. Nothing is written until then. Money
+  /// back asks too: its day and account can be edited, only its amount, type and currency
+  /// stay.
+  ///
+  /// A refund taken back from a purchase keeps the purchase's rate, and the rubles it stores
+  /// follow the purchase part (`RefundRules.rubles`): taking back the rest of the part stores
+  /// the rest of its rubles exactly.
+  func save(
+    store: TransactionsStore, environment: AppEnvironment, balances: AccountBalances? = nil,
+    now: Date = Date()
+  ) -> Bool {
     if let refusal = draft.saveRefusalKey {
       errorKey = refusal
       return false
@@ -92,11 +123,29 @@ final class TransactionEditorModel {
       errorKey = "entry.error.notSaved"
       return false
     }
-    environment.applyRate(to: &draft.draft)
+    if movesTheMoney(calendar: environment.calendar),
+      let count = draft.countToAskAbout(
+        savedAt: now, balances: balances ?? balancesNow?() ?? .empty)
+    {
+      countQuestion = BeforeTheCountQuestion(count: count)
+      return false
+    }
+    let takesBack = RefundRules.takesBack(draft.draft)
+    // A refund carries the purchase's rate, never one of its own day.
+    if !takesBack { environment.applyRate(to: &draft.draft) }
+    // «Списано со счёта» follows the rate the save has just laid.
+    draft.refreshCharge()
+    let rublesConverter: (AmountE4) throws -> AmountE4
+    if takesBack,
+      let rubles = Self.refundRubles(of: draft.draft, editing: entry, ledger: store.listing)
+    {
+      rublesConverter = { _ in rubles }
+    } else {
+      rublesConverter = environment.rublesConverter(for: draft.draft)
+    }
     let updated: TransactionEntry
     do {
-      updated = try Self.edited(
-        entry, with: draft.draft, rublesConverter: environment.rublesConverter(for: draft.draft))
+      updated = try Self.edited(entry, with: draft.draft, rublesConverter: rublesConverter)
     } catch MoneyConversionError.rateMissing {
       errorKey = "entry.error.rateMissing"
       return false
@@ -121,6 +170,15 @@ final class TransactionEditorModel {
     case .declined(let refusal):
       errorKey = Self.errorKey(of: refusal)
       return false
+    case .declinedByLink(let refusal):
+      errorKey = Self.errorKey(of: refusal)
+      return false
+    case .refundRefused(let refusal):
+      errorKey = Self.errorKey(of: refusal)
+      return false
+    case .chargeMissing:
+      errorKey = "entry.error.chargeMissing"
+      return false
     case .refused:
       errorKey = "entry.error.noDependencies"
       return false
@@ -137,6 +195,48 @@ final class TransactionEditorModel {
     return choice
   }
 
+  /// The owner's answer to «Это было до сверки?»: the operation is dated before or after the
+  /// count, and the save that follows does not ask about that count again.
+  func answerCount(_ count: Date, wasBefore: Bool) {
+    draft.answerCount(count, wasBefore: wasBefore)
+    countQuestion = nil
+  }
+
+  /// Whether the edit moves the operation's money to another day, account or currency: only
+  /// such an edit can land it on the day of a count it was not on before.
+  private func movesTheMoney(calendar: CalendarContext) -> Bool {
+    let old = entry.transaction
+    let new = draft.draft
+    return calendar.day(of: old.occurredAt) != calendar.day(of: new.occurredAt)
+      || old.paymentMethodId != new.paymentMethodId || old.currency != new.currency
+  }
+
+  /// The rubles a refund taken back from a purchase stores after the edit: for each of its
+  /// parts, what `RefundRules.rubles` gives against the purchase part, counting what the other
+  /// refunds of that part took back — never this refund's own earlier figures. `nil` when the
+  /// ledger does not know a purchase part the draft names: the save converts as any other.
+  nonisolated static func refundRubles(
+    of draft: TransactionDraft, editing original: TransactionEntry, ledger: Ledger?
+  ) -> AmountE4? {
+    guard let ledger else { return nil }
+    let index = ledger.refundIndex
+    let own = original.transaction.isDeleted ? [] : original.parts
+    var total = AmountE4.zero
+    for part in draft.parts {
+      guard let target = part.refundOfPartId, let row = ledger.row(ofPart: target),
+        let purchase = ledger.entry(row.transactionId)?.parts.first(where: { $0.id == target })
+      else { return nil }
+      // What this refund took back before the edit is not «before» it.
+      let mine = own.filter { index.purchasePart(ofRefundPart: $0.id) == target }
+      let before = (
+        amount: index.refunded(part: target) - AmountE4.sum(mine.map(\.amountE4)),
+        rub: index.refundedStoredRub(part: target) - AmountE4.sum(mine.map(\.amountRubE4))
+      )
+      total += RefundRules.rubles(refundAmount: part.amount, part: purchase, refundedBefore: before)
+    }
+    return total
+  }
+
   /// What the editor says when the store declines the edit.
   nonisolated static func errorKey(of refusal: EditRefusal) -> String {
     switch refusal {
@@ -147,8 +247,40 @@ final class TransactionEditorModel {
     }
   }
 
+  /// What the editor says when a refund or money back that covered only some of a part leans
+  /// on what the edit changes.
+  nonisolated static func errorKey(of refusal: LinkedEditRefusal) -> String {
+    switch refusal {
+    case .refundedPartRemoved: "transactions.error.refundedPartRemoved"
+    case .refundedPartReduced: "transactions.error.refundedPartReduced"
+    case .refundedPartChanged: "transactions.error.refundedPartChanged"
+    case .partlyReturnedPartChanged: "transactions.error.partlyReturnedPartChanged"
+    case .linkedRefundChanged: "transactions.error.linkedRefundChanged"
+    }
+  }
+
+  /// What the editor says when a refund taken back from a purchase may not become what the edit
+  /// makes it.
+  nonisolated static func errorKey(of refusal: RefundError) -> String {
+    switch refusal {
+    case .notRefundable: "transactions.error.refundNotRefundable"
+    case .exceedsRemaining: "transactions.error.refundExceedsRemaining"
+    case .notPositive: "transactions.error.refundNotPositive"
+    case .purchaseHasRefunds: "transactions.error.purchaseHasRefunds"
+    case .otherCurrency: "transactions.error.refundOtherCurrency"
+    }
+  }
+
+  /// The String Catalog an error key of the editor is in: the refusals about refunds and money
+  /// back are the Transactions window's words, the rest the panel's.
+  nonisolated static func table(ofErrorKey key: String) -> String {
+    key.hasPrefix("transactions.") ? "Transactions" : "Entry"
+  }
+
+  /// A purchase a live refund takes money back from stays, and the question says why.
   func requestDeletion(store: TransactionsStore) {
-    confirmation = BulkConfirmation.deletion(of: [entry], debts: store.debts)
+    confirmation = BulkConfirmation.deletion(
+      of: [entry], refunds: store.listing?.refundIndex ?? .empty, debts: store.debts)
   }
 
   /// The saved operation after the edit. Only what the panel edits changes: when the
@@ -184,6 +316,7 @@ struct TransactionEditor: View {
 
   @Dependency(\.environment) private var environment
   @Dependency(\.store) private var store
+  @Dependency(\.compute) private var compute
 
   @Bindable var editor: TransactionEditorModel
   let style: Style
@@ -205,9 +338,12 @@ struct TransactionEditor: View {
       // message («no rate yet», «deleted», a refusal) made the window loop until AppKit threw
       // (`testEveryMessageOfTheEditorLeavesTheInspectorSettled`).
       if let errorKey = editor.errorKey {
-        Text(verbatim: environment.language(errorKey, table: "Entry"))
-          .font(.caption)
-          .foregroundStyle(.red)
+        Text(
+          verbatim: environment.language(
+            errorKey, table: TransactionEditorModel.table(ofErrorKey: errorKey))
+        )
+        .font(.caption)
+        .foregroundStyle(.red)
       }
 
       // Named, not read by their captions: every confirmation of the Transactions window has
@@ -225,12 +361,10 @@ struct TransactionEditor: View {
         Spacer()
         Button(environment.language("action.cancel"), role: .cancel, action: close)
           .accessibilityIdentifier("editor.cancel")
-        Button(environment.language("action.save")) {
-          if editor.save(store: store, environment: environment) { close() }
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(!editor.canSave(in: store))
-        .accessibilityIdentifier("editor.save")
+        Button(environment.language("action.save"), action: save)
+          .buttonStyle(.borderedProminent)
+          .disabled(!editor.canSave(in: store))
+          .accessibilityIdentifier("editor.save")
       }
     }
     .padding(style == .sheet ? 20 : 14)
@@ -241,14 +375,41 @@ struct TransactionEditor: View {
         editor.errorKey = "entry.error.notSaved"
       }
     }
+    // The answer dates the operation before or after the count, and the save goes on.
+    .beforeTheCountQuestion($editor.countQuestion) { count, wasBefore in
+      editor.answerCount(count, wasBefore: wasBefore)
+      save()
+    }
+    // While it is on screen, a save made from a question of the window asks about a count by
+    // the balances the window has. Folded away, the editor asks nothing it could not show.
+    .onAppear {
+      let compute = self.compute
+      editor.balancesNow = { compute.snapshot?.planning.accounts.balances ?? .empty }
+    }
+    .onDisappear { editor.balancesNow = nil }
+  }
+
+  private func save() {
+    let balances = compute.snapshot?.planning.accounts.balances ?? .empty
+    if editor.save(store: store, environment: environment, balances: balances) { close() }
+  }
+
+  /// What a refund taken back from a purchase says here, as its row says it: on the purchase,
+  /// what came back; on the refund, the purchase.
+  private var refundMark: RefundMark? {
+    guard let ledger = store.listing, let entry = ledger.entry(editor.id) else { return nil }
+    return RefundMark.of(entry, ledger: ledger)
   }
 
   @ViewBuilder
   private var header: some View {
     switch style {
     case .sheet:
-      Text(verbatim: environment.language("action.edit"))
-        .font(.headline)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(verbatim: environment.language("action.edit"))
+          .font(.headline)
+        if let refundMark { RefundMarkLabel(mark: refundMark) }
+      }
     case .inspector:
       // The operation as it is named in the table, and when it happened.
       VStack(alignment: .leading, spacing: 2) {
@@ -258,8 +419,46 @@ struct TransactionEditor: View {
         Text(verbatim: environment.dates.moment(editor.entry.transaction.occurredAt))
           .font(.caption)
           .foregroundStyle(.secondary)
+        if let refundMark { RefundMarkLabel(mark: refundMark) }
       }
     }
+  }
+}
+
+/// The mark of a refund beside the description of a row. On a refund it leads to the purchase
+/// when `open` is given: a click opens the purchase the refund takes money back from.
+struct RefundMarkLabel: View {
+  @Dependency(\.environment) private var environment
+  let mark: RefundMark
+  var open: ((UUID) -> Void)? = nil
+
+  var body: some View {
+    let words = RefundMarkText.text(mark, environment: environment)
+    if case .refundOf(let purchaseId, _, _, _) = mark, let open {
+      Button {
+        open(purchaseId)
+      } label: {
+        label(words)
+      }
+      .buttonStyle(.link)
+      .help(Text(verbatim: words))
+      .accessibilityIdentifier("transactions.refund.purchase")
+    } else {
+      label(words)
+        .foregroundStyle(.secondary)
+        .help(Text(verbatim: words))
+    }
+  }
+
+  private func label(_ words: String) -> some View {
+    Label {
+      Text(verbatim: words)
+        .lineLimit(1)
+    } icon: {
+      Image(systemName: RefundMarkText.symbol)
+    }
+    .font(.caption)
+    .accessibilityElement(children: .combine)
   }
 }
 

@@ -34,17 +34,24 @@ public struct SamplePlanning: Hashable, Sendable {
 }
 
 extension SampleDataSet {
-  /// The planning of this history, built from it on every call (`SamplePlanning(for:)`).
-  public var planning: SamplePlanning { SamplePlanning(for: self) }
+  /// The planning of this history, built from it on every call (`SamplePlanning(for:)`),
+  /// with the payments due once that the accounts add after its own.
+  public var planning: SamplePlanning {
+    var planning = SamplePlanning(for: self)
+    planning.scheduled += oneOffPayments
+    return planning
+  }
 
   /// The planning book of a database holding this history: its planning, the journals of
-  /// its debts and the default settings — what `Dataset.planning` carries.
+  /// its debts, the counts of its accounts and the default settings — what
+  /// `Dataset.planning` carries.
   public var planningBook: PlanningBook {
     let planning = planning
     return PlanningBook(
       scheduled: planning.scheduled, prices: planning.prices, expected: planning.expected,
       expectedLinks: planning.expectedLinks, budgets: planning.budgets,
-      debtEntries: debtEntries)
+      reconciliations: reconciliations, debtEntries: debtEntries,
+      reconciledBalances: reconciledBalances)
   }
 }
 
@@ -285,7 +292,7 @@ extension SamplePlanning {
 /// its name in either language under the parent found before it, so the lookup does not
 /// depend on where a category sits in the list, and a subcategory whose parent is gone is
 /// not found at all.
-private struct StarterCategories {
+struct StarterCategories {
   private struct Key: Hashable {
     let kind: CategoryKind
     let english: String

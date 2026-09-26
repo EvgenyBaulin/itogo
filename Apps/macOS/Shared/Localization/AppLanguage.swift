@@ -92,8 +92,7 @@ public final class AppLanguage {
   }
 
   public init(missingDependency: String? = nil) {
-    let stored = UserDefaults.standard.string(forKey: Self.defaultsKey)
-    let choice = stored.flatMap(Choice.init(rawValue:)) ?? .system
+    let choice = Self.storedChoice(in: .standard)
     self.choice = choice
     self.locale = Locale(identifier: Self.code(for: choice))
     self.bundle = Self.bundle(for: Self.code(for: choice))
@@ -103,6 +102,18 @@ public final class AppLanguage {
 
   /// Two-letter code actually in use, with `system` resolved against system preferences.
   public var resolvedCode: String { Self.code(for: choice) }
+
+  /// The two-letter code of the interface as the choice stored in `defaults` resolves it —
+  /// the rule of `resolvedCode` — for work off the main thread that has to write in the
+  /// language of the interface.
+  nonisolated static func storedCode(in defaults: UserDefaults) -> String {
+    code(for: storedChoice(in: defaults), in: defaults)
+  }
+
+  /// The choice stored in `defaults`; «System» when none is, or it is not one of the choices.
+  private nonisolated static func storedChoice(in defaults: UserDefaults) -> Choice {
+    defaults.string(forKey: defaultsKey).flatMap(Choice.init(rawValue:)) ?? .system
+  }
 
   /// Looks a key up in the chosen language. A key the chosen language lacks is looked up in
   /// the app's own tables — English, the language of development — and a key no table has
@@ -136,10 +147,12 @@ public final class AppLanguage {
     bundle = Self.bundle(for: resolvedCode)
   }
 
-  private static func code(for choice: Choice) -> String {
+  private nonisolated static func code(
+    for choice: Choice, in defaults: UserDefaults = .standard
+  ) -> String {
     switch choice {
     case .system:
-      let preferred = systemLanguages.first ?? "en"
+      let preferred = systemLanguages(in: defaults).first ?? "en"
       return preferred.hasPrefix("ru") ? "ru" : "en"
     case .english:
       return "en"
@@ -152,8 +165,8 @@ public final class AppLanguage {
   /// which reads `AppleLanguages` of the app's own domain first — the key an explicit choice
   /// writes — so «System» resolved to the last language chosen by hand. The process's list
   /// is left for a Mac whose global domain says nothing.
-  private static var systemLanguages: [String] {
-    let global = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)
+  private nonisolated static func systemLanguages(in defaults: UserDefaults) -> [String] {
+    let global = defaults.persistentDomain(forName: UserDefaults.globalDomain)
     if let languages = global?[appleLanguagesKey] as? [String], !languages.isEmpty {
       return languages
     }

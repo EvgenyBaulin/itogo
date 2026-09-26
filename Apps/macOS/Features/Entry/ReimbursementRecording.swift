@@ -5,11 +5,13 @@ import Foundation
 /// The sheet only collects the choices; this is where they become operations and links,
 /// so the rules can be checked without a window.
 ///
-/// Money comes back in rubles, so the whole reimbursement is worked out in rubles: every
-/// part is owed as the rubles it cost (`OwedPart.inRubles`), and the reimbursement, the
-/// surplus, the shortfalls and `reimbursement_links.amount_e4` are all rubles. Matching a
-/// part paid in dollars against the dollar figure used to turn most of the money into a
-/// surplus that never existed.
+/// This is the per-part mode («Вручную…»), worked out in rubles: every part is owed as the
+/// rubles still left of it (`OwedPart.inRubles`), and the reimbursement, the surplus, the
+/// shortfalls and `reimbursement_links.amount_e4` are all rubles. Matching a part paid in
+/// dollars against the dollar figure used to turn most of the money into a surplus that never
+/// existed. The money lands on the account it came onto («На счёт»), and so does a surplus; a
+/// shortfall is spending from the account the purchase was paid from. Money back spread by the
+/// rules in its own currency is `MoneyBackConfirmation`.
 struct ReimbursementRecording {
   let outcome: ReimbursementOutcome
   let reimbursement: TransactionEntry
@@ -87,6 +89,8 @@ struct ReimbursementRecording {
     now: Date = Date(),
     occurredAt: Date? = nil,
     note: String? = nil,
+    accountId: UUID? = nil,
+    leg: MoneyLeg? = nil,
     setting: Setting
   ) throws -> ReimbursementRecording {
     let payer = payer(chosen: personId, closing: parts)
@@ -94,11 +98,12 @@ struct ReimbursementRecording {
     let owed = parts.map(\.inRubles)
     let outcome = try ReimbursementResolver.resolve(
       reimbursementTxId: id, amountE4: received, closing: owed,
-      allocation: distribution.allocation(over: owed))
+      allocation: distribution.allocation(over: owed), accountId: accountId)
 
     let day = occurredAt ?? now
     var draft = TransactionDraft(
-      kind: .reimbursement, occurredAt: day, currency: .rub, amount: received, note: note)
+      kind: .reimbursement, occurredAt: day, currency: .rub, amount: received, note: note,
+      paymentMethodId: accountId, accountCurrency: leg?.currency, accountAmount: leg?.amount)
     draft.normalizeSinglePart()
     draft.parts[0].forPersonId = payer.personId
     let reimbursement = try draft.materialize(id: id, now: now)
@@ -123,21 +128,30 @@ struct ReimbursementRecording {
   // along.
 
   /// More money came back than I paid: the excess is income in the system Surcharges
-  /// category, never in the category of the original spending.
-  private static func surplusEntry(
+  /// category, never in the category of the original spending — in the currency the money
+  /// came in, at its rate, on the account it came onto.
+  static func surplusEntry(
     _ surplus: SurchargeIncome, of reimbursementId: UUID, on day: Date, now: Date,
-    setting: Setting
+    rateDate: DateOnly? = nil, setting: Setting
   ) throws -> TransactionEntry {
     guard let surcharges = setting.surchargesCategoryId else {
       throw Failure.noSurchargesCategory
     }
+    let foreign = surplus.currency != .rub && !surplus.amountE4.isZero
     var draft = TransactionDraft(
-      kind: .income, occurredAt: day, currency: .rub, amount: surplus.amountE4)
+      kind: .income, occurredAt: day, currency: surplus.currency, amount: surplus.amountE4,
+      rate: foreign
+        ? DecimalMath.round(surplus.amountRubE4.decimal / surplus.amountE4.decimal, scale: 6)
+        : nil,
+      rateDate: foreign ? rateDate : nil,
+      rateSource: foreign ? .manual : nil,
+      paymentMethodId: surplus.accountId)
     draft.normalizeSinglePart()
     draft.parts[0].categoryId = surcharges
     draft.parts[0].categorySource = .system
     draft.note = setting.surplusNote
-    var entry = try draft.materialize(now: now)
+    let rubles = surplus.amountRubE4
+    var entry = try draft.materialize(now: now, rublesConverter: { _ in rubles })
     entry.transaction.externalId = ReimbursementCompanions.surplusKey(of: reimbursementId)
     return entry
   }
@@ -161,7 +175,8 @@ struct ReimbursementRecording {
   ) throws -> TransactionEntry {
     let purchaseDescription = purchase?.note
     var draft = TransactionDraft(
-      kind: .expense, occurredAt: day, currency: .rub, amount: shortfall.amountE4)
+      kind: .expense, occurredAt: day, currency: .rub, amount: shortfall.amountE4,
+      paymentMethodId: shortfall.accountId)
     draft.normalizeSinglePart()
     draft.parts[0].categoryId = shortfall.categoryId
     draft.parts[0].categorySource = .system
@@ -179,6 +194,12 @@ struct ReimbursementRecording {
       of: reimbursementId, partId: shortfall.partId)
     return entry
   }
+}
+
+/// What an account received, in a currency it holds, when it does not hold the operation's.
+struct MoneyLeg: Hashable, Sendable {
+  var currency: CurrencyCode
+  var amount: AmountE4
 }
 
 /// The distribution the sheet shows next to every chosen part, in rubles.
@@ -240,12 +261,34 @@ struct ReimbursementPrefill: Identifiable, Equatable {
   var personId: UUID?
   var occurredAt: Date
   var note: String?
+  /// «На счёт»: the account the money came onto.
+  var accountId: UUID?
+  /// What the account received, when it does not hold rubles: in a currency it holds.
+  var leg: MoneyLeg?
 
-  init(draft: TransactionDraft, received: AmountE4) {
+  init(draft: TransactionDraft, received: AmountE4, accounts: [PaymentMethod] = []) {
     self.received = received
     personId = draft.parts.first?.forPersonId
     occurredAt = draft.occurredAt
     note = draft.note
+    accountId = draft.paymentMethodId
+    leg = Self.leg(of: draft, accounts: accounts)
+  }
+
+  /// The sheet records rubles, and the account is told what it received in a currency it
+  /// holds: the money itself when it holds the currency the money came in — rubles or not, an
+  /// account holding rubles and dollars takes dollars on its dollar balance —, otherwise what
+  /// the line's «Списано со счёта» said. Nil when that is the rubles themselves.
+  static func leg(of draft: TransactionDraft, accounts: [PaymentMethod]) -> MoneyLeg? {
+    guard let id = draft.paymentMethodId, let account = accounts.first(where: { $0.id == id })
+    else { return nil }
+    if account.holds(draft.currency) {
+      return draft.currency == .rub ? nil : MoneyLeg(currency: draft.currency, amount: draft.amount)
+    }
+    guard let currency = draft.accountCurrency, currency != .rub,
+      let amount = draft.accountAmount
+    else { return nil }
+    return MoneyLeg(currency: currency, amount: amount)
   }
 
   /// The parts ticked when the sheet opens: whatever the person owes that can be closed now,

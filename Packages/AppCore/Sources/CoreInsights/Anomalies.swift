@@ -110,7 +110,7 @@ public enum AnomalyRules {
     found += priceRises(in: mine)
     found += spikes(in: mine, ledger: ledger, today: today, options: options)
     found += badSpending(in: mine, ledger: ledger, today: today, options: options)
-    found += slowReimbursements(in: ledger.rows, today: today, options: options)
+    found += slowReimbursements(in: ledger, today: today, options: options)
     found += eventsOverBudget(events, today: today)
 
     let hidden = Set(dismissals.map(\.key))
@@ -132,6 +132,10 @@ public enum AnomalyRules {
 
   /// My own spending and nothing else: not a system category, not a goal, not a payment on
   /// a debt, not money laid out for somebody else, not a line the app wrote for its books.
+  ///
+  /// The rules read `contribution`, so they see a refund where the ledger counts it: in the
+  /// purchase it takes back from. A purchase refunded in full contributes nothing and is no
+  /// large payment and nobody's duplicate; a refund's week is no spike of its own.
   static func isMyOwnSpending(_ row: LedgerRow) -> Bool {
     row.kind == .expense && row.contribution.raw > 0 && row.systemRole == nil
       && !row.isGoalContribution && row.debtId == nil && !row.reimbursable
@@ -338,23 +342,24 @@ public enum AnomalyRules {
   /// and the next are about the very things the first five leave out, so they read the
   /// whole ledger.
   ///
-  /// The amount waiting is the whole part: a reimbursement closes every part it is linked to,
-  /// however little came back, and the rest becomes my expense (`ReimbursementResolver`), so
-  /// a part still expected has had nothing back.
+  /// The amount waiting is what is left of the part: money back may cover only some of it,
+  /// and the part keeps waiting for the rest (`Ledger.remaining(ofPart:)`).
   private static func slowReimbursements(
-    in rows: [LedgerRow], today: DateOnly, options: AnomalyOptions
+    in ledger: Ledger, today: DateOnly, options: AnomalyOptions
   ) -> [Anomaly] {
     var found: [Anomaly] = []
-    for row in rows
+    for row in ledger.rows
     where row.reimbursable && (row.reimbursementStatus ?? .expected) == .expected
       && !(row.link?.isBookkeeping ?? false)
     {
       let days = today.dayNumber - row.dayNumber
       guard days > options.slowReimbursementDays else { continue }
+      let remaining = ledger.remaining(ofPart: row)
+      guard remaining.raw > 0 else { continue }
       found.append(
         Anomaly(
           rule: .slowReimbursement, subject: key(row.partId), day: row.day,
-          amount: row.amountRubE4, transactionId: row.transactionId, partId: row.partId,
+          amount: remaining, transactionId: row.transactionId, partId: row.partId,
           categoryId: row.categoryId, personId: row.personId, days: days))
     }
     return found

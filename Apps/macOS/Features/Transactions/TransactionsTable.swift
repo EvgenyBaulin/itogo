@@ -4,11 +4,12 @@ import SwiftUI
 
 /// The table of the Transactions window: a section for each side of each day, newest day
 /// first, with what that side comes to in its header; a split is one row with a disclosure
-/// triangle and its parts under it.
+/// triangle and its parts under it. The transfers of a day between the owner's accounts come
+/// last, a section of their own with ⇄ rows that adds up to nothing.
 ///
-/// Selection is the table's own — click, ⌘-click, ⇧-click, ⌘A — and holds operations only:
-/// parts cannot be selected (`selectionDisabled`), since a part is changed and deleted with
-/// its operation. Esc clears the selection, ⌫ deletes it after asking. A double click and
+/// Selection is the table's own — click, ⌘-click, ⇧-click, ⌘A — and holds operations and
+/// transfers only: parts cannot be selected (`selectionDisabled`), since a part is changed and
+/// deleted with its operation. Esc clears the selection, ⌫ deletes it after asking. A double click and
 /// the context menu go through `contextMenu(forSelectionType:)`; on a part they act on its
 /// operation.
 ///
@@ -53,11 +54,12 @@ struct TransactionsTable<MenuItems: View>: View {
     }
   }
 
-  /// The table selects rows; the window keeps operations. A part never gets in: it cannot
-  /// be selected anyway, and the selection bar, the menu and ⌘A count operations.
+  /// The table selects rows; the window keeps operations and transfers. A part never gets
+  /// in: it cannot be selected anyway, and the selection bar, the menu and ⌘A count
+  /// operations and transfers.
   private var rowSelection: Binding<Set<RowID>> {
     Binding(
-      get: { Set(selection.map(RowID.transaction)) },
+      get: { Set(selection.map(listing.row(of:))) },
       set: { selection = TransactionListing.operations(in: $0) })
   }
 
@@ -72,12 +74,8 @@ struct TransactionsTable<MenuItems: View>: View {
             .selectionDisabled(item.isPart)
         }
       } header: {
-        DayHeader(
-          day: section.day,
-          sideKey: section.side == .income ? "transactions.income" : "transactions.expenses",
-          totals: section.totals
-        )
-        .appDependencies(deps)
+        DayHeader(day: section.day, sideKey: section.side.titleKey, totals: section.totals)
+          .appDependencies(deps)
       }
     }
   }
@@ -119,7 +117,8 @@ struct TransactionsTable<MenuItems: View>: View {
     .customizationID("time")
 
     TableColumn(title("description")) { item in
-      DescriptionCell(item: item).appDependencies(deps)
+      // A refund leads to its purchase: the click opens the purchase as a double click would.
+      DescriptionCell(item: item, openPurchase: { primaryAction([$0]) }).appDependencies(deps)
     }
     .width(min: 120, ideal: 160)
     .customizationID("description")
@@ -205,15 +204,48 @@ enum TransactionColumnWidths {
 private struct DescriptionCell: View {
   @Dependency(\.environment) private var environment
   let item: TransactionRowItem
+  /// Opens the purchase a refund takes money back from.
+  var openPurchase: ((UUID) -> Void)? = nil
 
   /// What kind of row this is, so a UI test can double-click a plain operation, a split and
   /// a part of one without reading their descriptions.
   private var identifier: String {
+    if item.isTransfer { return "transactions.row.transfer" }
     if item.isPart { return "transactions.row.part" }
     return item.partCount > 1 ? "transactions.row.split" : "transactions.row.single"
   }
 
   var body: some View {
+    if let transfer = item.transfer {
+      transferBody(transfer)
+    } else {
+      operationBody
+    }
+  }
+
+  /// «⇄ Перевод: Сбер → Kaspi», the note under it: money moved between the owner's own
+  /// accounts, the symbol and the words saying so, never a colour.
+  private func transferBody(_ transfer: TransferRowText) -> some View {
+    VStack(alignment: .leading, spacing: 1) {
+      Label {
+        Text(verbatim: transfer.title(language: environment.language))
+          .lineLimit(1)
+      } icon: {
+        Image(systemName: TransferSymbol.name)
+          .foregroundStyle(.secondary)
+      }
+      if let note = transfer.note, !note.isEmpty {
+        Text(verbatim: note)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityIdentifier(identifier)
+  }
+
+  private var operationBody: some View {
     VStack(alignment: .leading, spacing: 1) {
       HStack(spacing: 6) {
         title
@@ -254,6 +286,10 @@ private struct DescriptionCell: View {
           .font(.caption.monospaced())
           .foregroundStyle(.secondary)
       }
+      // «вернули 500 ₽» on a purchase, «к покупке «Кроссовки», 12 сентября» on its refund.
+      if let refund = item.refund {
+        RefundMarkLabel(mark: refund, open: openPurchase)
+      }
     }
     .accessibilityIdentifier(identifier)
   }
@@ -285,8 +321,8 @@ private struct CategoryCell: View {
     case .several:
       SeveralText()
     case .none:
-      // Money given back has no category; anything else without one says so.
-      if item.kind != .reimbursement {
+      // Money given back and a transfer have no category; anything else without one says so.
+      if item.kind != .reimbursement, !item.isTransfer {
         Text(verbatim: environment.language("category.uncategorized"))
           .foregroundStyle(.secondary)
       }
@@ -382,7 +418,16 @@ private struct AmountCell: View {
       Text(verbatim: environment.money.exact(item.amount, currency: item.currency))
         .monospacedDigit()
         .foregroundStyle(item.isPart ? .secondary : .primary)
-      if item.currency != .rub {
+      if let transfer = item.transfer {
+        // An exchange says what arrived; a transfer in one currency arrives as it was sent.
+        if transfer.isExchange {
+          let received = environment.money.exact(transfer.received, currency: transfer.toCurrency)
+          Text(verbatim: "→ \(received)")
+            .font(.caption)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+        }
+      } else if item.currency != .rub {
         Text(verbatim: "≈ \(environment.money.rounded(item.amountRub))")
           .font(.caption)
           .monospacedDigit()
@@ -400,4 +445,9 @@ private struct SeveralText: View {
     Text(verbatim: environment.language("transactions.several", table: "Transactions"))
       .foregroundStyle(.secondary)
   }
+}
+
+/// The symbol of a transfer between the owner's accounts, in every list.
+enum TransferSymbol {
+  static let name = "arrow.left.arrow.right"
 }

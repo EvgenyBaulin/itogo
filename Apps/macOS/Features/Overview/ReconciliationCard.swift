@@ -1,7 +1,8 @@
 import AppCore
 import SwiftUI
 
-/// The last reconciliation: its day, how long ago, the difference it found, and «Сверить…»,
+/// The last reconciliation: its day, how long ago, the differences it found as it found them —
+/// each in its balance's own currency, never counted again at today's rates — and «Сверить…»,
 /// which opens the reconciliation sheet of the main window.
 struct ReconciliationCard: View {
   @Dependency(\.environment) private var environment
@@ -24,14 +25,14 @@ struct ReconciliationCard: View {
           )
           .font(.caption)
           .foregroundStyle(.secondary)
-          if let difference = last.differenceE4 {
-            Text(
-              verbatim: environment.format(
-                "overview.reconciliationDifference", table: "Planning",
-                environment.money.signedRounded(difference))
-            )
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
+          if let found = Self.found(
+            by: last, balances: snapshot.dataset.planning.reconciledBalances,
+            accounts: snapshot.dataset.paymentMethods, environment)
+          {
+            Text(verbatim: found)
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
           }
         } else {
           Text(verbatim: environment.language("overview.reconciliationNone", table: "Overview"))
@@ -46,5 +47,31 @@ struct ReconciliationCard: View {
         .controlSize(.small)
       }
     }
+  }
+
+  /// What the card says the reconciliation found, as it found it: «разница −1,200 ₽» of a
+  /// reconciliation of one total; the differences of the balances of one of the accounts, each
+  /// in its currency and to the whole unit — or «без расхождений», «точка отсчёта»; nil when
+  /// there is nothing to say.
+  static func found(
+    by reconciliation: Reconciliation, balances: [ReconciledBalance],
+    accounts: [PaymentMethod], _ environment: AppEnvironment
+  ) -> String? {
+    func difference(_ text: String) -> String {
+      environment.format("overview.reconciliationDifference", table: "Planning", text)
+    }
+    guard reconciliation.kind != .total else {
+      return reconciliation.differenceE4.map { difference(environment.money.signedRounded($0)) }
+    }
+    let balances = balances.filter { $0.reconciliationId == reconciliation.id }
+    guard !balances.isEmpty else { return nil }
+    let names = Dictionary(
+      accounts.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+    // The Overview shows amounts to the ruble; the sheet's history keeps the kopecks.
+    let text = ReconcileSheet.differencesText(
+      balances, names: { names[$0] ?? "—" }, money: environment.money,
+      language: environment.language, rounded: true)
+    guard case .differences = ReconcileSheet.findings(balances) else { return text }
+    return difference(text)
   }
 }

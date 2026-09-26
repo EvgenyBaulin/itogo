@@ -264,10 +264,10 @@ struct AnomalyTests {
     #expect(found.days == 49)
   }
 
-  /// A part paid back only in part is not «still waiting» for the rest: a reimbursement
-  /// closes every part it is linked to, however little came, and what is missing becomes my
-  /// expense (`ReimbursementResolver`). So the rule never meets a part with money already
-  /// back on it, and there is no smaller «amount still waiting» for it to report.
+  /// A part the owner closed by hand with the money that came — «Вручную…», what is missing
+  /// written as my expense (`ReimbursementResolver`) — waits for nothing more, however little
+  /// came. A part money back covered only in part and left open still waits for the rest
+  /// (`AnomalyRefundFoldTests`).
   @Test("A partial return closes the part, and the wait is over")
   func aPartialReturnEndsTheWait() throws {
     var entries = book.entries

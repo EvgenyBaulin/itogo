@@ -92,6 +92,10 @@ extension Lexicon {
   ]
 
   static let englishPersonMarkers: Set<String> = ["for"]
+  /// Whom money back came from: "money back 1700 from Anya". Only money back reads it.
+  static let englishFromMarkers: Set<String> = ["from"]
+  /// «от» / "from": the person money back came from, in both languages.
+  static let fromMarkers: Set<String> = englishFromMarkers.union(russianFromMarkers)
   static let englishPlaceMarkers: Set<String> = ["at", "in"]
   static let englishGoalMarkers: Set<String> = ["goal", "goals"]
   static let englishDebtMarkers: Set<String> = ["loan", "loans", "credit", "debt", "mortgage"]

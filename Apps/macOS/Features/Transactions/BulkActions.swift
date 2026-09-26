@@ -6,16 +6,58 @@ import SwiftUI
 /// written from.
 enum BulkConfirmation {
   case edit(BulkEdit, ids: [UUID], plan: BulkEditPlan)
-  /// `ids` are the operations that will go; `totals` is what they come to.
-  case delete(ids: [UUID], plan: BulkEditPlan, totals: RowTotals)
+  /// `ids` are the operations and transfers that will go; `totals` is what the operations come
+  /// to; `transfers` counts the transfers among `ids` and what their fees come to.
+  case delete(
+    ids: [UUID], plan: BulkEditPlan, totals: RowTotals, transfers: TransferDeletion = .none)
 
   /// Deleting always asks first, one operation or many, from the menu or from the edit
-  /// sheet: the same question with the same numbers.
-  static func deletion(of entries: [TransactionEntry], debts: [UUID: Debt]) -> BulkConfirmation? {
-    let plan = BulkEditRule.deletion(of: entries)
-    guard !plan.changed.isEmpty || !plan.skipped.isEmpty else { return nil }
+  /// sheet: the same question with the same numbers. Transfers go with the operations, in the
+  /// same step of ⌘Z; they add up to nothing, and their fees are named apart.
+  ///
+  /// `refunds` are the refunds of the whole ledger (`Ledger.refundIndex`): a purchase a live
+  /// refund takes money back from stays, as the deletion itself leaves it, and what the rest
+  /// comes to counts a refund in its purchase — the numbers of the day it is deleted from.
+  static func deletion(
+    of entries: [TransactionEntry], transfers: [UUID] = [],
+    transferSummary: TransferDeletion = .none, refunds: RefundIndex = .empty,
+    debts: [UUID: Debt]
+  ) -> BulkConfirmation? {
+    let plan = BulkEditRule.deletion(of: entries, refunds: refunds)
+    guard !plan.changed.isEmpty || !plan.skipped.isEmpty || !transfers.isEmpty else {
+      return nil
+    }
     return .delete(
-      ids: plan.changedIds, plan: plan, totals: RowTotals(entries: plan.changed, debts: debts))
+      ids: plan.changedIds + transfers, plan: plan,
+      totals: RowTotals(entries: plan.changed, debts: debts, refunds: refunds),
+      transfers: transferSummary)
+  }
+}
+
+/// The bank's rates by day, for one unit, as the cache holds them now. A bulk change of the
+/// account works out from them what an account that does not hold an operation's currency is
+/// charged for it; read when the change is planned and again when it is made. No other change
+/// reads them: the whole cache is read from the database where the window draws.
+@MainActor
+enum BulkRates {
+  /// Whether `edit` works out a charge: only a change of the account does.
+  static func needed(for edit: BulkEdit) -> Bool {
+    if case .paymentMethod = edit { return true }
+    return false
+  }
+
+  /// The rates `edit` needs: the cache for a change of the account, nothing otherwise.
+  static func now(for edit: BulkEdit, _ environment: AppEnvironment) -> DayRates {
+    needed(for: edit) ? now(environment) : .empty
+  }
+
+  static func now(_ environment: AppEnvironment) -> DayRates {
+    guard let table = try? environment.rates?.table() else { return .empty }
+    var series: [CurrencyCode: [DayRate]] = [:]
+    for rate in table.rates {
+      series[rate.currency, default: []].append(DayRate(day: rate.date, perUnit: rate.perUnit))
+    }
+    return DayRates(series: series)
   }
 }
 
@@ -59,6 +101,8 @@ final class OperationActions {
 
   var selection: Set<UUID> = []
   var editing: TransactionEntry?
+  /// A transfer opened from a list of days: its own sheet, not the editor of an operation.
+  var editingTransfer: TransferEditing?
   var popover: BulkPopover?
   var confirmation: BulkConfirmation?
   var recordingReimbursement = false
@@ -100,9 +144,16 @@ final class OperationActions {
   /// opens the operation in its inspector instead.
   @ObservationIgnored var opensEditor: (@MainActor (TransactionEntry) -> Void)?
 
-  /// A double click, or «Edit» in the menu of one row.
+  /// A double click, or «Edit» in the menu of one row. A transfer opens its own sheet, with
+  /// the fee it has now.
   func edit(_ ids: Set<UUID>, store: TransactionsStore) {
-    guard ids.count == 1, let id = ids.first, let entry = store.entry(id: id) else { return }
+    guard ids.count == 1, let id = ids.first else { return }
+    guard let entry = store.entry(id: id) else {
+      guard let transfer = store.transfers(among: [id]).first else { return }
+      let fee = TransferActions.fee(of: transfer.id, in: store.listing?.dataset.entries ?? [])
+      editingTransfer = TransferEditing(transfer: transfer, fee: fee?.transaction.amountE4)
+      return
+    }
     if let opensEditor {
       opensEditor(entry)
     } else {
@@ -132,20 +183,31 @@ final class OperationActions {
   /// confirmation says that it reaches every part of a split, or what it leaves alone.
   /// Nothing is asked while a bulk write is still landing in the background: the store would
   /// refuse the change after the owner had confirmed it.
-  func request(_ edit: BulkEdit, on ids: Set<UUID>, store: TransactionsStore) {
+  ///
+  /// `environment` gives the rates and the calendar that work out what an account is charged
+  /// for an operation in a currency it does not hold, when the change moves it there.
+  func request(
+    _ edit: BulkEdit, on ids: Set<UUID>, store: TransactionsStore, environment: AppEnvironment
+  ) {
     guard !store.isWritingInBackground else { return }
-    let plan = store.plan(edit, ids: ids)
+    let rates = BulkRates.now(for: edit, environment)
+    let plan = store.plan(edit, ids: ids, rates: rates, calendar: environment.calendar)
     guard !plan.changed.isEmpty || !plan.skipped.isEmpty else { return }
     if plan.touchesSplit || !plan.skipped.isEmpty {
       confirmation = .edit(edit, ids: Array(ids), plan: plan)
     } else {
-      store.apply(edit, to: Array(ids))
+      store.apply(edit, to: Array(ids), rates: rates, calendar: environment.calendar)
     }
   }
 
+  /// Transfers among `ids` go with the operations; a purchase a live refund takes money back
+  /// from stays, unless the refund goes too.
   func requestDeletion(of ids: Set<UUID>, store: TransactionsStore) {
     guard !store.isWritingInBackground else { return }
-    confirmation = BulkConfirmation.deletion(of: store.entries(ids: ids), debts: store.debts)
+    confirmation = BulkConfirmation.deletion(
+      of: store.entries(ids: ids), transfers: store.transferIds(in: ids),
+      transferSummary: store.transferDeletion(in: ids),
+      refunds: store.listing?.refundIndex ?? .empty, debts: store.debts)
   }
 }
 
@@ -205,9 +267,14 @@ struct BulkMenuItems: View {
         Button(event.name) { request(.event(event.id)) }
       }
     }
+    // Every operation keeps an account: a bulk change moves operations to another one, never
+    // to none. The main account comes first, as in every menu of accounts.
     Menu(t("bulk.paymentMethod")) {
-      Button(t("bulk.none")) { request(.paymentMethod(nil)) }
-      ForEach(actions.dictionaries.paymentMethods, id: \.id) { method in
+      ForEach(
+        Self.accountChoices(
+          actions.dictionaries.paymentMethods, locale: environment.language.locale),
+        id: \.id
+      ) { method in
         Button(method.name) { request(.paymentMethod(method.id)) }
       }
     }
@@ -218,7 +285,18 @@ struct BulkMenuItems: View {
   }
 
   private func request(_ edit: BulkEdit) {
-    actions.request(edit, on: ids, store: store)
+    actions.request(edit, on: ids, store: store, environment: environment)
+  }
+
+  /// The accounts the account menu offers: each live one, the main one first.
+  static func accountChoices(_ accounts: [PaymentMethod], locale: Locale) -> [PaymentMethod] {
+    AccountRules.ordered(accounts, locale: locale)
+  }
+
+  /// What the account menu does: a move to one of `accountChoices`, never to none — every
+  /// operation keeps an account.
+  static func accountEdits(_ accounts: [PaymentMethod], locale: Locale) -> [BulkEdit] {
+    accountChoices(accounts, locale: locale).map { .paymentMethod($0.id) }
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Transactions") }
@@ -337,7 +415,7 @@ struct BulkCategoryPopover: View {
   private func apply() {
     guard let chosen = subcategoryId ?? categoryId else { return }
     actions.popover = nil
-    actions.request(.category(chosen), on: ids, store: store)
+    actions.request(.category(chosen), on: ids, store: store, environment: environment)
   }
 }
 
@@ -388,6 +466,19 @@ struct ReferencePickerPopover: View {
   }
 }
 
+/// A transfer a list opened for editing, with its fee as the list had it then.
+struct TransferEditing: Identifiable {
+  let transfer: Transfer
+  let fee: AmountE4?
+
+  var id: UUID { transfer.id }
+
+  /// The form of the transfer's sheet: the transfer as it was written, on its day.
+  func form(calendar: CalendarContext) -> TransferForm {
+    TransferForm(editing: transfer, fee: fee, calendar: calendar)
+  }
+}
+
 // MARK: - Presenting from the root of a screen
 
 extension View {
@@ -419,6 +510,12 @@ private struct OperationPresentations: ViewModifier {
       .sheet(item: $actions.editing) { entry in
         EditTransactionSheet(entry: entry)
           .handingOver(dependencies)
+      }
+      .sheet(item: $actions.editingTransfer) { editing in
+        TransferSheet(form: editing.form(calendar: environment.calendar)) { _ in
+          actions.editingTransfer = nil
+        }
+        .handingOver(dependencies)
       }
       .sheet(isPresented: $actions.recordingReimbursement) {
         ReimbursementSheet()
@@ -472,7 +569,7 @@ private struct OperationPresentations: ViewModifier {
         allowsNone: true
       ) { placeId in
         actions.popover = nil
-        actions.request(.place(placeId), on: ids, store: store)
+        actions.request(.place(placeId), on: ids, store: store, environment: environment)
       }
     case .person(let ids):
       ReferencePickerPopover(
@@ -482,7 +579,7 @@ private struct OperationPresentations: ViewModifier {
       ) { personId in
         actions.popover = nil
         guard let personId else { return }
-        actions.request(.forPerson(personId), on: ids, store: store)
+        actions.request(.forPerson(personId), on: ids, store: store, environment: environment)
       }
     }
   }
@@ -501,12 +598,16 @@ private struct BulkConfirmationDialog: ViewModifier {
       switch confirmation {
       case .edit(let edit, let ids, let plan):
         if !plan.changed.isEmpty {
-          Button(t("bulk.apply")) { store.apply(edit, to: ids) }
+          Button(t("bulk.apply")) {
+            store.apply(
+              edit, to: ids, rates: BulkRates.now(for: edit, environment),
+              calendar: environment.calendar)
+          }
           Button(environment.language("action.cancel"), role: .cancel) {}
         } else {
           Button(environment.language("action.ok"), role: .cancel) {}
         }
-      case .delete(let ids, _, _):
+      case .delete(let ids, _, _, _):
         if !ids.isEmpty {
           Button(environment.language("action.delete"), role: .destructive) {
             let landed = store.delete(ids: ids)
@@ -569,9 +670,15 @@ enum BulkConfirmationText {
     case .edit(_, _, let plan):
       guard !plan.changed.isEmpty else { return language("bulk.nothingToChange", table: table) }
       return language.format("bulk.confirmEdit", table: table, counts: plan.changed.count)
-    case .delete(let ids, _, _):
+    case .delete(let ids, let plan, _, let transfers):
       guard !ids.isEmpty else { return language("bulk.nothingToDelete", table: table) }
-      return language.format("bulk.confirmDelete", table: table, counts: ids.count)
+      // A transfer is not an operation: transfers alone are asked about as transfers.
+      if let title = TransferDeletionText.title(
+        operations: plan.changed.count, transfers, language: language)
+      {
+        return title
+      }
+      return language.format("bulk.confirmDelete", table: table, counts: plan.changed.count)
     }
   }
 
@@ -584,8 +691,11 @@ enum BulkConfirmationText {
         lines.append(language.format("bulk.splitWarning", table: table, counts: plan.splitCount))
       }
       lines += skipLines(plan, language: language)
-    case .delete(let ids, let plan, let totals):
+    case .delete(let ids, let plan, let totals, let transfers):
       if !totals.isEmpty { lines.append(RowTotalsText.line(totals, environment: environment)) }
+      // The transfers besides the operations, and the fees that go with them.
+      lines += TransferDeletionText.lines(
+        operations: plan.changed.count, transfers, environment: environment)
       // Money given back for a purchase takes its surplus or shortfall along and reopens the
       // parts it closed. Money given back on a debt owed to me is a reimbursement too, but it
       // closes nothing: the line about debts is the one that applies to it.

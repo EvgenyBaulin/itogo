@@ -76,8 +76,19 @@ enum TextNormalizer {
     ".", ",", ";", ":", "!", "?", "\"", "'", "\u{00AB}", "\u{00BB}", "(", ")", "[", "]",
     "\u{2026}", "\u{2014}", "-",
   ]
-  private static let amountTrailing: Set<Character> = [".", ",", ";", ":", "!", "?"]
-  private static let amountLeading: Set<Character> = ["\"", "'", "\u{00AB}"]
+  /// Every quote that may stand on either side of a number, whichever way round a language
+  /// writes it: «250», »250«, "250", “250” (the quotes a Mac puts in by itself), „250“, ‚250‘,
+  /// ‹250›. None of them is ever part of a number.
+  private static let quotes: Set<Character> = [
+    "\"", "'", "\u{00AB}", "\u{00BB}", "\u{201C}", "\u{201D}", "\u{201E}", "\u{2018}",
+    "\u{2019}", "\u{201A}", "\u{2039}", "\u{203A}",
+  ]
+  /// What may close a number without being part of it: the punctuation of a sentence, and
+  /// every quote.
+  private static let amountTrailing: Set<Character> = quotes.union([
+    ".", ",", ";", ":", "!", "?", "\u{2026}",
+  ])
+  private static let amountLeading: Set<Character> = quotes
   /// Endings a Russian word may change when it is declined. Only the last one is dropped.
   private static let softEndings: Set<Character> = [
     "а", "е", "и", "о", "у", "ы", "э", "ю", "я", "ь", "й",

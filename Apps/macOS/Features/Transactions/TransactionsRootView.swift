@@ -372,7 +372,7 @@ struct TransactionsRootView: View {
     let (filter, months) = (filters.entryFilter(today: environment.today), pages.monthsShown)
     guard
       let result = try? await compute.compute({
-        let found = TransactionListing.build(filter.apply(to: ledger), ledger: ledger)
+        let found = TransactionListing.build(matching: filter, in: ledger)
         return (found: found, page: found.latestMonths(months))
       }),
       // A newer filter or newer data replaced this one while it ran: its result is stale.
@@ -390,7 +390,7 @@ struct TransactionsRootView: View {
   /// in step with it.
   private func followData() {
     guard let snapshot = compute.snapshot else { return }
-    choices = FilterChoices(snapshot.dataset)
+    choices = FilterChoices(snapshot.dataset, locale: environment.language.locale)
     // A value archived since it was chosen is no longer offered: it stops filtering.
     var kept = filters
     kept.keep(within: choices)
@@ -442,10 +442,20 @@ struct TransactionsRootView: View {
 
   /// «Save» in the question asked when the inspector was folded away. The edit being saved is
   /// the one the question is holding, not whatever is in the inspector now — there is nothing
-  /// in the inspector now.
+  /// in the inspector now. When it cannot be saved — a reason, or «Это было до сверки?» to
+  /// answer first — the inspector comes back with the edit, and says it or asks it there.
   private func saveAndClose(_ parked: TransactionEditorModel) {
-    guard parked.save(store: store, environment: environment) else { return }
+    guard parked.save(store: store, environment: environment, balances: balances) else {
+      editor = parked
+      return
+    }
     dialog = .none
+  }
+
+  /// The accounts' balances as the data on screen has them: a save that lands an operation
+  /// on the day of a count, after it, asks first.
+  private var balances: AccountBalances {
+    compute.snapshot?.planning.accounts.balances ?? .empty
   }
 
   /// The window closing the inspector itself: «Cancel», a save, an operation that is gone.
@@ -473,7 +483,8 @@ struct TransactionsRootView: View {
   /// «Save» in the question: the changes are saved first; if they cannot be, the inspector
   /// keeps them and says why, and the other operation waits.
   private func saveAndSwitch(to next: TransactionEntry) {
-    guard let editor, editor.save(store: store, environment: environment) else { return }
+    guard let editor, editor.save(store: store, environment: environment, balances: balances)
+    else { return }
     dialog = .none
     open(next)
   }

@@ -132,6 +132,9 @@ extension Lexicon {
   ]
 
   static let russianPersonMarkers: Set<String> = ["для"]
+  /// Whom money back came from: «возврат денег 1700 от Ани». Only money back reads it; in any
+  /// other line «от» stays in the note («торт от Ани» is a cake, not a person's money).
+  static let russianFromMarkers: Set<String> = ["от"]
   static let russianPlaceMarkers: Set<String> = ["в", "во"]
   static let russianGoalMarkers: Set<String> = ["цель", "цели", "целей", "накопление"]
   static let russianDebtMarkers: Set<String> = [

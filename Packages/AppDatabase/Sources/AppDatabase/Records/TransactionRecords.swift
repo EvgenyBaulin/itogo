@@ -9,28 +9,28 @@ extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive Persis
     self.init(
       id: try RowMapping.uuid(row, "id"),
       kind: TransactionKind(rawValue: row["kind"] ?? "expense") ?? .expense,
-      occurredAt: row["occurred_at"] ?? Date(timeIntervalSince1970: 0),
+      occurredAt: try RowMapping.instant(row, "occurred_at"),
       currency: CurrencyCode(row["currency"] ?? "RUB"),
-      amountE4: RowMapping.amount(row, "amount_e4"),
+      amountE4: try RowMapping.amount(row, "amount_e4"),
       amountExpr: row["amount_expr"],
       rate: RowMapping.decimal(row, "rate"),
       rateDate: RowMapping.day(row, "rate_date"),
       rateSource: (row["rate_source"] as String?).flatMap(RateSource.init(rawValue:)),
-      rateProvisional: row["rate_provisional"] ?? false,
-      amountRubE4: RowMapping.amount(row, "amount_rub_e4"),
+      rateProvisional: try RowMapping.flag(row, "rate_provisional", fallback: false),
+      amountRubE4: try RowMapping.amount(row, "amount_rub_e4"),
       note: row["note"],
       placeId: RowMapping.optionalUUID(row, "place_id"),
       paymentMethodId: RowMapping.optionalUUID(row, "payment_method_id"),
       accountCurrency: RowMapping.currency(row, "account_currency"),
-      accountAmountE4: RowMapping.optionalAmount(row, "account_amount_e4"),
+      accountAmountE4: try RowMapping.optionalAmount(row, "account_amount_e4"),
       periodMonth: RowMapping.month(row, "period_month"),
       debtId: RowMapping.optionalUUID(row, "debt_id"),
       creditDebtId: RowMapping.optionalUUID(row, "credit_debt_id"),
       importBatchId: RowMapping.optionalUUID(row, "import_batch_id"),
       externalId: row["external_id"],
-      createdAt: row["created_at"] ?? Date(timeIntervalSince1970: 0),
-      updatedAt: row["updated_at"] ?? Date(timeIntervalSince1970: 0),
-      deletedAt: row["deleted_at"])
+      createdAt: try RowMapping.instant(row, "created_at"),
+      updatedAt: try RowMapping.instant(row, "updated_at"),
+      deletedAt: try RowMapping.optionalInstant(row, "deleted_at"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -72,11 +72,11 @@ extension TransactionPart: @retroactive FetchableRecord, @retroactive Persistabl
       categorySource: CategorySource(rawValue: row["category_source"] ?? "manual") ?? .manual,
       quality: (row["quality"] as String?).flatMap(Quality.init(rawValue:)),
       qualitySource: (row["quality_source"] as String?).flatMap(QualitySource.init(rawValue:)),
-      amountE4: RowMapping.amount(row, "amount_e4"),
-      amountRubE4: RowMapping.amount(row, "amount_rub_e4"),
+      amountE4: try RowMapping.amount(row, "amount_e4"),
+      amountRubE4: try RowMapping.amount(row, "amount_rub_e4"),
       forWhom: ForWhom(rawValue: row["for_whom"] ?? "me") ?? .me,
       forPersonId: RowMapping.optionalUUID(row, "for_person_id"),
-      reimbursable: row["reimbursable"] ?? false,
+      reimbursable: try RowMapping.flag(row, "reimbursable", fallback: false),
       debtorPersonId: RowMapping.optionalUUID(row, "debtor_person_id"),
       reimbursementStatus: (row["reimbursement_status"] as String?)
         .flatMap(ReimbursementStatus.init(rawValue:)),
@@ -115,7 +115,7 @@ extension ReimbursementLink: @retroactive FetchableRecord, @retroactive Persista
       id: try RowMapping.uuid(row, "id"),
       reimbursementTxId: try RowMapping.uuid(row, "reimbursement_tx_id"),
       partId: try RowMapping.uuid(row, "part_id"),
-      amountE4: RowMapping.amount(row, "amount_e4"))
+      amountE4: try RowMapping.amount(row, "amount_e4"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -138,13 +138,13 @@ extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
       personId: RowMapping.optionalUUID(row, "person_id"),
       currency: CurrencyCode(row["currency"] ?? "RUB"),
       interestRate: RowMapping.decimal(row, "interest_rate"),
-      monthlyPaymentE4: RowMapping.optionalAmount(row, "monthly_payment_e4"),
-      paymentDay: row["payment_day"],
-      remindDaysBefore: row["remind_days_before"],
-      paymentsAreExpenses: row["payments_are_expenses"] ?? true,
+      monthlyPaymentE4: try RowMapping.optionalAmount(row, "monthly_payment_e4"),
+      paymentDay: try RowMapping.optionalInteger(row, "payment_day"),
+      remindDaysBefore: try RowMapping.optionalInteger(row, "remind_days_before"),
+      paymentsAreExpenses: try RowMapping.flag(row, "payments_are_expenses", fallback: true),
       origin: DebtOrigin(rawValue: row["origin"] ?? "existing") ?? .existing,
       note: row["note"],
-      closed: row["closed"] ?? false,
+      closed: try RowMapping.flag(row, "closed", fallback: false),
       loansSubcategoryId: RowMapping.optionalUUID(row, "loans_subcategory_id"))
   }
 
@@ -177,16 +177,16 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
       groupName: row["group_name"],
       date: RowMapping.day(row, "date"),
       description: row["description"],
-      fullAmountE4: RowMapping.optionalAmount(row, "full_amount_e4"),
+      fullAmountE4: try RowMapping.optionalAmount(row, "full_amount_e4"),
       share: RowMapping.decimal(row, "share"),
-      amountE4: RowMapping.amount(row, "amount_e4"),
+      amountE4: try RowMapping.amount(row, "amount_e4"),
       kind: DebtEntryKind(rawValue: row["kind"] ?? "adjustment") ?? .adjustment,
       transactionId: RowMapping.optionalUUID(row, "transaction_id"),
       note: row["note"],
       paymentMethodId: RowMapping.optionalUUID(row, "payment_method_id"),
-      occurredAt: row["occurred_at"],
+      occurredAt: try RowMapping.optionalInstant(row, "occurred_at"),
       accountCurrency: RowMapping.currency(row, "account_currency"),
-      accountAmountE4: RowMapping.optionalAmount(row, "account_amount_e4"))
+      accountAmountE4: try RowMapping.optionalAmount(row, "account_amount_e4"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {

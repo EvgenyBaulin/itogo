@@ -209,6 +209,71 @@ struct PlannedTests {
     }
   }
 
+  /// Goals in another currency: the planned month and the forecast work the plan out in the
+  /// goal's currency — contributions in rubles at the rate of their day, 95 ₽ a dollar and
+  /// 0.19 ₽ a tenge in September — and add it in rubles at today's rate, 95 ₽ and 0.2 ₽.
+  /// Dollars: 100 $ a month, 4 000 ₽ = 42.1053 $ in, 57.8947 $ = 5 499.9965 ₽ left. Tenge:
+  /// 60 000 ₸ wanted, 30 000 ₸ in August and 5 000 ₽ = 26 315.7895 ₸ now, so only 3 684.2105 ₸
+  /// are still needed = 736.8421 ₽. Whatever the day and whatever rate is missing, the two
+  /// figures stay one.
+  @Test func theForecastAndThePlannedMonthAgreeOnGoalsInOtherCurrencies() throws {
+    let tenge = CurrencyCode("KZT")
+    let goals = [
+      Goal(
+        id: Fx.id(33), name: "Trip", targetE4: Fx.money("1000"),
+        monthlyPlanE4: Fx.money("100"), subcategoryId: vacation, currency: .usd),
+      Goal(
+        id: Fx.id(34), name: "Almaty", targetE4: Fx.money("60000"),
+        monthlyPlanE4: Fx.money("50000"), currency: tenge),
+    ]
+    let entries = [
+      Fx.operation(
+        11, "2026-08-10", "50", currency: .usd, rubles: "4500", category: vacation,
+        goal: Fx.id(33)),
+      Fx.operation(12, "2026-09-07", "4000", category: vacation, goal: Fx.id(33)),
+      Fx.operation(
+        13, "2026-08-11", "30000", currency: tenge, rubles: "5400", category: goalsRoot,
+        goal: Fx.id(34)),
+      Fx.operation(14, "2026-09-08", "5000", category: goalsRoot, goal: Fx.id(34)),
+    ]
+    let ledger = Fx.ledger(entries, categories: categories, goals: goals)
+    let rates = DayRates(series: [
+      .usd: [
+        DayRate(day: Fx.day("2026-08-01"), perUnit: 90),
+        DayRate(day: Fx.day("2026-09-01"), perUnit: 95),
+      ],
+      tenge: [
+        DayRate(day: Fx.day("2026-08-01"), perUnit: Decimal(string: "0.18")!),
+        DayRate(day: Fx.day("2026-09-01"), perUnit: Decimal(string: "0.19")!),
+      ],
+    ])
+    let ratesNow: [CurrencyCode: Decimal] = [.usd: 95, tenge: Decimal(string: "0.2")!]
+
+    let month = PlannedMonth.build(
+      ledger: ledger, book: .empty, today: today, rubPerUnit: ratesNow, dayRates: rates)
+    let dollars = try #require(month.items.first { $0.id == Fx.id(33) })
+    #expect(dollars.currency == .usd)
+    #expect(dollars.amount == Fx.money("57.8947"))
+    #expect(dollars.myShareRub == Fx.money("5499.9965"))
+    let almaty = try #require(month.items.first { $0.id == Fx.id(34) })
+    #expect(almaty.currency == tenge)
+    #expect(almaty.amount == Fx.money("3684.2105"))
+    #expect(almaty.myShareRub == Fx.money("736.8421"))
+    #expect(month.goals == Fx.money("6236.8386"))
+
+    let partial: [CurrencyCode: Decimal] = [.usd: 95]
+    for rubPerUnit in [ratesNow, partial, [:]] {
+      for day in ["2026-09-19", "2026-09-30", "2026-10-02"].map(Fx.day) {
+        let month = PlannedMonth.build(
+          ledger: ledger, book: .empty, today: day, rubPerUnit: rubPerUnit, dayRates: rates)
+        let forecast = PlannedPayments(
+          ledger: ledger, today: day, rubPerUnit: rubPerUnit, dayRates: rates)
+        #expect(forecast.goals == month.goals, "\(day.iso), \(rubPerUnit.count) rates")
+        #expect(forecast.goalsWithoutRate == month.withoutRate, "\(day.iso)")
+      }
+    }
+  }
+
   /// A debt paid «on the 31st» falls due on 30 September, so on the 30th its payment is due
   /// today: owed by today (`debtsDueByToday`), out of the forecast — as the forecast's own
   /// figure has it — and not «later this month».

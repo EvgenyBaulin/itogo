@@ -81,6 +81,16 @@ struct ReimbursementSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
+                if part.returnedRubE4.raw > 0 {
+                  // Some of it came back already: what is owed is the rest.
+                  Text(
+                    verbatim: environment.language.format(
+                      "reimbursement.returnedSoFar", table: "Entry",
+                      environment.money.exact(part.returnedRubE4))
+                  )
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                }
               }
             }
             .toggleStyle(.checkbox)
@@ -89,8 +99,13 @@ struct ReimbursementSheet: View {
               AmountField(amount: allocationBinding(for: part))
                 .frame(width: 110)
             }
-            // Giving up on the money: the part stops waiting and becomes my spending.
-            Button(environment.language("owed.writeOff", table: "Entry")) {
+            // Giving up on the money: the part stops waiting and becomes my spending — all of
+            // it, or only the rest when some of it came back already.
+            Button(
+              environment.language(
+                part.returnedRubE4.raw > 0 ? "reimbursement.writeOffRest" : "owed.writeOff",
+                table: "Entry")
+            ) {
               writeOff(part)
             }
             .buttonStyle(.borderless)
@@ -164,8 +179,9 @@ struct ReimbursementSheet: View {
 
   private var selectedParts: [OwedPart] { owed.filter { selected.contains($0.partId) } }
 
-  /// What the chosen parts cost in rubles — the money the person is expected to return.
-  private var selectedTotal: AmountE4 { AmountE4.sum(selectedParts.map(\.amountRubE4)) }
+  /// What is still owed on the chosen parts in rubles — the money the person is expected to
+  /// return: a part some money came back for already owes only the rest.
+  private var selectedTotal: AmountE4 { AmountE4.sum(selectedParts.map(\.remainingRubE4)) }
 
   /// The part in the money it was paid in; a foreign one also shows what that was in rubles.
   private func amountText(for part: OwedPart) -> String {
@@ -208,9 +224,15 @@ struct ReimbursementSheet: View {
   }
 
   private func writeOff(_ part: OwedPart) {
-    let outcome = Self.writeOff(
-      part.partId, repository: environment.transactions, store: store,
-      scheduleBackup: environment.scheduleBackup)
+    let outcome =
+      part.returnedRubE4.raw > 0
+      ? Self.writeOffRest(
+        of: part, repository: environment.transactions, store: store,
+        setting: try? environment.transactions.map(recordingSetting),
+        scheduleBackup: environment.scheduleBackup)
+      : Self.writeOff(
+        part.partId, repository: environment.transactions, store: store,
+        scheduleBackup: environment.scheduleBackup)
     switch outcome {
     case .writtenOff: errorText = nil
     case .gone: errorText = t("reimbursement.partGone")
@@ -267,6 +289,33 @@ struct ReimbursementSheet: View {
     return .writtenOff
   }
 
+  /// «Списать остаток»: what is left of a part some money already came back for becomes my
+  /// spending — an expense of the rest in rubles in the part's category, from the account the
+  /// purchase was paid from — and the part is settled, in one write. Like writing a whole part
+  /// off, it cannot be undone step by step, so a write that landed clears ⌘Z.
+  static func writeOffRest(
+    of part: OwedPart, repository: TransactionRepository?, store: TransactionsStore,
+    setting: ReimbursementRecording.Setting?, now: Date = Date(), scheduleBackup: () -> Void
+  ) -> WriteOffOutcome {
+    do {
+      guard let repository else { throw WriteOffUnavailable() }
+      let companion = MoneyBack.remainderWriteOff(
+        part: part, occurredAt: now, operationId: UUID(),
+        tree: setting?.categories ?? CategoryTree(), history: setting?.history ?? .empty, now: now)
+      try repository.writeOffRemainder(partId: part.partId, companion: companion, at: now)
+    } catch ReimbursementError.partNoLongerOwed {
+      return .gone
+    } catch {
+      AppLog.error(
+        "reimb.writeOffRest", .db, "the rest of a part was not written off",
+        [LogPair("error", .error(error))])
+      return .failed
+    }
+    store.forgetUndoHistory()
+    scheduleBackup()
+    return .writtenOff
+  }
+
   /// The database is not open: there is nothing to write the part off in.
   private struct WriteOffUnavailable: Error {}
 
@@ -292,6 +341,7 @@ struct ReimbursementSheet: View {
       let recording = try ReimbursementRecording.make(
         id: UUID(), received: amount, closing: parts, distribution: distribution,
         personId: personId, occurredAt: prefill?.occurredAt, note: prefill?.note,
+        accountId: prefill?.accountId, leg: prefill?.leg,
         setting: try recordingSetting(repository))
       try repository.apply(
         recording.outcome, reimbursement: recording.reimbursement, extra: recording.extra)

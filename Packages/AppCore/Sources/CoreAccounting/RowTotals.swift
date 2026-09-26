@@ -10,7 +10,9 @@ import Foundation
 ///
 /// * `myExpenses` — `MyExpensesRule.contribution` of every part: a refund goes in with a
 ///   minus, a part paid for somebody else stays out until it is written off, a payment on
-///   something bought in instalments stays out altogether;
+///   something bought in instalments stays out altogether. A refund taken back from a purchase
+///   counts in the purchase instead (`RefundIndex`): the purchase comes in cheaper, and the
+///   refund itself adds nothing — so a day, a selection and the Overview agree;
 /// * `income` — operations of kind `income`, a surplus in Surcharges among them;
 /// * `forOthers` — parts of purchases paid for somebody else that were not written off:
 ///   money I laid out that is not my spending;
@@ -45,7 +47,12 @@ public struct RowTotals: Hashable, Sendable {
 
   /// `debts` decides whether a payment on a debt is spending (`MyExpensesRule`); closed
   /// debts belong in it too, or closing a loan would change the days it was paid on.
-  public init(entries: some Sequence<TransactionEntry>, debts: [UUID: Debt] = [:]) {
+  /// `refunds` are the refunds of the whole ledger, not only of `entries`: a purchase shows
+  /// what its refunds took back whether or not they are among the operations summed.
+  public init(
+    entries: some Sequence<TransactionEntry>, debts: [UUID: Debt] = [:],
+    refunds: RefundIndex = .empty
+  ) {
     self.init()
     for entry in entries {
       let transaction = entry.transaction
@@ -59,8 +66,11 @@ public struct RowTotals: Hashable, Sendable {
         let debt = transaction.debtId.flatMap { debts[$0] }
         let creditDebt = transaction.creditDebtId.flatMap { debts[$0] }
         for part in entry.parts {
-          myExpenses += MyExpensesRule.contribution(
-            part: part, in: transaction, debt: debt, creditDebt: creditDebt)
+          if refunds.isLinked(refundPart: part.id) { continue }
+          myExpenses +=
+            MyExpensesRule.contribution(
+              part: part, in: transaction, debt: debt, creditDebt: creditDebt)
+            + refunds.movedContribution(part: part.id)
           if transaction.kind == .expense, part.reimbursable,
             part.reimbursementStatus != .writtenOff
           {

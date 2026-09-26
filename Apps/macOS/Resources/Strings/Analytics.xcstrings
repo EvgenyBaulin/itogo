@@ -910,13 +910,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "My spending by payment method"
+            "value": "My spending by account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Мои траты по способам оплаты"
+            "value": "Мои траты по счетам"
           }
         }
       }
@@ -1420,13 +1420,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment method"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способ"
+            "value": "Счёт"
           }
         }
       }
@@ -2072,7 +2072,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способ не указан"
+            "value": "Счёт не указан"
           }
         }
       }
@@ -3039,13 +3039,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment methods"
+            "value": "Accounts"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способы оплаты"
+            "value": "Счета"
           }
         }
       }

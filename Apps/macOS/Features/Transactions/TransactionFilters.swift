@@ -38,6 +38,7 @@ struct TransactionFilters: Hashable, Sendable {
   var personId: UUID?
   var placeId: UUID?
   var eventId: UUID?
+  /// The account: its operations, and the transfers from it or to it.
   var paymentMethodId: UUID?
   var status: ReimbursementStatus?
   var search = ""
@@ -159,13 +160,15 @@ struct FilterChoices: Sendable {
 
   init() {}
 
-  init(_ dataset: Dataset) {
+  /// `locale` orders the accounts by name the way the interface language does.
+  init(_ dataset: Dataset, locale: Locale = Locale(identifier: "en")) {
     categories = dataset.categories.filter { !$0.archived }
     people = dataset.people.filter { !$0.archived }.sorted { $0.name < $1.name }
     places = dataset.places.filter { !$0.archived }.sorted { $0.name < $1.name }
     // The latest first: the event one looks for is usually the last one.
     events = dataset.events.filter { !$0.archived }.sorted { $0.startDate > $1.startDate }
-    paymentMethods = dataset.paymentMethods.filter { !$0.archived }
+    // The order of every list of accounts: the main one first, then the owner's order.
+    paymentMethods = AccountRules.ordered(dataset.paymentMethods, locale: locale)
   }
 
   func topLevel(for kind: TransactionKind?) -> [CoreKit.Category] {

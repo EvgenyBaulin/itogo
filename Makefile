@@ -71,9 +71,9 @@ PYENV        := $(BUILD_ROOT)/pyenv
 PYENV_PYTHON := $(PYENV)/bin/python
 PYENV_MARKER := $(PYENV)/pandas.ok
 
-.PHONY: all generate build-dir build run test test-core test-db test-ui fmt lint verify test-one eval-model \
+.PHONY: all generate build-dir build run test test-core test-db test-ui fmt lint verify test-one eval-model migration-dry-run \
 	    check-core-purity check-toolchain check-warnings check-scripts check-chart-double check-privacy check-environment check-geometry check-stale check-attribution check-native check-glass check-ci check-log-names check-strings ci-checks hooks clean install \
-	    archive-appstore build-appstore check-appstore-clean release-local sample sample-large \
+	    archive-appstore build-appstore check-appstore-clean release-local sample sample-large demo \
 	    bench bench-app pyenv
 
 all: run
@@ -284,6 +284,26 @@ eval-model: build-dir check-toolchain
 	    --scratch-path $(EVAL_SCRATCH) --product itogo-eval-model > /dev/null
 	@"$$($(SWIFT) build -c release --package-path Packages/AppCore \
 	    --scratch-path $(EVAL_SCRATCH) --show-bin-path)/itogo-eval-model" "$(or $(CSV),$(EVAL_CSV))"
+
+# The update of the schema, tried on a copy of a database file before it reaches the owner's:
+# `make migration-dry-run DB=<finance.sqlite>` (`SCHEMA=Schema` unless given). The tool copies
+# the file with its -wal and -shm into a temporary folder of its own, migrates the copy with the
+# schema of this tree and prints table names, row counts before and after, the counts of the
+# data step, «equal» or «differ» for the sums of money and the totals of every month, and what
+# the update has to give — no operation without an account, one live main account, the new
+# tables empty — never an amount, a name or a note. It deletes the copy, on Ctrl-C too, and a
+# copy a killed run left is deleted by the next. It never opens the original. Quit the app that
+# uses the file first: a copy taken while it writes may not be whole. Exits non-zero on
+# anything that differs.
+MIGRATION_SCRATCH := $(BUILD_DIR)/spm-appdatabase-release
+
+migration-dry-run: build-dir check-toolchain
+	@test -n "$(DB)" || (echo "migration-dry-run: DB=<path of a finance.sqlite> is required" && exit 1)
+	@$(SWIFT) build -c release --package-path Packages/AppDatabase \
+	    --scratch-path $(MIGRATION_SCRATCH) --product itogo-migration-dry-run > /dev/null
+	@"$$($(SWIFT) build -c release --package-path Packages/AppDatabase \
+	    --scratch-path $(MIGRATION_SCRATCH) --show-bin-path)/itogo-migration-dry-run" \
+	    "$(DB)" "$(or $(SCHEMA),Schema)"
 
 # UI tests stay on the author's Mac and out of CI. Without the «Itogo Local Signing» certificate
 # (scripts/make-signing-identity.sh), Accessibility for the test runner and automation mode
@@ -599,6 +619,30 @@ sample: build
 sample-large: build
 	@pkill -f "$(APP)/Contents/MacOS/Itogo" || true
 	open "$(APP)" --args --data-set sample-large --generate large $(ARGS)
+
+# A demo database from a random seed every run; `make demo SEED=<n>` makes the same one again
+# on the same day and in the same interface language: the history ends today, and its names are
+# in the language of the interface. Only a SEED given on the command line counts, so one left
+# exported in the shell does not pin every run; it is a whole number of at most 18 digits, and
+# anything else stops here instead of opening the demo of another seed. Twelve months: accounts
+# in several currencies and a group outside the summary, transfers with fees in rubles and in
+# dollars, currency exchanges, counts, an old card merged into the main one and kept in the
+# archive, refunds tied to purchases, money partly given back, a payment due once, a goal in
+# dollars, event budgets — in the `demo` set, «DEBUG · DEMO» in the title. The seed is printed
+# with the command that makes the same demo again, and the journal of the set says it too.
+DEMO_SEED := $(if $(filter command line,$(origin SEED)),$(SEED))
+
+demo: build
+	@pkill -f "$(APP)/Contents/MacOS/Itogo" || true
+	@seed="$(DEMO_SEED)"; \
+	if [ -z "$$seed" ]; then seed="$$(od -An -N6 -tu8 /dev/urandom | tr -d ' ')"; fi; \
+	case "$$seed" in *[!0-9]*) seed=invalid;; esac; \
+	if [ "$$seed" = invalid ] || [ $${#seed} -gt 18 ]; then \
+	  echo "demo: SEED must be a whole number of at most 18 digits, not '$(DEMO_SEED)'"; \
+	  exit 1; \
+	fi; \
+	echo "demo seed: $$seed   (make demo SEED=$$seed reproduces it today, in the same language)"; \
+	open "$(APP)" --args --data-set demo --generate 12 --seed "$$seed" $(ARGS)
 
 # The Analytics window of the Release build on about 20 000 operations.
 # The Debug build generates the `bench` set and quits; the Release build — ad-hoc signed like

@@ -290,6 +290,23 @@
         }
       }
     },
+    "overview.owedPartlyReturned": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "partly returned already: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "уже вернули часть: %@"
+          }
+        }
+      }
+    },
     "overview.qualities": {
       "extractionState": "manual",
       "localizations": {

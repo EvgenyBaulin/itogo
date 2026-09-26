@@ -68,6 +68,10 @@ struct OverviewView: View {
 /// under them — at the end of two months of days nobody would see it, and the bottom of the
 /// window belongs to the entry bar. The line of what comes later is gone: there is nothing
 /// left to announce.
+///
+/// The way back to the setup of the accounts stands above the grid, the full width of it,
+/// and only while the setup is put off: it is no cell of the grid, so once the setup is done
+/// no empty row is left behind.
 private struct OverviewHeader: View {
   @Dependency(\.environment) private var environment
   let actions: OperationActions
@@ -75,6 +79,9 @@ private struct OverviewHeader: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
+      if AccountsSetupCard.shows(setup: environment.accountSetup) {
+        AccountsSetupCard()
+      }
       grid
       RecomputeStatusLine()
     }

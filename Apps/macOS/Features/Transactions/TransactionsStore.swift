@@ -81,21 +81,33 @@ public final class TransactionsStore {
     /// came in, but it is not income: the row says so and `totals` never adds it to income.
     public let income: [TransactionEntry]
     /// What the day comes to — the same function the selection and the delete confirmation
-    /// use, so selecting the whole day shows exactly the numbers of its header.
+    /// use, so selecting the whole day shows exactly the numbers of its header. Transfers are
+    /// in none of it: money moved between the owner's own accounts is neither earned nor spent.
+    /// A refund taken back from a purchase counts on the purchase's day, as the purchase
+    /// made cheaper, and adds nothing on its own day.
     public let totals: RowTotals
+    /// Money moved that day between the owner's own accounts, newest first: rows of their own,
+    /// after the income and the spending.
+    public let transfers: [Transfer]
 
+    /// `refunds` are the refunds of the whole ledger: a purchase listed here shows what a
+    /// refund made on a later day took back, and a refund listed here whose purchase is on
+    /// another day adds nothing — the same numbers as Overview and the selection.
     public init(
       day: DateOnly, expenses: [TransactionEntry], income: [TransactionEntry],
-      debts: [UUID: Debt] = [:]
+      debts: [UUID: Debt] = [:], transfers: [Transfer] = [], refunds: RefundIndex = .empty
     ) {
       self.day = day
       self.expenses = expenses
       self.income = income
-      self.totals = RowTotals(entries: income + expenses, debts: debts)
+      self.transfers = transfers
+      self.totals = RowTotals(entries: income + expenses, debts: debts, refunds: refunds)
     }
 
     public var id: String { day.iso }
     public var entries: [TransactionEntry] { income + expenses }
+    /// Everything of the day a list can select: the operations, then the transfers.
+    public var selectableIds: [UUID] { entries.map(\.id) + transfers.map(\.id) }
 
     /// Which side of a day an operation is listed on.
     nonisolated static func isListedWithIncome(_ kind: TransactionKind) -> Bool {
@@ -316,10 +328,12 @@ public final class TransactionsStore {
     guard !refuses("save", file), let repository else { return false }
     do {
       let previous = try repository.entry(id: entry.id)
-      try repository.save(entry)
-      push(previous.map { .edited(EditedEntry(before: $0, after: entry)) } ?? .created(entry.id))
-      // The operation as written is what the list shows: no need to read it back.
-      finishWrite(StoreWrite(upserted: [entry]))
+      // What the write wrote: an operation that named no account is on the main one now, and
+      // that is what the lists show and what ⌘Z takes back.
+      let written = try repository.save(entry)
+      push(
+        previous.map { .edited(EditedEntry(before: $0, after: written)) } ?? .created(written.id))
+      finishWrite(StoreWrite(upserted: [written]))
       return true
     } catch {
       failed(.save, error, file: file)
@@ -348,16 +362,20 @@ public final class TransactionsStore {
   }
 
   /// What a change of planning wrote, as the lists lay it over their data: the operations it
-  /// created and rewrote as they were written, the ones it deleted with the surplus and
-  /// shortfalls that went along, and the parts the deletion reopened.
+  /// created and rewrote as the write left them — an operation that named no account is on
+  /// the main one —, the ones it deleted with the surplus and shortfalls that went along, and
+  /// the parts the deletion reopened.
   nonisolated static func applied(_ change: PlanningChange, undo: PlanningUndo) -> StoreWrite {
+    let written = Set(undo.written.map(\.id))
+    // Anything the write did not hand back is laid as it was asked for.
     let rewritten = change.rewritten.map { entry in
-      var written = entry
-      written.transaction.updatedAt = change.at
-      return written
+      var stamped = entry
+      stamped.transaction.updatedAt = change.at
+      return stamped
     }
+    let asked = (change.created + rewritten).filter { !written.contains($0.id) }
     return StoreWrite(
-      upserted: change.created + rewritten,
+      upserted: undo.written + asked,
       removed: undo.deletion.deletedIds + undo.deletion.companionIds,
       partStatuses: statuses(undo.deletion.reopenedPartIds, .expected),
       planningChanged: true)
@@ -391,6 +409,15 @@ public final class TransactionsStore {
     case failed
     /// The edit may not be written, for the reason given; nothing was.
     case declined(EditRefusal)
+    /// A refund or money back that covered only some of a part leans on what the edit
+    /// changes; nothing was written.
+    case declinedByLink(LinkedEditRefusal)
+    /// A refund taken back from a purchase may not become what the edit makes it: more than is
+    /// left of the part, or in another currency; nothing was written.
+    case refundRefused(RefundError)
+    /// The edit moves the money on an account that does not hold the currency, and nothing
+    /// says what the account was charged; nothing was written.
+    case chargeMissing
     /// The view was shown without the app's dependencies, so there was nothing to write to.
     /// Never seen in a window that was assembled properly.
     case refused
@@ -433,6 +460,12 @@ public final class TransactionsStore {
       }
     } catch let refusal as EditRefusal {
       return .declined(refusal)
+    } catch let refusal as LinkedEditRefusal {
+      return .declinedByLink(refusal)
+    } catch let refusal as RefundError {
+      return .refundRefused(refusal)
+    } catch AccountWriteError.chargeMissing {
+      return .chargeMissing
     } catch {
       failed(.edit, error, file: file)
       return .failed
@@ -451,28 +484,50 @@ public final class TransactionsStore {
 
   /// What a bulk change would do to the listed operations: the text of the confirmation.
   /// The write itself works on the rows as they are in the database at that moment.
-  public func plan(_ edit: BulkEdit, ids: Set<UUID>) -> BulkEditPlan {
+  ///
+  /// `rates` — the bank's rates by day — and `calendar` work out what an account that does not
+  /// hold an operation's currency is charged for it, when the change moves it there.
+  public func plan(
+    _ edit: BulkEdit, ids: Set<UUID>, rates: DayRates = .empty,
+    calendar: CalendarContext = .system
+  ) -> BulkEditPlan {
     BulkEditRule.plan(
       edit, entries: entries(ids: ids), tree: CategoryTree(categories()),
-      history: qualityHistory())
+      history: qualityHistory(), accounts: accounts(), rates: rates, calendar: calendar)
   }
 
+  /// What deleting the listed operations would take: a purchase a live refund takes money
+  /// back from stays, unless that refund goes too.
   public func planDeletion(ids: Set<UUID>) -> BulkEditPlan {
-    BulkEditRule.deletion(of: entries(ids: ids))
+    BulkEditRule.deletion(of: entries(ids: ids), refunds: listing?.refundIndex ?? .empty)
+  }
+
+  /// Every account the data knows, archived ones included: an operation moved in bulk goes to
+  /// the account the menu offered, and one already on an archived account keeps what it was
+  /// charged there.
+  private func accounts() -> [PaymentMethod] {
+    listing?.dataset.paymentMethods ?? []
   }
 
   /// One bulk change, one write, one step of undo. More than `backgroundThreshold`
   /// operations are written off the main thread: the call returns at once, and the change
   /// is reported through `didWrite` when it has landed.
   @discardableResult
-  public func apply(_ edit: BulkEdit, to ids: [UUID], file: String = #fileID) -> Bool {
+  public func apply(
+    _ edit: BulkEdit, to ids: [UUID], rates: DayRates = .empty,
+    calendar: CalendarContext = .system, file: String = #fileID
+  ) -> Bool {
     guard !refuses("apply(BulkEdit:)", file), repository != nil, !isWritingInBackground else {
       return false
     }
     let tree = CategoryTree(categories())
     let history = qualityHistory()
+    let accounts = accounts()
     return modifyMany(ids, file: file) { fresh in
-      BulkEditRule.apply(edit, to: fresh, tree: tree, history: history).changedEntry
+      BulkEditRule.apply(
+        edit, to: fresh, tree: tree, history: history, accounts: accounts, rates: rates,
+        calendar: calendar
+      ).changedEntry
     }
   }
 
@@ -538,10 +593,15 @@ public final class TransactionsStore {
     guard !refuses("delete(ids:)", file), let repository, !isWritingInBackground else {
       return false
     }
+    let transfers = transfers(among: ids)
+    if !transfers.isEmpty { return delete(ids, with: transfers, file: file) }
+    // A purchase a live refund takes money back from stays: the write refuses it, and would
+    // refuse the whole deletion with it.
+    let refunds = listing?.refundIndex ?? .empty
     if Self.writesInBackground(ids.count) {
       runInBackground(.delete, file: file) {
         let effects = try await repository.softDeleteInBackground(ids: ids) { listed in
-          Self.deletable(listed)
+          Self.deletable(listed, refunds: refunds)
         }
         return effects.deletedIds.isEmpty ? nil : Self.deletion(effects)
       }
@@ -551,10 +611,10 @@ public final class TransactionsStore {
       var listed: [TransactionEntry] = []
       let effects = try repository.softDelete(ids: ids) { rows in
         listed = rows
-        return Self.deletable(rows)
+        return Self.deletable(rows, refunds: refunds)
       }
       guard !effects.deletedIds.isEmpty else {
-        return BulkEditRule.deletion(of: listed).skipped.isEmpty
+        return BulkEditRule.deletion(of: listed, refunds: refunds).skipped.isEmpty
       }
       record(Self.deletion(effects))
       return true
@@ -564,9 +624,83 @@ public final class TransactionsStore {
     }
   }
 
+  // MARK: Transfers
+
+  /// The transfers among `ids`, as the lists show them now; the rest of `ids` are operations.
+  public func transfers(among ids: some Sequence<UUID>) -> [Transfer] {
+    guard let listing else { return [] }
+    let wanted = Set(ids)
+    guard !wanted.isEmpty else { return [] }
+    return listing.dataset.transfers.filter { wanted.contains($0.id) }
+  }
+
+  /// The ids among `ids` that are transfers: what a confirmation of a deletion names besides
+  /// the operations.
+  public func transferIds(in ids: some Sequence<UUID>) -> [UUID] {
+    transfers(among: ids).map(\.id)
+  }
+
+  /// What a deletion of `ids` takes besides operations: the transfers among them, and the
+  /// rubles of their live fees — what the question before it says.
+  func transferDeletion(in ids: some Sequence<UUID>) -> TransferDeletion {
+    let transfers = transfers(among: ids)
+    guard !transfers.isEmpty, let listing else { return .none }
+    let fees = feeIds(of: transfers).compactMap { listing.entry($0) }
+    return TransferDeletion(
+      count: transfers.count, fees: AmountE4.sum(fees.map(\.transaction.amountRubE4)))
+  }
+
+  /// A deletion that takes transfers along: the transfers, their fees and the operations the
+  /// rules let go, in one change of planning and so one step of ⌘Z, which brings all of it back
+  /// — the parts a deleted money back had closed included. The operations are chosen by the
+  /// same rule as any deletion, from the rows the lists show. More than `backgroundThreshold`
+  /// rows are written off the main thread.
+  private func delete(_ ids: [UUID], with transfers: [Transfer], file: String) -> Bool {
+    guard let planning else { return false }
+    let transferIds = Set(transfers.map(\.id))
+    let operations = entries(ids: Set(ids).subtracting(transferIds))
+    // A purchase a live refund still takes money back from stays, as in any deletion: the write
+    // would refuse it, and the whole change with it.
+    var gone = Self.deletable(operations, refunds: listing?.refundIndex ?? .empty)
+    for fee in feeIds(of: transfers) where !gone.contains(fee) { gone.append(fee) }
+    let change = PlanningChange(
+      delete: PlanningRowIDs(transfers: transfers.map(\.id)), softDeleted: gone, at: Date())
+    if Self.writesInBackground(gone.count + transfers.count) {
+      runInBackground(.delete, file: file) {
+        let undo = try await planning.applyInBackground(change)
+        return Landed(step: .planned(undo), write: Self.applied(change, undo: undo))
+      }
+      return true
+    }
+    do {
+      let undo = try planning.apply(change)
+      record(Landed(step: .planned(undo), write: Self.applied(change, undo: undo)))
+      return true
+    } catch {
+      failed(.delete, error, file: file)
+      return false
+    }
+  }
+
+  /// The live fees of these transfers (`transfer:<id>:fee`): a transfer takes its fee along.
+  private func feeIds(of transfers: [Transfer]) -> [UUID] {
+    guard let listing else { return [] }
+    let keys = Set(transfers.map { TransferRules.feeKey(of: $0.id) })
+    return listing.dataset.entries.compactMap { entry in
+      guard entry.transaction.deletedAt == nil, let key = entry.transaction.externalId,
+        keys.contains(key)
+      else { return nil }
+      return entry.id
+    }
+  }
+
   /// What of these operations a deletion takes: the rule's choice, without what is gone.
-  private nonisolated static func deletable(_ entries: [TransactionEntry]) -> [UUID] {
-    BulkEditRule.deletion(of: entries).changed.filter { !$0.transaction.isDeleted }.map(\.id)
+  /// `refunds` say which purchases a live refund takes money back from.
+  private nonisolated static func deletable(
+    _ entries: [TransactionEntry], refunds: RefundIndex = .empty
+  ) -> [UUID] {
+    BulkEditRule.deletion(of: entries, refunds: refunds).changed
+      .filter { !$0.transaction.isDeleted }.map(\.id)
   }
 
   /// The step and the report of a deletion that happened.
@@ -694,7 +828,11 @@ public final class TransactionsStore {
         // rate refined since the change stays as it is.
         let snapshots = Self.byId(before)
         var reverted: [UUID: TransactionEntry] = [:]
-        let changed = try repository.modify(ids: before.map(\.id)) { fresh in
+        // What the account was charged comes back with the account: the undo puts back what
+        // the operations were, a row of the time before accounts included, and asks nothing.
+        let changed = try repository.modify(
+          ids: before.map(\.id), checkingCharges: false
+        ) { fresh in
           let back = snapshots[fresh.id].map { BulkEditRule.revert(fresh, to: $0) }
           reverted[fresh.id] = back
           return back
@@ -738,7 +876,9 @@ public final class TransactionsStore {
         upserted: [change.before], planningChanged: change.reachesBeyondTheOperation)
     case .editedMany(let before):
       let snapshots = byId(before)
-      let modified = try await repository.modifyInBackground(ids: before.map(\.id)) { fresh in
+      let modified = try await repository.modifyInBackground(
+        ids: before.map(\.id), checkingCharges: false
+      ) { fresh in
         snapshots[fresh.id].map { BulkEditRule.revert(fresh, to: $0) }
       }
       return StoreWrite(upserted: modified.map(\.after))
@@ -853,20 +993,35 @@ public final class TransactionsStore {
     (try? repository?.manualQualityHistory()) ?? .empty
   }
 
-  /// Pure grouping, isolated from the store so it can be exercised without a UI.
+  /// Pure grouping, isolated from the store so it can be exercised without a UI. A transfer
+  /// goes on the day it was made, newest first; a day of transfers alone is a day too.
+  /// `refunds` — the ledger's (`Ledger.refundIndex`) — count a refund taken back from a
+  /// purchase in the purchase's day, never twice.
   nonisolated static func group(
-    _ entries: [TransactionEntry], calendar: CalendarContext, debts: [UUID: Debt] = [:]
+    _ entries: [TransactionEntry], calendar: CalendarContext, debts: [UUID: Debt] = [:],
+    transfers: [Transfer] = [], refunds: RefundIndex = .empty
   )
     -> [DayGroup]
   {
     let byDay = Dictionary(grouping: entries) { calendar.day(of: $0.transaction.occurredAt) }
-    return byDay.keys.sorted(by: >).map { day in
+    let transfersByDay = Dictionary(grouping: transfers) { calendar.day(of: $0.occurredAt) }
+    let days = Set(byDay.keys).union(transfersByDay.keys)
+    return days.sorted(by: >).map { day in
       let entries = byDay[day] ?? []
       return DayGroup(
         day: day,
         expenses: entries.filter { !DayGroup.isListedWithIncome($0.transaction.kind) },
         income: entries.filter { DayGroup.isListedWithIncome($0.transaction.kind) },
-        debts: debts)
+        debts: debts,
+        transfers: (transfersByDay[day] ?? []).sorted(by: Self.newestFirst),
+        refunds: refunds)
     }
+  }
+
+  /// Newest first; of two made at the same moment, the later written first.
+  nonisolated static func newestFirst(_ left: Transfer, _ right: Transfer) -> Bool {
+    if left.occurredAt != right.occurredAt { return left.occurredAt > right.occurredAt }
+    if left.createdAt != right.createdAt { return left.createdAt > right.createdAt }
+    return left.id.uuidString > right.id.uuidString
   }
 }

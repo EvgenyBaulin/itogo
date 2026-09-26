@@ -43,7 +43,10 @@ public struct QualityReport: Hashable, Sendable {
   }
 
   /// A bad day has a part rated bad with a positive contribution: a bad purchase makes the
-  /// day bad, and a refund later that day does not make it good again.
+  /// day bad, and a refund of no purchase later that day does not make it good again. A refund
+  /// taken back from the purchase counts in the purchase, on its day: taken back whole, the
+  /// purchase contributes nothing and its day is not bad — as if it had not been bought; taken
+  /// back in part, the day stays bad.
   static func streaks(ledger: Ledger, today: DateOnly) -> (current: Int, best: Int) {
     guard let first = ledger.firstDay, first <= today else { return (0, 0) }
     var badDays: Set<Int> = []
@@ -72,6 +75,11 @@ public struct QualityReport: Hashable, Sendable {
 /// I wrote off, what still waits, and the shortfall — how much less than a part came back
 /// before it was closed. The surplus is income in the Surcharges category, by the month it
 /// is for.
+///
+/// Money back may cover only some of a part: what still waits is what is left of it. A closed
+/// part falls short and has something written off only by the operations the app wrote for
+/// it (`Ledger.companionsRub`): a part closed within the drift of rates has neither, since the
+/// drift is not spending.
 public struct OthersReport: Hashable, Sendable {
   public struct Totals: Hashable, Sendable {
     public var paid: AmountE4 = .zero
@@ -82,13 +90,18 @@ public struct OthersReport: Hashable, Sendable {
 
     public init() {}
 
-    mutating func add(_ row: LedgerRow, returnedForPart: AmountE4) {
+    mutating func add(
+      _ row: LedgerRow, returnedForPart: AmountE4,
+      companions: (shortfall: AmountE4, writtenOff: AmountE4)
+    ) {
       paid += row.amountRubE4
       returned += returnedForPart
       switch row.reimbursementStatus ?? .expected {
-      case .expected: waiting += row.amountRubE4
+      case .expected: waiting += max(.zero, row.amountRubE4 - returnedForPart)
       case .writtenOff: writtenOff += row.amountRubE4
-      case .returned: shortfall += row.amountRubE4 - returnedForPart
+      case .returned:
+        shortfall += companions.shortfall
+        writtenOff += companions.writtenOff
       }
     }
   }
@@ -134,10 +147,13 @@ public struct OthersReport: Hashable, Sendable {
     var charges: [UUID: Set<UUID>] = [:]
     for row in ledger.rows(in: period.range) where row.kind == .expense && row.reimbursable {
       let returned = ledger.returned(forPart: row.partId)
-      totals.add(row, returnedForPart: returned)
-      people[row.debtorPersonId, default: Totals()].add(row, returnedForPart: returned)
+      let companions = ledger.companionsRub(forPart: row.partId)
+      totals.add(row, returnedForPart: returned, companions: companions)
+      people[row.debtorPersonId, default: Totals()].add(
+        row, returnedForPart: returned, companions: companions)
       guard case .scheduled(let paymentId, _) = row.link else { continue }
-      subscriptions[paymentId, default: Totals()].add(row, returnedForPart: returned)
+      subscriptions[paymentId, default: Totals()].add(
+        row, returnedForPart: returned, companions: companions)
       charges[paymentId, default: []].insert(row.transactionId)
     }
     self.totals = totals

@@ -1148,13 +1148,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment method"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способ оплаты"
+            "value": "Счёт"
           }
         }
       }

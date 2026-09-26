@@ -681,3 +681,341 @@ final class TransactionEditorTests: XCTestCase {
     XCTAssertEqual(try balance(loan), AmountE4(whole: 100_000))
   }
 }
+
+/// The editor on accounts, refunds and counts: what an account is charged follows the edit,
+/// a refund taken back from a purchase keeps the purchase's rubles, the refusals about refunds
+/// and money back are said in words, and an edit that lands an operation on the day of a count
+/// asks whether it was before the count.
+@MainActor
+final class TransactionEditorAccountsTests: XCTestCase {
+  private var stack: DatabaseStack!
+  private var references: ReferenceRepository!
+  private var repository: TransactionRepository!
+  private var store: TransactionsStore!
+  private var environment: AppEnvironment!
+
+  /// The main account, rubles only.
+  private let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
+  /// Tenge only.
+  private let kaspi = PaymentMethod(name: "Kaspi", currency: CurrencyCode("KZT"))
+  /// Dollars only.
+  private let freedom = PaymentMethod(name: "Freedom", currency: .usd)
+  private let kzt = CurrencyCode("KZT")
+
+  private let today = DateOnly(year: 2026, month: 9, day: 18)
+  private var yesterday: DateOnly { DateOnly(year: 2026, month: 9, day: 17) }
+
+  override func setUp() async throws {
+    stack = try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    references = ReferenceRepository(writer: stack.writer)
+    repository = TransactionRepository(writer: stack.writer)
+    for account in [card, kaspi, freedom] { try references.save(account) }
+    store = TransactionsStore()
+    store.attach(
+      repository, references: references, planning: PlanningRepository(writer: stack.writer))
+    environment = AppEnvironment()
+  }
+
+  private func moment(_ day: DateOnly, _ hour: Int, _ minute: Int = 0, _ second: Int = 0) -> Date {
+    CalendarContext.utc.startOfDay(day)
+      .addingTimeInterval(TimeInterval(hour * 3600 + minute * 60 + second))
+  }
+
+  /// The bank's rates of `today`: 90 ₽ for a dollar, 20 ₽ for 100 tenge.
+  private func rates() -> RateTable {
+    RateTable(rates: [
+      Rate(date: today, currency: .usd, rubPerUnit: 90),
+      Rate(date: today, currency: kzt, rubPerUnit: 20, nominal: 100),
+    ])
+  }
+
+  /// The editor of `entry`, with the panel on this database and these rates.
+  private func editor(of entry: TransactionEntry) -> TransactionEditorModel {
+    let draft = EntryDraftModel(
+      references: references, transactions: repository, calendar: .utc,
+      editsSavedOperation: true)
+    let table = rates()
+    draft.rateTable = { table }
+    return TransactionEditorModel(entry: entry, draft: draft)
+  }
+
+  /// What the pipeline would hand the store: the lists read the purchases and refunds from it.
+  private func showDatabase() throws {
+    let dataset = Dataset(
+      entries: try repository.entries(from: .distantPast, to: .distantFuture),
+      paymentMethods: [card, kaspi, freedom])
+    store.show(Ledger(dataset: dataset, calendar: .utc))
+  }
+
+  /// 12 $ on Freedom, which holds dollars: nothing charged apart.
+  private func dollarsOnFreedom() throws -> TransactionEntry {
+    var draft = TransactionDraft(
+      occurredAt: moment(today, 15), currency: .usd, amount: AmountE4(whole: 12), rate: 90,
+      rateDate: today, rateSource: .cbr, note: "books", paymentMethodId: freedom.id)
+    draft.normalizeSinglePart()
+    return try repository.save(try draft.materialize(now: moment(today, 15)))
+  }
+
+  // MARK: What the account is charged
+
+  func testMovedToAnAccountWithoutTheCurrencyTheChargeIsPrefilledAndSaved() throws {
+    let books = try dollarsOnFreedom()
+    let editor = editor(of: books)
+    editor.draft.setPaymentMethod(kaspi.id)
+    XCTAssertTrue(editor.save(store: store, environment: environment))
+
+    // 12 $ at 90 ₽ = 1 080 ₽ = 5 400 ₸ at 20 ₽ for 100 ₸.
+    let stored = try XCTUnwrap(try repository.entry(id: books.id))
+    XCTAssertEqual(stored.transaction.paymentMethodId, kaspi.id)
+    XCTAssertEqual(stored.transaction.accountCurrency, kzt)
+    XCTAssertEqual(stored.transaction.accountAmountE4, AmountE4(whole: 5_400))
+  }
+
+  func testATypedChargeIsKeptWithAWarningWhenTheAmountChanges() throws {
+    let books = try dollarsOnFreedom()
+    let moving = editor(of: books)
+    moving.draft.setPaymentMethod(kaspi.id)
+    moving.draft.setCharge(AmountE4(whole: 5_300))
+    XCTAssertTrue(moving.save(store: store, environment: environment))
+    let typed = try XCTUnwrap(try repository.entry(id: books.id))
+    XCTAssertEqual(typed.transaction.accountAmountE4, AmountE4(whole: 5_300))
+
+    // 12 $ → 13 $: the figure from the statement stays, and the panel says to check it.
+    let editor = editor(of: typed)
+    editor.draft.setTotal(AmountE4(whole: 13))
+    XCTAssertTrue(editor.draft.chargeNeedsCheck)
+    XCTAssertTrue(editor.save(store: store, environment: environment))
+    let stored = try XCTUnwrap(try repository.entry(id: books.id))
+    XCTAssertEqual(stored.transaction.amountE4, AmountE4(whole: 13))
+    XCTAssertEqual(stored.transaction.accountCurrency, kzt)
+    XCTAssertEqual(stored.transaction.accountAmountE4, AmountE4(whole: 5_300))
+  }
+
+  func testAnUntouchedChargeIsWorkedOutAgainWhenTheAmountChanges() throws {
+    let books = try dollarsOnFreedom()
+    let moving = editor(of: books)
+    moving.draft.setPaymentMethod(kaspi.id)
+    XCTAssertTrue(moving.save(store: store, environment: environment))
+    let prefilled = try XCTUnwrap(try repository.entry(id: books.id))
+
+    let editor = editor(of: prefilled)
+    editor.draft.setTotal(AmountE4(whole: 13))
+    XCTAssertFalse(editor.draft.chargeNeedsCheck)
+    XCTAssertTrue(editor.save(store: store, environment: environment))
+    // 13 $ at 90 ₽ = 1 170 ₽ = 5 850 ₸.
+    let stored = try XCTUnwrap(try repository.entry(id: books.id))
+    XCTAssertEqual(stored.transaction.accountAmountE4, AmountE4(whole: 5_850))
+  }
+
+  // MARK: Refunds
+
+  /// 7 000 $ bought on the card, the bank charging 1 000 000 ₽ — a rate of 142.857143 set by
+  /// the figure — and 3 000 $ of it refunded.
+  private func purchaseAndRefund() throws -> (purchase: TransactionEntry, refund: TransactionEntry)
+  {
+    var draft = TransactionDraft(
+      occurredAt: moment(yesterday, 12), currency: .usd, amount: AmountE4(whole: 7_000),
+      rate: 90, rateDate: yesterday, rateSource: .cbr, note: "Laptop", paymentMethodId: card.id)
+    draft.accountCurrency = .rub
+    draft.accountAmount = AmountE4(whole: 1_000_000)
+    draft.normalizeSinglePart()
+    let purchase = try repository.save(try draft.materialize(now: moment(yesterday, 12)))
+    XCTAssertEqual(purchase.transaction.amountRubE4, AmountE4(whole: 1_000_000))
+
+    let part = purchase.parts[0]
+    var refundDraft = try RefundRules.draft(
+      refunding: part, of: purchase, amount: AmountE4(whole: 3_000),
+      occurredAt: moment(today, 10), accountId: card.id,
+      index: RefundIndex(entries: [purchase], debts: [:]), tree: CategoryTree())
+    refundDraft.accountCurrency = .rub
+    refundDraft.accountAmount = AmountE4(whole: 270_000)
+    let rubles = RefundRules.rubles(
+      refundAmount: AmountE4(whole: 3_000), part: part, refundedBefore: (.zero, .zero))
+    let refund = try repository.save(
+      try refundDraft.materialize(now: moment(today, 10), rublesConverter: { _ in rubles }))
+    try showDatabase()
+    return (purchase, refund)
+  }
+
+  func testARefundEditedToTheWholePartStoresThePurchasesRublesExactly() throws {
+    let (purchase, refund) = try purchaseAndRefund()
+    let editor = editor(of: refund)
+    editor.draft.draft.amount = AmountE4(whole: 7_000)
+    editor.draft.draft.parts[0].amount = AmountE4(whole: 7_000)
+    XCTAssertTrue(editor.save(store: store, environment: environment), "\(editor.errorKey ?? "")")
+
+    let stored = try XCTUnwrap(try repository.entry(id: refund.id))
+    // The rest of the part's rubles, not 7 000 × 142.857143 = 1 000 000.001.
+    XCTAssertEqual(stored.transaction.amountRubE4, purchase.transaction.amountRubE4)
+    // The purchase's rate stays with the refund.
+    XCTAssertEqual(stored.transaction.rate, purchase.transaction.rate)
+  }
+
+  func testAPurchaseCheaperThanWhatWasRefundedIsRefusedInWords() throws {
+    let (purchase, _) = try purchaseAndRefund()
+    let editor = editor(of: purchase)
+    editor.draft.draft.amount = AmountE4(whole: 2_000)
+    editor.draft.draft.parts[0].amount = AmountE4(whole: 2_000)
+    editor.draft.draft.accountAmount = AmountE4(whole: 280_000)
+    XCTAssertFalse(editor.save(store: store, environment: environment))
+    XCTAssertEqual(editor.errorKey, "transactions.error.refundedPartReduced")
+    XCTAssertEqual(
+      try repository.entry(id: purchase.id)?.transaction.amountE4, AmountE4(whole: 7_000))
+  }
+
+  func testARefundAboveWhatIsLeftIsRefusedInWords() throws {
+    let (_, refund) = try purchaseAndRefund()
+    let editor = editor(of: refund)
+    editor.draft.draft.amount = AmountE4(whole: 8_000)
+    editor.draft.draft.parts[0].amount = AmountE4(whole: 8_000)
+    XCTAssertFalse(editor.save(store: store, environment: environment))
+    XCTAssertEqual(editor.errorKey, "transactions.error.linkedRefundChanged")
+    XCTAssertEqual(
+      try repository.entry(id: refund.id)?.transaction.amountE4, AmountE4(whole: 3_000))
+  }
+
+  func testEveryRefusalAboutRefundsAndMoneyBackHasWordsInBothLanguages() {
+    let language = AppLanguage()
+    // The choice is stored for the whole test host: it goes back to what it was.
+    let before = language.choice
+    defer { language.choice = before }
+    let keys =
+      LinkedEditRefusal.allCases.map(TransactionEditorModel.errorKey(of:))
+      + [
+        RefundError.notRefundable, .exceedsRemaining, .notPositive, .purchaseHasRefunds,
+        .otherCurrency,
+      ].map(TransactionEditorModel.errorKey(of:))
+      + ["entry.error.chargeMissing"]
+    for choice in [AppLanguage.Choice.english, .russian] {
+      language.choice = choice
+      for key in keys {
+        let table = TransactionEditorModel.table(ofErrorKey: key)
+        XCTAssertNotEqual(language(key, table: table), key, "\(choice) \(key)")
+      }
+    }
+  }
+
+  // MARK: Before the count
+
+  /// The card counted today at 14:05.
+  private func countedAt1405(now: Date) -> AccountBalances {
+    let count = moment(today, 14, 5)
+    let reconciliation = Reconciliation(
+      date: today, reconciledAt: count, actualTotalRubE4: .zero, kind: .accounts)
+    let balance = ReconciledBalance(
+      reconciliationId: reconciliation.id, accountId: card.id, currency: .rub,
+      actualE4: AmountE4(whole: 10_000))
+    return AccountBalances.build(
+      entries: [], transfers: [], debtEntries: [], debts: [:], reconciliations: [reconciliation],
+      balances: [balance], accounts: [card, kaspi, freedom], tree: CategoryTree(), now: now,
+      calendar: .utc)
+  }
+
+  /// A taxi of 500 ₽ on the card at `at`.
+  private func taxi(at: Date) throws -> TransactionEntry {
+    var draft = TransactionDraft(
+      occurredAt: at, amount: AmountE4(whole: 500), note: "taxi", paymentMethodId: card.id)
+    draft.normalizeSinglePart()
+    return try repository.save(try draft.materialize(now: at))
+  }
+
+  func testAnEditThatMovesAnOperationOntoTheDayOfACountAsksFirst() throws {
+    let taxi = try taxi(at: moment(yesterday, 20))
+    let saved = moment(today, 15)
+    let balances = countedAt1405(now: saved)
+    let editor = editor(of: taxi)
+    editor.draft.setDate(moment(today, 9), today: today)
+
+    // Nothing is written until the owner says whether it was before the count.
+    XCTAssertFalse(
+      editor.save(store: store, environment: environment, balances: balances, now: saved))
+    XCTAssertEqual(editor.countQuestion?.count, moment(today, 14, 5))
+    XCTAssertEqual(try repository.entry(id: taxi.id)?.transaction.occurredAt, moment(yesterday, 20))
+
+    // «Нет»: after the count; the save goes on and does not ask again.
+    editor.answerCount(moment(today, 14, 5), wasBefore: false)
+    XCTAssertNil(editor.countQuestion)
+    XCTAssertTrue(
+      editor.save(store: store, environment: environment, balances: balances, now: saved))
+    XCTAssertEqual(
+      try repository.entry(id: taxi.id)?.transaction.occurredAt, moment(today, 14, 5, 1))
+  }
+
+  func testAnEditMovedToAnotherAccountCountedTodayAsksToo() throws {
+    var draft = TransactionDraft(
+      occurredAt: moment(today, 16), amount: AmountE4(whole: 500), note: "taxi",
+      paymentMethodId: freedom.id, accountCurrency: .usd, accountAmount: AmountE4(whole: 6))
+    draft.normalizeSinglePart()
+    let taxi = try repository.save(try draft.materialize(now: moment(today, 16)))
+    let saved = moment(today, 17)
+    let editor = editor(of: taxi)
+    editor.draft.setPaymentMethod(card.id)
+    XCTAssertFalse(
+      editor.save(
+        store: store, environment: environment, balances: countedAt1405(now: saved), now: saved))
+    XCTAssertEqual(editor.countQuestion?.count, moment(today, 14, 5))
+  }
+
+  /// «Save» in the questions of the Transactions window — asked when another operation is
+  /// opened, or when the inspector is folded away — hands the editor no balances: it asks by
+  /// the balances of the window that showed it, the same question the button asks.
+  func testASaveFromTheQuestionsOfTheWindowAsksByTheBalancesTheEditorWasShownWith() throws {
+    let taxi = try taxi(at: moment(yesterday, 20))
+    let saved = moment(today, 15)
+    let balances = countedAt1405(now: saved)
+    let editor = editor(of: taxi)
+    editor.balancesNow = { balances }
+    editor.draft.setDate(moment(today, 9), today: today)
+
+    XCTAssertFalse(editor.save(store: store, environment: environment, now: saved))
+    XCTAssertEqual(editor.countQuestion?.count, moment(today, 14, 5))
+    XCTAssertEqual(try repository.entry(id: taxi.id)?.transaction.occurredAt, moment(yesterday, 20))
+
+    // Balances handed in win over the window's.
+    let elsewhere = self.editor(of: taxi)
+    elsewhere.balancesNow = { balances }
+    elsewhere.draft.setDate(moment(today, 9), today: today)
+    XCTAssertTrue(
+      elsewhere.save(store: store, environment: environment, balances: .empty, now: saved))
+  }
+
+  /// Money back moves money on a day like any other operation: moved onto the day of a count,
+  /// after it, the edit asks too — only its amount, type and currency stay as they were.
+  func testMoneyBackMovedOntoTheDayOfACountAsksFirst() throws {
+    var draft = TransactionDraft(
+      kind: .reimbursement, occurredAt: moment(yesterday, 20), amount: AmountE4(whole: 1_700),
+      paymentMethodId: card.id)
+    draft.normalizeSinglePart()
+    let back = try repository.save(try draft.materialize(now: moment(yesterday, 20)))
+    let saved = moment(today, 15)
+    let balances = countedAt1405(now: saved)
+    let editor = editor(of: back)
+    editor.draft.setDate(moment(today, 10), today: today)
+
+    XCTAssertFalse(
+      editor.save(store: store, environment: environment, balances: balances, now: saved))
+    XCTAssertEqual(editor.countQuestion?.count, moment(today, 14, 5))
+    XCTAssertEqual(try repository.entry(id: back.id)?.transaction.occurredAt, moment(yesterday, 20))
+
+    // «Нет»: the money came after the count.
+    editor.answerCount(moment(today, 14, 5), wasBefore: false)
+    XCTAssertTrue(
+      editor.save(store: store, environment: environment, balances: balances, now: saved),
+      "\(editor.errorKey ?? "")")
+    XCTAssertEqual(
+      try repository.entry(id: back.id)?.transaction.occurredAt, moment(today, 14, 5, 1))
+  }
+
+  func testAnEditThatMovesNoMoneyDoesNotAsk() throws {
+    // Dated on the day of the count, after it; only the description changes.
+    let taxi = try taxi(at: moment(today, 15))
+    let saved = moment(today, 16)
+    let editor = editor(of: taxi)
+    editor.draft.draft.note = "taxi home"
+    XCTAssertTrue(
+      editor.save(
+        store: store, environment: environment, balances: countedAt1405(now: saved), now: saved))
+    XCTAssertNil(editor.countQuestion)
+    XCTAssertEqual(try repository.entry(id: taxi.id)?.transaction.note, "taxi home")
+  }
+}

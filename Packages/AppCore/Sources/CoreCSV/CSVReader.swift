@@ -26,7 +26,8 @@ public enum CSVReader {
     if bytes.count >= bom.count, Array(bytes.prefix(bom.count)) == bom {
       bytes.removeFirst(bom.count)
     }
-    guard let text = String(bytes: bytes, encoding: .utf8) else {
+    // Decoded as it is: Foundation's decoding would drop a second mark too, which is text.
+    guard let text = String(validating: bytes, as: UTF8.self) else {
       throw CSVError.invalidEncoding
     }
     return parse(text)

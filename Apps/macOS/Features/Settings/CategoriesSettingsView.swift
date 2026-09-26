@@ -18,6 +18,10 @@ import SwiftUI
 /// that was missing — bring back from the archive. Until 21.09 archiving was a small button
 /// that made the row disappear for good, because nothing in the app ever listed an archived
 /// category again.
+///
+/// Every row that can take a limit — an expense category in use, not a system one — has a
+/// field for its monthly limit: an amount sets it, an empty field removes it, zero is refused,
+/// each commit one step of ⌘Z; ↻ marks a limit whose leftover carries over.
 struct CategoriesSettingsView: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.store) private var store
@@ -44,6 +48,10 @@ struct CategoriesSettingsView: View {
   @FocusState private var editingName: UUID?
   /// A write the database itself refused; the alert says so (`AppEnvironment.attempt`).
   @State private var refused = false
+  /// The limits as the database has them, read with the categories and after every write.
+  @State private var budgets: [Budget] = []
+  /// Why the last amount typed into a limit's field was not written, and in which row.
+  @State private var limitRefusal: LimitRefusal?
 
   /// `asking` opens the tab with the question of a deletion already on screen: how a test
   /// lays out the sheet without a click on a row's menu.
@@ -117,6 +125,20 @@ struct CategoriesSettingsView: View {
           .onTapGesture { self.refusalKey = nil }
       }
 
+      if kind == .expense {
+        if let limitRefusal {
+          Text(verbatim: limitRefusal.text)
+            .font(.caption)
+            .foregroundStyle(.red)
+            .onTapGesture { self.limitRefusal = nil }
+            .accessibilityIdentifier("categories.limit.refusal")
+        }
+        Text(verbatim: environment.language("categories.limit.hint", table: "Settings"))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
       if kind == .income {
         cashbackPicker
       }
@@ -133,8 +155,11 @@ struct CategoriesSettingsView: View {
     .onChange(of: kind) { _, _ in
       // A root of one kind is never the parent of a category of the other.
       newParent = nil
+      limitRefusal = nil
       reload()
     }
+    // A limit set or taken back elsewhere — in Planning, by ⌘Z — shows in its row at once.
+    .onChange(of: compute.generation) { reloadLimits() }
     // A sheet, not a `confirmationDialog`: when the operations of a category have to move,
     // the owner has to choose where — and a dialog holds buttons, not a picker. On the root
     // of the tab, never on a row: the rows are rebuilt by every reload.
@@ -304,6 +329,17 @@ struct CategoriesSettingsView: View {
       }
       Spacer(minLength: 8)
       if kind == .expense {
+        if LimitRules.offersLimit(on: category.id, tree: tree) {
+          CategoryLimitField(
+            stored: LimitRules.categoryLimit(of: category.id, in: budgets),
+            commit: { commitLimit($0, for: category.id) },
+            cancel: {
+              if limitRefusal?.categoryId == category.id { limitRefusal = nil }
+            })
+        } else {
+          // Keeps the pickers of quality in one column.
+          Color.clear.frame(width: CategoryLimitField.width, height: 1)
+        }
         Picker(selection: qualityBinding(for: category)) {
           Text(verbatim: "—").tag(Quality?.none)
           ForEach(Quality.allCases, id: \.self) { quality in
@@ -646,6 +682,55 @@ struct CategoriesSettingsView: View {
     categories = (try? environment.references?.categories(includeArchived: showsArchived)) ?? []
     cashbackId = (try? environment.settings?.string(AnalyticsSettings.cashbackCategoryKey))
       .flatMap { $0 }.flatMap(UUID.init(uuidString:))
+    reloadLimits()
+  }
+
+  private func reloadLimits() {
+    budgets = LimitWrites.budgets(environment, compute.snapshot)
+  }
+
+  /// Why the amount typed into a row was not written, and which row it was.
+  struct LimitRefusal: Equatable {
+    let categoryId: UUID
+    let text: String
+  }
+
+  /// The amount typed into the limit field of a category's row, written as one step of ⌘Z
+  /// (`commitLimit(_:for:budgets:tree:month:store:)`). Returns whether it was written — or
+  /// said what is stored; false leaves the reason under the list, named after the row.
+  private func commitLimit(_ text: String, for categoryId: UUID) -> Bool {
+    let tree = wholeTree()
+    let key = Self.commitLimit(
+      text, for: categoryId, budgets: LimitWrites.budgets(environment, compute.snapshot),
+      tree: tree, month: environment.today.monthKey, store: store)
+    reloadLimits()
+    limitRefusal = key.map {
+      LimitRefusal(
+        categoryId: categoryId,
+        text: Self.limitRefusal($0, for: categoryId, tree: tree, environment))
+    }
+    return key == nil
+  }
+
+  /// The reason under the list with the row it is about, «Еда вне дома › Кофейни: Лимит
+  /// должен быть больше нуля»: the list is long, and the field may have been left for another.
+  static func limitRefusal(
+    _ key: String, for categoryId: UUID, tree: CategoryTree, _ environment: AppEnvironment
+  ) -> String {
+    let reason = environment.language(key, table: "Planning")
+    guard let name = PlanningText.categoryPath(categoryId, tree: tree) else { return reason }
+    return environment.format("categories.limit.refused", table: "Settings", name, reason)
+  }
+
+  /// The write behind a limit field: `budgets` as the database has them now, `tree` the whole
+  /// tree, archived categories included. Nil when the write landed or there was nothing to
+  /// write, else the key, in the Planning table, of why not.
+  static func commitLimit(
+    _ text: String, for categoryId: UUID, budgets: [Budget], tree: CategoryTree,
+    month: MonthKey, store: TransactionsStore
+  ) -> String? {
+    LimitWrites.setCategoryLimit(
+      categoryId, typed: text, budgets: budgets, tree: tree, month: month, store: store)
   }
 
   /// Whether a new category of `kind` may be filed under `parent`: under nothing, or under
@@ -662,26 +747,201 @@ struct CategoriesSettingsView: View {
     NewReference.acceptsParent(parent, for: kind, in: categories)
   }
 
-  /// A new category is made the way «Add…» of the ↓ panel makes one (`NewReference`).
+  /// What came of «Добавить».
+  enum AddOutcome: Equatable {
+    /// A new category, or the one the archive gave back: its id.
+    case added(UUID)
+    /// `parent` cannot take a category of the kind (`acceptsParent`).
+    case parentRefused
+    /// The database did not take the write; the journal says why.
+    case failed
+  }
+
+  /// «Добавить»: a new category, made the way «Add…» of the ↓ panel makes one
+  /// (`NewReference`) — and like there, a name the archive holds beside the same parent brings
+  /// that category back instead of making a second one.
+  static func add(
+    named name: String, kind: CategoryKind, parent: UUID?, references: ReferenceRepository
+  ) -> AddOutcome {
+    let all = (try? references.categories(includeArchived: true)) ?? []
+    guard let category = NewReference.category(named: name, kind: kind, parent: parent, among: all)
+    else { return .parentRefused }
+    if let archived = NewReference.archivedCategory(
+      named: name, kind: kind, parent: parent, among: all)
+    {
+      let restored = AppEnvironment.attempt("categories.add", on: references) {
+        try $0.restoreCategory(archived.id)
+      }
+      guard restored else { return .failed }
+      return .added(archived.id)
+    }
+    guard AppEnvironment.attempt("categories.add", on: references, { try $0.save(category) })
+    else { return .failed }
+    return .added(category.id)
+  }
+
   private func add() {
     guard let references = environment.references else { return }
     let name = newName.trimmingCharacters(in: .whitespaces)
     guard !name.isEmpty else { return }
-    let all = (try? references.categories(includeArchived: true)) ?? categories
-    guard
-      let category = NewReference.category(named: name, kind: kind, parent: newParent, among: all)
-    else {
+    switch Self.add(named: name, kind: kind, parent: newParent, references: references) {
+    case .parentRefused:
       newParent = nil
       refusalKey = "categories.add.parentRefused"
       return
-    }
-    guard environment.attempt("categories.add", on: references, { try $0.save(category) }) else {
+    case .failed:
       refused = true
       return
+    case .added:
+      break
     }
     newName = ""
     reload()
     environment.scheduleBackup()
+  }
+}
+
+/// The monthly limit of one category, in its row: the amount as the app writes amounts, or
+/// empty without a limit. What is typed is written on Return, when the field loses focus and
+/// when the row goes away with the tab or the window — never per keystroke (`LimitFieldDraft`);
+/// Esc puts the stored amount back. ↻ follows a limit whose leftover carries over to the next
+/// month.
+struct CategoryLimitField: View {
+  @Dependency(\.environment) private var environment
+  static let width: CGFloat = 132
+  let stored: Budget?
+  /// Writes what was typed; false when nothing was written, the reason said under the list.
+  let commit: (String) -> Bool
+  /// Esc: a reason said about this row goes with the typing.
+  let cancel: () -> Void
+  @State private var draft: LimitFieldDraft
+  @FocusState private var focused: Bool
+
+  init(stored: Budget?, commit: @escaping (String) -> Bool, cancel: @escaping () -> Void) {
+    self.stored = stored
+    self.commit = commit
+    self.cancel = cancel
+    _draft = State(initialValue: LimitFieldDraft(showing: Self.text(of: stored)))
+  }
+
+  var body: some View {
+    HStack(spacing: 4) {
+      TextField(text: Binding(get: { draft.text }, set: { draft.type($0) })) {
+        Text(verbatim: environment.language("categories.limit.placeholder", table: "Settings"))
+      }
+      .labelsHidden()
+      .textFieldStyle(.roundedBorder)
+      .font(.body.monospacedDigit())
+      .multilineTextAlignment(.trailing)
+      .focused($focused)
+      .help(environment.language("categories.limit.placeholder", table: "Settings"))
+      .accessibilityIdentifier("categories.row.limit")
+      .onSubmit {
+        if draft.submit(shown: shown, write: commit) == .written { focused = false }
+      }
+      .onExitCommand {
+        draft.cancel(shown: shown)
+        cancel()
+      }
+      .onChange(of: focused) { _, now in
+        if !now { draft.leave(shown: shown, write: commit) }
+      }
+      Image(systemName: "arrow.clockwise")
+        .foregroundStyle(.secondary)
+        .opacity(stored?.rollover == true ? 1 : 0)
+        .help(rollover)
+        .accessibilityLabel(Text(verbatim: rollover))
+        .accessibilityHidden(stored?.rollover != true)
+    }
+    .frame(width: Self.width)
+    .onAppear { draft.storedChanged(to: shown) }
+    // The name field of the row saves on the way out too: typed without Return, a limit was
+    // lost when the tab switched to income or the window closed.
+    .onDisappear { draft.leave(shown: shown, write: commit) }
+    // The stored limit changed — written here, elsewhere or taken back by ⌘Z: shown at once,
+    // unless the owner has typed over it.
+    .onChange(of: stored) { _, _ in draft.storedChanged(to: shown) }
+  }
+
+  private var rollover: String {
+    environment.language("categories.limit.rollover", table: "Settings")
+  }
+
+  /// The stored amount as the app writes amounts; nothing without a limit.
+  private var shown: String { Self.text(of: stored) }
+
+  private static func text(of stored: Budget?) -> String {
+    stored.map { AmountField.text(for: $0.amountE4) } ?? ""
+  }
+}
+
+/// What the limit field of a category's row holds between the stored limit and the owner's
+/// typing. The stored limit shows whenever the owner has not typed over it — with the cursor
+/// in the field too, so an amount ⌘Z took back shows at once — and only what the owner typed
+/// is ever written: leaving a field that shows what the database has writes nothing. Until
+/// 25.09 the field kept what it had written while it held the cursor, and leaving it wrote
+/// that again after ⌘Z, the undo silently redone.
+@MainActor
+struct LimitFieldDraft {
+  private(set) var text: String
+  /// Typed by the owner since the field last showed the stored limit or wrote what it said.
+  private(set) var isTyped = false
+
+  init(showing shown: String) {
+    text = shown
+  }
+
+  /// What a Return, or leaving the field, did.
+  enum Submit: Equatable {
+    /// Nothing was typed, or nothing new.
+    case nothing
+    /// The write landed (one step of ⌘Z), or what was typed says what is stored. The field
+    /// lets go of the cursor then: the next ⌘Z takes back the write, not the typing in it.
+    case written
+    /// Nothing was written; the reason is said under the list.
+    case refused
+  }
+
+  /// The owner typed, or took typing back in the field.
+  mutating func type(_ new: String) {
+    guard new != text else { return }
+    text = new
+    isTyped = true
+  }
+
+  /// The stored limit changed — written here, elsewhere, or taken back by ⌘Z.
+  mutating func storedChanged(to shown: String) {
+    if !isTyped { text = shown }
+  }
+
+  /// Return: what was typed is written and shown the way the app writes amounts. A refusal
+  /// keeps it in the field, next to its reason, for the owner to correct.
+  mutating func submit(shown: String, write: (String) -> Bool) -> Submit {
+    guard isTyped else { return .nothing }
+    guard text != shown else {
+      isTyped = false
+      return .nothing
+    }
+    guard write(text) else { return .refused }
+    text = LimitWrites.settledText(text) ?? text
+    isTyped = false
+    return .written
+  }
+
+  /// The cursor left the field, or its row went away with the tab or the window: what was
+  /// typed is written. A refusal gives the field back the stored limit — the reason stays said
+  /// under the list — rather than leaving an amount on screen the database does not have.
+  @discardableResult
+  mutating func leave(shown: String, write: (String) -> Bool) -> Submit {
+    let outcome = submit(shown: shown, write: write)
+    if outcome == .refused { cancel(shown: shown) }
+    return outcome
+  }
+
+  /// Esc: the stored limit again, the typing dropped.
+  mutating func cancel(shown: String) {
+    text = shown
+    isTyped = false
   }
 }
 

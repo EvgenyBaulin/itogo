@@ -104,4 +104,92 @@ struct FundingTests {
     // The overdue 12th still needs its money.
     #expect(lines.map(\.remaining) == [Fx.money("700"), Fx.money("2000")])
   }
+
+  // MARK: - Accounts
+
+  /// A dollar subscription on a card that holds only rubles is topped up in rubles: 10 $ at
+  /// 90. Without a rate it stays in dollars and says so. A payment that names no account goes
+  /// to the main one.
+  @Test func aDollarSubscriptionOnARubleCardShowsRubles() {
+    let card = PaymentMethod(id: cardOne, name: "Card", currency: .rub)
+    let main = PaymentMethod(id: cardTwo, name: "Main", currency: .rub, isDefault: true)
+    let video = ScheduledPayment(
+      id: Fx.id(1), name: "Video", kind: .subscription, amountE4: Fx.money("10"),
+      currency: .usd, paymentMethodId: cardOne, day: 25, nextDate: Fx.day("2026-09-25"))
+    let rent = ScheduledPayment(
+      id: Fx.id(2), name: "Rent", amountE4: Fx.money("30000"), day: 28,
+      nextDate: Fx.day("2026-09-28"))
+    let book = PlanningBook(scheduled: [video, rent])
+    let ledger = Fx.ledger([], book: book)
+    func lines(_ rates: [CurrencyCode: Decimal]) -> [FundingLine] {
+      Funding.month(
+        MonthKey(year: 2026, month: 9), book: book, ledger: ledger, today: Fx.day("2026-09-19"),
+        accounts: [card, main], mainId: main.id, rubPerUnit: rates)
+    }
+    // The main account comes first.
+    #expect(
+      lines([.usd: 90]) == [
+        FundingLine(
+          paymentMethodId: cardTwo, currency: .rub, due: Fx.money("30000"), paid: .zero,
+          remaining: Fx.money("30000")),
+        FundingLine(
+          paymentMethodId: cardOne, currency: .rub, due: Fx.money("900"), paid: .zero,
+          remaining: Fx.money("900")),
+      ])
+    #expect(
+      lines([:]).last
+        == FundingLine(
+          paymentMethodId: cardOne, currency: .usd, due: Fx.money("10"), paid: .zero,
+          remaining: Fx.money("10"), withoutRate: true))
+  }
+
+  /// An ordinary operation that matches a due pays it from its own account, in what moved on
+  /// that account: here 900 ₽ charged for 10 $.
+  @Test func aMatchedOperationPaysFromItsAccount() {
+    let card = PaymentMethod(id: cardOne, name: "Card", currency: .rub)
+    let video = ScheduledPayment(
+      id: Fx.id(1), name: "Video", kind: .subscription, amountE4: Fx.money("10"),
+      currency: .usd, paymentMethodId: cardTwo, day: 15, nextDate: Fx.day("2026-09-15"))
+    let book = PlanningBook(scheduled: [video])
+    var paid = Fx.operation(
+      1, "2026-09-15", "10", currency: .usd, rubles: "900", note: "Video", method: cardOne)
+    paid.transaction.accountCurrency = .rub
+    paid.transaction.accountAmountE4 = Fx.money("905")
+    let ledger = Fx.ledger([paid], book: book)
+    let matches = ScheduledMatching.matches(
+      book: book, ledger: ledger, today: Fx.day("2026-09-19"), rejections: [])
+    let lines = Funding.month(
+      MonthKey(year: 2026, month: 9), book: book, ledger: ledger, today: Fx.day("2026-09-19"),
+      accounts: [card], mainId: nil, rubPerUnit: [.usd: 90], matches: matches)
+    #expect(
+      lines == [
+        FundingLine(
+          paymentMethodId: cardOne, currency: .rub, due: Fx.money("905"),
+          paid: Fx.money("905"), remaining: .zero)
+      ])
+  }
+
+  /// The main account first, then the others in the order of every menu; within an account its
+  /// currencies in its own order, its main currency first.
+  @Test func theMainAccountFirstThenTheOrderOfTheMenus() {
+    let main = PaymentMethod(id: cardTwo, name: "Main", currency: .rub, isDefault: true)
+    let wallet = PaymentMethod(
+      id: Fx.id(30), name: "Wallet", currency: .usd, otherCurrencies: [.eur])
+    let alpha = PaymentMethod(id: cardOne, name: "Alpha", currency: .rub)
+    func payment(_ number: Int, _ currency: CurrencyCode, _ account: UUID) -> ScheduledPayment {
+      ScheduledPayment(
+        id: Fx.id(number), name: "P\(number)", amountE4: Fx.money("10"), currency: currency,
+        paymentMethodId: account, day: 25, nextDate: Fx.day("2026-09-25"))
+    }
+    let book = PlanningBook(scheduled: [
+      payment(1, .eur, wallet.id), payment(2, .usd, wallet.id), payment(3, .rub, alpha.id),
+      payment(4, .rub, main.id),
+    ])
+    let lines = Funding.month(
+      MonthKey(year: 2026, month: 9), book: book, ledger: Fx.ledger([], book: book),
+      today: Fx.day("2026-09-19"), accounts: [wallet, alpha, main], mainId: main.id,
+      rubPerUnit: [.usd: 90, .eur: 100])
+    #expect(lines.map(\.paymentMethodId) == [main.id, alpha.id, wallet.id, wallet.id])
+    #expect(lines.map(\.currency) == [.rub, .rub, .usd, .eur])
+  }
 }

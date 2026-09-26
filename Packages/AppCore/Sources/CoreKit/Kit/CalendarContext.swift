@@ -44,8 +44,12 @@ public struct CalendarContext: Sendable {
     startOfDay(day).addingTimeInterval(12 * 3600)
   }
 
+  /// The last moment of the day: a millisecond before the next day starts. A day is not always
+  /// twenty-four hours long — the clocks move — so it ends where the next begins, not a fixed
+  /// time after its own start: on a day of 23 hours that would be the next day, on one of 25
+  /// an hour short.
   public func endOfDay(_ day: DateOnly) -> Date {
-    startOfDay(day).addingTimeInterval(24 * 3600 - 0.001)
+    startOfDay(adding(days: 1, to: day)).addingTimeInterval(-0.001)
   }
 
   public func adding(days: Int, to origin: DateOnly) -> DateOnly {

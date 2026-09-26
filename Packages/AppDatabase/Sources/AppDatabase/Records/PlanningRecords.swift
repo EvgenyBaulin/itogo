@@ -14,26 +14,26 @@ extension ScheduledPayment: @retroactive FetchableRecord, @retroactive Persistab
       id: try RowMapping.uuid(row, "id"),
       name: row["name"] ?? "",
       kind: ScheduledKind(rawValue: row["kind"] ?? "bill") ?? .bill,
-      amountE4: RowMapping.amount(row, "amount_e4"),
+      amountE4: try RowMapping.amount(row, "amount_e4"),
       currency: CurrencyCode(row["currency"] ?? "RUB"),
       categoryId: RowMapping.optionalUUID(row, "category_id"),
       paymentMethodId: RowMapping.optionalUUID(row, "payment_method_id"),
       forWhom: ForWhom(rawValue: row["for_whom"] ?? "me") ?? .me,
       forPersonId: RowMapping.optionalUUID(row, "for_person_id"),
-      reimbursable: row["reimbursable"] ?? false,
+      reimbursable: try RowMapping.flag(row, "reimbursable", fallback: false),
       debtorPersonId: RowMapping.optionalUUID(row, "debtor_person_id"),
-      reimbursementAmountE4: RowMapping.optionalAmount(row, "reimbursement_amount_e4"),
+      reimbursementAmountE4: try RowMapping.optionalAmount(row, "reimbursement_amount_e4"),
       reimbursementCurrency: (row["reimbursement_currency"] as String?).map(CurrencyCode.init),
       freq: Frequency(rawValue: row["freq"] ?? "monthly") ?? .monthly,
-      interval: row["interval"] ?? 1,
-      day: row["day"],
-      month: row["month"],
+      interval: try RowMapping.optionalInteger(row, "interval") ?? 1,
+      day: try RowMapping.optionalInteger(row, "day"),
+      month: try RowMapping.optionalInteger(row, "month"),
       nextDate: RowMapping.day(row, "next_date"),
       endDate: RowMapping.day(row, "end_date"),
       trialEnd: RowMapping.day(row, "trial_end"),
       cancelURL: row["cancel_url"],
-      remindDaysBefore: row["remind_days_before"],
-      active: row["active"] ?? true)
+      remindDaysBefore: try RowMapping.optionalInteger(row, "remind_days_before"),
+      active: try RowMapping.flag(row, "active", fallback: true))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -71,7 +71,7 @@ extension SubscriptionPrice: @retroactive FetchableRecord, @retroactive Persista
       id: try RowMapping.uuid(row, "id"),
       paymentId: try RowMapping.uuid(row, "payment_id"),
       date: RowMapping.day(row, "date") ?? DateOnly(year: 1970, month: 1, day: 1),
-      amountE4: RowMapping.amount(row, "amount_e4"))
+      amountE4: try RowMapping.amount(row, "amount_e4"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -92,13 +92,13 @@ extension ExpectedIncome: @retroactive FetchableRecord, @retroactive Persistable
       categoryId: RowMapping.optionalUUID(row, "category_id"),
       personId: RowMapping.optionalUUID(row, "person_id"),
       kind: ExpectedIncomeKind(rawValue: row["kind"] ?? "one_off") ?? .oneOff,
-      totalE4: RowMapping.amount(row, "total_e4"),
+      totalE4: try RowMapping.amount(row, "total_e4"),
       currency: CurrencyCode(row["currency"] ?? "RUB"),
       dueDate: RowMapping.day(row, "due_date"),
       freq: (row["freq"] as String?).flatMap(Frequency.init(rawValue:)),
-      day: row["day"],
-      partsExpected: row["parts_expected"] ?? 1,
-      closed: row["closed"] ?? false)
+      day: try RowMapping.optionalInteger(row, "day"),
+      partsExpected: try RowMapping.optionalInteger(row, "parts_expected") ?? 1,
+      closed: try RowMapping.flag(row, "closed", fallback: false))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -143,8 +143,8 @@ extension Budget: @retroactive FetchableRecord, @retroactive PersistableRecord {
       scope: BudgetScope(rawValue: row["scope"] ?? "category") ?? .category,
       categoryId: RowMapping.optionalUUID(row, "category_id"),
       forWhom: (row["for_whom"] as String?).flatMap(ForWhom.init(rawValue:)),
-      amountE4: RowMapping.amount(row, "amount_e4"),
-      rollover: row["rollover"] ?? false,
+      amountE4: try RowMapping.amount(row, "amount_e4"),
+      rollover: try RowMapping.flag(row, "rollover", fallback: false),
       startMonth: RowMapping.month(row, "start_month"))
   }
 
@@ -170,10 +170,10 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
     self.init(
       id: try RowMapping.uuid(row, "id"),
       date: RowMapping.day(row, "date") ?? DateOnly(year: 1970, month: 1, day: 1),
-      reconciledAt: row["reconciled_at"],
-      actualTotalRubE4: RowMapping.amount(row, "actual_total_rub_e4"),
-      expectedTotalRubE4: RowMapping.optionalAmount(row, "expected_total_rub_e4"),
-      differenceE4: RowMapping.optionalAmount(row, "difference_e4"),
+      reconciledAt: try RowMapping.optionalInstant(row, "reconciled_at"),
+      actualTotalRubE4: try RowMapping.amount(row, "actual_total_rub_e4"),
+      expectedTotalRubE4: try RowMapping.optionalAmount(row, "expected_total_rub_e4"),
+      differenceE4: try RowMapping.optionalAmount(row, "difference_e4"),
       transactionId: RowMapping.optionalUUID(row, "transaction_id"),
       breakdown: ReconciliationBreakdown.amounts(fromJSON: row["breakdown"]),
       kind: ReconciliationKind(rawValue: row["kind"] ?? "total") ?? .total)

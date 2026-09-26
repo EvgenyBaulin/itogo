@@ -2283,6 +2283,193 @@
         }
       }
     },
+    "events.add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+ Event"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+ Событие"
+          }
+        }
+      }
+    },
+    "events.edit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Изменить"
+          }
+        }
+      }
+    },
+    "events.form.budget": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Budget"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Бюджет"
+          }
+        }
+      }
+    },
+    "events.form.budgetHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Empty — no budget. What is left of a budget is kept back in the free sum."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пусто — без бюджета. Остаток бюджета придерживается в свободной сумме."
+          }
+        }
+      }
+    },
+    "events.form.edit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Event"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Событие"
+          }
+        }
+      }
+    },
+    "events.form.end": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По"
+          }
+        }
+      }
+    },
+    "events.form.name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название"
+          }
+        }
+      }
+    },
+    "events.form.new": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New event"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новое событие"
+          }
+        }
+      }
+    },
+    "events.form.start": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "С"
+          }
+        }
+      }
+    },
+    "events.issue.emptyName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Give the event a name."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дайте событию название."
+          }
+        }
+      }
+    },
+    "events.issue.sameNameAndDays": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another event with this name covers some of these days."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Другое событие с таким названием уже приходится на эти дни."
+          }
+        }
+      }
+    },
     "events.lastTime": {
       "extractionState": "manual",
       "localizations": {
@@ -3124,6 +3311,23 @@
         }
       }
     },
+    "form.goal.otherCurrency": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Counted in the goal's %@ at the rate of its day"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В цель пойдёт в %@ по курсу своего дня"
+          }
+        }
+      }
+    },
     "form.goal.plan": {
       "extractionState": "manual",
       "localizations": {
@@ -3328,6 +3532,23 @@
         }
       }
     },
+    "form.limit.rolloverHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A new amount, or carrying over switched on, starts the carry again this month."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новая сумма, как и включённый перенос, начинает перенос остатка заново с этого месяца."
+          }
+        }
+      }
+    },
     "form.limit.scope": {
       "extractionState": "manual",
       "localizations": {
@@ -3470,13 +3691,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment method"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способ оплаты"
+            "value": "Счёт"
           }
         }
       }
@@ -3787,6 +4008,23 @@
         }
       }
     },
+    "form.rateMissing.goal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There is no %@ rate for this day yet, so the rubles cannot be counted. It loads from the Bank of Russia once the Mac is online — or pick another currency or date."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Курса %@ на этот день ещё нет, и рубли не посчитать. Он подгрузится из ЦБ, когда будет сеть, — или выберите другую валюту или дату."
+          }
+        }
+      }
+    },
     "form.rateMissing.reminder": {
       "extractionState": "manual",
       "localizations": {
@@ -3887,6 +4125,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Возвращает"
+          }
+        }
+      }
+    },
+    "form.returns.currency": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Currency of the return"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Валюта возврата"
+          }
+        }
+      }
+    },
+    "form.returns.rub": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "≈ %@ at today's rate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "≈ %@ по курсу на сегодня"
           }
         }
       }
@@ -3993,6 +4265,23 @@
         }
       }
     },
+    "form.withdraw.noRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No rate to count %2$@ in %1$@ for this day: it cannot be checked against what is saved"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет курса, чтобы перевести %2$@ в %1$@ на этот день: не проверить, хватит ли накопленного"
+          }
+        }
+      }
+    },
     "form.withdraw.title": {
       "extractionState": "manual",
       "localizations": {
@@ -4010,36 +4299,121 @@
         }
       }
     },
-    "free.daily": {
+    "form.withdraw.tooMuch": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "≈ %@ a day · days: %lld"
+            "value": "More than the goal holds: %@ saved"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "≈ %@ в день · дней: %lld"
+            "value": "Больше, чем в цели: накоплено %@"
           }
         }
       }
     },
-    "free.noExpectations": {
+    "free.excludedTitle": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Only income already received is counted. Add your salary as regular expected income, and it will count before it arrives."
+            "value": "Not in the summary — no free sum"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Учтён только уже полученный доход. Заведите зарплату как регулярное ожидаемое поступление — и она будет учтена ещё до прихода."
+            "value": "Не в сводке — без свободной суммы"
+          }
+        }
+      }
+    },
+    "free.goalSavingsInside": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "of it put aside for goals: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "из них отложено на цели: %@"
+          }
+        }
+      }
+    },
+    "free.grey": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allowing for planned events and payments"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Учитывая запланированные События и траты"
+          }
+        }
+      }
+    },
+    "free.main": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "on the accounts now"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "на счетах сейчас"
+          }
+        }
+      }
+    },
+    "free.mainWithoutRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no rate today, not in the sum: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "без курса на сегодня, не в сумме: %@"
+          }
+        }
+      }
+    },
+    "free.noReconciliation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not enough data: make the first reconciliation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мало данных: сделайте первую сверку"
           }
         }
       }
@@ -4061,6 +4435,74 @@
         }
       }
     },
+    "free.perDay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can spend a day: %@ · days: %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Можно тратить в день: %@ · дней: %lld"
+          }
+        }
+      }
+    },
+    "free.planWithoutRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no rate today, left out of the lines: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "без курса на сегодня, не в строках: %@"
+          }
+        }
+      }
+    },
+    "free.stillExpected": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "still expected by %@: %@ — not added"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ещё ждём до %@: %@ — не прибавлено"
+          }
+        }
+      }
+    },
+    "free.stillExpectedWithoutRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some expected income has no rate today and is left out."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Часть ожидаемых поступлений без курса на сегодня — не учтена."
+          }
+        }
+      }
+    },
     "free.title": {
       "extractionState": "manual",
       "localizations": {
@@ -4074,6 +4516,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Свободная сумма"
+          }
+        }
+      }
+    },
+    "free.unanchored": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not reconciled yet, not in the sum: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ещё не сверены, не в сумме: %@"
           }
         }
       }
@@ -4101,13 +4560,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No payment method"
+            "value": "No account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Без способа оплаты"
+            "value": "Без счёта"
           }
         }
       }
@@ -4142,6 +4601,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сколько нужно в этом месяце"
+          }
+        }
+      }
+    },
+    "funding.withoutRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(no rate)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(без курса)"
           }
         }
       }
@@ -4384,6 +4860,59 @@
         }
       }
     },
+    "goals.withoutRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operation has no rate for its day and is not counted yet"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operations have no rate for their day and are not counted yet"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции без курса своего дня — пока не учтены"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операций без курса своего дня — пока не учтены"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операция без курса своего дня — пока не учтена"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции без курса своего дня — пока не учтены"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "limit.badTotal": {
       "extractionState": "manual",
       "localizations": {
@@ -4571,6 +5100,108 @@
         }
       }
     },
+    "limits.all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All limits (%lld)…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все лимиты (%lld)…"
+          }
+        }
+      }
+    },
+    "limits.allTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All limits"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все лимиты"
+          }
+        }
+      }
+    },
+    "limits.amount.carryRestart": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A new amount starts the carry again: %@ is carried over now"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новая сумма начнёт перенос заново: сейчас перенесено %@"
+          }
+        }
+      }
+    },
+    "limits.amount.edit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change the limit: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Изменить лимит: %@"
+          }
+        }
+      }
+    },
+    "limits.amount.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available this month. Click to change the monthly limit, the carry aside. Return saves, Esc puts it back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доступно в этом месяце. Нажмите, чтобы изменить лимит в месяц, без переноса. Return — сохранить, Esc — вернуть как было."
+          }
+        }
+      }
+    },
+    "limits.amount.placeholder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В месяц"
+          }
+        }
+      }
+    },
     "limits.carry": {
       "extractionState": "manual",
       "localizations": {
@@ -4669,6 +5300,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Лимиты"
+          }
+        }
+      }
+    },
+    "limits.unreadable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That is not an amount"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это не сумма"
           }
         }
       }
@@ -4839,6 +5487,59 @@
           "stringUnit": {
             "state": "translated",
             "value": "Лимиты"
+          }
+        }
+      }
+    },
+    "overview.limitsMore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld more in Planning"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld more in Planning"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "ещё %lld — в «Планировании»"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "ещё %lld — в «Планировании»"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "ещё %lld — в «Планировании»"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "ещё %lld — в «Планировании»"
+                }
+              }
+            }
           }
         }
       }
@@ -5110,13 +5811,30 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "debt payments still due"
+            "value": "debt payments by then"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "платежи по долгам впереди"
+            "value": "платежи по долгам до этой даты"
+          }
+        }
+      }
+    },
+    "planning.free.events": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "left of event budgets"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "остаток бюджетов событий"
           }
         }
       }
@@ -5138,53 +5856,36 @@
         }
       }
     },
-    "planning.free.forOthers": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "of it paid for others, coming back:"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "из них за других, вернут:"
-          }
-        }
-      }
-    },
     "planning.free.goalReserve": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "kept back for goal plans"
+            "value": "goal plans by then"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "резерв на плановые взносы"
+            "value": "план взносов на цели до этой даты"
           }
         }
       }
     },
-    "planning.free.income": {
+    "planning.free.goalSavings": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "income of the month"
+            "value": "already put aside for goals"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "доход месяца"
+            "value": "уже отложено на цели"
           }
         }
       }
@@ -5195,30 +5896,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "payments still due"
+            "value": "payments and subscriptions by then"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "платежи впереди"
-          }
-        }
-      }
-    },
-    "planning.free.spent": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "spent this month"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "потрачено в этом месяце"
+            "value": "платежи и подписки до этой даты"
           }
         }
       }
@@ -5427,19 +6111,53 @@
         }
       }
     },
-    "reconcile.byCurrency": {
+    "reconcile.accountsQuestion": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "By currency"
+            "value": "How much money is on each account now? Each field already holds what the books expect: fix only the ones that differ."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "По валютам"
+            "value": "Сколько денег на каждом счёте сейчас? В каждом поле — сколько ожидает учёт: поправьте только то, что отличается."
+          }
+        }
+      }
+    },
+    "reconcile.archived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "archived account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "счёт в архиве"
+          }
+        }
+      }
+    },
+    "reconcile.cannotRecord": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A difference on an archived account or in a currency the account does not hold cannot be recorded. Nothing was saved."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разницу на счёте в архиве или в валюте вне списка счёта не записать. Ничего не сохранено."
           }
         }
       }
@@ -5478,6 +6196,23 @@
         }
       }
     },
+    "reconcile.expectedHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What the books expect: the last count plus every movement since"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сколько ожидает учёт: прошлая сверка плюс все движения после неё"
+          }
+        }
+      }
+    },
     "reconcile.findMissing": {
       "extractionState": "manual",
       "localizations": {
@@ -5501,13 +6236,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The first reconciliation becomes the starting point."
+            "value": "The first count of an account in a currency is its starting point: there is nothing to compare it with."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Первая сверка станет точкой отсчёта."
+            "value": "Первая сверка счёта в валюте — точка отсчёта: сравнивать не с чем."
           }
         }
       }
@@ -5563,19 +6298,104 @@
         }
       }
     },
-    "reconcile.journalLeftOut": {
+    "reconcile.kind.accounts": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Some debt journal lines are left out: without a date, without a rate, or dated on the day of the previous reconciliation."
+            "value": "accounts"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Часть записей журналов долгов не учтена: без даты, без курса или с датой прошлой сверки."
+            "value": "по счетам"
+          }
+        }
+      }
+    },
+    "reconcile.kind.opening": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "opening balances"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "начальные остатки"
+          }
+        }
+      }
+    },
+    "reconcile.kind.total": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "one total"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "одной суммой"
+          }
+        }
+      }
+    },
+    "reconcile.negative": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A balance cannot be below zero."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток не может быть меньше нуля."
+          }
+        }
+      }
+    },
+    "reconcile.noAccounts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No accounts yet."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счетов пока нет."
+          }
+        }
+      }
+    },
+    "reconcile.noDifference": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no difference"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "без расхождений"
           }
         }
       }
@@ -5593,6 +6413,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "нет курса — нажмите ⌘R"
+          }
+        }
+      }
+    },
+    "reconcile.noRateForDifference": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No rate today for %@: the difference cannot be recorded in rubles. Press ⌘R, or save without recording."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет курса на сегодня для %@: разницу не записать в рублях. Нажмите ⌘R или сохраните без записи."
+          }
+        }
+      }
+    },
+    "reconcile.notHeld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not among the account's currencies"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "вне списка валют счёта"
+          }
+        }
+      }
+    },
+    "reconcile.notHeldDifference": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A difference on an archived account or in a currency the account does not hold cannot be recorded: %@. Save without recording."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разницу на счёте в архиве или в валюте вне списка счёта не записать: %@. Сохраните без записи."
+          }
+        }
+      }
+    },
+    "reconcile.notInSummary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not in the summary"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "не в сводке"
           }
         }
       }
@@ -5631,19 +6519,19 @@
         }
       }
     },
-    "reconcile.oneSum": {
+    "reconcile.nothingCounted": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "One sum in rubles"
+            "value": "Nothing is counted yet: type the balance of at least one account."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Одной суммой в рублях"
+            "value": "Ничего не сосчитано: введите остаток хотя бы одного счёта."
           }
         }
       }
@@ -5665,53 +6553,19 @@
         }
       }
     },
-    "reconcile.previous": {
+    "reconcile.rateMissing": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "previous reconciliation, %@"
+            "value": "A difference in a currency without a rate today cannot be recorded, so nothing was saved. Press ⌘R, or save without recording."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "прошлая сверка, %@"
-          }
-        }
-      }
-    },
-    "reconcile.question": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "How much money do you have in total?"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сколько у вас денег всего?"
-          }
-        }
-      }
-    },
-    "reconcile.rateOf": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bank of Russia rate of %@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "курс ЦБ на %@"
+            "value": "Разницу в валюте без курса на сегодня не записать, и ничего не сохранено. Нажмите ⌘R или сохраните без записи."
           }
         }
       }
@@ -5739,13 +6593,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "An operation dated today, in a category of its own — «Reconciliation»"
+            "value": "Every difference becomes an operation in «Reconciliation» on its account, in its currency, dated now"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Операция сегодняшним числом, в отдельной категории «Сверка»"
+            "value": "Каждая разница — операция в категории «Сверка» на своём счёте, в своей валюте, текущим моментом"
           }
         }
       }
@@ -5784,240 +6638,19 @@
         }
       }
     },
-    "reconcile.term.borrowed": {
+    "reconcile.startingPoint": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "borrowed"
+            "value": "starting point"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "взял в долг"
-          }
-        }
-      }
-    },
-    "reconcile.term.debtPayments": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "debt payments that are not expenses"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "платежи по долгам без расхода"
-          }
-        }
-      }
-    },
-    "reconcile.term.goalSavings": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "put aside for goals (still yours)"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "отложено на цели (деньги остались у вас)"
-          }
-        }
-      }
-    },
-    "reconcile.term.income": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "income"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "доходы"
-          }
-        }
-      }
-    },
-    "reconcile.term.lent": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "lent"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "дал в долг"
-          }
-        }
-      }
-    },
-    "reconcile.term.myExpenses": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "my expenses"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "мои расходы"
-          }
-        }
-      }
-    },
-    "reconcile.term.onCredit": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "bought on credit (no money left)"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "куплено в кредит (деньги не ушли)"
-          }
-        }
-      }
-    },
-    "reconcile.term.paidForOthersExpected": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "paid for others, not returned yet"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "за других, ещё не вернули"
-          }
-        }
-      }
-    },
-    "reconcile.term.paidForOthersReturned": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "paid for others, already returned"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "за других, уже вернули"
-          }
-        }
-      }
-    },
-    "reconcile.term.previous": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "previous reconciliation"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "прошлая сверка"
-          }
-        }
-      }
-    },
-    "reconcile.term.repaidToMe": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "debts repaid to me"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "мне вернули долги"
-          }
-        }
-      }
-    },
-    "reconcile.term.returned": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "money returned by people"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "возвраты денег от людей"
-          }
-        }
-      }
-    },
-    "reconcile.term.shortfalls": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "shortfalls (the money left at the purchase)"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "недостачи (деньги ушли при покупке)"
-          }
-        }
-      }
-    },
-    "reconcile.term.surplus": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "surplus already inside money returned"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "излишек — уже в возврате денег"
+            "value": "точка отсчёта"
           }
         }
       }
@@ -6347,6 +6980,40 @@
         }
       }
     },
+    "scheduled.bind": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Привязать"
+          }
+        }
+      }
+    },
+    "scheduled.bindHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tie the operation to this due date for good, as «Mark as paid» would"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Навсегда связать операцию с этим сроком, как это сделал бы «Провести»"
+          }
+        }
+      }
+    },
     "scheduled.cancelLink": {
       "extractionState": "manual",
       "localizations": {
@@ -6500,6 +7167,23 @@
         }
       }
     },
+    "scheduled.matchedMore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "and %lld more"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "и ещё %lld"
+          }
+        }
+      }
+    },
     "scheduled.none": {
       "extractionState": "manual",
       "localizations": {
@@ -6513,6 +7197,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Регулярных платежей пока нет"
+          }
+        }
+      }
+    },
+    "scheduled.notThis": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Something else"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это другое"
+          }
+        }
+      }
+    },
+    "scheduled.notThisHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This operation is not this payment: the due date waits for it again"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эта операция — не этот платёж: срок снова ждёт оплаты"
+          }
+        }
+      }
+    },
+    "scheduled.paidByOperation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ paid by an operation: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ оплачено операцией: %@"
           }
         }
       }

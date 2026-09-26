@@ -63,9 +63,11 @@ extension AdviceRules {
   ///
   /// s = p × the average monthly bad spending of the last three complete months. For a goal
   /// with R still to save and a positive monthly pace r (its plan, else its average net
-  /// contribution — `GoalStatus.pace`): months sooner = ⌈R ÷ r⌉ − ⌈R ÷ (r + s)⌉. No open
-  /// goal: nothing to suggest, whatever the history; no complete month: «not enough data»;
-  /// open goals, but none with a pace: «not enough data»; no bad spending: nothing to suggest.
+  /// contribution — `GoalStatus.pace`): months sooner = ⌈R ÷ r⌉ − ⌈R ÷ (r + s)⌉. R and r are in
+  /// the goal's currency, so the rubles s frees are turned into it at today's rate; a goal
+  /// whose currency has no rate today is left out. No open goal: nothing to suggest, whatever
+  /// the history; no complete month: «not enough data»; open goals, but none with a pace:
+  /// «not enough data»; no bad spending: nothing to suggest.
   static func badCutScenarios(_ context: AdviceContext, goals: [GoalStatus]) -> [Advice] {
     // The scenario is about goals: without one to bring forward there is nothing to say, not
     // too little to say it with.
@@ -81,20 +83,23 @@ extension AdviceRules {
     guard !paced.isEmpty else {
       return [.notEnoughData(.badCutScenario, reason: Reason.goalNoPace)]
     }
-    return paced.map { status in
+    return paced.compactMap { status in
+      guard let rate = status.rubPerUnit, rate > 0 else { return nil }
+      let currency = status.currency
       let remaining = status.remaining
       let pace = status.pace ?? .zero
       let base = SavingsMath.ceilingQuotient(remaining, pace)
       var terms = [
         AdviceTerm(key: Key.badMonthlyAverage, value: .money(average)),
-        AdviceTerm(key: Key.goalRemaining, value: .money(remaining)),
-        AdviceTerm(key: Key.goalPace, value: .money(pace)),
+        AdviceTerm(key: Key.goalRemaining, value: AdviceMath.money(remaining, in: currency)),
+        AdviceTerm(key: Key.goalPace, value: AdviceMath.money(pace, in: currency)),
         AdviceTerm(key: Key.monthsAtPace, value: .months(base)),
       ]
       var notes: [AdviceTerm] = []
       for cut in badCutsBp {
         let freed = AdviceMath.share(average, basisPoints: cut)
-        let sooner = base - SavingsMath.ceilingQuotient(remaining, pace + freed)
+        let freedInGoal = currency == .rub ? freed : SavingsMath.rounded(freed.decimal / rate)
+        let sooner = base - SavingsMath.ceilingQuotient(remaining, pace + freedInGoal)
         terms.append(AdviceTerm(key: Key.sooner(cutBp: cut), value: .months(sooner)))
         notes.append(AdviceTerm(key: Key.cut(cutBp: cut), value: .money(freed)))
       }

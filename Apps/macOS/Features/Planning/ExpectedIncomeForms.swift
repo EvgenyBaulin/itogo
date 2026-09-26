@@ -116,9 +116,16 @@ struct ExpectedIncomeForm: View {
     .onAppear {
       guard !loaded else { return }
       loaded = true
-      income = original ?? ExpectedIncome(name: "", totalE4: .zero, dueDate: environment.today)
+      income =
+        original
+        ?? Self.newIncome(defaultCurrency: environment.defaultCurrency, today: environment.today)
       lastDay = income.isOnLastDay
     }
+  }
+
+  /// A new expected income: in the default currency, due today until another day is picked.
+  static func newIncome(defaultCurrency: CurrencyCode, today: DateOnly) -> ExpectedIncome {
+    ExpectedIncome(name: "", totalE4: .zero, currency: defaultCurrency, dueDate: today)
   }
 
   private var offersLastDay: Bool { income.offersLastDay }

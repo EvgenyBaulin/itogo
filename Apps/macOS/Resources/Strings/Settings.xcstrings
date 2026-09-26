@@ -1182,6 +1182,74 @@
         }
       }
     },
+    "categories.limit.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Monthly limit: an empty field removes the limit, zero is not accepted. ↻ — what is left carries over; a new amount starts the carry again this month. Each change is undone with ⌘Z."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лимит в месяц: пустое поле убирает лимит, ноль не ставится. ↻ — остаток переносится; новая сумма начинает перенос заново с этого месяца. Каждое изменение отменяется ⌘Z."
+          }
+        }
+      }
+    },
+    "categories.limit.placeholder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Monthly limit"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лимит в месяц"
+          }
+        }
+      }
+    },
+    "categories.limit.refused": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: %2$@"
+          }
+        }
+      }
+    },
+    "categories.limit.rollover": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What is left carries over to the next month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток переносится на следующий месяц"
+          }
+        }
+      }
+    },
     "categories.orphans": {
       "extractionState": "manual",
       "localizations": {
@@ -1401,6 +1469,108 @@
           "stringUnit": {
             "state": "translated",
             "value": "Вернуть из архива"
+          }
+        }
+      }
+    },
+    "currencies.caption.default": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "default"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "по умолчанию"
+          }
+        }
+      }
+    },
+    "currencies.caption.heldMany": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "held by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "на счетах %@"
+          }
+        }
+      }
+    },
+    "currencies.caption.heldOne": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "held by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "на счёте %@"
+          }
+        }
+      }
+    },
+    "currencies.lock.base": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ruble is the currency of every total, limit and report: it stays on."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рубль — валюта всех итогов, лимитов и отчётов: он не выключается."
+          }
+        }
+      }
+    },
+    "currencies.lock.default": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The default currency stays on. Choose another default first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Валюта по умолчанию не выключается. Сначала выберите другую."
+          }
+        }
+      }
+    },
+    "currencies.lock.held": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An account holds this currency: take it off the account first (Settings → Accounts)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эта валюта есть на счёте: сначала уберите её из счёта (Настройки → Счета)."
           }
         }
       }
@@ -1749,6 +1919,246 @@
         }
       }
     },
+    "goals.inArchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In the archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В архиве"
+          }
+        }
+      }
+    },
+    "goals.restore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bring back"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть"
+          }
+        }
+      }
+    },
+    "goals.showArchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Show archive (%lld)"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Show archive (%lld)"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Показывать архив (%lld)"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Показывать архив (%lld)"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Показывать архив (%lld)"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Показывать архив (%lld)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "names.other.add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить"
+          }
+        }
+      }
+    },
+    "names.other.alreadyHere": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This name is in the list already."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это название уже есть в списке."
+          }
+        }
+      }
+    },
+    "names.other.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A name cannot be empty."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название не может быть пустым."
+          }
+        }
+      }
+    },
+    "names.other.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other ways you type this name in the entry line. For example: Starbucks — sbux, starbs."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Как ещё вы пишете это название в строке ввода. Например: Пятёрочка — пятёрка, 5ка."
+          }
+        }
+      }
+    },
+    "names.other.new": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another name"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ещё одно название"
+          }
+        }
+      }
+    },
+    "names.other.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Убрать «%@»"
+          }
+        }
+      }
+    },
+    "names.other.sameAsName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is the name itself."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это и есть название записи."
+          }
+        }
+      }
+    },
+    "names.other.taken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» already answers to this name: the entry line would not tell the two apart."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это название уже у «%@» — строка ввода не различила бы две записи."
+          }
+        }
+      }
+    },
+    "names.other.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other names"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Другие названия"
+          }
+        }
+      }
+    },
     "payment.account": {
       "extractionState": "manual",
       "localizations": {
@@ -1840,13 +2250,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aliases, one per line"
+            "value": "Other names"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Алиасы, по одному в строке"
+            "value": "Другие названия"
           }
         }
       }
@@ -1864,6 +2274,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "В архив"
+          }
+        }
+      }
+    },
+    "references.archiveSection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архив"
           }
         }
       }
@@ -1908,13 +2335,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Main payment method"
+            "value": "Main account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Основной способ оплаты"
+            "value": "Основной счёт"
           }
         }
       }
@@ -1936,6 +2363,286 @@
         }
       }
     },
+    "references.delete.kept": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld record was not deleted: something refers to it now."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld records were not deleted: something refers to them now."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld записи не удалены: на них уже ссылаются."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld записей не удалены: на них уже ссылаются."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld запись не удалена: на неё уже ссылаются."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld записи не удалены: на них уже ссылаются."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "references.delete.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing refers to it: no operation, the ones in the bin included, no plan, no debt. A deletion cannot be undone."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На это ничто не ссылается: ни операции, в том числе в корзине, ни планы, ни долги. Удаление не отменить."
+          }
+        }
+      }
+    },
+    "references.delete.messageMany": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing refers to them: no operation, the ones in the bin included, no plan, no debt. A deletion cannot be undone."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На них ничто не ссылается: ни операции, в том числе в корзине, ни планы, ни долги. Удаление не отменить."
+          }
+        }
+      }
+    },
+    "references.delete.skipped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld more is used and stays: it can be merged or put in the archive."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld more are used and stay: they can be merged or put in the archive."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Ещё %lld используются и останутся: их можно объединить или убрать в архив."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Ещё %lld используются и останутся: их можно объединить или убрать в архив."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Ещё %lld используется и останется: её можно объединить или убрать в архив."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Ещё %lld используются и останутся: их можно объединить или убрать в архив."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "references.delete.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete «%@»?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить «%@»?"
+          }
+        }
+      }
+    },
+    "references.delete.titleMany": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Delete %lld record?"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Delete %lld records?"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld записи?"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld записей?"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld запись?"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld записи?"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "references.deleteAsk": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить…"
+          }
+        }
+      }
+    },
+    "references.deleteUnused": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Delete %lld unused…"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Delete %lld unused…"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld неиспользуемые…"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld неиспользуемых…"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld неиспользуемую…"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Удалить %lld неиспользуемой…"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "references.end": {
       "extractionState": "manual",
       "localizations": {
@@ -1949,6 +2656,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Конец"
+          }
+        }
+      }
+    },
+    "references.inArchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In the archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В архиве"
           }
         }
       }
@@ -2010,13 +2734,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The operations of «%1$@» move to «%2$@», its name becomes an alias of «%2$@», and «%1$@» goes to the archive. A merge cannot be undone."
+            "value": "The operations of «%1$@» move to «%2$@», its name becomes another name of «%2$@», and «%1$@» goes to the archive. A merge cannot be undone."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Операции «%1$@» перейдут к «%2$@», его название станет алиасом «%2$@», а сам «%1$@» уйдёт в архив. Объединение нельзя отменить."
+            "value": "Операции «%1$@» перейдут к «%2$@», его название станет другим названием «%2$@», а сам «%1$@» уйдёт в архив. Объединение нельзя отменить."
           }
         }
       }
@@ -2106,6 +2830,57 @@
         }
       }
     },
+    "references.refusal.emptyName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A name cannot be empty."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название не может быть пустым."
+          }
+        }
+      }
+    },
+    "references.refusal.nameTaken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» already answers to this name: the entry line would not tell the two apart."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это название уже у «%@» — строка ввода не различила бы две записи."
+          }
+        }
+      }
+    },
+    "references.refusal.otherNameTaken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%1$@» is already a name of «%2$@»: the entry line would not tell the two apart."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%1$@» — уже название «%2$@»: строка ввода не различила бы две записи."
+          }
+        }
+      }
+    },
     "references.relation": {
       "extractionState": "manual",
       "localizations": {
@@ -2123,6 +2898,197 @@
         }
       }
     },
+    "references.restore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bring back"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть"
+          }
+        }
+      }
+    },
+    "references.restore.nameTaken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» stays in the archive: another record has its name. Rename one of them, or merge them."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» остаётся в архиве: это название уже у другой записи. Переименуйте одну из них или объедините их."
+          }
+        }
+      }
+    },
+    "references.rowMenu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actions for «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Действия с «%@»"
+          }
+        }
+      }
+    },
+    "references.rowMenuHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge, put in the archive, bring back or delete"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединить, убрать в архив, вернуть или удалить"
+          }
+        }
+      }
+    },
+    "references.selected": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld record selected"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld records selected"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Выбраны %lld записи"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Выбрано %lld записей"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Выбрана %lld запись"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Выбрано %lld записи"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "references.selectedUsed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld of them is used: it cannot be deleted, only merged or put in the archive."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld of them are used: they cannot be deleted, only merged or put in the archive."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld из них используются: их не удалить, только объединить или убрать в архив."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld из них используются: их не удалить, только объединить или убрать в архив."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld из них используется: её не удалить, только объединить или убрать в архив."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld из них используются: их не удалить, только объединить или убрать в архив."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "references.showArchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать архив"
+          }
+        }
+      }
+    },
     "references.start": {
       "extractionState": "manual",
       "localizations": {
@@ -2136,6 +3102,146 @@
           "stringUnit": {
             "state": "translated",
             "value": "Начало"
+          }
+        }
+      }
+    },
+    "references.usage.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing refers to it: it can be deleted."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На это ничто не ссылается — можно удалить."
+          }
+        }
+      }
+    },
+    "references.usage.operations": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operation"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operations"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операций"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операция"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "references.usage.planning": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld plan or debt"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld plans and debts"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld записи в планах и долгах"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld записей в планах и долгах"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld запись в планах или долгах"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld записи в планах и долгах"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "references.usage.used": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used by %@, the bin included. It cannot be deleted: merge it into another record or put it in the archive."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Используется: %@ — корзина тоже считается. Удалить нельзя: можно объединить с другой записью или убрать в архив."
           }
         }
       }
@@ -3264,6 +4370,40 @@
         }
       }
     },
+    "settings.currencies.default": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default currency"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Валюта по умолчанию"
+          }
+        }
+      }
+    },
+    "settings.currencies.defaultHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Everything new starts in it: the entry line, templates, scheduled payments, expected income, debts and goals. Totals, limits and reports stay in rubles."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В ней начинается всё новое: строка ввода, шаблоны, платежи, ожидаемые поступления, долги и цели. Итоги, лимиты и отчёты остаются в рублях."
+          }
+        }
+      }
+    },
     "settings.currencies.enabled": {
       "extractionState": "manual",
       "localizations": {
@@ -3389,13 +4529,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "A person can be set on any operation instead of one of the five, and «For whom» in Analytics counts them separately. Relations, aliases and merging are in Reference books."
+            "value": "A person can be set on any operation instead of one of the five, and «For whom» in Analytics counts them separately. Relations, other names and merging are in Reference books."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Человека можно указать у любой операции вместо одного из пяти значений, и в «На кого» аналитики он считается отдельно. Отношение, псевдонимы и слияние — в «Справочниках»."
+            "value": "Человека можно указать у любой операции вместо одного из пяти значений, и в «На кого» аналитики он считается отдельно. Отношение, другие названия и слияние — в «Справочниках»."
           }
         }
       }
@@ -3542,13 +4682,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Payment methods"
+            "value": "Accounts"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Способы оплаты"
+            "value": "Счета"
           }
         }
       }
@@ -3593,13 +4733,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Money put aside for goals is part of my total"
+            "value": "Goal money sits on accounts in the summary"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Отложенное на цели входит в мою сумму"
+            "value": "Деньги целей лежат на счетах в сводке"
           }
         }
       }
@@ -3610,13 +4750,81 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "When on, a contribution to a goal does not lower the expected balance of a reconciliation: the money only moved to savings."
+            "value": "When on, the grey line of the free sum subtracts what is already saved in goals. Turn it off when goal money is kept on an account outside the summary."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Если включено, взнос на цель не уменьшает ожидаемый остаток при сверке: деньги просто переложены в сбережения."
+            "value": "Если включено, серая строка свободной суммы вычитает то, что уже отложено на цели. Выключите, если деньги целей лежат на счёте вне сводки."
+          }
+        }
+      }
+    },
+    "settings.planning.limits": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Limits"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лимиты"
+          }
+        }
+      }
+    },
+    "settings.planning.limitsHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Over the limit first, then close to it, then by the share spent. The Overview card shows five at most; when there are more limits than this number, all of them are under «All limits…» in Planning."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала превышенные, затем на грани, затем по доле потраченного. Карточка «Обзора» показывает не больше пяти; если лимитов больше этого числа, все они — по кнопке «Все лимиты…» в «Планировании»."
+          }
+        }
+      }
+    },
+    "settings.planning.limitsTopN": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Limits shown in Planning"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сколько лимитов показывать в «Планировании»"
+          }
+        }
+      }
+    },
+    "settings.planning.limitsTopN.all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все"
           }
         }
       }
@@ -3755,6 +4963,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Целевая доля сбережений: %lld %%"
+          }
+        }
+      }
+    },
+    "settings.tab.accounts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accounts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счета"
           }
         }
       }
@@ -3980,19 +5205,70 @@
         }
       }
     },
+    "templates.archive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Put in the archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В архив"
+          }
+        }
+      }
+    },
+    "templates.archiveSection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архив"
+          }
+        }
+      }
+    },
     "templates.hint": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Templates fill themselves from what you enter. Pinned ones always stay first."
+            "value": "Templates fill themselves from what you enter. Pinned ones always stay first. A template in the archive leaves the chips and comes back with «Bring back»."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Шаблоны сами набираются из того, что вы вводите. Закреплённые всегда идут первыми."
+            "value": "Шаблоны сами набираются из того, что вы вводите. Закреплённые всегда идут первыми. Шаблон в архиве уходит из чипов и возвращается кнопкой «Вернуть»."
+          }
+        }
+      }
+    },
+    "templates.inArchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In the archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В архиве"
           }
         }
       }
@@ -4010,6 +5286,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Закрепить"
+          }
+        }
+      }
+    },
+    "templates.restore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bring back"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть"
+          }
+        }
+      }
+    },
+    "templates.rowMenu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Template actions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Действия с шаблоном"
+          }
+        }
+      }
+    },
+    "templates.showArchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать архив"
           }
         }
       }

@@ -236,7 +236,12 @@ struct AccountSetupStorageTests {
     let setup = try SettingsRepository(writer: stack.writer).string(AccountSettings.setupKey)
     #expect(setup == "later")
 
-    let another = try TestSupport.makeEntry(note: "later still")
+    // The main account holds tenge: an operation in tenge needs nothing charged apart.
+    var later = TransactionDraft(
+      currency: CurrencyCode("KZT"), amount: AmountE4(whole: 1500), rate: Decimal(2) / 10,
+      note: "later still")
+    later.normalizeSinglePart()
+    let another = try later.materialize(rublesConverter: { AmountE4(raw: $0.raw / 5) })
     try transactions.save(another)
     try accounts.postponeSetup(mainAccountName: "Second", defaultCurrency: .rub, at: noon)
     #expect(try accounts.accounts().map(\.id) == [made.id])

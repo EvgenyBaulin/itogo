@@ -1,11 +1,15 @@
 import AppCore
+import AppDatabase
 import SwiftUI
 
 // The blocks of the Planning section below the payments. Content, never glass; states in
 // words and symbols, never colour alone.
 
-/// The limits of the month: a symbol and a word for the status, «spent / available», a thin
-/// bar, the pace and the forecast; what is carried over from earlier months.
+/// The limits running out: the top ones of the one order the lists share — over the limit,
+/// then close to it, then by the share spent — as many as Settings → Планирование says. Each
+/// with a symbol and a word for the status, «spent / available», a thin bar, the pace and the
+/// forecast, and what is carried over. A click on the amount edits it in place; «Все лимиты»
+/// opens every one of them in a sheet of this block's own.
 struct LimitsBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -13,6 +17,10 @@ struct LimitsBlock: View {
   @Binding var sheet: PlanningSheet?
   /// A limit asked to be deleted: the confirmation comes first.
   @State private var deleting: Budget?
+  /// The limit whose amount is being typed in place, and why its last Enter was refused.
+  @State private var editing: UUID?
+  @State private var refusal: String?
+  @State private var showsAll = false
 
   var body: some View {
     ComputedBlock(
@@ -20,26 +28,31 @@ struct LimitsBlock: View {
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       VStack(alignment: .leading, spacing: 10) {
-        let lines = snapshot.planning.limits
-        if lines.isEmpty {
+        let ranked = LimitLists.ranked(snapshot, environment)
+        if ranked.total == 0 {
           Text(verbatim: t("limits.none")).foregroundStyle(.secondary)
         }
-        ForEach(lines, id: \.budget.id) { line in
-          VStack(alignment: .leading, spacing: 3) {
-            LimitStatusLine(line: line, tree: snapshot.ledger.tree)
-            LimitBar(line: line)
-            Text(verbatim: detail(line))
-              .font(.caption.monospacedDigit())
-              .foregroundStyle(.secondary)
-          }
-          .contextMenu {
-            Button(environment.language("action.edit")) { sheet = .budget(line.budget) }
-            Button(environment.language("action.delete")) { deleting = line.budget }
+        ForEach(ranked.shown, id: \.budget.id) { line in
+          LimitRow(
+            line: line, tree: snapshot.ledger.tree,
+            editing: LimitAmountEditing(
+              editing: $editing, refusal: $refusal,
+              save: { budget, text in save(budget, text) }),
+            edit: { sheet = .budget($0) }, delete: { deleting = $0 })
+        }
+        HStack(spacing: 8) {
+          Button(t("limits.add")) { sheet = .budget(nil) }
+            .buttonStyle(.bordered)
+          if ranked.total > ranked.shown.count {
+            Button(environment.format("limits.all", table: "Planning", counts: ranked.total)) {
+              editing = nil
+              showsAll = true
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("limits.all")
           }
         }
-        Button(t("limits.add")) { sheet = .budget(nil) }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+        .controlSize(.small)
       }
     }
     .confirmationDialog(
@@ -51,9 +64,73 @@ struct LimitsBlock: View {
         if let dependencies { PlanningActions(dependencies).delete(budget) }
       }
     }
+    // Presented by the block that opens it, over the section — not through the section's
+    // own sheet, which holds the forms.
+    .sheet(isPresented: $showsAll) {
+      AllLimitsSheet()
+        .handingOver(dependencies)
+    }
   }
 
-  private func detail(_ line: LimitLine) -> String {
+  private func save(_ budget: Budget, _ text: String) -> String? {
+    guard let dependencies else { return t("form.notSaved") }
+    return LimitWrites.changeAmount(of: budget, typed: text, deps: dependencies).map(t)
+  }
+
+  private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
+}
+
+/// One limit in a list of limits: the status line with its amount to edit in place, the bar,
+/// the pace, the forecast and the carry, and a menu to open the form or delete it.
+struct LimitRow: View {
+  @Dependency(\.environment) private var environment
+  let line: LimitLine
+  let tree: CategoryTree
+  let editing: LimitAmountEditing
+  let edit: (Budget) -> Void
+  let delete: (Budget) -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      LimitStatusLine(line: line, tree: tree, editing: editing)
+      LimitBar(line: line)
+      Text(verbatim: detail)
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+      if isEditing, let note = Self.carryNote(line, environment) {
+        Text(verbatim: note)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("limits.amount.carryRestart")
+      }
+      if let refusal, isEditing {
+        Text(verbatim: refusal)
+          .font(.caption)
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .contextMenu {
+      Button(environment.language("action.edit")) { edit(line.budget) }
+      Button(environment.language("action.delete")) { delete(line.budget) }
+    }
+  }
+
+  private var refusal: String? { editing.refusal.wrappedValue }
+
+  private var isEditing: Bool { editing.editing.wrappedValue == line.budget.id }
+
+  /// Said under a limit while its amount is typed in place: a new amount starts the carry
+  /// again, and what is carried now is what it would give up — the button shows the amount
+  /// available, the field the monthly limit alone. Nothing when nothing is carried.
+  static func carryNote(_ line: LimitLine, _ environment: AppEnvironment) -> String? {
+    guard !line.carry.isZero else { return nil }
+    return environment.format(
+      "limits.amount.carryRestart", table: "Planning", environment.money.rounded(line.carry))
+  }
+
+  private var detail: String {
     var pieces: [String] = []
     if let pace = line.paceBp {
       pieces.append(
@@ -71,8 +148,6 @@ struct LimitsBlock: View {
     }
     return pieces.joined(separator: " · ")
   }
-
-  private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
 }
 
 /// Spent against available: the part within the limit in the accent colour, what went over
@@ -99,5 +174,139 @@ private struct LimitBar: View {
       }
       .frame(height: 4)
       .accessibilityHidden(true)
+  }
+}
+
+/// A list of limits whose amounts are edited in place: which one is being typed (one at a
+/// time), why its last Enter was refused, and the write — nil when it landed or there was
+/// nothing to write, else the refusal in words.
+struct LimitAmountEditing {
+  var editing: Binding<UUID?>
+  var refusal: Binding<String?>
+  var save: (Budget, String) -> String?
+}
+
+/// The lists of limits: the Planning block, the sheet of all of them and the Overview card
+/// read the one order through here.
+@MainActor
+enum LimitLists {
+  /// The limits in the order of `LimitRules.ranked`, the top ones as Settings → Планирование
+  /// says (every one with `all`), and how many there are to show. A bad-spending or a «for
+  /// whom» limit is named for the order as the lists name it.
+  static func ranked(
+    _ snapshot: DataSnapshot, _ environment: AppEnvironment, all: Bool = false
+  ) -> (shown: [LimitLine], total: Int) {
+    let tree = snapshot.ledger.tree
+    return LimitRules.ranked(
+      snapshot.planning.limits, topN: all ? nil : snapshot.planning.book.settings.limitsTopN,
+      tree: tree
+    ) { PlanningText.limitName($0.budget, tree: tree, environment) }
+  }
+}
+
+/// The writes of an amount typed into a limit's field — in place in Planning, in the sheet
+/// of all limits, in the row of a category in Settings. Each is one `PlanningChange`, one
+/// step of ⌘Z. What they return is nil when the write landed or there was nothing to write,
+/// else the key, in the Planning table, of why nothing was written.
+@MainActor
+enum LimitWrites {
+  /// What a limit's field says.
+  enum Typed: Equatable {
+    /// Nothing typed.
+    case empty
+    case amount(AmountE4)
+    /// Text that is no amount, not even a formula.
+    case unreadable
+  }
+
+  /// The text of a field read the way amounts are typed everywhere: «1,500», «1500,5», «2k»,
+  /// «(1000+600)/2».
+  static func read(_ text: String) -> Typed {
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .empty }
+    guard let value = try? ExpressionEvaluator.evaluate(text),
+      let amount = try? AmountE4(decimal: value)
+    else { return .unreadable }
+    return .amount(amount)
+  }
+
+  /// What a field shows once what it says is written: the amount the way the app writes
+  /// amounts, nothing for an empty field; nil for text that is no amount.
+  static func settledText(_ text: String) -> String? {
+    switch read(text) {
+    case .empty: ""
+    case .amount(let amount): AmountField.text(for: amount)
+    case .unreadable: nil
+    }
+  }
+
+  /// The amount typed over a limit's amount in place. An empty field writes nothing — it puts
+  /// the amount back, as Esc does; a limit is deleted from its menu, after a question.
+  static func changeAmount(
+    of budget: Budget, typed text: String, budgets: [Budget], tree: CategoryTree,
+    month: MonthKey, store: TransactionsStore
+  ) -> String? {
+    switch read(text) {
+    case .empty: return nil
+    case .unreadable: return "limits.unreadable"
+    case .amount(let amount):
+      return apply(
+        LimitRules.changingAmount(
+          of: budget.id, to: amount, budgets: budgets, tree: tree, in: month),
+        store: store)
+    }
+  }
+
+  /// The same with what the window has at hand: the book as the database has it now, the
+  /// tree of the data on screen, the month of today.
+  static func changeAmount(
+    of budget: Budget, typed text: String, deps: AppDependencies
+  ) -> String? {
+    let snapshot = deps.compute.snapshot
+    return changeAmount(
+      of: budget, typed: text, budgets: budgets(deps.environment, snapshot),
+      tree: snapshot?.ledger.tree ?? CategoryTree(), month: deps.environment.today.monthKey,
+      store: deps.store)
+  }
+
+  /// The amount typed into the row of a category: an empty field deletes its limit, zero is
+  /// refused (`LimitRules.settingCategoryLimit`).
+  static func setCategoryLimit(
+    _ categoryId: UUID, typed text: String, budgets: [Budget], tree: CategoryTree,
+    month: MonthKey, store: TransactionsStore
+  ) -> String? {
+    let amount: AmountE4?
+    switch read(text) {
+    case .unreadable: return "limits.unreadable"
+    case .empty: amount = nil
+    case .amount(let typed): amount = typed
+    }
+    return apply(
+      LimitRules.settingCategoryLimit(
+        categoryId, to: amount, budgets: budgets, tree: tree, in: month),
+      store: store)
+  }
+
+  /// One change, one write.
+  static func apply(_ change: LimitChange, store: TransactionsStore) -> String? {
+    switch change {
+    case .unchanged:
+      return nil
+    case .refused(let issue):
+      return "limit.issue.\(issue.rawValue)"
+    case .save(let budget):
+      var rows = PlanningRows.empty
+      rows.budgets = [budget]
+      return store.apply(PlanningChange(upsert: rows)) ? nil : "form.notSaved"
+    case .delete(let budget):
+      var ids = PlanningRowIDs.empty
+      ids.budgets = [budget.id]
+      return store.apply(PlanningChange(delete: ids)) ? nil : "form.notSaved"
+    }
+  }
+
+  /// The limits as the database has them now — the screen may not have caught up with the
+  /// last edit — or as the screen has them when the database cannot be read.
+  static func budgets(_ environment: AppEnvironment, _ snapshot: DataSnapshot?) -> [Budget] {
+    (try? environment.planning?.budgets()) ?? snapshot?.dataset.planning.budgets ?? []
   }
 }

@@ -495,4 +495,384 @@ final class PlanningFlowTests: XCTestCase {
     XCTAssertEqual(lines.count, 2, "every refused undo is in the journal")
     XCTAssertTrue(lines.allSatisfy { $0.contains("action=undo") }, lines.joined(separator: "\n"))
   }
+
+  // MARK: - A payment paid by an ordinary operation
+
+  /// The rent of 15 September, typed as an ordinary expense on the 14th, and the payment of
+  /// the rent — as the pipeline would show them.
+  private func rentPaidByHand() throws -> (
+    payment: ScheduledPayment, operation: TransactionEntry, snapshot: DataSnapshot
+  ) {
+    let main = PaymentMethod(name: "Main", currency: .rub, isDefault: true)
+    try references.save(main)
+    let rent = CoreKit.Category(kind: .expense, name: "Rent", quality: .neutral)
+    try references.save(rent)
+    let payment = ScheduledPayment(
+      name: "Rent", amountE4: AmountE4(whole: 30_000), categoryId: rent.id,
+      paymentMethodId: main.id, day: 15, nextDate: DateOnly(year: 2026, month: 9, day: 15))
+    var rows = PlanningRows.empty
+    rows.scheduled = [payment]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    var draft = TransactionDraft(
+      occurredAt: CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 14))
+        .addingTimeInterval(10 * 3600),
+      amount: AmountE4(whole: 30_000), note: "rent", paymentMethodId: main.id)
+    draft.parts = [PartDraft(categoryId: rent.id, amount: AmountE4(whole: 30_000))]
+    let operation = try draft.materialize()
+    try transactions.save(operation)
+    let snapshot = try showStored()
+    return (payment, operation, snapshot)
+  }
+
+  /// What the database holds now, shown as the pipeline would show it.
+  @discardableResult
+  private func showStored(version: Int = 1) throws -> DataSnapshot {
+    let snapshot = DataSnapshot.build(
+      dataset: Dataset(
+        entries: try transactions.entries(from: .distantPast, to: .distantFuture),
+        categories: try references.categories(),
+        paymentMethods: try references.paymentMethods(), planning: try planning.book()),
+      calendar: .utc, today: today, context: SnapshotContext(), version: DataVersion(load: version))
+    compute.applyLight(snapshot)
+    return snapshot
+  }
+
+  /// «оплачено операцией»: the rent typed by hand pays the due of the 15th. «Привязать» keys
+  /// it to that due for good and moves the payment to October — one step of ⌘Z, which puts
+  /// both back.
+  func testLinkingAMatchedOperationKeysItAndMovesThePaymentOnInOneUndo() throws {
+    let (payment, operation, snapshot) = try rentPaidByHand()
+    let status = try XCTUnwrap(snapshot.planning.scheduled.first)
+    XCTAssertEqual(status.matchedDues, [DateOnly(year: 2026, month: 9, day: 15): operation.id])
+
+    XCTAssertTrue(
+      PlanningActions(deps).bind(
+        operation.id, to: payment, due: DateOnly(year: 2026, month: 9, day: 15)))
+    XCTAssertEqual(
+      try transactions.entry(id: operation.id)?.transaction.externalId,
+      OperationLink.scheduled(paymentId: payment.id, due: DateOnly(year: 2026, month: 9, day: 15))
+        .externalId)
+    XCTAssertEqual(
+      try planning.scheduled().first?.nextDate, DateOnly(year: 2026, month: 10, day: 15))
+
+    store.undo()
+    XCTAssertNil(try transactions.entry(id: operation.id)?.transaction.externalId)
+    XCTAssertEqual(
+      try planning.scheduled().first?.nextDate, DateOnly(year: 2026, month: 9, day: 15))
+  }
+
+  /// «Это другое»: the operation is not the rent; the due waits for its payment again. One
+  /// step of ⌘Z brings the match back.
+  func testSomethingElseStopsTheMatchAndOneUndoBringsItBack() throws {
+    let (payment, operation, _) = try rentPaidByHand()
+    let due = DateOnly(year: 2026, month: 9, day: 15)
+    XCTAssertTrue(PlanningActions(deps).reject(operation.id, for: payment, due: due))
+
+    let key = ScheduledMatching.rejectionKey(operation: operation.id, payment: payment.id, due: due)
+    XCTAssertEqual(try planning.book().settings.scheduledMatchRejections, [key])
+    let shown = try showStored(version: 2)
+    XCTAssertEqual(shown.planning.scheduled.first?.matchedDues, [:])
+    XCTAssertEqual(shown.planning.scheduled.first?.nextUnpaid, due, "the due waits again")
+
+    store.undo()
+    XCTAssertEqual(try planning.book().settings.scheduledMatchRejections, [])
+  }
+
+  /// The row shows, pays and skips the first due nothing paid: the one the operation paid is
+  /// behind it.
+  func testTheRowPaysTheFirstUnpaidDue() throws {
+    let (_, _, snapshot) = try rentPaidByHand()
+    let status = try XCTUnwrap(snapshot.planning.scheduled.first)
+    XCTAssertEqual(status.nextDue, DateOnly(year: 2026, month: 9, day: 15))
+    XCTAssertEqual(status.nextUnpaid, DateOnly(year: 2026, month: 10, day: 15))
+    XCTAssertEqual(ScheduledRow.paying(status).nextDue, DateOnly(year: 2026, month: 10, day: 15))
+    // A reminder of the due the operation paid pays nothing; the next one does.
+    let matches = snapshot.planning.matches
+    XCTAssertTrue(ScheduledRow.canPay(status, matches: matches))
+    XCTAssertFalse(
+      RemindersSheet.waits(status, for: DateOnly(year: 2026, month: 9, day: 15), matches: matches))
+    XCTAssertTrue(
+      RemindersSheet.waits(
+        status, for: DateOnly(year: 2026, month: 10, day: 15), matches: matches))
+  }
+
+  /// A one-off repair an ordinary expense paid already: nothing is left to pay, so neither the
+  /// row nor the reminder offers «Провести» or «Пропустить» — pressed, «Провести» would write
+  /// the repair a second time. «Привязать» under the row closes it.
+  func testAPaymentWhoseEveryDueIsPaidCannotBePaidAgain() throws {
+    let main = PaymentMethod(name: "Main", currency: .rub, isDefault: true)
+    try references.save(main)
+    let repair = CoreKit.Category(kind: .expense, name: "Repair", quality: .neutral)
+    try references.save(repair)
+    let due = DateOnly(year: 2026, month: 9, day: 20)
+    let payment = ScheduledPayment(
+      name: "Repair", amountE4: AmountE4(whole: 50_000), categoryId: repair.id,
+      paymentMethodId: main.id, day: 20, nextDate: due, endDate: due)
+    var rows = PlanningRows.empty
+    rows.scheduled = [payment]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    var draft = TransactionDraft(
+      occurredAt: CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 18))
+        .addingTimeInterval(10 * 3600),
+      amount: AmountE4(whole: 50_000), note: "repair", paymentMethodId: main.id)
+    draft.parts = [PartDraft(categoryId: repair.id, amount: AmountE4(whole: 50_000))]
+    let operation = try draft.materialize()
+    try transactions.save(operation)
+
+    let snapshot = try showStored()
+    let status = try XCTUnwrap(snapshot.planning.scheduled.first)
+    XCTAssertEqual(status.matchedDues, [due: operation.id])
+    XCTAssertEqual(status.nextUnpaid, due, "the row shows the last due, paid")
+    XCTAssertFalse(ScheduledRow.canPay(status, matches: snapshot.planning.matches))
+    XCTAssertFalse(RemindersSheet.waits(status, for: due, matches: snapshot.planning.matches))
+  }
+
+  /// «Провести» on the October rent while September's was paid by the rent typed by hand: the
+  /// payment moves past both, and that operation is keyed to September's due date in the same
+  /// write — unkeyed, it would drop out of September's funding once `next_date` is past it.
+  /// One ⌘Z takes all of it back; «Пропустить» keys it the same way.
+  func testPayingALaterDueKeysTheOperationThatPaidTheEarlierOne() throws {
+    let (payment, operation, _) = try rentPaidByHand()
+    let september = DateOnly(year: 2026, month: 9, day: 15)
+    let october = DateOnly(year: 2026, month: 10, day: 15)
+    let key = OperationLink.scheduled(paymentId: payment.id, due: september).externalId
+
+    XCTAssertTrue(
+      PlanningActions(deps).markAsPaid(
+        payment, due: october, amount: AmountE4(whole: 30_000),
+        on: CalendarContext.utc.startOfDay(today).addingTimeInterval(12 * 3600),
+        paymentMethodId: payment.paymentMethodId, updatePrice: false))
+    XCTAssertEqual(try transactions.entry(id: operation.id)?.transaction.externalId, key)
+    XCTAssertEqual(
+      try planning.scheduled().first?.nextDate, DateOnly(year: 2026, month: 11, day: 15))
+    let shown = try showStored(version: 2)
+    XCTAssertEqual(
+      shown.planning.funding.map(\.paid), [AmountE4(whole: 30_000)],
+      "September's rent dropped out of September's funding")
+
+    store.undo()
+    XCTAssertNil(try transactions.entry(id: operation.id)?.transaction.externalId)
+    XCTAssertEqual(try planning.scheduled().first?.nextDate, september)
+    XCTAssertEqual(
+      try transactions.entries(from: .distantPast, to: .distantFuture).map(\.id),
+      [operation.id], "one ⌘Z left the October payment")
+
+    try showStored(version: 3)
+    XCTAssertTrue(PlanningActions(deps).skip(payment, due: october))
+    XCTAssertEqual(try transactions.entry(id: operation.id)?.transaction.externalId, key)
+    store.undo()
+    XCTAssertNil(try transactions.entry(id: operation.id)?.transaction.externalId)
+  }
+
+  /// The forecast step leaves the rent typed by hand out of the daily average: the plan
+  /// counts it already, and in both it would be forecast twice.
+  func testTheForecastLeavesAMatchedOperationOutOfTheAverage() throws {
+    let (_, operation, snapshot) = try rentPaidByHand()
+    XCTAssertEqual(snapshot.planning.matches.operationIds, [operation.id])
+    let matched = ComputeSources.forecast(of: snapshot, today: today)
+    let twice = MonthForecast.remainder(ledger: snapshot.ledger, today: today)
+    let without = MonthForecast.remainder(
+      ledger: Ledger(
+        dataset: snapshot.dataset.removing([operation.id]), calendar: .utc),
+      today: today)
+    XCTAssertEqual(matched, without)
+    XCTAssertNotEqual(matched, twice)
+  }
+}
+
+/// Events and their budgets set right in Planning, against a database: each save is one step
+/// of ⌘Z, and a name in the archive comes back rather than a second event beside it.
+@MainActor
+final class EventBudgetFlowTests: XCTestCase {
+  private var environment: AppEnvironment!
+  private var store: TransactionsStore!
+  private var compute: ComputeStore!
+
+  override func setUp() async throws {
+    environment = AppEnvironment()
+    await environment.start(preparing: {
+      try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    })
+    store = TransactionsStore()
+    store.attach(
+      try XCTUnwrap(environment.transactions), references: environment.references,
+      planning: environment.planning)
+    compute = ComputeStore(calendar: .system, rebuildsInline: true)
+  }
+
+  override func tearDown() async throws {
+    if let environment { await environment.close() }
+  }
+
+  private var actions: PlanningActions {
+    PlanningActions(AppDependencies(environment: environment, store: store, compute: compute))
+  }
+
+  private func events() throws -> [Event] {
+    try XCTUnwrap(environment.references).events(includeArchived: true)
+  }
+
+  func testAnEventAndItsBudgetAreOneStepOfUndoEach() throws {
+    let day = DateOnly(year: 2026, month: 12, day: 31)
+    let party = Event(
+      name: "  New Year ", startDate: day, endDate: day, budgetE4: AmountE4(whole: 20_000))
+    XCTAssertTrue(actions.save(party))
+    XCTAssertEqual(try events().map(\.name), ["New Year"])
+    XCTAssertEqual(try events().first?.budgetE4, AmountE4(whole: 20_000))
+
+    var edited = try XCTUnwrap(try events().first)
+    edited.budgetE4 = AmountE4(whole: 25_000)
+    XCTAssertTrue(actions.save(edited))
+    XCTAssertEqual(try events().first?.budgetE4, AmountE4(whole: 25_000))
+
+    store.undo()
+    XCTAssertEqual(try events().first?.budgetE4, AmountE4(whole: 20_000), "one ⌘Z, one edit")
+    store.undo()
+    XCTAssertEqual(try events(), [], "one ⌘Z took the new event back")
+  }
+
+  func testANameInTheArchiveComesBackAndATwinIsRefused() throws {
+    let day = DateOnly(year: 2026, month: 10, day: 3)
+    let trip = Event(name: "Trip", startDate: day, endDate: day.adding(days: 3), archived: true)
+    try XCTUnwrap(environment.references).save(trip)
+
+    let again = Event(
+      name: "trip", startDate: day.adding(days: 1), endDate: day.adding(days: 5),
+      budgetE4: AmountE4(whole: 50_000))
+    XCTAssertTrue(actions.save(again))
+    let stored = try events()
+    XCTAssertEqual(stored.count, 1, "a second event beside the archived one")
+    XCTAssertEqual(stored.first?.id, trip.id)
+    XCTAssertEqual(stored.first?.archived, false)
+    XCTAssertEqual(stored.first?.budgetE4, AmountE4(whole: 50_000))
+
+    let twin = Event(name: "TRIP", startDate: day.adding(days: 2), endDate: day.adding(days: 2))
+    XCTAssertEqual(PlanningActions.issue(of: twin, among: stored), .sameNameAndDays)
+    XCTAssertFalse(actions.save(twin))
+    XCTAssertEqual(
+      PlanningActions.issue(of: Event(name: "", startDate: day, endDate: day), among: []),
+      .emptyName)
+    let nextYear = Event(
+      name: "Trip", startDate: day.adding(days: 365), endDate: day.adding(days: 366))
+    XCTAssertNil(PlanningActions.issue(of: nextYear, among: stored))
+  }
+
+  /// An event with a budget five months ahead is past the 120 days of «upcoming», but the
+  /// free sum keeps its budget back until a day up to a year away: the block lists it, to see
+  /// and to change.
+  func testAnEventWithABudgetFarAheadIsInTheBlock() {
+    let today = DateOnly(year: 2026, month: 9, day: 26)
+    let holiday = Event(
+      name: "Holiday", startDate: today.adding(days: 156), endDate: today.adding(days: 169),
+      budgetE4: AmountE4(whole: 200_000))
+    let party = Event(
+      name: "Party", startDate: today.adding(days: 10), endDate: today.adding(days: 10))
+    let far = Event(
+      name: "Far", startDate: today.adding(days: 200), endDate: today.adding(days: 200))
+    let snapshot = DataSnapshot.build(
+      dataset: Dataset(events: [holiday, party, far]), calendar: .utc, today: today,
+      context: SnapshotContext(), version: DataVersion(load: 1))
+    let shown = EventsBlock.shown(
+      snapshot.planning.events, budgeted: snapshot.planning.budgetedEvents)
+    XCTAssertEqual(
+      shown.map(\.event.name), ["Party", "Holiday"],
+      "the budget kept back is not in the block, or an event without one came in")
+  }
+
+  func testTheWordsOfTheEventFormAreTranslated() {
+    let keys = [
+      "events.add", "events.edit", "events.form.new", "events.form.edit", "events.form.budget",
+      "events.form.budgetHint", "events.issue.emptyName", "events.issue.sameNameAndDays",
+      "free.noReconciliation", "free.grey", "free.perDay", "free.stillExpected",
+      "free.excludedTitle", "planning.free.goalSavings", "planning.free.events",
+      "scheduled.paidByOperation", "scheduled.bind", "scheduled.notThis", "funding.withoutRate",
+    ]
+    for choice in [AppLanguage.Choice.english, .russian] {
+      environment.language.choice = choice
+      for key in keys {
+        XCTAssertNotEqual(environment.language(key, table: "Planning"), key, "\(choice) \(key)")
+      }
+    }
+    environment.language.choice = .russian
+  }
+}
+
+/// The free-sum block: what it shows of the free sum, and the day it counts to.
+@MainActor
+final class FreeMoneyBlockTests: XCTestCase {
+  private let today = DateOnly(year: 2026, month: 9, day: 19)
+
+  /// A free sum as the pipeline gives it, for a book with `accounts`.
+  private func freeMoney(accounts: [PaymentMethod] = []) -> FreeMoney {
+    DataSnapshot.build(
+      dataset: Dataset(paymentMethods: accounts), calendar: .utc, today: today,
+      context: SnapshotContext(), version: DataVersion(load: 1)
+    ).planning.freeMoney
+  }
+
+  /// A free sum counted from 100,000 on the accounts.
+  private func ready() -> FreeMoney {
+    var free = freeMoney()
+    free.state = .ready
+    free.main = AmountE4(whole: 100_000)
+    free.grey = AmountE4(whole: 90_000)
+    return free
+  }
+
+  /// D is the end of the month unless another day is picked, and stays within today and a
+  /// year ahead.
+  func testTheDayIsTheEndOfTheMonthAndStaysWithinAYear() {
+    XCTAssertEqual(
+      FreeMoneyBlock.day(today: today, picked: nil), DateOnly(year: 2026, month: 9, day: 30))
+    XCTAssertEqual(
+      FreeMoneyBlock.day(today: today, picked: DateOnly(year: 2027, month: 3, day: 31)),
+      DateOnly(year: 2027, month: 3, day: 31))
+    XCTAssertEqual(
+      FreeMoneyBlock.day(today: today, picked: DateOnly(year: 2028, month: 1, day: 1)),
+      DateOnly(year: 2027, month: 9, day: 19))
+    XCTAssertEqual(
+      FreeMoneyBlock.day(today: today, picked: DateOnly(year: 2026, month: 9, day: 1)), today)
+  }
+
+  /// With no count there is no money to start from: the block shows only «Мало данных» and
+  /// the way to the first count — no main figure, no grey line, no guide per day.
+  func testWithoutACountTheBlockAsksForTheFirstOne() {
+    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
+    let free = freeMoney(accounts: [card])
+    XCTAssertEqual(free.state, .noReconciliation)
+    XCTAssertEqual(FreeMoneyBlock.parts(of: free), [.firstCount])
+
+    let parts = FreeMoneyBlock.parts(of: ready()).map(\.name)
+    XCTAssertEqual(parts.first, "main")
+    XCTAssertTrue(parts.contains("grey"))
+    XCTAssertTrue(parts.contains("perDay"))
+    XCTAssertFalse(parts.contains("firstCount"))
+  }
+
+  /// «из них отложено на цели» explains the main figure only while the grey line takes the
+  /// goals' money away, and only when there is some.
+  func testTheGoalsMoneyInsideIsShownOnlyWhileTheGreyLineTakesItAway() {
+    var free = ready()
+    free.plan.subtractsGoalSavings = true
+    free.plan.goalSavings = AmountE4(whole: 10_000)
+    XCTAssertTrue(
+      FreeMoneyBlock.parts(of: free).contains(.goalSavingsInside(AmountE4(whole: 10_000))))
+    free.plan.subtractsGoalSavings = false
+    XCTAssertFalse(FreeMoneyBlock.parts(of: free).map(\.name).contains("goalSavingsInside"))
+    free.plan.subtractsGoalSavings = true
+    free.plan.goalSavings = .zero
+    XCTAssertFalse(FreeMoneyBlock.parts(of: free).map(\.name).contains("goalSavingsInside"))
+  }
+
+  /// The groups left out of the summary are shown apart, with their own totals, whether or
+  /// not the summary was counted.
+  func testTheGroupsLeftOutOfTheSummaryAreShownApart() {
+    let business = FreeMoney.ExcludedGroup(
+      group: AccountGroup(name: "Business", inSummary: false), totalRub: AmountE4(whole: 5_000))
+    var free = ready()
+    free.excluded = [business]
+    XCTAssertEqual(FreeMoneyBlock.parts(of: free).last, .excluded([business]))
+    free.state = .noReconciliation
+    XCTAssertEqual(FreeMoneyBlock.parts(of: free), [.firstCount, .excluded([business])])
+  }
 }

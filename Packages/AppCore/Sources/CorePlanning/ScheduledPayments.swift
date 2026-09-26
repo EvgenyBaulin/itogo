@@ -148,6 +148,18 @@ public enum SubscriptionMath {
   }
 }
 
+// MARK: - One-off payments
+
+extension ScheduledPayment {
+  /// A planned expense of one date — «Разово»: every month and ending on its own next date,
+  /// the way the form saves it (and reads it back). It is one charge, not a rhythm: it has no
+  /// figure per month or per year and adds nothing to what the subscriptions cost.
+  public var isOneOff: Bool {
+    guard let next = nextDate else { return false }
+    return freq == .monthly && interval == 1 && endDate == next
+  }
+}
+
 // MARK: - Status of a payment
 
 /// The last operation «Mark as paid» wrote for a payment.
@@ -195,25 +207,42 @@ public struct ScheduledStatus: Hashable, Sendable, Identifiable {
   /// payment has been overdue. Empty when the next one falls in a later month.
   public var dueDates: [DateOnly]
   public var nextDue: DateOnly
-  /// The next due date is before today and still unpaid.
+  /// A due date from the next one on is before today and still unpaid — neither by «Mark as
+  /// paid» nor by an ordinary operation that matches it.
   public var isOverdue: Bool
-  /// The price on the next due date, in the currency of the payment.
+  /// The price on the next unpaid due date (`nextUnpaid`, else `next_date`), in the currency
+  /// of the payment.
   public var amountNext: AmountE4
-  /// `amountNext` per month and per year (`SubscriptionMath`).
+  /// `amountNext` per month and per year (`SubscriptionMath`); zero for a one-off payment,
+  /// which is one charge and no rhythm (`isOneOff`).
   public var monthly: AmountE4
   public var yearly: AmountE4
-  /// My part of the next charge in rubles; `nil` when a rate is missing.
+  /// A planned expense of one date, «Разово» (`ScheduledPayment.isOneOff`): the list shows no
+  /// figure per month or per year for it.
+  public var isOneOff: Bool
+  /// My part of that charge in rubles; `nil` when a rate is missing.
   public var myShareRubNext: AmountE4?
   /// What the person gives back for the next charge, in rubles; `nil` without a rate.
   public var expectedReturnRubNext: AmountE4?
   public var lastCharge: ScheduledCharge?
   /// The last charge differed from the price on its due date — in amount or in currency.
   public var chargedDifferently: Bool
+  /// Due dates from the next one on that an ordinary operation pays by matching them
+  /// (`ScheduledMatching`), with that operation: «оплачено операцией», to tie with
+  /// «Привязать» or to dismiss with «Это другое».
+  public var matchedDues: [DateOnly: UUID]
+  /// The first due date from `next_date` on that nothing paid — neither a key nor a matching
+  /// operation: the date the list shows as the next one. `next_date` stays behind it while
+  /// ordinary operations pay the payment, since nothing moves it then. When every due date
+  /// through the end of the payment is paid, the last of them (its operation is in
+  /// `matchedDues`). Given no value, `nextDue`.
+  public var nextUnpaid: DateOnly
 
   public init(
     payment: ScheduledPayment, dueDates: [DateOnly], nextDue: DateOnly, isOverdue: Bool,
     amountNext: AmountE4, monthly: AmountE4, yearly: AmountE4, myShareRubNext: AmountE4?,
-    expectedReturnRubNext: AmountE4?, lastCharge: ScheduledCharge?, chargedDifferently: Bool
+    expectedReturnRubNext: AmountE4?, lastCharge: ScheduledCharge?, chargedDifferently: Bool,
+    matchedDues: [DateOnly: UUID] = [:], nextUnpaid: DateOnly? = nil, isOneOff: Bool = false
   ) {
     self.payment = payment
     self.dueDates = dueDates
@@ -226,6 +255,9 @@ public struct ScheduledStatus: Hashable, Sendable, Identifiable {
     self.expectedReturnRubNext = expectedReturnRubNext
     self.lastCharge = lastCharge
     self.chargedDifferently = chargedDifferently
+    self.matchedDues = matchedDues
+    self.nextUnpaid = nextUnpaid ?? nextDue
+    self.isOneOff = isOneOff
   }
 
   /// How many due dates `dueDates` keeps at most.
@@ -282,10 +314,12 @@ public enum ScheduledIssue: String, Error, Hashable, Sendable, CaseIterable {
 /// before saving.
 public enum ScheduledRules {
 
-  /// The status of every active payment that still has a due date, the soonest first.
+  /// The status of every active payment that still has a due date, the soonest unpaid one
+  /// first. `matches` are the due dates ordinary operations paid (`ScheduledMatching`): the
+  /// price, its equivalents and my part are those of the first due date nothing paid.
   public static func statuses(
     book: PlanningBook, ledger: Ledger, today: DateOnly,
-    rubPerUnit: [CurrencyCode: Decimal] = [:]
+    rubPerUnit: [CurrencyCode: Decimal] = [:], matches: ScheduledMatches = .empty
   ) -> [ScheduledStatus] {
     let charges = lastCharges(ledger: ledger)
     let endOfMonth = today.monthKey.lastDay
@@ -294,7 +328,9 @@ public enum ScheduledRules {
       guard let nextDue = payment.nextDate, payment.endDate.map({ nextDue <= $0 }) ?? true
       else { continue }
       let rule = RecurrenceRule(payment: payment)
-      let amount = SubscriptionMath.price(of: payment, on: nextDue, prices: book.prices)
+      let oneOff = payment.isOneOff
+      let shown = firstUnpaid(of: payment, from: nextDue, rule: rule, matches: matches)
+      let amount = SubscriptionMath.price(of: payment, on: shown.due, prices: book.prices)
       let split = share(of: payment, amount: amount, rubPerUnit: rubPerUnit)
       let charge = charges[payment.id]
       let chargedDifferently =
@@ -312,20 +348,39 @@ public enum ScheduledRules {
               limit: 10_000
             ).suffix(ScheduledStatus.dueDatesKept)),
           nextDue: nextDue,
-          isOverdue: nextDue < today,
+          isOverdue: shown.isUnpaid && shown.due < today,
           amountNext: amount,
-          monthly: SubscriptionMath.monthlyEquivalent(amount, rule: rule),
-          yearly: SubscriptionMath.yearlyEquivalent(amount, rule: rule),
+          monthly: oneOff ? .zero : SubscriptionMath.monthlyEquivalent(amount, rule: rule),
+          yearly: oneOff ? .zero : SubscriptionMath.yearlyEquivalent(amount, rule: rule),
           myShareRubNext: split?.myShareRub,
           expectedReturnRubNext: split?.expectedReturnRub,
           lastCharge: charge,
-          chargedDifferently: chargedDifferently))
+          chargedDifferently: chargedDifferently,
+          matchedDues: matches.matchedDues(of: payment.id), nextUnpaid: shown.due,
+          isOneOff: oneOff))
     }
     return result.sorted { left, right in
-      if left.nextDue != right.nextDue { return left.nextDue < right.nextDue }
+      if left.nextUnpaid != right.nextUnpaid { return left.nextUnpaid < right.nextUnpaid }
       if left.payment.name != right.payment.name { return left.payment.name < right.payment.name }
       return left.payment.id.uuidString < right.payment.id.uuidString
     }
+  }
+
+  /// The first due date from `nextDue` on that no key and no matching operation paid, looking
+  /// at `ScheduledMatching.duesPerPayment` due dates at most. When the payment ends before
+  /// one, its last due date, paid.
+  static func firstUnpaid(
+    of payment: ScheduledPayment, from nextDue: DateOnly, rule: RecurrenceRule,
+    matches: ScheduledMatches
+  ) -> (due: DateOnly, isUnpaid: Bool) {
+    var due = nextDue
+    for _ in 0..<ScheduledMatching.duesPerPayment {
+      guard matches.isPaid(payment.id, due) else { return (due, true) }
+      let next = Recurrence.next(after: due, rule: rule)
+      if let end = payment.endDate, next > end { return (due, false) }
+      due = next
+    }
+    return (due, !matches.isPaid(payment.id, due))
   }
 
   /// One charge of `amount` (in the payment's currency) split into what the person gives

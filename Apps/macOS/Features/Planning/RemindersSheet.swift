@@ -25,6 +25,9 @@ struct RemindersSheet: View {
   /// The reminder whose debt sheet is open: it goes once the payment lands, and the payment
   /// is for its due.
   @State private var debtReminder: Reminder?
+  /// The reminder whose «Провести» waits for the answer to «Это было до сверки в 14:05?».
+  @State private var asking: Reminder?
+  @State private var countQuestion: BeforeTheCountQuestion?
 
   private var shown: [Reminder] { reminders.filter { !handled.contains($0.id) } }
 
@@ -59,6 +62,11 @@ struct RemindersSheet: View {
         }, payDue: debtReminder?.due
       )
       .handingOver(dependencies)
+    }
+    // The answer dates the payment before or after the count, and «Провести» goes on.
+    .beforeTheCountQuestion($countQuestion) { count, wasBefore in
+      guard let asking else { return }
+      pay(asking, answer: (count, wasBefore))
     }
   }
 
@@ -99,25 +107,22 @@ struct RemindersSheet: View {
   private func actions(_ reminder: Reminder) -> some View {
     switch reminder.kind {
     case .payment:
-      // Only while the payment still waits for this very due date.
-      if let status = status(reminder), let due = reminder.due, status.nextDue == due {
+      if let status = status(reminder), let due = reminder.due,
+        Self.waits(status, for: due, matches: compute.snapshot?.planning.matches ?? .empty)
+      {
         Button(t("scheduled.markAsPaid")) {
           guard let dependencies else { return }
-          let actions = PlanningActions(dependencies)
-          if actions.markAsPaid(
-            status.payment, due: due,
-            amount: SubscriptionMath.price(
-              of: status.payment, on: due, prices: prices), on: paidAt(due),
-            paymentMethodId: status.payment.paymentMethodId, updatePrice: false)
+          // Dated on the day of the latest count of the balance it moves and saved after that
+          // count, it asks first, as the entry line and the form do.
+          if let count = PlanningActions(dependencies).countToAsk(
+            paying: status.payment, due: due,
+            amount: SubscriptionMath.price(of: status.payment, on: due, prices: prices),
+            on: paidAt(due))
           {
-            handled.insert(reminder.id)
+            asking = reminder
+            countQuestion = BeforeTheCountQuestion(count: count)
           } else {
-            // Not in silence: the row says why (review of the app, 19.09).
-            let currency = status.payment.currency
-            failed[reminder.id] = environment.format(
-              actions.failureKey(currency: currency, on: paidAt(due), at: .reminder),
-              table: "Planning",
-              currency.code)
+            pay(reminder, answer: nil)
           }
         }
         .buttonStyle(.bordered)
@@ -160,6 +165,42 @@ struct RemindersSheet: View {
       }
       .buttonStyle(.bordered)
       .controlSize(.small)
+    }
+  }
+
+  /// The row pays only while the payment still waits for this very due date: the first one
+  /// nothing paid, neither «Провести» nor an ordinary operation that matches it. `next_date`
+  /// stays behind the dates such operations paid, so it is not the one to compare with; and
+  /// a payment whose every due date is paid shows its last one, which waits for nothing.
+  static func waits(
+    _ status: ScheduledStatus, for due: DateOnly, matches: ScheduledMatches
+  )
+    -> Bool
+  {
+    status.nextUnpaid == due && ScheduledRow.canPay(status, matches: matches)
+  }
+
+  /// «Провести» of a reminder: its own due date, on the payment's account — the main one when
+  /// it has none or it is archived — with «Списано со счёта» prefilled when that account does
+  /// not hold the payment's currency; dated by the answer about a count when one was asked.
+  private func pay(_ reminder: Reminder, answer: (count: Date, wasBefore: Bool)?) {
+    guard let dependencies, let status = status(reminder), let due = reminder.due else { return }
+    let actions = PlanningActions(dependencies)
+    let moment =
+      answer.map { FormAccounts.stamped(paidAt(due), $0, calendar: environment.calendar) }
+      ?? paidAt(due)
+    if actions.markAsPaid(
+      status.payment, due: due,
+      amount: SubscriptionMath.price(of: status.payment, on: due, prices: prices), on: moment,
+      account: status.payment.paymentMethodId, charged: nil, updatePrice: false)
+    {
+      handled.insert(reminder.id)
+    } else {
+      // Not in silence: the row says why (review of the app, 19.09).
+      let currency = status.payment.currency
+      failed[reminder.id] = environment.format(
+        actions.failureKey(currency: currency, on: moment, at: .reminder), table: "Planning",
+        currency.code)
     }
   }
 

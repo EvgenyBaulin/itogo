@@ -26,9 +26,135 @@ public enum EditRefusal: Error, Hashable, Sendable, CaseIterable {
   case closedPartChanged
 }
 
+/// Why the edit of one saved operation is not written because a refund or money back leans on
+/// what it changes. Nothing of the edit lands.
+public enum LinkedEditRefusal: Error, Hashable, Sendable, CaseIterable {
+  /// The edit takes away a part a live refund takes money back from: the refund would take
+  /// back from nothing. The refund is deleted first.
+  case refundedPartRemoved
+  /// The edit makes a part cheaper than what its refunds already took back.
+  case refundedPartReduced
+  /// The edit changes what a refund of a part was worked out from: the currency or the type of
+  /// the purchase, the part made one paid for somebody else, or the purchase put on credit.
+  case refundedPartChanged
+  /// The edit changes the money of a part some money already came back for, while it still
+  /// waits for the rest — its amount, «за другого», or the currency or the type of the
+  /// purchase: the money back was spread over the part as it was. A new rate may change what is
+  /// left of it, but not take its rubles down to what came back or below: the part would wait
+  /// for nothing, and could be neither closed nor written off.
+  case partlyReturnedPartChanged
+  /// The edit of a refund taken back from a purchase makes it more than is left of that part
+  /// to refund, or changes its currency or its type.
+  case linkedRefundChanged
+}
+
+/// What only the database knows about an operation being edited, read inside the write.
+public struct EditFacts: Hashable, Sendable {
+  /// The operation is a reimbursement that closed parts or left a surplus or a shortfall.
+  public var settles: Bool
+  /// The rubles of the live money back that reached each part of the operation.
+  public var linkedRubByPart: [UUID: AmountE4]
+  /// What the live refunds took back from each part of the operation, in its currency.
+  public var refundedByPart: [UUID: AmountE4]
+  /// For each purchase part a part of the operation takes back from: what is left of it to
+  /// refund, the operation's own refunds not counted, and its currency.
+  public var refundOf: [UUID: RefundableRemainder]
+
+  public init(
+    settles: Bool = false, linkedRubByPart: [UUID: AmountE4] = [:],
+    refundedByPart: [UUID: AmountE4] = [:], refundOf: [UUID: RefundableRemainder] = [:]
+  ) {
+    self.settles = settles
+    self.linkedRubByPart = linkedRubByPart
+    self.refundedByPart = refundedByPart
+    self.refundOf = refundOf
+  }
+}
+
+/// What is left of a purchase part to refund, and in which currency.
+public struct RefundableRemainder: Hashable, Sendable {
+  public var remaining: AmountE4
+  public var currency: CurrencyCode
+
+  public init(remaining: AmountE4, currency: CurrencyCode) {
+    self.remaining = remaining
+    self.currency = currency
+  }
+}
+
 /// What the edit of one saved operation may not do. The storage layer asks it inside the
 /// write, of the row as it is then, with the facts only the database knows.
 public enum OperationEditRule {
+  /// Why `before` may not become `after`, or `nil` when it may: the refusals of
+  /// `refusal(editing:into:settles:)`, then those of refunds and of money back that covered
+  /// only some of a part (`LinkedEditRefusal`).
+  public static func refusal(
+    editing before: TransactionEntry, into after: TransactionEntry, facts: EditFacts
+  ) -> (any Error & Sendable)? {
+    if let refusal = refusal(editing: before, into: after, settles: facts.settles) {
+      return refusal
+    }
+    return linkedRefusal(editing: before, into: after, facts: facts)
+  }
+
+  /// The refusals that protect refunds and money back that covered only some of a part.
+  public static func linkedRefusal(
+    editing before: TransactionEntry, into after: TransactionEntry, facts: EditFacts
+  ) -> LinkedEditRefusal? {
+    let old = before.transaction
+    let new = after.transaction
+    let edited = Dictionary(
+      after.parts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+    let refunded = before.parts.filter { (facts.refundedByPart[$0.id] ?? .zero).raw > 0 }
+    if refunded.contains(where: { edited[$0.id] == nil }) { return .refundedPartRemoved }
+    if !refunded.isEmpty {
+      if old.kind != new.kind || old.currency != new.currency
+        || (old.creditDebtId == nil && new.creditDebtId != nil)
+      {
+        return .refundedPartChanged
+      }
+      for part in refunded {
+        guard let now = edited[part.id] else { continue }
+        if now.reimbursable && !part.reimbursable { return .refundedPartChanged }
+        if now.amountE4 < (facts.refundedByPart[part.id] ?? .zero) { return .refundedPartReduced }
+      }
+    }
+
+    let partlyReturned = before.parts.filter {
+      $0.reimbursable && ($0.reimbursementStatus ?? .expected) == .expected
+        && (facts.linkedRubByPart[$0.id] ?? .zero).raw > 0
+    }
+    if !partlyReturned.isEmpty {
+      if old.kind != new.kind || old.currency != new.currency {
+        return .partlyReturnedPartChanged
+      }
+      for part in partlyReturned {
+        guard let now = edited[part.id] else { return .partlyReturnedPartChanged }
+        if now.amountE4 != part.amountE4 || now.reimbursable != part.reimbursable
+          || now.amountRubE4 <= (facts.linkedRubByPart[part.id] ?? .zero)
+        {
+          return .partlyReturnedPartChanged
+        }
+      }
+    }
+
+    let takesBack = before.parts.contains { $0.refundOfPartId != nil }
+    if takesBack && new.kind != .refund { return .linkedRefundChanged }
+    var asked: [UUID: AmountE4] = [:]
+    for part in after.parts {
+      guard let target = part.refundOfPartId else { continue }
+      asked[target, default: .zero] += part.amountE4
+    }
+    for (target, amount) in asked {
+      guard let left = facts.refundOf[target] else { continue }
+      if new.kind != .refund || new.currency != left.currency || amount > left.remaining {
+        return .linkedRefundChanged
+      }
+    }
+    return nil
+  }
+
   /// Why `before` may not become `after`, or `nil` when it may.
   ///
   /// `settles` — `before` is a reimbursement that closed parts through its links or left a
@@ -70,10 +196,11 @@ public enum OperationEditRule {
     }
   }
 
-  /// The surplus or a shortfall of a reimbursement.
+  /// The surplus or a shortfall of a reimbursement, or what is left of a part written off:
+  /// each was worked out from money that came back, and is not edited in place.
   public static func isCompanion(_ transaction: Transaction) -> Bool {
     switch OperationLink(externalId: transaction.externalId) {
-    case .surplus, .shortfall: true
+    case .surplus, .shortfall, .remainderWriteOff: true
     default: false
     }
   }

@@ -5,11 +5,17 @@ import SwiftUI
 /// What the app was launched with, for the checks and the measurements of the build.
 /// An owner who opens the app from the Dock passes none of these.
 ///
-/// * `--data-set <sample|sample-large|bench|ui-test>` — a folder of its own for synthetic
+/// * `--data-set <sample|sample-large|bench|ui-test|demo>` — a folder of its own for synthetic
 ///   data (`AppPaths.DataSet`); the Debug and Release databases are never touched.
 /// * `--generate <months|large>`, and the older `--generate-sample` for six months — Debug
 ///   only: the set's folder is made anew and filled with a generated history before the
 ///   app opens it. Without `--data-set` the set is `sample`, or `sample-large` for `large`.
+/// * `--seed <n>` — Debug only: the seed that set is generated from, instead of the fixed one
+///   (`DataSetGeneration.fixedSeed`). `make demo` passes a random one and prints it, so the
+///   same demo can be made again on the same day and in the same interface language — the
+///   history ends on the day of the launch and is named in that language; the journal says the
+///   seed too (`dataset.generated`). A whole number from 0 up to `Int.max`, so the journal can
+///   write it as a count; anything else is passed over.
 /// * `--generate-only` — Debug only: quit once the set is written (`make bench-app`).
 /// * `--slow-pipeline` — Debug only: every step of the pipeline takes three seconds from the
 ///   run of the launch on, as Debug → Pipeline → «Slow down» makes it for ⌘R, so the
@@ -64,6 +70,8 @@ struct LaunchOptions: Equatable, Sendable {
 
   var dataSet: AppPaths.DataSet?
   var generation: Generation?
+  /// `--seed`: what the generated set is drawn from; `nil` — the fixed seed.
+  var seed: UInt64?
   var generatesOnly = false
   var slowsPipeline = false
   /// `--no-reminders`: the sheet of the day's reminders is not shown (Debug; the UI tests).
@@ -117,6 +125,7 @@ struct LaunchOptions: Equatable, Sendable {
         dataSet = generation == .large ? .sampleLarge : .sample
       }
       generatesOnly = generation != nil && arguments.contains("--generate-only")
+      seed = value(after: "--seed").flatMap { UInt64($0) }.filter { $0 <= UInt64(Int.max) }
       slowsPipeline = arguments.contains("--slow-pipeline")
       suppressesReminders = arguments.contains("--no-reminders")
       presents = Set(

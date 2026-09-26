@@ -3,14 +3,15 @@ import AppKit
 import SwiftUI
 
 /// Operations by day, newest first: the days of Overview. Income and expenses are listed
-/// separately inside a day, and the header of the day says what it comes to. The Transactions
+/// separately inside a day, and the header of the day says what it comes to; the transfers
+/// between the owner's accounts come last, ⇄ rows counted in no total. The Transactions
 /// window shows the whole history in a table of its own (`TransactionsTable`).
 ///
 /// Selection is the list's own: click, ⌘-click and ⇧-click are native, ⌘A is the system
 /// «Select All», Esc clears it. A double click and the context menu go through
 /// `contextMenu(forSelectionType:)`, because a tap gesture on a row fights the selection.
-/// Only operations can be selected: the rows that head a day's income and expenses, and
-/// whatever `header` puts on top, carry no tag.
+/// Only operations and transfers can be selected: the rows that head a day's income, expenses
+/// and transfers, and whatever `header` puts on top, carry no tag.
 ///
 /// The list owns no sheets and no dialogs. Rows are redrawn on every change of the data,
 /// and a sheet hung on a row goes away with it — so everything the menu opens hangs on the
@@ -42,7 +43,7 @@ struct DayList<Header: View, MenuItems: View>: View {
       // ⌘A is the system «Select All», and a focused list answers it by itself. This is the
       // way back when it does not reach the list: the same thing, done by hand.
       .onCommand(#selector(NSResponder.selectAll(_:))) {
-        selection = Set(groups.flatMap(\.entries).map(\.id))
+        selection = Set(groups.flatMap(\.selectableIds))
       }
       .onDeleteCommand {
         guard let deleteAction, !selection.isEmpty else { return }
@@ -52,6 +53,8 @@ struct DayList<Header: View, MenuItems: View>: View {
 
   @ViewBuilder
   private var rows: some View {
+    // Once for the whole list, not for every transfer row.
+    let names = accountNames
     header()
     if let waiting {
       ComputedBlock(waiting: waiting.state, retry: waiting.retry)
@@ -76,6 +79,13 @@ struct DayList<Header: View, MenuItems: View>: View {
             row(entry)
           }
         }
+        if !group.transfers.isEmpty {
+          sideHeader("transactions.transfers")
+          ForEach(group.transfers) { transfer in
+            TransferRow(transfer: transfer, accounts: names)
+              .tag(transfer.id)
+          }
+        }
       } header: {
         DayHeader(day: group.day, totals: group.totals)
       }
@@ -85,12 +95,21 @@ struct DayList<Header: View, MenuItems: View>: View {
   private func row(_ entry: TransactionEntry) -> some View {
     TransactionRow(
       entry: entry, names: ledger?.tree ?? CategoryTree(),
-      quality: TransactionListing.quality(of: entry, ledger: ledger)
+      quality: TransactionListing.quality(of: entry, ledger: ledger),
+      refund: ledger.flatMap { RefundMark.of(entry, ledger: $0) }
     )
     .tag(entry.id)
   }
 
-  /// «Доходы» and «Расходы» inside a day: a heading, not something to select.
+  /// The names of the accounts, archived ones too: a transfer made from one retired since still
+  /// says where the money came from.
+  private var accountNames: [UUID: String] {
+    Dictionary(
+      (ledger?.dataset.paymentMethods ?? []).map { ($0.id, $0.name) },
+      uniquingKeysWith: { first, _ in first })
+  }
+
+  /// «Доходы», «Расходы» and «Переводы» inside a day: a heading, not something to select.
   private func sideHeader(_ key: String) -> some View {
     Text(verbatim: environment.language(key, table: "Transactions"))
       .font(.subheadline.weight(.semibold))
@@ -196,6 +215,8 @@ struct TransactionRow: View {
   let names: CategoryTree
   /// The quality of its parts; «several» when they disagree (`TransactionListing.quality`).
   let quality: RowCell<Quality>
+  /// «вернули 500 ₽» on a purchase, the purchase on its refund (`RefundMark`).
+  var refund: RefundMark? = nil
 
   var body: some View {
     HStack(spacing: 12) {
@@ -225,6 +246,9 @@ struct TransactionRow: View {
             } icon: {
               Image(systemName: "square.split.2x1")
             }
+          }
+          if let refund {
+            RefundMarkLabel(mark: refund)
           }
           if let status = TransactionListing.owedMark(of: entry) {
             let words = [
@@ -275,5 +299,53 @@ struct TransactionRow: View {
       seen.append(path)
     }
     return seen.joined(separator: "; ")
+  }
+}
+
+/// A transfer between the owner's accounts in a list of days: ⇄, «Перевод: Сбер → Kaspi»,
+/// the time and the note, and the amount sent — with what arrived when it was an exchange.
+/// Neither income nor spending: no colour, no sign, the symbol and the words say what it is.
+struct TransferRow: View {
+  @Dependency(\.environment) private var environment
+  let transfer: Transfer
+  /// The names of the accounts by id.
+  let accounts: [UUID: String]
+
+  var body: some View {
+    let text = TransferRowText(transfer, names: accounts)
+    HStack(spacing: 12) {
+      Image(systemName: TransferSymbol.name)
+        .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(verbatim: text.title(language: environment.language))
+        HStack(spacing: 8) {
+          Text(verbatim: environment.dates.time(transfer.occurredAt))
+          if let note = transfer.note, !note.isEmpty {
+            Text(verbatim: note)
+              .lineLimit(1)
+          }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      Spacer()
+      VStack(alignment: .trailing, spacing: 1) {
+        Text(
+          verbatim: environment.money.exact(transfer.fromAmountE4, currency: transfer.fromCurrency)
+        )
+        .font(.body.monospacedDigit())
+        if transfer.isExchange {
+          let received = environment.money.exact(
+            transfer.toAmountE4, currency: transfer.toCurrency)
+          Text(verbatim: "→ \(received)")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+    .padding(.vertical, 2)
+    .contentShape(.rect)
+    .accessibilityElement(children: .combine)
+    .accessibilityIdentifier("operation.transfer")
   }
 }

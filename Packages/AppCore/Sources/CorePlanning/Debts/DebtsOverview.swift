@@ -42,14 +42,17 @@ public struct OwedPartSummary: Identifiable, Hashable, Sendable {
   public var day: DateOnly
   /// Who owes it: the debtor of the part.
   public var personId: UUID?
-  /// What the part cost in rubles on the day of the purchase — what is owed.
+  /// What is still owed, in rubles: what the part cost on the day of the purchase, less what
+  /// already came back for it.
   public var amountRub: AmountE4
   /// The note of the part, otherwise of its operation.
   public var note: String?
+  /// What already came back for the part, in rubles, while it waits for the rest.
+  public var returnedRub: AmountE4
 
   public init(
     partId: UUID, transactionId: UUID, day: DateOnly, personId: UUID?, amountRub: AmountE4,
-    note: String?
+    note: String?, returnedRub: AmountE4 = .zero
   ) {
     self.partId = partId
     self.transactionId = transactionId
@@ -57,6 +60,7 @@ public struct OwedPartSummary: Identifiable, Hashable, Sendable {
     self.personId = personId
     self.amountRub = amountRub
     self.note = note
+    self.returnedRub = returnedRub
   }
 
   public var id: UUID { partId }
@@ -132,9 +136,9 @@ public struct DebtsOverview: Hashable, Sendable {
   ///   (`rubPerUnit`); without one the debt stays in its list with no rubles and is named in
   ///   `withoutRate` instead of being guessed into a total.
   /// * The parts paid for others are the ones the Overview counts as owed to me: parts of
-  ///   purchases, paid for somebody else, still expected — in the rubles they cost on the day
-  ///   of the purchase. The person is the debtor of the part, the same key the
-  ///   report of payments for others groups by.
+  ///   purchases, paid for somebody else, still expected — what is left of each in rubles,
+  ///   the rubles they cost on the day of the purchase less what already came back. The person
+  ///   is the debtor of the part, the same key the report of payments for others groups by.
   public static func build(
     ledger: Ledger, book: PlanningBook, today: DateOnly, rubPerUnit: [CurrencyCode: Decimal]
   ) -> DebtsOverview {
@@ -145,15 +149,25 @@ public struct DebtsOverview: Hashable, Sendable {
 
     func line(_ debt: Debt) -> DebtLine {
       let journal = journals[debt.id] ?? []
+      let start = DebtSchedule.start(of: journal, calendar: ledger.calendar)
       let paid = DebtSchedule.isPaid(
-        debt.id, in: today.monthKey, paidByOperation: paidByOperation, journal: journal)
+        debt, for: today.monthKey, startsOn: start, calendar: ledger.calendar
+      ) { month in
+        DebtSchedule.isPaid(
+          debt.id, in: month,
+          paidByOperation: month == today.monthKey
+            ? paidByOperation
+            : DebtSchedule.debtsPaid(in: month, ledger: ledger, journal: book.debtEntries),
+          journal: journal)
+      }
       let balance = DebtRules.balance(entries: journal)
       return DebtLine(
         debt: debt, balance: balance,
         balanceRub: DebtRubles.convert(balance, from: debt.currency, rubPerUnit: rubPerUnit),
         groups: DebtRules.groupTotals(entries: journal),
         nextPayment: DebtSchedule.nextPaymentDate(
-          of: debt, today: today, paidThisMonth: paid, calendar: ledger.calendar),
+          of: debt, today: today, paidThisMonth: paid, calendar: ledger.calendar,
+          startsOn: start),
         paidThisMonth: paid, entries: newestFirst(journal))
     }
 
@@ -170,13 +184,16 @@ public struct DebtsOverview: Hashable, Sendable {
     var groupParts: [UUID?: [OwedPartSummary]] = [:]
     for row in ledger.rows
     where row.kind == .expense && row.reimbursable && row.reimbursementStatus == .expected {
+      let remaining = ledger.remaining(ofPart: row)
+      guard remaining.raw > 0 else { continue }
       let entry = ledger.entry(row.transactionId)
       let part = entry?.parts.first { $0.id == row.partId }
       groupParts[row.debtorPersonId, default: []].append(
         OwedPartSummary(
           partId: row.partId, transactionId: row.transactionId, day: row.day,
-          personId: row.debtorPersonId, amountRub: row.amountRubE4,
-          note: part?.note ?? entry?.transaction.note))
+          personId: row.debtorPersonId, amountRub: remaining,
+          note: part?.note ?? entry?.transaction.note,
+          returnedRub: ledger.returned(forPart: row.partId)))
     }
     let people = Set(groupDebts.keys).union(groupParts.keys)
     let owedToMe = people.map { person in

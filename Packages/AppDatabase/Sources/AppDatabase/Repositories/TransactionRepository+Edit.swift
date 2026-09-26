@@ -22,11 +22,15 @@ public struct EditedEntry: Hashable, Sendable {
   /// (`ON DELETE CASCADE`), and the part given back by undo needs it — or deleting the
   /// reimbursement would never open the part again.
   public var removedLinks: [ReimbursementLink]
+  /// Refunds in the bin that let go of a part the edit took away, refund part → purchase part:
+  /// undo gives the part back and ties them to it again, so undoing their deletion later brings
+  /// them back to their purchase.
+  public var releasedRefunds: [UUID: UUID]
 
   public init(
     before: TransactionEntry, after: TransactionEntry, journalBefore: [DebtEntry] = [],
     journalAdded: [UUID] = [], journalRowIDs: [UUID: Int64] = [:],
-    removedLinks: [ReimbursementLink] = []
+    removedLinks: [ReimbursementLink] = [], releasedRefunds: [UUID: UUID] = [:]
   ) {
     self.before = before
     self.after = after
@@ -34,6 +38,7 @@ public struct EditedEntry: Hashable, Sendable {
     self.journalAdded = journalAdded
     self.journalRowIDs = journalRowIDs
     self.removedLinks = removedLinks
+    self.releasedRefunds = releasedRefunds
   }
 
   /// Whether the edit moved a debt.
@@ -65,10 +70,16 @@ extension TransactionRepository {
   /// days of `calendar`, the one the entry line dates them by.
   ///
   /// What a reimbursement worked out — its links, the parts it closed, its surplus and
-  /// shortfalls — is not edited in place (`OperationEditRule`).
+  /// shortfalls — is not edited in place (`OperationEditRule`), and neither is what a refund or
+  /// money back that covered only some of a part leans on (`LinkedEditRefusal`). A refund is
+  /// held to the part it takes back from (`refuseUnsoundRefund`). An operation left without an
+  /// account gets the main one, and one moved onto an account that does not hold its currency
+  /// must say what it was charged (`AccountWriteError.chargeMissing`). A part taken away lets
+  /// go of the refunds in the bin that took back from it, and undo ties them back.
   ///
-  /// Throws what `transform` throws, `EditRefusal` when the edit may not be written, and
-  /// `DatabaseError.unbalancedParts` when the parts do not add up; nothing is written then.
+  /// Throws what `transform` throws, `EditRefusal`, `LinkedEditRefusal` or `RefundError` when
+  /// the edit may not be written, and `DatabaseError.unbalancedParts` when the parts do not add
+  /// up; nothing is written then.
   public func edit(
     id: UUID, at instant: Date = Date(), calendar: CalendarContext,
     transform: (TransactionEntry) throws -> TransactionEntry?
@@ -80,13 +91,14 @@ extension TransactionRepository {
 
   /// Takes an edit back in one write: the operation as it was, its journal lines as they
   /// were — the lines the edit added go, the ones it changed or took away come back — and the
-  /// links of the parts it took away. A line whose debt is gone since, or a link whose
-  /// reimbursement is, has nothing to come back to.
+  /// links of the parts it took away, and the refunds in the bin that let go of them. A line
+  /// whose debt is gone since, or a link whose reimbursement is, has nothing to come back to.
   public func revert(_ edit: EditedEntry) throws {
     guard edit.before.isBalanced else { throw DatabaseError.unbalancedParts }
     try writer.write { db in
       try edit.before.transaction.save(db)
       try Self.replaceParts(of: edit.before, db: db)
+      try Self.relink(edit.releasedRefunds, db: db)
       _ = try DebtEntry.deleteAll(db, keys: edit.journalAdded.map(\.uuidString))
       for line in edit.journalBefore {
         guard try Debt.exists(db, key: line.debtId.uuidString) else { continue }
@@ -118,11 +130,13 @@ extension TransactionRepository {
     else { throw DatabaseError.notFound }
     guard changed.isBalanced else { throw DatabaseError.unbalancedParts }
     if let refusal = OperationEditRule.refusal(
-      editing: fresh, into: changed, settles: try settles(fresh.transaction, db: db))
+      editing: fresh, into: changed, facts: try editFacts(fresh, changed, db: db))
     {
       throw refusal
     }
     changed.transaction.updatedAt = instant
+    changed = try assigningAccount(changed, over: fresh, db: db)
+    try refuseUnsoundRefund(changed, over: fresh, db: db)
 
     let lines = try DebtEntry.filter(Column("transaction_id") == id.uuidString)
       .order(Column.rowID)
@@ -139,10 +153,11 @@ extension TransactionRepository {
       .order(Column.rowID)
       .fetchAll(db)
 
-    try write(changed, over: fresh, db: db)
+    let released = try write(changed, over: fresh, db: db)
 
     let existing = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
-    var edited = EditedEntry(before: fresh, after: changed, removedLinks: removedLinks)
+    var edited = EditedEntry(
+      before: fresh, after: changed, removedLinks: removedLinks, releasedRefunds: released)
     for line in journal.upsert {
       if let old = existing[line.id] {
         edited.journalBefore.append(old)
@@ -160,6 +175,75 @@ extension TransactionRepository {
     for line in journal.upsert { try line.save(db) }
     _ = try DebtEntry.deleteAll(db, keys: journal.delete.map(\.uuidString))
     return .edited(edited)
+  }
+
+  /// What only the database knows about the operation being edited: whether it is a
+  /// reimbursement that settled parts, the live money back that reached each of its parts, what
+  /// the live refunds took back from each of them, and — for the purchase parts it takes back
+  /// from — what is left of them to refund, its own refunds not counted.
+  static func editFacts(
+    _ before: TransactionEntry, _ after: TransactionEntry, db: Database
+  ) throws -> EditFacts {
+    var facts = EditFacts(settles: try settles(before.transaction, db: db))
+    let parts = before.parts.map(\.id.uuidString)
+    if !parts.isEmpty {
+      let marks = databaseQuestionMarks(count: parts.count)
+      for row in try Row.fetchAll(
+        db,
+        sql: """
+          SELECT l.part_id AS part, SUM(l.amount_e4) AS amount FROM reimbursement_links l
+          JOIN transactions t ON t.id = l.reimbursement_tx_id
+          WHERE t.deleted_at IS NULL AND l.part_id IN (\(marks))
+          GROUP BY l.part_id
+          """,
+        arguments: StatementArguments(parts))
+      {
+        guard let part = RowMapping.optionalUUID(row, "part") else { continue }
+        facts.linkedRubByPart[part] = AmountE4(raw: row["amount"] ?? 0)
+      }
+      for row in try Row.fetchAll(
+        db,
+        sql: """
+          SELECT p.refund_of_part_id AS part, SUM(p.amount_e4) AS amount
+          FROM transaction_parts p JOIN transactions t ON t.id = p.transaction_id
+          WHERE t.deleted_at IS NULL AND t.kind = ? AND p.refund_of_part_id IN (\(marks))
+          GROUP BY p.refund_of_part_id
+          """,
+        arguments: [TransactionKind.refund.rawValue] + StatementArguments(parts))
+      {
+        guard let part = RowMapping.optionalUUID(row, "part") else { continue }
+        facts.refundedByPart[part] = AmountE4(raw: row["amount"] ?? 0)
+      }
+    }
+    let targets = Set((before.parts + after.parts).compactMap(\.refundOfPartId))
+    for target in targets.sorted(by: { $0.uuidString < $1.uuidString }) {
+      guard
+        let row = try Row.fetchOne(
+          db,
+          sql: """
+            SELECT p.amount_e4 AS amount, t.currency AS currency FROM transaction_parts p
+            JOIN transactions t ON t.id = p.transaction_id
+            WHERE p.id = ? AND t.deleted_at IS NULL AND t.kind = ?
+            """,
+          arguments: [target.uuidString, TransactionKind.expense.rawValue])
+      else { continue }
+      let others =
+        try Int64.fetchOne(
+          db,
+          sql: """
+            SELECT COALESCE(SUM(p.amount_e4), 0) FROM transaction_parts p
+            JOIN transactions t ON t.id = p.transaction_id
+            WHERE t.deleted_at IS NULL AND t.kind = ? AND p.refund_of_part_id = ?
+              AND t.id <> ?
+            """,
+          arguments: [
+            TransactionKind.refund.rawValue, target.uuidString, before.id.uuidString,
+          ]) ?? 0
+      facts.refundOf[target] = RefundableRemainder(
+        remaining: AmountE4(raw: row["amount"] ?? 0) - AmountE4(raw: others),
+        currency: CurrencyCode(row["currency"] ?? CurrencyCode.rub.code))
+    }
+    return facts
   }
 
   /// Whether a reimbursement closed parts — a link of its own — or left a live surplus or

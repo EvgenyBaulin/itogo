@@ -23,8 +23,15 @@ struct DebtActions {
   /// A new debt, with its Loans subcategory when its payments are expenses («подкатегория
   /// долга создаётся автоматически») and a first line for what is owed now. Owing less than
   /// nothing («100-300» in the field) is refused, not written as a debt at 0.
+  ///
+  /// Money that changes hands now is a line of cash on an account — `account` while it is
+  /// live, else the main one — at `moment`, with what that account was charged when it does
+  /// not hold the debt's currency (`charged` when typed, else the prefill).
   @discardableResult
-  func create(_ debt: Debt, balance: AmountE4, on day: DateOnly, moneyMovedNow: Bool) -> Bool {
+  func create(
+    _ debt: Debt, balance: AmountE4, on day: DateOnly, moneyMovedNow: Bool,
+    account: UUID? = nil, charged: Money? = nil, at moment: Date? = nil
+  ) -> Bool {
     guard !balance.isNegative else { return false }
     // Named without the spaces around it: the Loans subcategory and the entry line's word
     // take the name as it is saved.
@@ -36,12 +43,55 @@ struct DebtActions {
     // (money lent or borrowed today): a reconciliation must not count an old loan as cash
     // that came in.
     if balance.raw > 0,
-      let opening = try? DebtRules.opening(
+      var opening = try? DebtRules.opening(
         of: debt, balance: balance, date: day, moneyMovedNow: moneyMovedNow)
     {
+      if moneyMovedNow {
+        guard
+          (try? layCash(
+            on: &opening, of: debt, account: account, charged: charged, at: moment ?? Date()))
+            != nil
+        else { return false }
+      }
       rows.debtEntries = [opening]
     }
     return apply(PlanningChange(upsert: rows))
+  }
+
+  /// A line of money borrowed or lent through the journal alone names the account it moved on
+  /// — `account` while live, else the main one — its moment, and what that account was charged
+  /// when it does not hold the debt's currency: `charged` when typed in that currency, else the
+  /// prefill from the bank's rates of its day. Throws `FormChargeError.chargeMissing` when no
+  /// rate gives the figure.
+  func layCash(
+    on line: inout DebtEntry, of debt: Debt, account chosen: UUID?, charged: Money?,
+    at moment: Date
+  ) throws {
+    let environment = planning.environment
+    let accounts =
+      (try? environment.references?.paymentMethods(includeArchived: true))
+      ?? snapshot?.dataset.paymentMethods ?? []
+    let account = FormAccounts.account(chosen, among: accounts)
+    line.paymentMethodId = account?.id ?? chosen
+    line.occurredAt = moment
+    line.date = environment.calendar.day(of: moment)
+    line.accountCurrency = nil
+    line.accountAmountE4 = nil
+    guard let account, let leg = AccountRules.legCurrency(for: debt.currency, account: account)
+    else { return }
+    if let charged, charged.currency == leg, charged.amount.raw > 0 {
+      line.accountCurrency = leg
+      line.accountAmountE4 = charged.amount
+      return
+    }
+    let table = (try? environment.rates?.table()) ?? RateTable()
+    guard
+      let figure = FormAccounts.charge(
+        amount: line.amountE4.magnitude, currency: debt.currency, at: moment, rate: nil,
+        account: account, table: table, calendar: environment.calendar)?.amount
+    else { throw FormChargeError.chargeMissing }
+    line.accountCurrency = leg
+    line.accountAmountE4 = figure
   }
 
   @discardableResult
@@ -102,20 +152,23 @@ struct DebtActions {
   /// closed debt owes nothing, like one closed by «Close». A payment that no longer
   /// covers the balance — a line landed since the form opened — is written alone, and the rest
   /// stays owed where it can be seen.
+  ///
+  /// The operation is on `paymentMethodId` while that account is live, else on the main one,
+  /// with what the account was charged when it does not hold the debt's currency: `charged`
+  /// when typed from the statement, else the prefill at the rate of the operation.
   @discardableResult
   func pay(
-    _ debt: Debt, amount: AmountE4, on day: Date, paymentMethodId: UUID?, closing: Bool = false
+    _ debt: Debt, amount: AmountE4, on day: Date, paymentMethodId: UUID?, closing: Bool = false,
+    charged: Money? = nil
   ) -> Bool {
     guard !debt.closed else { return false }
     var rows = PlanningRows.empty
     let debt = withSubcategory(debt, rows: &rows)
     if !rows.categories.isEmpty { rows.debts = [debt] }
-    let loans = debt.loansSubcategoryId ?? snapshot?.ledger.tree.systemCategory(.loans)?.id
-    let draft = DebtRules.paymentDraft(
-      debt: debt, amount: amount, occurredAt: day, paymentMethodId: paymentMethodId,
-      loansCategoryId: loans)
     let date = planning.environment.calendar.day(of: day)
-    guard let entry = try? planning.operation(draft, link: nil),
+    guard
+      let entry = try? paymentOperation(
+        debt, amount: amount, on: day, account: paymentMethodId, charged: charged),
       let outcome = try? DebtRules.payment(
         on: debt, amountE4: amount, date: date, transactionId: entry.id)
     else { return false }
@@ -129,16 +182,36 @@ struct DebtActions {
     return apply(PlanningChange(created: [entry], upsert: rows))
   }
 
-  /// «Offset»: I paid something for the creditor and the debt goes down. Money left my
-  /// pocket, so it is an operation, counted the way a payment of this debt is.
-  @discardableResult
-  func offset(_ debt: Debt, amount: AmountE4, on day: Date, description: String?) -> Bool {
-    guard !debt.closed else { return false }
+  /// The operation a payment of `debt` writes — «Pay», or «Offset» with its note — on
+  /// `account` while it is live, else on the main one, with «Списано со счёта» when that
+  /// account does not hold the debt's currency. The forms ask «Это было до сверки?» about it
+  /// before the write.
+  func paymentOperation(
+    _ debt: Debt, amount: AmountE4, on day: Date, account: UUID?, charged: Money?,
+    note: String? = nil
+  ) throws -> TransactionEntry {
     let loans = debt.loansSubcategoryId ?? snapshot?.ledger.tree.systemCategory(.loans)?.id
     var draft = DebtRules.paymentDraft(
-      debt: debt, amount: amount, occurredAt: day, paymentMethodId: nil, loansCategoryId: loans)
-    draft.note = DebtRules.cleaned(description)
-    guard let entry = try? planning.operation(draft, link: nil),
+      debt: debt, amount: amount, occurredAt: day, paymentMethodId: account,
+      loansCategoryId: loans)
+    draft.note = note
+    try FormAccounts.lay(on: &draft, account: account, charged: charged, actions: planning)
+    return try planning.operation(draft, link: nil)
+  }
+
+  /// «Offset»: I paid something for the creditor and the debt goes down. Money left my
+  /// pocket, so it is an operation, counted the way a payment of this debt is — on `account`
+  /// while it is live, else on the main one.
+  @discardableResult
+  func offset(
+    _ debt: Debt, amount: AmountE4, on day: Date, description: String?, account: UUID? = nil,
+    charged: Money? = nil
+  ) -> Bool {
+    guard !debt.closed else { return false }
+    guard
+      let entry = try? paymentOperation(
+        debt, amount: amount, on: day, account: account, charged: charged,
+        note: DebtRules.cleaned(description)),
       let line = try? DebtRules.offset(
         on: debt, amountE4: amount, date: planning.environment.calendar.day(of: day),
         transactionId: entry.id, description: description)
@@ -150,13 +223,18 @@ struct DebtActions {
 
   /// «Add entry»: borrowed, or the debt grew — an amount, or a share of a full amount
   /// («полная сумма 1 000 000, доля 1/2»).
+  ///
+  /// Money that moved is a line of cash on `account` — while live, else the main one — at
+  /// `moment` (noon of `day` when none is given), with «Списано со счёта» when that account
+  /// does not hold the debt's currency.
   @discardableResult
   func addEntry(
     _ debt: Debt, amount: AmountE4, fullAmount: AmountE4?, share: Decimal?, on day: DateOnly?,
-    group: String?, description: String?, moneyMoved: Bool
+    group: String?, description: String?, moneyMoved: Bool, account: UUID? = nil,
+    charged: Money? = nil, at moment: Date? = nil
   ) -> Bool {
     guard !debt.closed else { return false }
-    let line: DebtEntry?
+    var line: DebtEntry?
     if moneyMoved {
       // Borrowed: money came in (or went out, on a debt owed to me) — a real movement.
       if let fullAmount, let share {
@@ -176,10 +254,45 @@ struct DebtActions {
         on: debt, amountE4: amount, fullAmountE4: fullAmount, share: share, date: day,
         groupName: group, description: description)
     }
-    guard let line else { return false }
+    guard var line else { return false }
+    if moneyMoved {
+      let calendar = planning.environment.calendar
+      let when =
+        moment ?? day.map { calendar.startOfDay($0).addingTimeInterval(12 * 3600) } ?? Date()
+      guard
+        (try? layCash(on: &line, of: debt, account: account, charged: charged, at: when)) != nil
+      else { return false }
+    }
     var rows = PlanningRows.empty
     rows.debtEntries = [line]
     return apply(PlanningChange(upsert: rows))
+  }
+
+  /// The open «Мне должны» debt a money back is offered to repay: the person owes no part but
+  /// owes on it (`MoneyBackRefusal.owesOnDebt`). `nil` for any other refusal or a debt that is
+  /// closed, gone or owed the other way.
+  static func repaid(by refusal: MoneyBackRefusal, among debts: [Debt]) -> Debt? {
+    guard case .owesOnDebt(let id) = refusal,
+      let debt = debts.first(where: { $0.id == id }),
+      !debt.closed, debt.direction == .owedToMe
+    else { return nil }
+    return debt
+  }
+
+  /// The payment form a money back opens as a repayment of `debt`: the amount given back when
+  /// it is in the debt's currency (otherwise typed in the form), on the account it came to.
+  static func repaymentSheet(of debt: Debt, money: Money, account: UUID?) -> DebtSheet {
+    .repay(debt, amount: money.currency == debt.currency ? money.amount : nil, account: account)
+  }
+
+  /// What a money back that repays `debt` needs from the entry line: nothing when it is in the
+  /// debt's currency — the line saves it with the debt, and asks what the line asks — or, in
+  /// another currency, which the line cannot write on the debt (5 $ back on a ruble debt), the
+  /// payment form of the debt on the account the money came to, the amount typed there in the
+  /// debt's currency.
+  static func repaymentSheetIfNeeded(of debt: Debt, money: Money, account: UUID?) -> DebtSheet? {
+    money.currency == debt.currency
+      ? nil : repaymentSheet(of: debt, money: money, account: account)
   }
 
   /// «Transfer»: a third party paid one debt off and the sum moved into another — the first

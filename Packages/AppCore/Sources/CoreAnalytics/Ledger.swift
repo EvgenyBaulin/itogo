@@ -26,11 +26,22 @@ public struct LedgerRow: Hashable, Sendable {
   public var month: MonthKey
 
   public var currency: CurrencyCode
+  /// The part in the operation's own currency.
+  public var amountE4: AmountE4
   /// The part in rubles.
   public var amountRubE4: AmountE4
   /// Its signed contribution to my expenses (`MyExpensesRule.contribution`): the amount
   /// for my spending, minus the amount for a refund, zero for everything else.
+  ///
+  /// A refund taken back from a purchase counts in the purchase: the purchase part comes in
+  /// cheaper by what its refunds took back (`refundedRubE4`) — on its own day, in its own
+  /// month, in its own category — and the refund part contributes nothing.
   public var contribution: AmountE4
+  /// On a refund part: the purchase part it takes back from, when that purchase is live.
+  public var refundOfPartId: UUID?
+  /// On a purchase part: what its refunds took back, in the operation's currency and in rubles.
+  public var refundedE4: AmountE4
+  public var refundedRubE4: AmountE4
 
   public var categoryId: UUID?
   /// The top-level category the part is filed under.
@@ -80,6 +91,10 @@ public struct Ledger: Sendable {
   private let searchKeys: [UUID: String]
   /// Σ of the live reimbursement links of each part, in rubles.
   private let returnedByPart: [UUID: AmountE4]
+  /// Σ of the rubles of the live shortfalls and remainders written off of each part.
+  private let companionsByPart: [String: (shortfall: AmountE4, writtenOff: AmountE4)]
+  /// Which refunds take back from which purchase parts, over the live operations.
+  public let refundIndex: RefundIndex
 
   public init(dataset: Dataset, calendar: CalendarContext) {
     self.dataset = dataset
@@ -88,6 +103,8 @@ public struct Ledger: Sendable {
     self.tree = tree
     let history = ManualQualityHistory(entries: dataset.entries)
     let debts = dataset.debtsById
+    let refunds = RefundIndex(entries: dataset.entries, debts: debts)
+    self.refundIndex = refunds
 
     let alive = dataset.entries
       .filter { !$0.transaction.isDeleted }
@@ -106,9 +123,22 @@ public struct Ledger: Sendable {
     var entriesById: [UUID: TransactionEntry] = [:]
     var searchKeys: [UUID: String] = [:]
     var partOwners: Set<UUID> = []
-    for (entry, day) in alive {
+    var companions: [String: (shortfall: AmountE4, writtenOff: AmountE4)] = [:]
+    for (stored, day) in alive {
+      // What an income stored before its kind lost those fields — a place, an event, a person —
+      // is kept in the database, and read as if it were not there.
+      let entry = KindFields.masked(stored)
       let transaction = entry.transaction
-      entriesById[entry.id] = entry
+      entriesById[entry.id] = stored
+      switch OperationLink(externalId: transaction.externalId) {
+      case .shortfall(_, let part):
+        companions[part.lowercased(), default: (.zero, .zero)].shortfall += transaction.amountRubE4
+      case .remainderWriteOff(let part, _):
+        companions[part.lowercased(), default: (.zero, .zero)].writtenOff +=
+          transaction.amountRubE4
+      default:
+        break
+      }
       searchKeys[entry.id] = names.key(for: entry, tree: tree)
       let debt = transaction.debtId.flatMap { debts[$0] }
       let creditDebt = transaction.creditDebtId.flatMap { debts[$0] }
@@ -136,9 +166,16 @@ public struct Ledger: Sendable {
             weekday: day.weekday,
             month: month,
             currency: transaction.currency,
+            amountE4: part.amountE4,
             amountRubE4: part.amountRubE4,
-            contribution: MyExpensesRule.contribution(
-              part: part, in: transaction, debt: debt, creditDebt: creditDebt),
+            contribution: refunds.isLinked(refundPart: part.id)
+              ? .zero
+              : MyExpensesRule.contribution(
+                part: part, in: transaction, debt: debt, creditDebt: creditDebt)
+                + refunds.movedContribution(part: part.id),
+            refundOfPartId: refunds.purchasePart(ofRefundPart: part.id),
+            refundedE4: refunds.refunded(part: part.id),
+            refundedRubE4: refunds.refundedRub(part: part.id),
             categoryId: part.categoryId,
             rootCategoryId: tree.root(of: part.categoryId)?.id ?? part.categoryId,
             systemRole: tree.systemRole(of: part.categoryId),
@@ -188,6 +225,7 @@ public struct Ledger: Sendable {
     self.entriesById = entriesById
     self.searchKeys = searchKeys
     self.returnedByPart = returnedByPart
+    self.companionsByPart = companions
   }
 
   // MARK: - Lookups
@@ -212,6 +250,21 @@ public struct Ledger: Sendable {
   /// What people gave back for this part, through live reimbursements, in rubles.
   public func returned(forPart partId: UUID) -> AmountE4 { returnedByPart[partId] ?? .zero }
 
+  /// What is still owed on a part paid for somebody else, in rubles: the part less what came
+  /// back for it. Money back may cover only some of a part, which keeps waiting for the rest.
+  public func remaining(ofPart row: LedgerRow) -> AmountE4 {
+    max(.zero, row.amountRubE4 - returned(forPart: row.partId))
+  }
+
+  /// What refunds took back from a purchase part, in its currency.
+  public func refunded(forPart partId: UUID) -> AmountE4 { refundIndex.refunded(part: partId) }
+
+  /// The rubles of the live operations the app wrote for a part paid for somebody else: the
+  /// shortfalls money back left of it, and what was left of it and written off.
+  public func companionsRub(forPart partId: UUID) -> (shortfall: AmountE4, writtenOff: AmountE4) {
+    companionsByPart[partId.uuidString.lowercased()] ?? (.zero, .zero)
+  }
+
   /// Rows whose day falls in the span, by date.
   public func rows(in range: DayRange) -> ArraySlice<LedgerRow> {
     guard !range.isEmpty else { return rows[rows.startIndex..<rows.startIndex] }
@@ -229,9 +282,12 @@ public struct Ledger: Sendable {
   }
 
   /// The totals of the day header, of a selection and of the delete dialog — the
-  /// `RowTotals` of `CoreAccounting` over these operations.
+  /// `RowTotals` of `CoreAccounting` over these operations, with the refunds of the whole
+  /// ledger counted in their purchases.
   public func rowTotals(of transactionIds: some Sequence<UUID>) -> RowTotals {
-    RowTotals(entries: transactionIds.compactMap { entriesById[$0] }, debts: dataset.debtsById)
+    RowTotals(
+      entries: transactionIds.compactMap { entriesById[$0] }, debts: dataset.debtsById,
+      refunds: refundIndex)
   }
 
   private func firstIndex(where predicate: (LedgerRow) -> Bool) -> Int {

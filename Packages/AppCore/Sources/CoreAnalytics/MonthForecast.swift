@@ -13,9 +13,12 @@ import Foundation
 /// them one figure.
 public struct PlannedPayments: Hashable, Sendable {
   public var debts: AmountE4
+  /// In rubles at today's rate, whatever the currency of each goal.
   public var goals: AmountE4
   /// Debts in a currency without a known rate: left out rather than guessed.
   public var debtsWithoutRate: [UUID]
+  /// Goals in a currency without today's rate: left out rather than guessed.
+  public var goalsWithoutRate: [UUID] = []
 
   public var total: AmountE4 { debts + goals }
 
@@ -25,12 +28,21 @@ public struct PlannedPayments: Hashable, Sendable {
   ///   debt card alone writes (the rule of `DebtSchedule.isPaid` in CorePlanning);
   ///   the payment day is the day it falls due, clipped to the length of the month — a debt
   ///   paid «on the 31st» is due on 30 September, not after it (as `DebtSchedule` has it);
+  ///   a payment day before the debt began owed nothing, and a payment made in the month it
+  ///   began, when that month owed nothing, pays its first due (`DebtStart`, the rule the
+  ///   planning screens share);
   ///   a debt in another currency is converted at the last rate the caller knows
   ///   (`rubPerUnit`);
   /// * a goal counts with what is left of its monthly plan: max(0, plan − contributions
   ///   this month), never more than the plan, never more than it still needs, max(0,
-  ///   target − saved) — the rule of `GoalRules.planStillDue` in `CorePlanning`.
-  public init(ledger: Ledger, today: DateOnly, rubPerUnit: [CurrencyCode: Decimal] = [:]) {
+  ///   target − saved) — `GoalMath.planLeft`, the rule `GoalRules.planStillDue` in
+  ///   `CorePlanning` gives too. It is worked out in the goal's currency, contributions in
+  ///   another currency at the rate of their day (`dayRates`), and converted at today's rate
+  ///   (`rubPerUnit`).
+  public init(
+    ledger: Ledger, today: DateOnly, rubPerUnit: [CurrencyCode: Decimal] = [:],
+    dayRates: DayRates = .empty
+  ) {
     let month = today.monthKey
     let thisMonth = ledger.rows(in: Period.month(month).range)
     // An operation the journal wrote as an `offset` or as more `borrowed` points at the debt
@@ -39,17 +51,34 @@ public struct PlannedPayments: Hashable, Sendable {
     let notPayments = Set(
       journal.lazy.filter { $0.kind == .offset || $0.kind == .borrowed }
         .compactMap(\.transactionId))
-    let paidDebts = Set(
-      thisMonth.lazy.filter { !notPayments.contains($0.transactionId) }.compactMap(\.debtId)
-    )
-    .union(
-      journal.lazy.filter { $0.kind == .payment && $0.date?.monthKey == month }.map(\.debtId))
+    func paid(in paidMonth: MonthKey, rows: ArraySlice<LedgerRow>) -> Set<UUID> {
+      Set(rows.lazy.filter { !notPayments.contains($0.transactionId) }.compactMap(\.debtId))
+        .union(
+          journal.lazy.filter { $0.kind == .payment && $0.date?.monthKey == paidMonth }
+            .map(\.debtId))
+    }
+    var paidDebts: [MonthKey: Set<UUID>] = [month: paid(in: month, rows: thisMonth)]
+    func isPaid(_ debtId: UUID, in paidMonth: MonthKey) -> Bool {
+      if paidDebts[paidMonth] == nil {
+        paidDebts[paidMonth] = paid(
+          in: paidMonth, rows: ledger.rows(in: Period.month(paidMonth).range))
+      }
+      return paidDebts[paidMonth]?.contains(debtId) == true
+    }
+    let starts = DebtStart.days(of: journal, calendar: ledger.calendar)
     var debts = AmountE4.zero
     var missing: [UUID] = []
     for debt in ledger.dataset.debts {
       guard !debt.closed, DebtRules.paymentIsExpense(on: debt),
-        let payment = debt.monthlyPaymentE4, let day = debt.paymentDay,
-        min(max(1, day), month.dayCount) > today.day, !paidDebts.contains(debt.id)
+        let payment = debt.monthlyPaymentE4, let day = debt.paymentDay
+      else { continue }
+      let due = DateOnly(
+        year: month.year, month: month.month, day: min(max(1, day), month.dayCount))
+      let start = starts[debt.id]
+      guard due > today, DebtStart.owes(due: due, startsOn: start),
+        !DebtStart.isPaid(
+          debt, for: month, startsOn: start, calendar: ledger.calendar,
+          paidIn: { isPaid(debt.id, in: $0) })
       else { continue }
       if debt.currency == .rub {
         debts += payment
@@ -60,27 +89,21 @@ public struct PlannedPayments: Hashable, Sendable {
       }
     }
     var goals = AmountE4.zero
+    var goalsMissing: [UUID] = []
+    let stillDue = GoalMath.planLeft(
+      goals: ledger.dataset.goals, rows: ledger.rows, month: month, rates: dayRates)
     for goal in ledger.dataset.goals where !goal.archived {
-      guard let plan = goal.monthlyPlanE4 else { continue }
-      var contributed = AmountE4.zero
-      var saved = AmountE4.zero
-      for row in ledger.rows where row.kind == .expense || row.kind == .refund {
-        guard
-          row.goalId == goal.id
-            || (row.goalId == nil && row.categoryId != nil && row.categoryId == goal.subcategoryId)
-        else { continue }
-        let amount = row.kind == .expense ? row.amountRubE4 : -row.amountRubE4
-        saved += amount
-        if row.day.monthKey == month { contributed += amount }
+      guard let left = stillDue[goal.id] else { continue }
+      if let rubles = GoalMath.rubles(left, in: goal.currency, rubPerUnit: rubPerUnit) {
+        goals += rubles
+      } else {
+        goalsMissing.append(goal.id)
       }
-      // Never more than the plan — a withdrawal of earlier savings is no plan of this
-      // month — nor than the goal still needs: a reached goal asks nothing.
-      let left = min(plan - contributed, plan, goal.targetE4 - saved)
-      if left.raw > 0 { goals += left }
     }
     self.debts = debts
     self.goals = goals
     self.debtsWithoutRate = missing.sorted { $0.uuidString < $1.uuidString }
+    self.goalsWithoutRate = goalsMissing.sorted { $0.uuidString < $1.uuidString }
   }
 }
 
@@ -156,11 +179,14 @@ public struct MonthForecast: Hashable, Sendable {
 
   /// Variable spending: my expenses without goal contributions, debt payments, parts paid
   /// for others and system categories — those are either planned or not mine. Nor the
-  /// operations «Mark as paid» wrote for scheduled payments (`sched:` links): those are
-  /// planned payments already, and left in the history they would be counted twice — once
-  /// in the planned payments, once more in the daily average.
-  static func isVariable(_ row: LedgerRow) -> Bool {
+  /// operations that paid scheduled payments: those «Mark as paid» wrote (`sched:` links) and
+  /// the ordinary ones that match a due date (`scheduledOperations`, worked out by the
+  /// planning, which this module cannot see). They are planned payments already, and left in
+  /// the history they would be counted twice — once in the planned payments, once more in the
+  /// daily average.
+  static func isVariable(_ row: LedgerRow, scheduledOperations: Set<UUID> = []) -> Bool {
     if case .scheduled = row.link { return false }
+    if scheduledOperations.contains(row.transactionId) { return false }
     // Nor anything the app wrote for its own books — the surplus and the shortfall of a
     // reimbursement, and the difference of a reconciliation. The last one used to be excluded
     // by its category, «Не помню»; it lives in «Сверка» now, which is an ordinary category,
@@ -174,13 +200,16 @@ public struct MonthForecast: Hashable, Sendable {
   /// The remainder for the days after `today`.
   ///
   /// Reading the whole ledger once and asking it many times is what the backtest needs, so
-  /// the daily series is a value of its own: `VariableSpending`.
+  /// the daily series is a value of its own: `VariableSpending`. `scheduledOperations` are the
+  /// ordinary operations that pay a due date of a scheduled payment by matching it.
   public static func remainder(
-    ledger: Ledger, today: DateOnly, method: Method? = nil
+    ledger: Ledger, today: DateOnly, method: Method? = nil,
+    scheduledOperations: Set<UUID> = []
   )
     -> Remainder
   {
-    VariableSpending(ledger: ledger).remainder(today: today, method: method)
+    VariableSpending(ledger: ledger, scheduledOperations: scheduledOperations)
+      .remainder(today: today, method: method)
   }
 
   /// Sums of every run of `length` consecutive values; when the series is shorter than a

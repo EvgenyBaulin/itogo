@@ -35,9 +35,12 @@ extension TransactionRepository {
         sql: "SELECT id, amount_e4, amount_expr FROM transactions WHERE amount_expr IS NOT NULL")
       var stale: [String] = []
       for row in rows {
-        let id: String = row["id"]
-        let amount = AmountE4(raw: row["amount_e4"])
-        let formula: String = row["amount_expr"]
+        // A row another program wrote with an amount that is no number is passed over, left
+        // as it is: the load of the history says what is wrong with it, and a check run at
+        // every start must not stop the app on it.
+        guard let id: String = row["id"], let formula: String = row["amount_expr"],
+          let amount = try? RowMapping.amount(row, "amount_e4")
+        else { continue }
         if !Self.formula(formula, comesTo: amount) { stale.append(id) }
       }
       for id in stale {
