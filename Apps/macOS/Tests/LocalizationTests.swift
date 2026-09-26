@@ -1,4 +1,5 @@
 import AppCore
+import AppDatabase
 import XCTest
 
 @testable import Itogo
@@ -444,6 +445,234 @@ final class LocalizationTests: XCTestCase {
     XCTAssertEqual(used(1), "used 1 time")
     XCTAssertEqual(used(2), "used 2 times")
   }
+
+  // MARK: Every table, both ways
+
+  /// The tables of the accounts and of the first setup are shipped like the others, their
+  /// counts as plural entries. A catalog left out of the bundle shows every key raw.
+  func testTheTablesOfAccountsAndOfTheSetupAreShippedInBothLanguages() throws {
+    for code in ["en", "ru"] {
+      let folder = try XCTUnwrap(Bundle.main.url(forResource: code, withExtension: "lproj"))
+      let tables = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+      for table in [
+        "Accounts.strings", "Accounts.stringsdict", "Onboarding.strings", "Settings.strings",
+        "Settings.stringsdict",
+      ] {
+        XCTAssertTrue(tables.contains(table), "\(code): no \(table) in \(tables)")
+      }
+    }
+  }
+
+  /// The other way round from the walk above: a key only the Russian table has is shown raw
+  /// on every Mac that is not Russian. English plurals have «one» and «other».
+  func testEveryRussianKeyIsInTheEnglishTableToo() throws {
+    let english = try XCTUnwrap(Bundle.main.url(forResource: "en", withExtension: "lproj"))
+    let russian = try XCTUnwrap(Bundle.main.url(forResource: "ru", withExtension: "lproj"))
+    let tables = try FileManager.default.contentsOfDirectory(atPath: russian.path)
+      .filter { $0.hasSuffix(".strings") || $0.hasSuffix(".stringsdict") }
+    XCTAssertTrue(tables.contains("Accounts.strings"), "\(tables)")
+    for table in tables {
+      let source = try XCTUnwrap(
+        NSDictionary(contentsOf: russian.appendingPathComponent(table)) as? [String: Any], table)
+      let translated =
+        NSDictionary(contentsOf: english.appendingPathComponent(table)) as? [String: Any] ?? [:]
+      for key in source.keys {
+        if table.hasSuffix(".stringsdict") {
+          let plural = Self.pluralForms(translated[key])
+          for form in ["one", "other"] {
+            XCTAssertFalse(
+              (plural[form] ?? "").isEmpty, "\(table): \(key) has no English «\(form)»")
+          }
+        } else {
+          let text = (translated[key] as? String ?? "").trimmingCharacters(in: .whitespaces)
+          XCTAssertFalse(text.isEmpty, "\(table): \(key) has no English text")
+        }
+      }
+    }
+  }
+
+  /// A translation takes what the English text takes: a `%@` where the English has `%lld`
+  /// reads a number as an object and crashes; a number the Russian text drops is a count on
+  /// screen without its number. Plural forms are compared as a whole, since a form may say
+  /// its number in words.
+  func testEveryTranslationTakesTheArgumentsOfTheEnglishText() throws {
+    let english = try XCTUnwrap(Bundle.main.url(forResource: "en", withExtension: "lproj"))
+    let russian = try XCTUnwrap(Bundle.main.url(forResource: "ru", withExtension: "lproj"))
+    let tables = try FileManager.default.contentsOfDirectory(atPath: english.path)
+      .filter { $0.hasSuffix(".strings") || $0.hasSuffix(".stringsdict") }
+    var compared = 0
+    for table in tables {
+      let source = try XCTUnwrap(
+        NSDictionary(contentsOf: english.appendingPathComponent(table)) as? [String: Any], table)
+      let translated =
+        NSDictionary(contentsOf: russian.appendingPathComponent(table)) as? [String: Any] ?? [:]
+      for (key, value) in source {
+        let texts: ([String], [String])
+        if table.hasSuffix(".stringsdict") {
+          texts = (
+            Array(Self.pluralForms(value).values), Array(Self.pluralForms(translated[key]).values)
+          )
+        } else {
+          texts = ([value as? String ?? ""], [translated[key] as? String ?? ""])
+        }
+        let (en, ru) = (Self.arguments(texts.0), Self.arguments(texts.1))
+        XCTAssertEqual(en, ru, "\(table): «\(key)» takes \(en) in English and \(ru) in Russian")
+        compared += 1
+      }
+    }
+    XCTAssertGreaterThan(compared, 500, "the walk read almost nothing")
+  }
+
+  /// The counts of Settings → Счета and of the lists of records read right with every number:
+  /// «1 счёт», «2 счёта», «5 счетов», «11 счетов», «21 счёт».
+  func testTheCountsOfAccountsAndRecordsAreDeclined() {
+    func text(_ key: String, _ table: String, _ count: Int) -> String {
+      language.format(key, table: table, count)
+    }
+    // The choice is written to the host's defaults; the classes after this one start in the
+    // language they found.
+    let before = language.choice
+    defer { language.choice = before }
+    language.choice = .russian
+    let accounts = [
+      1: "1 счёт", 2: "2 счёта", 5: "5 счетов", 11: "11 счетов", 21: "21 счёт", 22: "22 счёта",
+    ]
+    for (count, words) in accounts {
+      XCTAssertEqual(text("accounts.group.count", "Accounts", count), words)
+    }
+    XCTAssertEqual(text("accounts.selected", "Accounts", 1), "Выбран 1 счёт")
+    XCTAssertEqual(text("accounts.selected", "Accounts", 3), "Выбрано 3 счёта")
+    XCTAssertEqual(text("accounts.selected", "Accounts", 12), "Выбрано 12 счетов")
+    XCTAssertEqual(text("accounts.delete.titleMany", "Accounts", 2), "Удалить 2 счёта?")
+    XCTAssertEqual(text("accounts.delete.titleMany", "Accounts", 25), "Удалить 25 счетов?")
+    XCTAssertEqual(text("references.selected", "Settings", 1), "Выбрана 1 запись")
+    XCTAssertEqual(text("references.selected", "Settings", 4), "Выбраны 4 записи")
+    XCTAssertEqual(text("references.selected", "Settings", 5), "Выбрано 5 записей")
+    XCTAssertEqual(text("references.delete.titleMany", "Settings", 21), "Удалить 21 запись?")
+    XCTAssertEqual(
+      text("settings.planning.reconcileEvery", "Settings", 14), "Напоминать о сверке раз в 14 дней")
+    XCTAssertEqual(
+      text("settings.planning.reconcileEvery", "Settings", 31), "Напоминать о сверке раз в 31 день")
+    language.choice = .english
+    XCTAssertEqual(text("accounts.group.count", "Accounts", 1), "1 account")
+    XCTAssertEqual(text("accounts.group.count", "Accounts", 2), "2 accounts")
+    XCTAssertEqual(text("accounts.selected", "Accounts", 1), "1 account selected")
+    XCTAssertEqual(text("references.selected", "Settings", 3), "3 records selected")
+  }
+
+  /// Keys built from a value at run time are out of reach of `check-strings`, which reads only
+  /// literals: every value of the pickers of Settings, of the accounts and of the first setup
+  /// says something in both languages, so no picker of a new kind or relation shows
+  /// «onboarding.kind.cash».
+  func testEveryKeyBuiltFromAValueSaysSomethingInBothLanguages() {
+    var keys: [(String, String)] = []
+    for kind in PaymentMethodKind.allCases {
+      keys.append((AccountText.kindKey(kind), "Accounts"))
+      keys.append(("onboarding.kind.\(kind.rawValue)", "Onboarding"))
+    }
+    for level in AnomalySensitivity.allCases {
+      keys.append(("settings.anomalies.\(level.rawValue)", "Settings"))
+    }
+    for relation in PersonRelation.allCases {
+      keys.append(("relation.\(relation.rawValue)", "Settings"))
+    }
+    for kind in EventKind.allCases {
+      keys.append(("event.\(kind.rawValue)", "Settings"))
+    }
+    let before = language.choice
+    defer { language.choice = before }
+    for choice in [AppLanguage.Choice.english, .russian] {
+      language.choice = choice
+      for (key, table) in keys {
+        let text = language(key, table: table)
+        XCTAssertNotEqual(text, key, "\(table): \(key) is missing in \(choice.rawValue)")
+        XCTAssertFalse(text.isEmpty, "\(table): \(key) is empty in \(choice.rawValue)")
+      }
+    }
+  }
+
+  /// The outer text of a plural entry (`NSStringLocalizedFormatKey`) takes its arguments like
+  /// any other: «%#@count@ в %@» translated as «%#@count@» would drop the name that follows the
+  /// count, and one `%@` too many reads past the arguments. The variables of the plural are
+  /// arguments too, in their place, so a translation that swaps them without positions shows.
+  func testTheOuterTextOfEveryPluralTakesTheArgumentsOfTheEnglishOne() throws {
+    let english = try XCTUnwrap(Bundle.main.url(forResource: "en", withExtension: "lproj"))
+    let russian = try XCTUnwrap(Bundle.main.url(forResource: "ru", withExtension: "lproj"))
+    let tables = try FileManager.default.contentsOfDirectory(atPath: english.path)
+      .filter { $0.hasSuffix(".stringsdict") }
+    var compared = 0
+    for table in tables {
+      let source = try XCTUnwrap(
+        NSDictionary(contentsOf: english.appendingPathComponent(table)) as? [String: Any], table)
+      let translated =
+        NSDictionary(contentsOf: russian.appendingPathComponent(table)) as? [String: Any] ?? [:]
+      for (key, value) in source {
+        let en = Self.outerFormat(value)
+        let ru = Self.outerFormat(translated[key])
+        XCTAssertNotNil(en, "\(table): «\(key)» has no outer text in English")
+        XCTAssertNotNil(ru, "\(table): «\(key)» has no outer text in Russian")
+        let (enArguments, ruArguments) = (
+          Self.outerArguments(en ?? ""), Self.outerArguments(ru ?? "")
+        )
+        XCTAssertFalse(enArguments.isEmpty, "\(table): «\(key)» takes nothing: \(en ?? "")")
+        XCTAssertEqual(
+          enArguments, ruArguments,
+          "\(table): the outer text of «\(key)» takes \(enArguments) in English and "
+            + "\(ruArguments) in Russian")
+        compared += 1
+      }
+    }
+    XCTAssertGreaterThan(compared, 20, "the walk read almost no plural entries")
+  }
+
+  /// The outer text of a plural entry of a `.stringsdict`.
+  private static func outerFormat(_ entry: Any?) -> String? {
+    (entry as? [String: Any])?["NSStringLocalizedFormatKey"] as? String
+  }
+
+  /// The arguments an outer text takes, in order: plain conversions and `%#@variable@`, each
+  /// with its position (explicit, or its place among the others).
+  private static func outerArguments(_ text: String) -> [String] {
+    let pattern = try? NSRegularExpression(
+      pattern: "%(?:([0-9]+)\\$)?(#@[A-Za-z0-9_]+@|lld|ld|d|@|f|\\.[0-9]f)")
+    let bare = text.replacingOccurrences(of: "%%", with: "")
+    var found: [String] = []
+    for match in pattern?.matches(in: bare, range: NSRange(bare.startIndex..., in: bare)) ?? [] {
+      let explicit = Range(match.range(at: 1), in: bare).map { String(bare[$0]) }
+      let conversion = Range(match.range(at: 2), in: bare).map { String(bare[$0]) } ?? ""
+      found.append("\(explicit ?? String(found.count + 1)):\(conversion)")
+    }
+    return found.sorted()
+  }
+
+  /// The texts of the forms of a plural entry of a `.stringsdict`, by form.
+  private static func pluralForms(_ entry: Any?) -> [String: String] {
+    let rule = (entry as? [String: Any])?.values
+      .compactMap { $0 as? [String: Any] }
+      .first { $0["NSStringFormatSpecTypeKey"] as? String == "NSStringPluralRuleType" }
+    var forms: [String: String] = [:]
+    for form in ["zero", "one", "two", "few", "many", "other"] {
+      if let text = rule?[form] as? String { forms[form] = text }
+    }
+    return forms
+  }
+
+  /// The arguments a text takes, by their conversion: `%lld`, `%@`, `%1$lld`…, `%%` not one.
+  private static func arguments(_ texts: [String]) -> [String] {
+    let pattern = try? NSRegularExpression(pattern: "%(?:([0-9]+)\\$)?(lld|ld|d|@|f|\\.[0-9]f)")
+    var found = Set<String>()
+    for text in texts {
+      let bare = text.replacingOccurrences(of: "%%", with: "")
+      var position = 0
+      for match in pattern?.matches(in: bare, range: NSRange(bare.startIndex..., in: bare)) ?? [] {
+        position += 1
+        let explicit = Range(match.range(at: 1), in: bare).map { String(bare[$0]) }
+        let conversion = Range(match.range(at: 2), in: bare).map { String(bare[$0]) } ?? ""
+        found.insert("\(explicit ?? String(position)):\(conversion)")
+      }
+    }
+    return found.sorted()
+  }
 }
 
 /// The currency list is capped at ten and the ruble always stays enabled.
@@ -458,5 +687,72 @@ final class CurrencySettingsTests: XCTestCase {
   func testCurrencyCodesAreCaseInsensitiveAndUppercase() {
     XCTAssertEqual(CurrencyCode("usd"), CurrencyCode("USD"))
     XCTAssertEqual(CurrencyCode("uSd").code, "USD")
+  }
+}
+
+/// Every refusal of Settings → Счета, of the account editor and of the first setup is said in
+/// words of the interface's language, with what it is about filled in: a key shown raw, or a
+/// «%@» left in a sentence, is what the owner would read instead of the reason.
+@MainActor
+final class AccountRefusalWordsTests: XCTestCase {
+  func testEveryRefusalOfAnAccountSaysWhatItIsAboutInBothLanguages() {
+    let environment = AppEnvironment()
+    let before = environment.language.choice
+    defer { environment.language.choice = before }
+    let usd = CurrencyCode("USD")
+    let refusals: [(AccountRefusal, [String])] = [
+      (.emptyName, []), (.nameTaken, []), (.otherNameTaken("Сберик"), ["Сберик"]),
+      (.inArchive(UUID()), []), (.noCurrency, []), (.duplicateCurrency, []),
+      (.currencyNotEnabled(usd), ["USD"]), (.removesCurrencyWithMoney(usd), ["USD"]),
+      (.currencyBalanceUnknown(usd), ["USD"]), (.unreadableBalance(usd), ["USD"]),
+      (.hasMoney, []), (.deletesWithMoney, []), (.balanceUnknown, []), (.lastLiveAccount, []),
+      (.needsNewMain, []), (.noSuccessor, []), (.mainInExcludedGroup, []),
+      (
+        .inUse(UUID(), AccountUsage(operations: 1_234, transfers: 2, scheduled: 3, debtEntries: 4)),
+        ["1,234", "2", "3", "4"]
+      ),
+      (.groupHoldsMain, []), (.groupHasLiveAccounts, []), (.groupInUse, []),
+      (.groupNameTaken, []), (.notFound, []),
+    ]
+    for choice in [AppLanguage.Choice.english, .russian] {
+      environment.language.choice = choice
+      var said = Set<String>()
+      for (refusal, words) in refusals {
+        let text = AccountText.message(refusal, environment)
+        XCTAssertFalse(text.hasPrefix("account.refusal."), "\(refusal) is a raw key: \(text)")
+        XCTAssertFalse(text.contains("%"), "\(refusal) keeps a placeholder: \(text)")
+        for word in words {
+          XCTAssertTrue(text.contains(word), "\(refusal) does not say «\(word)»: \(text)")
+        }
+        said.insert(text)
+      }
+      XCTAssertEqual(said.count, refusals.count, "two refusals say the same in \(choice)")
+    }
+  }
+
+  /// Every issue of the first setup is a sentence of its own in both languages, and the
+  /// countries its groups are suggested under have names.
+  func testEveryIssueAndCountryOfTheSetupIsSaidInBothLanguages() {
+    let language = AppLanguage()
+    let before = language.choice
+    defer { language.choice = before }
+    let id = UUID()
+    let issues: [AccountSetupModel.Issue] = [
+      .noAccount, .emptyName(id), .nameTaken(id), .nameArchived(id), .emptyGroupName(id),
+      .groupNameTaken(id), .groupNameArchived(id), .noMain, .mainInExcludedGroup,
+      .tooManyCurrencies,
+    ]
+    let keys =
+      issues.map(\.messageKey) + ["onboarding.issue.nameArchivedStored"]
+      + BankCatalog.Country.allCases.map(\.nameKey)
+    for choice in [AppLanguage.Choice.english, .russian] {
+      language.choice = choice
+      let texts = keys.map { language($0, table: "Onboarding") }
+      for (key, text) in zip(keys, texts) {
+        XCTAssertNotEqual(text, key, "\(key) is missing in \(choice.rawValue)")
+        XCTAssertFalse(text.contains("%"), "\(key) keeps a placeholder: \(text)")
+      }
+      XCTAssertEqual(Set(texts).count, keys.count, "two issues say the same in \(choice)")
+    }
   }
 }

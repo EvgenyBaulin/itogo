@@ -153,8 +153,15 @@ enum AppLaunch {
       store.attach(
         repository, references: environment.references, planning: environment.planning)
     }
+    // A copy after every change, whoever wrote it: the store, a setting written through
+    // `environment.attempt`, a hidden anomaly, a pinned template. One rule on the database
+    // rather than a call in every screen, so a write no screen remembered to report still
+    // reaches the newest copy. The store's own call above stays: the service collapses the
+    // two into one copy. The test host never starts by itself, so only a test that starts
+    // the app on a scratch database gets this.
+    observeChangesForCopies(of: environment)
     // The test host is this very app: there the pipeline, the observation of the database
-    // and the network stay off, and the tests build their own stores.
+    // for the numbers and the network stay off, and the tests build their own stores.
     if startsPipeline, !compute.isAttached, let stack = environment.stack,
       let rateService = environment.rateService
     {
@@ -173,6 +180,35 @@ enum AppLaunch {
       // history is nobody's first launch.
       if AppPaths.dataSet == nil { Task { await CurrencyCheck.runOnce(environment) } }
     }
+  }
+
+  /// The tasks that arm a copy after every change of the data, one per environment started:
+  /// each is stopped before its database closes (`putDown`).
+  private static var copyObservations: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+  /// Arms a copy after every committed change of the owner's data, once per environment. An
+  /// environment without an open database, or a closed one, gets nothing.
+  private static func observeChangesForCopies(of environment: AppEnvironment) {
+    let key = ObjectIdentifier(environment)
+    guard copyObservations[key] == nil, !environment.isClosed, let stack = environment.stack
+    else { return }
+    let changes = stack.dataChanges()
+    copyObservations[key] = Task { @MainActor [environment] in
+      for await _ in changes {
+        guard !Task.isCancelled else { return }
+        environment.scheduleBackup()
+      }
+    }
+  }
+
+  /// Stops the observation `observeChangesForCopies` started and waits for it, so nothing is
+  /// left registered on a database about to close.
+  private static func stopObservingChangesForCopies(of environment: AppEnvironment) async {
+    guard let task = copyObservations.removeValue(forKey: ObjectIdentifier(environment)) else {
+      return
+    }
+    task.cancel()
+    await task.value
   }
 
   /// The way out, in the order that keeps the database whole: the pipeline stops and is
@@ -213,6 +249,7 @@ enum AppLaunch {
     // the store.
     compute.onSnapshot = nil
     store?.detach()
+    await stopObservingChangesForCopies(of: environment)
     await environment.close()
     if running?.environment === environment { running = nil }
     AppLog.info("app.stopped", .app, "the application was put down cleanly")

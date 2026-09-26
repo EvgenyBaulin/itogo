@@ -320,7 +320,13 @@ struct CategoriesSettingsView: View {
             }
           }
         } label: {
+          // Named by its category, like the «…» of every row of Справочники: the bare symbol
+          // was read as «More» on every row alike.
           Image(systemName: "ellipsis.circle")
+            .accessibilityLabel(
+              Text(
+                verbatim: environment.format(
+                  "references.rowMenu", table: "Settings", category.name)))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

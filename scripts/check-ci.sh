@@ -311,8 +311,10 @@ undeclared() {
     END { exit bad }' "$1" "$1"
 }
 
-# The first major of each action this repository uses that runs on Node 24.
-node24="actions/checkout@5 actions/setup-python@6 actions/upload-artifact@5"
+# The first major of each action this repository uses that runs on Node 24: the `using:` of the
+# action.yml at that tag says node24. upload-artifact@v5 still says node20 (every failed run of
+# build.yml warned so); v6 is its first on Node 24.
+node24="actions/checkout@5 actions/setup-python@6 actions/upload-artifact@6"
 
 # Prints each `uses:` of an action older than its first Node 24 major, or not in the table;
 # exit 1 when there is any. Comments are not read.
@@ -400,8 +402,8 @@ if [ "${1:-}" = "--self-test" ]; then
     exit 1
   fi
   found="$(outdated "${fixtures}/bad.yml.txt" | wc -l | tr -d ' ')"
-  if [ "${found}" != "3" ]; then
-    echo "check-ci self-test: expected two actions on Node 20 and one unknown in bad.yml.txt, got ${found}"
+  if [ "${found}" != "4" ]; then
+    echo "check-ci self-test: expected three actions on Node 20 and one unknown in bad.yml.txt, got ${found}"
     outdated "${fixtures}/bad.yml.txt"
     exit 1
   fi

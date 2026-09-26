@@ -71,6 +71,15 @@ entries() {
   done
 }
 
+# The entry right under the one of a version, as `entries` prints it; nothing for the last one.
+# awk reads to the end: one that left at the entry it wanted would close the pipe while
+# `entries` still writes the entries under it, and under pipefail that SIGPIPE ends the whole
+# check with 141 for every version but the last two of the feed.
+below_of() {
+  entries "$1" |
+    awk -F '|' -v wanted="$2" 'found && !taken { print; taken = 1 } $2 == wanted { found = 1 }'
+}
+
 # The feed as a whole: every entry whole, the builds falling from the top down, one entry per
 # version.
 check_feed() {
@@ -239,6 +248,20 @@ if [ "${1:-}" = "--self-test" ]; then
   (check_feed "${feed}") || { echo "check-release self-test: refused a whole feed"; exit 1; }
   [ "$(entries "${feed}" | sed -n 2p)" = "2|1.1.0|26.0|110|${bare}|${downloads}/v1.1.0/Itogo-1.1.0.zip" ] ||
     { echo "check-release self-test: read the second entry as «$(entries "${feed}" | sed -n 2p)»"; exit 1; }
+  # `check-release.sh 1.1.1` over this feed of three: the entry under the one asked for is read,
+  # and the reading itself succeeds, for the top entry as for the last.
+  for asked in "1.1.1|2|1.1.0|110" "1.1.0|1|1.0.0|100" "1.0.0|"; do
+    IFS='|' read -r version build under length <<< "${asked}"
+    expected=""
+    [ -z "${build}" ] ||
+      expected="${build}|${under}|26.0|${length}|${bare}|${downloads}/v${under}/Itogo-${under}.zip"
+    found="$(below_of "${feed}" "${version}")" || {
+      echo "check-release self-test: reading the entry under ${version} failed with $?"
+      exit 1
+    }
+    [ "${found}" = "${expected}" ] ||
+      { echo "check-release self-test: read the entry under ${version} as «${found}»"; exit 1; }
+  done
   # Each of these is one feed an installed copy would be misled by.
   wrong=(
     "2 1.1.0 110|3 1.1.1 120"
@@ -457,7 +480,7 @@ if [ -n "${wanted}" ]; then
     esac
     fail "the feed does not announce ${wanted}"
   fi
-  below="$(entries "${feed}" | awk -F '|' -v wanted="${wanted}" 'found { print; exit } $2 == wanted { found = 1 }')"
+  below="$(below_of "${feed}" "${wanted}")"
 else
   line="$(entries "${feed}" | sed -n 1p)"
   below="$(entries "${feed}" | sed -n 2p)"

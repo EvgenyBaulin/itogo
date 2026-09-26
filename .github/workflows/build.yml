@@ -95,7 +95,7 @@ jobs:
       # What the build and the tests wrote, for the run that failed.
       - name: Keep the logs of a failed run
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: logs
           path: ~/Library/Developer/Itogo/logs

@@ -5341,6 +5341,23 @@
         }
       }
     },
+    "templates.unpin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unpin"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открепить"
+          }
+        }
+      }
+    },
     "templates.used": {
       "extractionState": "manual",
       "localizations": {

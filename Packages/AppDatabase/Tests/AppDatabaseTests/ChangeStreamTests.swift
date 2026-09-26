@@ -193,6 +193,33 @@ struct ChangeStreamTests {
     withExtendedLifetime(changes) {}
   }
 
+  /// The copy after every change listens wider than the numbers do: a pinned template or a
+  /// switched-on currency changes nothing the ledger reads, yet it is the owner's data and
+  /// has to reach the next copy.
+  @Test func theCopiesWatchTheTemplatesAndTheCurrenciesBesideTheLedger() {
+    #expect(Set(DatabaseStack.dataTables).isSuperset(of: DatabaseStack.ledgerTables))
+    #expect(DatabaseStack.dataTables.contains("templates"))
+    #expect(DatabaseStack.dataTables.contains("currencies"))
+    #expect(!DatabaseStack.ledgerTables.contains("templates"))
+    #expect(!DatabaseStack.ledgerTables.contains("currencies"))
+  }
+
+  /// A write that only touches the currencies — Settings → Currencies — arrives on the stream
+  /// the copies listen to.
+  @Test(.timeLimit(.minutes(1)))
+  func aWriteToTheCurrenciesAloneIsAnnouncedForTheCopies() async throws {
+    let stack = try TestSupport.makeStack()
+    var changes = stack.dataChanges().makeAsyncIterator()
+
+    try await stack.writer.write { db in
+      try db.execute(
+        sql: "INSERT OR REPLACE INTO currencies (code, enabled, sort) VALUES ('EUR', 1, 99)")
+    }
+
+    let arrived: Void? = await changes.next()
+    #expect(arrived != nil, "a write to the currencies alone was not announced to the copies")
+  }
+
   /// The SQL the trace saw, behind a lock: GRDB calls the trace on the reader's queue.
   private final class Statements: @unchecked Sendable {
     private let lock = NSLock()

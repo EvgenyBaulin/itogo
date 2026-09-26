@@ -190,7 +190,7 @@ jobs:
             > "appcast-entry-${version}.xml"
           cat "appcast-entry-${version}.xml"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: release
           path: |

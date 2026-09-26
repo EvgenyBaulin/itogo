@@ -58,17 +58,27 @@ struct TemplatesSettingsView: View {
     .refusedWriteAlert($refused, environment)
   }
 
+  /// What the pin of a row says it will do: unpin a pinned template, pin any other.
+  static func pinCaptionKey(pinned: Bool) -> String {
+    pinned ? "templates.unpin" : "templates.pin"
+  }
+
   private func liveRow(_ template: Binding<Template>) -> some View {
-    HStack(spacing: 10) {
+    // The pin says what pressing it does, «Открепить» on a pinned template: the filled pin
+    // alone told the state to the eye only, and VoiceOver read the name of the symbol.
+    let pinned = template.wrappedValue.pinned
+    let pinCaption = t(Self.pinCaptionKey(pinned: pinned))
+    return HStack(spacing: 10) {
       Button {
         write("templates.save") {
-          try $0.setTemplate(template.wrappedValue.id, pinned: !template.wrappedValue.pinned)
+          try $0.setTemplate(template.wrappedValue.id, pinned: !pinned)
         }
       } label: {
-        Image(systemName: template.wrappedValue.pinned ? "pin.fill" : "pin")
+        Image(systemName: pinned ? "pin.fill" : "pin")
       }
       .buttonStyle(.borderless)
-      .help(t("templates.pin"))
+      .help(pinCaption)
+      .accessibilityLabel(Text(verbatim: pinCaption))
 
       TextField(text: template.text) { EmptyView() }
         .labelsHidden()

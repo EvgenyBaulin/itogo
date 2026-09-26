@@ -13,11 +13,15 @@ public enum LedgerTraining {
   public static func rows(of dataset: Dataset, calendar: CalendarContext) -> [CategoryTraining.Row]
   {
     let tree = CategoryTree(dataset.categories)
+    // A refund taken back from a live purchase carries the purchase part's category and its
+    // source because the app copied them there: the owner filed the purchase, once, and the
+    // model learns it once. A refund of no purchase is filed by the owner and teaches.
+    let refunds = RefundIndex(entries: dataset.entries, debts: dataset.debtsById)
     var rows: [CategoryTraining.Row] = []
     for entry in dataset.entries {
       let transaction = entry.transaction
       let day = calendar.day(of: transaction.occurredAt)
-      for part in entry.parts {
+      for part in entry.parts where !refunds.isLinked(refundPart: part.id) {
         let category = part.categoryId.flatMap { id in dataset.categories.first { $0.id == id } }
         // A subcategory of Goals is a goal's own: the role of the root counts as much as the
         // role of the category itself.

@@ -322,6 +322,46 @@ final class AppLaunchTests: XCTestCase {
       "the last copy does not have the change made before the quit")
   }
 
+  /// «Бэкап после каждого изменения» holds for every write, not only for the store's: a change
+  /// made in the settings through `environment.attempt` — the default currency, the enabled
+  /// currencies — armed no copy, and a quit right after it left the newest copy without it.
+  func testAChangeMadeInTheSettingsJustBeforeQuittingIsInTheLastCopy() async throws {
+    let directory = try scratchData()
+    defer { dropScratchData(directory) }
+    let environment = AppEnvironment()
+    let store = TransactionsStore()
+    let compute = ComputeStore(calendar: .utc)
+    await AppLaunch.start(
+      environment, store: store, compute: compute, startsPipeline: false,
+      sources: Self.emptySources)
+    let enabled = try XCTUnwrap(environment.settings).enabledCurrencies()
+
+    XCTAssertTrue(CurrenciesSettingsView.chooseDefault(.usd, in: environment))
+    XCTAssertTrue(
+      CurrenciesSettingsView.switchCurrency(
+        .eur, on: true, enabled: try XCTUnwrap(environment.settings).enabledCurrencies(),
+        in: environment))
+    XCTAssertNotEqual(enabled, try XCTUnwrap(environment.settings).enabledCurrencies())
+    // The copy is armed; its debounce is seconds long, and the quit comes well inside it.
+    try await Task.sleep(for: .milliseconds(200))
+    await AppLaunch.stop(environment, compute: compute, store: store)
+
+    let copies = try FileManager.default
+      .contentsOfDirectory(at: AppPaths.backupsDirectory, includingPropertiesForKeys: nil)
+      .filter { $0.pathExtension == "sqlite" }
+      .sorted { $0.lastPathComponent > $1.lastPathComponent }
+    let last = try XCTUnwrap(copies.first, "the quit left no copy of the change in the settings")
+    let copy = try DatabaseStack(url: last, schema: BundleSchemaSource(bundle: .main))
+    defer { try? copy.close() }
+    let settings = SettingsRepository(writer: copy.writer)
+    XCTAssertEqual(
+      try settings.defaultCurrency(), .usd,
+      "the last copy does not have the default currency chosen before the quit")
+    XCTAssertTrue(
+      try settings.enabledCurrencies().contains(.eur),
+      "the last copy does not have the currency switched on before the quit")
+  }
+
   /// The journal of a clean quit ends with the lines of the quit: the database closed, the
   /// application put down. They are what tells a clean quit from a crash, and they were
   /// logged into a journal whose close had already overtaken them.

@@ -10,6 +10,7 @@ jobs:
         with:
           fetch-depth: 0   # uses: actions/checkout@v4 would be read if this were not a comment
       - uses: actions/setup-python@v6
+      - uses: actions/upload-artifact@v6
       - name: Install XcodeGen, not with brew install xcodegen
         run: scripts/install-xcodegen.sh "$RUNNER_TEMP/xcodegen"
       - name: Test, as make test-core does

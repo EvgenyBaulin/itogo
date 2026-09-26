@@ -69,7 +69,9 @@ public struct PlacesReport: Hashable, Sendable {
     var receipts: [UUID: AmountE4] = [:]
     var purchases: [UUID: Set<UUID>] = [:]
     for row in ledger.rows(in: period.range) {
-      guard let placeId = row.placeId else { continue }
+      // A refund taken back from a live purchase belongs to the purchase's day, which already
+      // counts it: on its own day it is no visit to the place.
+      guard let placeId = row.placeId, row.refundOfPartId == nil else { continue }
       spending[placeId, default: .zero] += row.contribution
       if row.kind == .expense {
         receipts[placeId, default: .zero] += row.amountRubE4
@@ -121,7 +123,9 @@ public struct EventsReport: Hashable, Sendable {
       guard let eventId = row.eventId else { continue }
       totals[eventId, default: .zero] += row.contribution
       rowsByEvent[eventId, default: []].append(row)
-      if period.range.contains(row.day) { inPeriod.insert(eventId) }
+      // A refund taken back from a live purchase is the purchase's, on the purchase's day: it
+      // brings no event into a period the event has nothing else in.
+      if period.range.contains(row.day), row.refundOfPartId == nil { inPeriod.insert(eventId) }
     }
     let events = ledger.dataset.events
     self.events = events.filter { event in
@@ -156,9 +160,12 @@ public struct EventsReport: Hashable, Sendable {
 ///
 /// Next to my spending with each method stands its turnover: the whole receipts of expense
 /// operations, parts paid for others included, minus refunds, by date — what the bank pays
-/// cashback on. Cashback is income in the cashback category (and its subcategories) that
-/// came to that method, by the month it is for. The share is cashback ÷ turnover, and there
-/// is none when the turnover is not positive.
+/// cashback on. A refund taken back from a live purchase counts like my spending does: the
+/// purchase comes in cheaper on its own day and on its own method, and the refund adds nothing
+/// on its day, whatever method it came back to; a refund of no purchase lowers the turnover of
+/// its own day and method. Cashback is income in the cashback category (and its subcategories)
+/// that came to that method, by the month it is for. The share is cashback ÷ turnover, and
+/// there is none when the turnover is not positive.
 public struct PaymentMethodsReport: Hashable, Sendable {
   public struct Method: Hashable, Sendable {
     /// `.paymentMethod(id)` or `.noPaymentMethod`.
@@ -183,8 +190,10 @@ public struct PaymentMethodsReport: Hashable, Sendable {
     for row in ledger.rows(in: period.range) {
       spending[key(row), default: .zero] += row.contribution
       switch row.kind {
-      case .expense: turnover[key(row), default: .zero] += row.amountRubE4
-      case .refund: turnover[key(row), default: .zero] += -row.amountRubE4
+      case .expense: turnover[key(row), default: .zero] += row.amountRubE4 - row.refundedRubE4
+      case .refund:
+        guard row.refundOfPartId == nil else { continue }
+        turnover[key(row), default: .zero] += -row.amountRubE4
       case .income, .reimbursement: break
       }
     }

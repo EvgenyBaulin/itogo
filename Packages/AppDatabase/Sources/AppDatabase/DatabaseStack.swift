@@ -252,9 +252,27 @@ public final class DatabaseStack: Sendable {
   /// tell a stopped observation from one left behind on the writer. The tests use it. Like
   /// the yield, the callback must never block.
   func ledgerChanges(onChange: @escaping @Sendable () -> Void) -> AsyncStream<Void> {
+    changes(of: Self.ledgerTables, onChange: onChange)
+  }
+
+  /// The tables whose change is a change of the owner's data, worth a copy: the ledger's, plus
+  /// the templates and the enabled currencies, which no number reads but a restore must bring
+  /// back. The model file (`ml_models`) is left out: it is rebuilt from the data.
+  static let dataTables = ledgerTables + ["templates", "currencies"]
+
+  /// One element after every committed transaction that changed one of `dataTables`, whoever
+  /// wrote it — the stream the copy after every change listens to. Same threading, buffer
+  /// and lifetime as `ledgerChanges()`.
+  public func dataChanges() -> AsyncStream<Void> {
+    changes(of: Self.dataTables, onChange: {})
+  }
+
+  private func changes(
+    of tables: [String], onChange: @escaping @Sendable () -> Void
+  ) -> AsyncStream<Void> {
     AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
       let observation = DatabaseRegionObservation(
-        tracking: Self.ledgerTables.map { Table($0) })
+        tracking: tables.map { Table($0) })
       let cancellable = observation.start(
         in: writer,
         onError: { _ in continuation.finish() },

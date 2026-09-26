@@ -7,6 +7,25 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.1.2] — 2026-09-26
+
+Fixes to 1.1.1. The database schema and the transfer-archive format stay as 1.1.0 left them.
+
+### Fixed
+
+- A change made outside operations — the default currency, the currencies switched on or off,
+  a Planning setting, «This is normal» on an anomaly, pinning or archiving a template — got no
+  backup of its own: closing the app right after it left the newest copy without that change.
+  Every change written to the database now schedules a backup.
+- An account's turnover counted a refund taken back to another account in the refund's month,
+  as a negative figure on that account; it now follows the purchase, like the other figures.
+- «Places» and «Events» of the refund's month listed the purchase's place or event with 0 ₽;
+  a refund tied to a purchase now counts only where the purchase does.
+- The category model learned a purchase twice when it had a refund tied to it.
+- The counters of «Model quality» were written without thousands separators («12345»).
+- VoiceOver: the pin of a pinned template now says it unpins, and the «…» menu of every
+  category row says whose menu it is.
+
 ## [1.1.1] — 2026-09-26
 
 Fixes to 1.1.0. The database schema and the transfer-archive format stay as 1.1.0 left them:

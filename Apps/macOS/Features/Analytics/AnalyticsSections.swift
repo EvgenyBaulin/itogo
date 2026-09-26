@@ -1159,7 +1159,7 @@ private struct ForecastQualityTable: View {
     VStack(alignment: .leading, spacing: 10) {
       Text(
         verbatim: "\(t("analytics.forecast.origins")): "
-          + "\(backtest.metrics(of: backtest.chosen)?.origins ?? 0)"
+          + money.count(Int64(backtest.metrics(of: backtest.chosen)?.origins ?? 0))
       )
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -1209,6 +1209,7 @@ struct MeasuredTable: View {
     of categories: ModelQuality.Categories, _ environment: AppEnvironment
   ) -> [Row] {
     guard let metrics = categories.metrics else { return [] }
+    let count = { (value: Int) in environment.money.count(Int64(value)) }
     func share(_ key: String, _ bp: Int) -> Row {
       Row(
         title: AnalyticsText.t(key, environment),
@@ -1217,11 +1218,12 @@ struct MeasuredTable: View {
     return [
       Row(
         title: AnalyticsText.t("analytics.model.examples", environment),
-        value: "\(categories.examples)"),
-      Row(title: AnalyticsText.t("analytics.model.asked", environment), value: "\(metrics.asked)"),
+        value: count(categories.examples)),
+      Row(
+        title: AnalyticsText.t("analytics.model.asked", environment), value: count(metrics.asked)),
       Row(
         title: AnalyticsText.t("analytics.model.classes", environment),
-        value: "\(metrics.classes) / \(metrics.classesReady)"),
+        value: "\(count(metrics.classes)) / \(count(metrics.classesReady))"),
       share("analytics.model.top1", metrics.top1Bp),
       share("analytics.model.top3", metrics.top3Bp),
       share("analytics.model.coverage", metrics.coverageBp),
@@ -1238,12 +1240,14 @@ struct MeasuredTable: View {
     of choices: ModelQuality.Choices, _ environment: AppEnvironment
   ) -> [Row] {
     guard choices.made > 0 else { return [] }
+    let count = { (value: Int) in environment.money.count(Int64(value)) }
     var rows = [
       Row(
-        title: AnalyticsText.t("analytics.model.choices", environment), value: "\(choices.made)"),
+        title: AnalyticsText.t("analytics.model.choices", environment),
+        value: count(choices.made)),
       Row(
         title: AnalyticsText.t("analytics.model.overruled", environment),
-        value: "\(choices.overruled)"),
+        value: count(choices.overruled)),
     ]
     if let sure = choices.confidenceWhenOverruledBp {
       rows.append(
