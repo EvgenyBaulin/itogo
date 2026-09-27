@@ -711,7 +711,7 @@ struct AdviceTests: SavingsFixtures {
           interestRate: rate.flatMap { Decimal(string: $0) }, monthlyPaymentE4: payment.map(rub),
           paymentDay: day, paymentsAreExpenses: false))
       data.book.debtEntries.append(
-        DebtEntry(debtId: id, date: date("2026-01-10"), amountE4: rub(balance), kind: .borrowed))
+        DebtEntry(debtId: id, date: date("2026-09-01"), amountE4: rub(balance), kind: .borrowed))
     }
     debt(700, "A", rate: "12", payment: "10000", day: 5, balance: "120000")
     debt(701, "B", rate: "6", payment: "100", day: 10, currency: .usd, balance: "1000")
@@ -763,10 +763,18 @@ struct AdviceTests: SavingsFixtures {
   /// against 10, 2.4218 $ saved. C: 190 → 200 extra makes 2 100 beat the interest — closed
   /// in 154 months, never without it. D: 150 → 200 extra, 1 700 never closes it. E has no
   /// rate.
-  @Test func debtPayoffWithTenPercentExtra() {
+  ///
+  /// The advice follows the order of «Я должен» (nearest due first), which the debts screen
+  /// owns: each debt is looked up by its own subject.
+  @Test func debtPayoffWithTenPercentExtra() throws {
     let items = AdviceRules.debtPayoffs(overview(debtBook()))
-    #expect(items.map(\.subject) == [.debt("A"), .debt("B"), .debt("C"), .debt("D")])
-    let a = items[0]
+    #expect(
+      Set(items.compactMap(\.subject)) == [.debt("A"), .debt("B"), .debt("C"), .debt("D")])
+    #expect(items.count == 4)
+    func item(_ name: String) throws -> Advice {
+      try #require(items.first { $0.subject == .debt(name) }, "no advice for \(name)")
+    }
+    let a = try item("A")
     #expect(a.id == "debtPayoff:\(ids(700))")
     #expect(
       a.terms == [
@@ -782,14 +790,17 @@ struct AdviceTests: SavingsFixtures {
         term("advice.term.monthsWithExtra", .months(12)),
         term("advice.term.interestSaved", money("766.4429")),
       ])
-    let b = items[1]
+    let b = try item("B")
+    try #require(b.terms.count == 4 && b.notes.count == 3)
     #expect(b.terms[0] == term("advice.term.debtBalance", .moneyIn(.usd, rub("1000"))))
     #expect(b.terms[3] == term("advice.term.debtExtra", .plus, .moneyIn(.usd, rub("10"))))
     #expect(b.notes[2] == term("advice.term.interestSaved", .moneyIn(.usd, rub("2.4218"))))
-    #expect(items[2].terms[3] == term("advice.term.debtExtra", .plus, money("200")))
-    #expect(items[2].result == term("advice.term.closesOnlyWithExtra", .equals, .months(154)))
-    #expect(items[2].notes.isEmpty)
-    #expect(items[3].result == term("advice.term.notClosedWithin", .months(600)))
+    let c = try item("C")
+    try #require(c.terms.count == 4)
+    #expect(c.terms[3] == term("advice.term.debtExtra", .plus, money("200")))
+    #expect(c.result == term("advice.term.closesOnlyWithExtra", .equals, .months(154)))
+    #expect(c.notes.isEmpty)
+    #expect(try item("D").result == term("advice.term.notClosedWithin", .months(600)))
   }
 
   /// 10 %, to 100 ₽ and never below it; to whole units of another currency, at least one.

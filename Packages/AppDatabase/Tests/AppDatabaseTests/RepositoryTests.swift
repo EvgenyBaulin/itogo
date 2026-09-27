@@ -325,8 +325,13 @@ struct MergeTests {
     #expect(
       listed["payment_methods"]?.isSuperset(of: [
         "transfers.from_payment_method_id", "transfers.to_payment_method_id",
-        "debt_entries.payment_method_id",
+        "debt_entries.payment_method_id", "cards.payment_method_id",
+        "cashback_rules.payment_method_id", "expected_income.payment_method_id",
       ]) == true)
+    // The cards move before anything that names them: a row may name only a card of its own
+    // account, which the schema checks as each row moves.
+    #expect(ReferenceRepository.mergedColumns["payment_methods"]?.first?.table == "cards")
+    #expect(listed["events"]?.contains("scheduled_payments.event_id") == true)
     #expect(kept == ["reconciliation_balances.payment_method_id"])
   }
 

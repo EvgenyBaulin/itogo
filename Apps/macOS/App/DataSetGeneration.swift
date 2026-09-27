@@ -70,7 +70,8 @@
       try manager.createDirectory(at: directory, withIntermediateDirectories: true)
       let stack = try DatabaseStack(url: AppPaths.databaseURL(in: directory), schema: schema)
       let set = generate(
-        generation, today: today, now: now, calendar: calendar, language: language, seed: seed)
+        generation, today: today, now: now, calendar: calendar, language: language, seed: seed,
+        demo: showcase)
       try write(set, into: stack)
       var operations = set.entries.count
       if showcase {
@@ -88,12 +89,14 @@
     }
 
     /// The history ending `today`; with `now`, only as much of today as has been lived. It
-    /// comes with its accounts (`withAccounts`): groups, accounts in several currencies,
-    /// transfers, counts and the rest — a set looks like the books of an app with accounts, set
-    /// up and counted, so no setup of accounts is offered on it.
+    /// comes with its accounts and every layer after them (`withEveryFeature`): groups, accounts
+    /// in several currencies, transfers, counts, cards and their cashback, a credit card below
+    /// zero, a later count that follows the books and the rest — a set looks like the books of
+    /// an app with accounts, set up and counted, so no setup of accounts is offered on it. The
+    /// `demo` set also has a payment due and not paid, which the launch asks about.
     nonisolated static func generate(
       _ generation: LaunchOptions.Generation, today: DateOnly, now: Date? = nil,
-      calendar: CalendarContext, language: String, seed: UInt64 = fixedSeed
+      calendar: CalendarContext, language: String, seed: UInt64 = fixedSeed, demo: Bool = false
     ) -> SampleDataSet {
       let generator = SampleDataGenerator(seed: seed)
       let history: SampleDataSet
@@ -106,7 +109,8 @@
           months: SampleDataGenerator.largeSetMonths, endingOn: today, now: now,
           calendar: calendar, language: language, density: SampleDataGenerator.largeSetDensity)
       }
-      return history.withAccounts(seed: seed, calendar: calendar, language: language, now: now)
+      return history.withEveryFeature(
+        seed: seed, calendar: calendar, language: language, now: now, demo: demo)
     }
 
     /// The whole set in one transaction (`HistoryBatch(sample:)`), the tree before everything
@@ -141,7 +145,8 @@
     static let fallbackDollarRate = Decimal(95)
 
     /// The balances `SampleDataSet.accountExpectations` has for `set`, with what the showcase
-    /// drawn from `seed` does to them: the old card counted at zero, the dollars moved.
+    /// drawn from `seed` does to them: the dollars moved. The old card was never counted, so the
+    /// merge counts nothing of it and its key has no balance at all.
     nonisolated static func expectedBalances(
       of set: SampleDataSet, seed: UInt64
     ) -> [BalanceKey: AmountE4]? {
@@ -151,7 +156,6 @@
       let cash = BalanceKey(accountId: roles.cash.id, currency: .usd)
       expected[travel] = (expected[travel] ?? .zero) - dollarsWithdrawn - dollarFee
       expected[cash, default: .zero] += dollarsWithdrawn
-      expected[BalanceKey(accountId: Ids(seed: seed).oldCard, currency: .rub)] = .zero
       return expected
     }
 

@@ -6,31 +6,7 @@ import SwiftUI
 /// between two accounts of the group, and counts in no total of the day.
 struct AccountHistory: Sendable {
   /// A line of a day: an operation, or a transfer.
-  enum Item: Identifiable, Sendable {
-    case operation(TransactionEntry)
-    case transfer(Transfer)
-
-    var id: String {
-      switch self {
-      case .operation(let entry): "op.\(entry.id.uuidString)"
-      case .transfer(let transfer): "tr.\(transfer.id.uuidString)"
-      }
-    }
-
-    var occurredAt: Date {
-      switch self {
-      case .operation(let entry): entry.transaction.occurredAt
-      case .transfer(let transfer): transfer.occurredAt
-      }
-    }
-
-    var createdAt: Date {
-      switch self {
-      case .operation(let entry): entry.transaction.createdAt
-      case .transfer(let transfer): transfer.createdAt
-      }
-    }
-  }
+  typealias Item = DayItem
 
   struct Day: Identifiable, Sendable {
     let day: DateOnly
@@ -77,11 +53,7 @@ struct AccountHistory: Sendable {
     let byDay = Dictionary(grouping: items) { calendar.day(of: $0.occurredAt) }
     let debts = dataset.debtsById
     let days = byDay.keys.sorted(by: >).map { day in
-      let listed = (byDay[day] ?? []).sorted { left, right in
-        if left.occurredAt != right.occurredAt { return left.occurredAt > right.occurredAt }
-        if left.createdAt != right.createdAt { return left.createdAt > right.createdAt }
-        return left.id < right.id
-      }
+      let listed = (byDay[day] ?? []).sorted(by: DayItem.newestFirst)
       let operations = listed.compactMap { item -> TransactionEntry? in
         if case .operation(let entry) = item { return entry }
         return nil
@@ -97,6 +69,19 @@ struct AccountHistory: Sendable {
       })
     return AccountHistory(
       days: days, operationIds: ids, fees: fees.filter { listedTransfers.contains($0.key) })
+  }
+
+  /// The card names a history shows beside its operations, by card: only for the cards of an
+  /// account that has more than one — archived ones counted —, where the name tells which one
+  /// paid; one card alone says nothing its account does not.
+  static func cardNames(of accountIds: Set<UUID>, cards: [PaymentCard]) -> [UUID: String] {
+    let own = cards.filter { accountIds.contains($0.accountId) }
+    let perAccount = Dictionary(grouping: own, by: \.accountId)
+    var names: [UUID: String] = [:]
+    for (_, cards) in perAccount where cards.count > 1 {
+      for card in cards { names[card.id] = card.name }
+    }
+    return names
   }
 
   /// What a transfer did to the accounts on screen: «−1,000 ₽» when it left them, «+1,000 ₽»
@@ -133,14 +118,20 @@ struct AccountHistoryList<Header: View>: View {
   /// A transfer to edit, or «Изменить…» of its menu.
   var editTransfer: (Transfer, TransactionEntry?) -> Void
 
+  @Environment(\.dependencies) private var dependencies
+
   /// Why the transfer the owner deleted is still there.
   @State private var deleteRefusal: TransferRefusal?
   @State private var deleteFailed = false
+  /// A deletion that would leave money on an account in the archive: asked where it goes.
+  @State private var asking: TransferDeletionAsk?
 
   private func t(_ key: String) -> String { environment.language(key, table: AccountText.table) }
 
   var body: some View {
     @Bindable var actions = actions
+    let cardNames = AccountHistory.cardNames(
+      of: accountIds, cards: compute.snapshot?.dataset.cards ?? [])
     List(selection: $actions.selection) {
       header()
         .listRowSeparator(.hidden)
@@ -161,7 +152,8 @@ struct AccountHistoryList<Header: View>: View {
               case .operation(let entry):
                 TransactionRow(
                   entry: entry, names: compute.snapshot?.ledger.tree ?? CategoryTree(),
-                  quality: TransactionListing.quality(of: entry, ledger: compute.snapshot?.ledger)
+                  quality: TransactionListing.quality(of: entry, ledger: compute.snapshot?.ledger),
+                  cardName: entry.transaction.cardId.flatMap { cardNames[$0] }
                 )
                 .tag(entry.id)
               case .transfer(let transfer):
@@ -208,20 +200,51 @@ struct AccountHistoryList<Header: View>: View {
       Text(verbatim: TransferText.message(refusal, environment))
     }
     .refusedWriteAlert($deleteFailed, environment)
+    .sheet(item: $asking) { asked in
+      ArchivedMoneySheet(
+        check: asked.check,
+        confirm: { settling in
+          asking = nil
+          let transfers = TransferActions(environment: environment, store: store)
+          said(transfers.delete(asked.transfer, books: asked.books, settling: settling))
+        },
+        cancel: { asking = nil }
+      )
+      .handingOver(dependencies)
+    }
   }
 
-  /// A transfer goes with its fee as the books have it now, one step of ⌘Z; nothing is asked,
-  /// ⌘Z brings it back. What kept it is said.
+  /// A transfer goes with its fee as the books have it now, one step of ⌘Z; ⌘Z brings it
+  /// back. Only when it would leave money on an account in the archive — or take it below zero
+  /// — is the owner asked which live account takes it, and the transfers that settle it go in
+  /// the same step. What kept it is said.
   private func delete(_ transfer: Transfer) {
     let transfers = TransferActions(environment: environment, store: store)
     Task {
-      switch await transfers.delete(transfer) {
-      case .done: break
-      case .refused(let refusal): deleteRefusal = refusal
-      case .failed: deleteFailed = true
+      switch await transfers.deleteAsking(transfer) {
+      case .finished(let outcome): said(outcome)
+      case .ask(let check, let books):
+        asking = TransferDeletionAsk(transfer: transfer, check: check, books: books)
       }
     }
   }
+
+  private func said(_ outcome: TransferOutcome) {
+    switch outcome {
+    case .done: break
+    case .refused(let refusal): deleteRefusal = refusal
+    case .failed: deleteFailed = true
+    }
+  }
+}
+
+/// A transfer whose deletion asks where the money of an archived account goes: what it would
+/// leave there, and the books the question was worked out from.
+struct TransferDeletionAsk: Identifiable {
+  let id = UUID()
+  let transfer: Transfer
+  let check: ArchivedMoneyCheck
+  let books: AccountBooks
 }
 
 /// A transfer in a list of days: ⇄, «Перевод: Сбер → Kaspi», what it did to the accounts on
@@ -264,7 +287,8 @@ struct AccountTransferRow: View {
         items
       } label: {
         Image(systemName: "ellipsis.circle")
-          .accessibilityLabel(Text(verbatim: t("accounts.rowMenu")))
+          // «Действия с «Перевод: Сбер → Kaspi»»: the row it acts on named, as in every list.
+          .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(title, environment)))
       }
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
@@ -403,7 +427,8 @@ struct AccountBalancesCard: View {
   }
 }
 
-/// The screen of one account: its balance per currency, its operations and transfers by day,
+/// The screen of one account: its balance per currency and its forecast, its cards, the
+/// cashback of the month and the payments paid from it, its operations and transfers by day,
 /// and «Перевод…», «Сверить…», «Изменить…». While it is open, an operation typed in the entry
 /// line goes to this account unless the line or the panel names another.
 struct AccountScreen: View {
@@ -489,10 +514,18 @@ struct AccountScreen: View {
       }
       if let line {
         AccountBalancesCard(line: line)
+        AccountForecastCard(accountId: accountId)
       } else if compute.snapshot == nil {
         ComputedBlock<Int, EmptyView>(
           title: t("account.screen.balances"), state: .calculating, retry: nil
         ) { _ in EmptyView() }
+      }
+      // What pays from the account and what it earns: its cards, the cashback of the month,
+      // and the payments and subscriptions paid from it.
+      if account != nil {
+        AccountCardsBlock(accountId: accountId)
+        AccountCashbackBlock(accountId: accountId)
+        AccountPaymentsBlock(accountId: accountId)
       }
       Label {
         Text(verbatim: t("account.screen.entryHint"))

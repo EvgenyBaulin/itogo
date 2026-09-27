@@ -18,6 +18,15 @@ struct InputLineParserTests {
     check(testCase)
   }
 
+  /// «1,500к» is shown before Enter: it reads as 1 500, and the app writes it «1.500к».
+  @Test("A comma before к is shown before Enter")
+  func aCommaBeforeKIsPreviewed() {
+    let result = Fixture.parse("обед 1,500к")
+    #expect(result.amount == dec("1500"))
+    #expect(result.amountToPreview == "1,500к")
+    #expect(result.amountCanonicalText == "1.500к")
+  }
+
   private func check(_ testCase: LineCase) {
     let result = Fixture.parse(testCase.line)
     #expect(result.amount == testCase.amount, "amount")
@@ -50,6 +59,9 @@ struct InputLineParserTests {
     LineCase("возврат 500").amount("500").kind(.refund),
     LineCase("2k кофе").amount("2000").note("кофе"),
     LineCase("1 250,50 продукты").amount("1250.5").note("продукты"),
+    // Перед «к» одинокая запятая — дробная: полторы тысячи, а не полтора миллиона.
+    LineCase("обед 1,500к").amount("1500").note("обед"),
+    LineCase("обед 12,345к").amount("12345").note("обед"),
     // Выражения.
     LineCase("3000\u{00F7}4").amount("750").expression("3000\u{00F7}4"),
     LineCase("1500\u{00D7}3\u{2212}2000 ремонт")

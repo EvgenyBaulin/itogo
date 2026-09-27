@@ -160,21 +160,19 @@ final class OperationsOnAccountScreenTests: XCTestCase {
     XCTAssertFalse(model.needsCharge)
   }
 
-  /// On the tenge account's screen «возврат 7000 кроссовки» reads 7,000 ₸, like any amount
-  /// without a code there. The words still find the ruble purchase, but tenge cannot be taken
-  /// into rubles by the picker: nothing is ticked for the owner, who types the amount or
-  /// «Вся сумма». Money is never lost this way, only typed again; reading the amount in the
-  /// purchase's currency instead would be a deliberate change of this test.
-  func testOnATengeScreenTheRefundLinesAmountIsNotTakenForRubles() throws {
+  /// On the tenge account's screen «возврат 7000 кроссовки» names no currency: the tenge would
+  /// only come from the screen, so the amount of a refund is read in the currency of the
+  /// purchase the words found — 7,000 ₽, the whole purchase — as on any other screen.
+  func testOnATengeScreenARefundWithoutACodeIsReadInThePurchasesCurrency() throws {
     let shoes = try buy("кроссовки", 7000, daysAgo: 10)
     let model = makeModel(screen: kaspi.id)
     try enter("возврат 7000 кроссовки", into: model)
-    XCTAssertEqual(model.refundQuery.currency, kzt)
+    XCTAssertNil(model.refundQuery.currency, "the screen's tenge is not a currency typed")
     let picker = picker(for: model)
     XCTAssertEqual(picker.selected?.purchase.id, shoes.id, "the words found it")
-    XCTAssertFalse(picker.wholeAmount)
-    XCTAssertEqual(picker.amount, .zero)
-    XCTAssertEqual(picker.refusalKey, "entry.error.amountNotPositive")
+    XCTAssertTrue(picker.wholeAmount)
+    XCTAssertEqual(picker.amount, AmountE4(whole: 7000))
+    XCTAssertNil(picker.refusalKey)
   }
 
   /// The account the line names beats the purchase's account: the refund comes onto it, and

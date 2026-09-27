@@ -9,6 +9,9 @@ enum AccountRefusal: Error, Hashable, Sendable {
   case nameTaken
   /// One of the other names is already the name or another name of a live account.
   case otherNameTaken(String)
+  /// A live card of another account is called that — the entry line would read the card: the
+  /// card's name.
+  case nameTakenByCard(String)
   /// A new account named like one in the archive: that one comes back instead.
   case inArchive(UUID)
   case noCurrency
@@ -45,6 +48,9 @@ enum AccountRefusal: Error, Hashable, Sendable {
   case groupInUse
   case groupNameTaken
   case notFound
+  /// The money on the key is not what the question showed any more — something was written
+  /// meanwhile —: nothing was written, and the amounts are shown again.
+  case balanceChanged(BalanceKey)
 
   /// The account a refusal of `inUse` is about: it can still be merged or archived.
   var accountInUse: UUID? {
@@ -87,11 +93,14 @@ struct AccountBooks: Sendable {
     liveOperations = counts
   }
 
-  /// Money is on the key: a balance that is not zero, or movements on a key never counted — a
-  /// balance nobody knows is not taken for zero.
+  /// Money is on the key: a balance that is not zero now, or once everything written on it has
+  /// happened — an operation typed ahead of now counts (`AccountBalances.balanceAhead`), as
+  /// the rules of saving an account count it —, or movements on a key never counted — a balance
+  /// nobody knows is not taken for zero.
   func hasMoney(_ key: BalanceKey) -> Bool {
-    guard let balance = balances[key] else { return false }
-    if let amount = balance.amountE4 { return !amount.isZero }
+    if let amount = balances.balanceAhead(key) {
+      return !amount.isZero || !(balances.balance(key, at: balances.now) ?? .zero).isZero
+    }
     return balances.hasHistory(key)
   }
 
@@ -114,7 +123,16 @@ struct AccountMergePreview: Sendable {
   var plan: AccountMergePlan
   /// Keys whose balance cannot be worked out; the merge dialog asks for them.
   var needsBalance: [BalanceKey]
+  /// What the merged account will hold now in each currency it knows, as the plan stands —
+  /// what the dialog shows, rather than the count it rests on.
+  var balancesAfter: [BalanceKey: AmountE4] = [:]
   var deletedTransfers: Int { plan.deletedTransferIds.count }
+
+  /// A key asked for that, left empty, keeps the target's own latest count: the other
+  /// account's past becomes history.
+  func keepsItsCountWhenEmpty(_ key: BalanceKey) -> Bool {
+    needsBalance.contains(key) && plan.opening[key] != nil
+  }
 }
 
 /// Every action on the accounts and their groups that the settings and the sidebar offer.
@@ -141,6 +159,12 @@ struct AccountActions {
   /// Every group, archived ones too.
   var groups: [AccountGroup] {
     (try? environment.accounts?.groups(includeArchived: true)) ?? []
+  }
+
+  /// Every card, archived ones too.
+  var cards: [PaymentCard] {
+    guard let writer = environment.stack?.writer else { return [] }
+    return (try? CardRepository(writer: writer).cards(includeArchived: true)) ?? []
   }
 
   var enabledCurrencies: [CurrencyCode] {
@@ -174,7 +198,8 @@ struct AccountActions {
 
   /// Saves a new account (`previous == nil`) or an edit of one. `openings` are «Остаток
   /// сейчас» typed for currencies never counted and never moved: each becomes the starting
-  /// point of its key, in one opening count written with the account.
+  /// point of its key, in one opening count written with the account. A new account of the kind
+  /// card or account starts with a card named like it, in the same step of ⌘Z.
   func save(
     _ account: PaymentMethod, previous: PaymentMethod?, openings: [CurrencyCode: AmountE4] = [:],
     books: AccountBooks
@@ -187,7 +212,7 @@ struct AccountActions {
     }
     if let refusal = Self.refusal(
       saving: account, previous: previous, books: books, enabled: enabledCurrencies, all: all,
-      groups: groups)
+      groups: groups, cards: cards)
     {
       return .refused(refusal)
     }
@@ -196,6 +221,9 @@ struct AccountActions {
     }
     let at = environment.now()
     var rows = PlanningRows(paymentMethods: [account])
+    if previous == nil, let card = CardRules.startingCard(for: account) {
+      rows.cards = [card]
+    }
     let counted = openings.filter { currency, _ in
       account.holds(currency)
         && !books.balances.hasHistory(BalanceKey(accountId: account.id, currency: currency))
@@ -203,7 +231,7 @@ struct AccountActions {
     if !counted.isEmpty {
       let count = Reconciliation(
         date: environment.calendar.day(of: at), reconciledAt: at, actualTotalRubE4: .zero,
-        kind: .opening)
+        kind: .opening, origin: .account)
       rows.reconciliations = [count]
       rows.reconciledBalances = counted.sorted { $0.key.code < $1.key.code }.map {
         ReconciledBalance(
@@ -253,9 +281,20 @@ struct AccountActions {
     return (candidates, preselected)
   }
 
-  /// Into the archive. Money still on it keeps it out; the main account goes only with
-  /// `newMain`, which takes the flag in the same step.
-  func archive(_ id: UUID, newMain: UUID? = nil, books: AccountBooks) -> AccountActionOutcome {
+  /// Into the archive; the main account goes only with `newMain`, which takes the flag in the
+  /// same step. Money still on it keeps it out, unless `settling` moves every currency of it
+  /// that holds money to a live account (`ArchivedMoney.balancesToMove`): the transfers and the
+  /// archive are then one change and one step of ⌘Z. `expecting` are the amounts the question
+  /// showed; when the books hold other money now, nothing is written
+  /// (`AccountRefusal.balanceChanged`), and the write itself checks them once more.
+  ///
+  /// `expectingNow` are what the keys held now when the question was shown
+  /// (`ArchivedLeftover.heldNow`): with money typed ahead, the money of now is moved apart, so
+  /// both are checked.
+  func archive(
+    _ id: UUID, newMain: UUID? = nil, books: AccountBooks, settling: [Transfer] = [],
+    expecting: [BalanceKey: AmountE4] = [:], expectingNow: [BalanceKey: AmountE4] = [:]
+  ) -> AccountActionOutcome {
     let all = self.all
     let groups = self.groups
     guard let account = all.first(where: { $0.id == id }) else { return .refused(.notFound) }
@@ -263,8 +302,15 @@ struct AccountActions {
     var archived = account
     archived.archived = true
     archived.isDefault = false
-    if let refusal = archiveRefusal(account, books: books, all: all, groups: groups) {
+    if let refusal = archiveRefusal(
+      account, books: books, all: all, groups: groups, settling: settling)
+    {
       return .refused(refusal)
+    }
+    if let changed = Self.changedBalance(
+      of: account, books: books, expecting: expecting, expectingNow: expectingNow)
+    {
+      return .refused(.balanceChanged(changed))
     }
     var rows = [archived]
     if account.isDefault {
@@ -273,8 +319,65 @@ struct AccountActions {
       case .failure(let refusal): return .refused(refusal)
       }
     }
-    return apply(
-      PlanningChange(upsert: PlanningRows(paymentMethods: rows), at: environment.now()))
+    let outcome = apply(
+      PlanningChange(
+        upsert: PlanningRows(paymentMethods: rows, transfers: settling), at: environment.now(),
+        expectingBalances: settling.isEmpty ? [:] : expecting,
+        expectingBalancesNow: settling.isEmpty ? [:] : expectingNow))
+    if outcome == .done, !settling.isEmpty {
+      AppLog.info(
+        "accounts.archivedSettled", .db, "an account went to the archive with its money moved",
+        [LogPair("transfers", .count(settling.count)), LogPair("archive", .flag(true))])
+    }
+    return outcome
+  }
+
+  /// Moves what an account already in the archive still holds — money left there before the
+  /// archive kept accounts at zero — to live accounts: the transfers `settling`, one change and
+  /// one step of ⌘Z. `expecting` are the amounts the question showed, `expectingNow` what the
+  /// keys held now then.
+  func settleLeftovers(
+    of account: PaymentMethod, books: AccountBooks, settling: [Transfer],
+    expecting: [BalanceKey: AmountE4], expectingNow: [BalanceKey: AmountE4] = [:]
+  ) -> AccountActionOutcome {
+    guard !settling.isEmpty else { return .done }
+    if let changed = Self.changedBalance(
+      of: account, books: books, expecting: expecting, expectingNow: expectingNow)
+    {
+      return .refused(.balanceChanged(changed))
+    }
+    let outcome = apply(
+      PlanningChange(
+        upsert: PlanningRows(transfers: settling), at: environment.now(),
+        expectingBalances: expecting, expectingBalancesNow: expectingNow))
+    if outcome == .done {
+      AppLog.info(
+        "accounts.archivedSettled", .db, "money left on an archived account was moved",
+        [LogPair("transfers", .count(settling.count)), LogPair("archive", .flag(false))])
+    }
+    return outcome
+  }
+
+  /// The first key whose money is not what the question showed (`expecting`) — worked out the
+  /// way the question worked it out, once everything written on the key has happened
+  /// (`ArchivedMoney.balancesToMove`) —, or, with `expectingNow`, whose money now is not what it
+  /// held then; `nil` when every amount holds, or when nothing was shown.
+  static func changedBalance(
+    of account: PaymentMethod, books: AccountBooks, expecting: [BalanceKey: AmountE4],
+    expectingNow: [BalanceKey: AmountE4] = [:]
+  ) -> BalanceKey? {
+    guard !expecting.isEmpty else { return nil }
+    let held = ArchivedMoney.balancesToMove(of: account, balances: books.balances)
+    let amounts = Dictionary(
+      held.leftovers.map { ($0.key, $0.amount) }, uniquingKeysWith: { first, _ in first })
+    let now = Dictionary(
+      held.leftovers.map { ($0.key, $0.heldNow ?? .zero) }, uniquingKeysWith: { first, _ in first })
+    var keys = Set(amounts.keys).union(expecting.keys)
+    if !expectingNow.isEmpty { keys.formUnion(expectingNow.keys) }
+    return keys.sorted().first { key in
+      (amounts[key] ?? .zero) != (expecting[key] ?? .zero)
+        || (!expectingNow.isEmpty && (now[key] ?? .zero) != (expectingNow[key] ?? .zero))
+    }
   }
 
   /// Why the account cannot go to the archive now, or `nil`: the last live account stays, and
@@ -284,7 +387,8 @@ struct AccountActions {
   }
 
   private func archiveRefusal(
-    _ account: PaymentMethod, books: AccountBooks, all: [PaymentMethod], groups: [AccountGroup]
+    _ account: PaymentMethod, books: AccountBooks, all: [PaymentMethod], groups: [AccountGroup],
+    settling: [Transfer] = []
   ) -> AccountRefusal? {
     var archived = account
     archived.archived = true
@@ -294,10 +398,13 @@ struct AccountActions {
       others: all, groups: groups)
     if issues.contains(.archivesLastLiveAccount) { return .lastLiveAccount }
     guard issues.contains(.archivesWithMoney) else { return nil }
-    let keys =
-      account.currencies.map { BalanceKey(accountId: account.id, currency: $0) }
-      + books.balances.keys.filter { $0.accountId == account.id }
-    return keys.contains(where: books.holdsCountedMoney) ? .hasMoney : .balanceUnknown
+    let money = ArchivedMoney.balancesToMove(of: account, balances: books.balances)
+    guard money.unknown.isEmpty else { return .balanceUnknown }
+    // Money on it goes with it only when a transfer moves every currency that holds some.
+    let settled = Set(settling.flatMap { [$0.from, $0.to] })
+    let held = money.leftovers.map(\.key)
+    if !held.isEmpty, held.allSatisfy(settled.contains) { return nil }
+    return held.isEmpty ? nil : .hasMoney
   }
 
   /// «Вернуть»: back among the live accounts, not main, after every other once the owner has
@@ -511,9 +618,11 @@ struct AccountActions {
       plan.target.aliases.append(trimmed)
     }
     for key in needs {
-      if let amount = answers[key] { plan.opening[key] = amount }
+      if let amount = answers[key] { plan.count(key, typed: amount) }
     }
-    return AccountMergePreview(plan: plan, needsBalance: needs)
+    return AccountMergePreview(
+      plan: plan, needsBalance: needs,
+      balancesAfter: AccountMerge.balancesAfter(plan, source: source.id, balances: books.balances))
   }
 
   /// Merges the account into another, for good; the ⌘Z history is forgotten after it.
@@ -633,10 +742,12 @@ struct AccountActions {
 
   // MARK: Rules
 
-  /// What keeps `account` from being saved over `previous`, the first thing only.
+  /// What keeps `account` from being saved over `previous`, the first thing only. `cards` are
+  /// every card: a name or another name of a live card of another account is taken.
   static func refusal(
     saving account: PaymentMethod, previous: PaymentMethod?, books: AccountBooks,
-    enabled: [CurrencyCode], all: [PaymentMethod], groups: [AccountGroup]
+    enabled: [CurrencyCode], all: [PaymentMethod], groups: [AccountGroup],
+    cards: [PaymentCard] = []
   ) -> AccountRefusal? {
     let name = folded(account.name)
     if previous == nil, !name.isEmpty,
@@ -675,6 +786,11 @@ struct AccountActions {
       })
     {
       return .nameTaken
+    }
+    for spelling in [account.name] + account.aliases {
+      if let card = CardRules.cardTaking(spelling, except: account.id, cards: cards) {
+        return .nameTakenByCard(card.name)
+      }
     }
     let rivals = all.filter { !$0.archived && $0.id != account.id }
     for alias in account.aliases {
@@ -789,6 +905,8 @@ enum AccountText {
     switch refusal {
     case .emptyName: return t("account.refusal.emptyName")
     case .nameTaken: return t("account.refusal.nameTaken")
+    case .nameTakenByCard(let card):
+      return environment.format("account.refusal.nameTakenByCard", table: table, card)
     case .otherNameTaken(let name):
       return environment.format("account.refusal.otherNameTaken", table: table, name)
     case .inArchive: return t("account.refusal.inArchive")
@@ -820,6 +938,11 @@ enum AccountText {
     case .groupInUse: return t("account.refusal.groupInUse")
     case .groupNameTaken: return t("account.refusal.groupNameTaken")
     case .notFound: return t("account.refusal.notFound")
+    case .balanceChanged(let key):
+      let name =
+        (try? environment.accounts?.accounts(includeArchived: true))?
+        .first { $0.id == key.accountId }?.name ?? ""
+      return environment.format("archived.leftover.changed", table: table, name)
     }
   }
 }
@@ -959,6 +1082,8 @@ struct AccountMergeSheet: View {
   @State private var failed = false
   /// The books could not be read: nothing is worked out, and the alert says so.
   @State private var unreadable = false
+  /// The source has cards: they move to the kept account with it.
+  @State private var sourceHasCards = false
 
   init(
     source: PaymentMethod, targets: [PaymentMethod], preselected: UUID?,
@@ -1016,6 +1141,7 @@ struct AccountMergeSheet: View {
     .padding(20)
     .frame(width: 460)
     .task {
+      sourceHasCards = actions.cards.contains { $0.accountId == source.id }
       books = await actions.books()
       if books == nil {
         unreadable = true
@@ -1031,7 +1157,9 @@ struct AccountMergeSheet: View {
 
   @ViewBuilder
   private func details(_ preview: AccountMergePreview) -> some View {
-    let counted = preview.plan.opening.sorted { $0.key.currency.code < $1.key.currency.code }
+    // What the merged account will hold now; a key asked for is typed below instead.
+    let counted = preview.balancesAfter.filter { !preview.needsBalance.contains($0.key) }
+      .sorted { $0.key.currency.code < $1.key.currency.code }
     if !counted.isEmpty || !preview.needsBalance.isEmpty {
       Text(
         verbatim: environment.format(
@@ -1063,10 +1191,15 @@ struct AccountMergeSheet: View {
         }
       }
       if !preview.needsBalance.isEmpty {
-        Text(verbatim: t("account.merge.unknownHint"))
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        Text(
+          verbatim: preview.needsBalance.contains(where: preview.keepsItsCountWhenEmpty)
+            ? environment.format(
+              "account.merge.emptyKeepsCount", table: AccountText.table, targetName)
+            : t("account.merge.unknownHint")
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       }
     }
     if preview.deletedTransfers > 0 {
@@ -1085,6 +1218,15 @@ struct AccountMergeSheet: View {
             "account.merge.mainMoves", table: AccountText.table, targetName))
       } icon: {
         Image(systemName: "star.fill")
+      }
+    }
+    if sourceHasCards {
+      Label {
+        Text(
+          verbatim: environment.format(
+            "account.merge.cardsMove", table: AccountText.table, source.name, targetName))
+      } icon: {
+        Image(systemName: "creditcard")
       }
     }
     Text(

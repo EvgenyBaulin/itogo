@@ -5,6 +5,10 @@ import SwiftUI
 enum DebtSheet: Identifiable {
   case create
   case pay(Debt)
+  /// «Платёж» that starts at `at` from `account` — a due date paid from the reminders, dated
+  /// the day it was due or now, from the account the debt is paid from. `nil` leaves the form's
+  /// own start: now, the main account.
+  case payAt(Debt, at: Date?, account: UUID?)
   /// «Pay» opened from a money back that turned out to be a repayment of this debt: the
   /// amount given back when it is in the debt's currency, on the account it came to.
   case repay(Debt, amount: AmountE4?, account: UUID?)
@@ -18,6 +22,7 @@ enum DebtSheet: Identifiable {
     switch self {
     case .create: "create"
     case .pay(let debt): "pay-\(debt.id)"
+    case .payAt(let debt, _, _): "payAt-\(debt.id)"
     case .repay(let debt, _, _): "repay-\(debt.id)"
     case .entry(let debt): "entry-\(debt.id)"
     case .offset(let debt): "offset-\(debt.id)"
@@ -85,10 +90,16 @@ struct DebtSheetView: View {
         Button(environment.language("action.cancel")) { dismiss() }
           .keyboardShortcut(.cancelAction)
         Button(action.title) {
-          if let count = countToAsk() {
-            question = BeforeTheCountQuestion(count: count)
-          } else {
+          switch countAsk() {
+          case .none:
             finish(at: date)
+          case .answered(let stamp):
+            // Answered for this reconciliation already: saved at that moment, unasked.
+            finish(at: stamp)
+          case .ask(let questions):
+            question = BeforeTheCountQuestion(
+              count: questions.count, reconciliation: questions.reconciliation,
+              questions: questions)
           }
         }
         .keyboardShortcut(.defaultAction)
@@ -100,9 +111,7 @@ struct DebtSheetView: View {
     .frame(width: 480)
     .onAppear(perform: load)
     .onChange(of: chargeInputs) { refreshCharge() }
-    .beforeTheCountQuestion($question) { count, wasBefore in
-      finish(at: FormAccounts.stamped(date, (count, wasBefore), calendar: environment.calendar))
-    }
+    .beforeTheCountQuestions($question) { stamp in finish(at: stamp) }
   }
 
   /// Writes with the operation or the line dated `moment`; the sheet closes over a write that
@@ -124,7 +133,7 @@ struct DebtSheetView: View {
     switch sheet {
     case .create:
       return moneyMoved ? (debt, debt.direction == .owedToMe) : nil
-    case .pay(let debt), .repay(let debt, _, _), .offset(let debt):
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _), .offset(let debt):
       return (debt, debt.direction == .iOwe)
     case .entry(let debt):
       return moneyMoved ? (debt, debt.direction == .owedToMe) : nil
@@ -179,34 +188,36 @@ struct DebtSheetView: View {
         calendar: environment.calendar))
   }
 
-  /// The count to ask «Это было до сверки в 14:05?» about before the write: the operation of a
-  /// payment, or the line of money borrowed or lent, is dated on the day of the latest count
-  /// of the balance it moves and saved after that count.
-  private func countToAsk() -> Date? {
-    guard let dependencies, action.enabled else { return nil }
+  /// What to ask «Это было до сверки в 14:05?» about before the write: every count made on the
+  /// day of the operation of a payment — or of the line of money borrowed or lent — of a
+  /// balance it moves, before it is saved, oldest first. A reconciliation the owner answered
+  /// with «Больше не спрашивать» answers by itself (`AccountReconciliation.countToAsk`).
+  private func countAsk() -> CountAsk {
+    guard let dependencies, action.enabled else { return .none }
     let actions = DebtActions(dependencies)
+    let remembered = environment.rememberedCountAnswers()
     switch sheet {
-    case .pay(let debt), .repay(let debt, _, _), .offset(let debt):
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _), .offset(let debt):
       guard
         let entry = try? actions.paymentOperation(
           debt, amount: amount, on: date, account: method, charged: charge.typedFigure)
-      else { return nil }
-      return FormAccounts.countToAsk(
+      else { return .none }
+      return FormAccounts.countAsk(
         about: entry, savedAt: Date(), snapshot: compute.snapshot,
-        calendar: environment.calendar)
+        calendar: environment.calendar, remembered: remembered)
     case .create, .entry:
-      guard let moves = movesMoney else { return nil }
+      guard let moves = movesMoney else { return .none }
       var line = DebtRules.makeEntry(debtId: moves.debt.id, kind: .borrowed, amountE4: movedAmount)
       guard
         (try? actions.layCash(
           on: &line, of: moves.debt, account: method, charged: charge.typedFigure, at: date))
           != nil
-      else { return nil }
-      return FormAccounts.countToAsk(
+      else { return .none }
+      return FormAccounts.countAsk(
         about: line, of: moves.debt, savedAt: Date(), snapshot: compute.snapshot,
-        calendar: environment.calendar)
+        calendar: environment.calendar, remembered: remembered)
     case .transfer, .adjust, .close:
-      return nil
+      return .none
     }
   }
 
@@ -262,7 +273,7 @@ struct DebtSheetView: View {
       if debt.direction == .iOwe {
         Toggle(t("debts.paymentsAreExpenses"), isOn: $debt.paymentsAreExpenses)
       }
-    case .pay(let debt), .repay(let debt, _, _), .offset(let debt):
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _), .offset(let debt):
       LabeledContent(t("form.amount")) { amountField($amount, currency: debt.currency) }
       DatePicker(t("form.date"), selection: $date)
       accountRows
@@ -275,15 +286,21 @@ struct DebtSheetView: View {
         )
         .font(.caption).foregroundStyle(.secondary)
         if paysOff, let balance {
+          let over = amount > balance
+          let repaysOver = over && debt.direction == .owedToMe
           // Said, and closing offered: paid off and left open, the debt stayed in its list at
-          // zero or below, and went on being reminded of.
-          Toggle(t("form.pay.close"), isOn: $closesDebt)
-          if amount > balance {
+          // zero or below, and went on being reminded of. Money given back above a debt owed to
+          // me always closes it — the rest is income — so there is nothing to ask.
+          if !repaysOver {
+            Toggle(t("form.pay.close"), isOn: $closesDebt)
+          }
+          if over {
+            let split = Self.overBalance(amount, balance: balance, direction: debt.direction)
             Text(
               verbatim: environment.format(
-                "form.pay.over", table: "Debts",
-                environment.money.exact(balance, currency: debt.currency),
-                environment.money.exact(amount - balance, currency: debt.currency))
+                repaysOver ? "form.pay.overSurplus" : "form.pay.over", table: "Debts",
+                environment.money.exact(split.left, currency: debt.currency),
+                environment.money.exact(split.over, currency: debt.currency))
             )
             .font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -369,7 +386,7 @@ struct DebtSheetView: View {
   /// «Pay» — from the card or as the repayment a money back turned out to be.
   private var isPayment: Bool {
     switch sheet {
-    case .pay, .repay: true
+    case .pay, .payAt, .repay: true
     default: false
     }
   }
@@ -398,7 +415,7 @@ struct DebtSheetView: View {
             account: method, charged: charged, at: moment)
         }
       )
-    case .pay(let debt), .repay(let debt, _, _):
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _):
       let closing = paysOff && closesDebt
       return (
         t("debts.pay"), amount.raw > 0 && complete,
@@ -465,7 +482,7 @@ struct DebtSheetView: View {
     let generic = environment.language("form.notSaved", table: "Planning")
     guard let dependencies else { return generic }
     switch sheet {
-    case .pay(let debt), .repay(let debt, _, _), .offset(let debt):
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _), .offset(let debt):
       if !charge.isComplete {
         return environment.language("entry.error.chargeMissing", table: "Entry")
       }
@@ -477,18 +494,50 @@ struct DebtSheetView: View {
     }
   }
 
-  /// The date «Платёж» starts with when it pays `due`: the due itself (at noon) when it is
-  /// in a later month than today — a payment made ahead for October belongs to October,
-  /// the month the schedule counts it in — and nothing, that is now, otherwise.
+  /// The date «Платёж» starts with when it pays `due`: always now. A payment pays the earliest
+  /// unpaid due whatever its date, so the date is when the money moved, never the due's —
+  /// a due paid from a reminder is dated by the reminder's own question (`payAt`).
   static func payDate(due: DateOnly?, today: DateOnly, calendar: CalendarContext) -> Date? {
-    guard let due, due.monthKey > today.monthKey else { return nil }
-    return calendar.startOfDay(due).addingTimeInterval(12 * 3600)
+    nil
+  }
+
+  /// What «Платёж» starts with, for `.pay` and `.payAt`: the debt, its monthly payment, the
+  /// moment — the one `.payAt` names, else `payDate`, `nil` being now — and the account — the
+  /// one `.payAt` names while it is live, else the main one (`FormAccounts.account`). `nil` for
+  /// every other sheet, a repayment included: that one starts with what came back.
+  static func payStart(
+    of sheet: DebtSheet, payDue: DateOnly?, today: DateOnly, calendar: CalendarContext,
+    methods: [PaymentMethod]
+  ) -> (debt: Debt, amount: AmountE4, date: Date?, method: UUID?)? {
+    let debt: Debt
+    let moment: Date?
+    let account: UUID?
+    switch sheet {
+    case .pay(let paid): (debt, moment, account) = (paid, nil, nil)
+    case .payAt(let paid, let at, let from): (debt, moment, account) = (paid, at, from)
+    default: return nil
+    }
+    return (
+      debt, debt.monthlyPaymentE4 ?? .zero,
+      moment ?? payDate(due: payDue, today: today, calendar: calendar),
+      FormAccounts.account(account, among: methods)?.id
+    )
   }
 
   /// Whether «Pay» starts with «Close the debt» on once the payment covers what is left. A
   /// credit card is paid down to zero month after month and stays open; any other debt paid
   /// off is done with.
   static func closesWhenPaidOff(_ debt: Debt) -> Bool { debt.type != .creditCard }
+
+  /// A payment above what is left on the debt, as the form says it: what is left, and what goes
+  /// over it. A debt owed to me takes nothing below zero — 1.1 could leave one at −700 ₽ —, so
+  /// 500 ₽ paid on it are 500 ₽ over, all of it income, as the repayment writes them.
+  static func overBalance(
+    _ amount: AmountE4, balance: AmountE4, direction: DebtDirection
+  ) -> (left: AmountE4, over: AmountE4) {
+    let left = direction == .owedToMe ? max(balance, .zero) : balance
+    return (left, amount - left)
+  }
 
   /// How much more than owed a balance below zero says was paid; `nil` at zero and above.
   static func overpaid(to balance: AmountE4) -> AmountE4? {
@@ -541,15 +590,6 @@ struct DebtSheetView: View {
       method = FormAccounts.account(account, among: methods)?.id
       balance = dependencies.flatMap { DebtActions($0).balance(of: debt) }
       closesDebt = Self.closesWhenPaidOff(debt)
-    case .pay(let debt):
-      amount = debt.monthlyPaymentE4 ?? .zero
-      balance = dependencies.flatMap { DebtActions($0).balance(of: debt) }
-      closesDebt = Self.closesWhenPaidOff(debt)
-      if let ahead = Self.payDate(
-        due: payDue, today: environment.today, calendar: environment.calendar)
-      {
-        date = ahead
-      }
     case .transfer(let debt, let carried, _), .adjust(let debt, let carried):
       balance = dependencies.flatMap { DebtActions($0).balance(of: debt) }
       amount = shown(carried)
@@ -557,6 +597,18 @@ struct DebtSheetView: View {
       balance = dependencies.flatMap { DebtActions($0).balance(of: debt) }
     default:
       break
+    }
+    if let start = Self.payStart(
+      of: sheet, payDue: payDue, today: environment.today, calendar: environment.calendar,
+      methods: methods)
+    {
+      amount = start.amount
+      if let moment = start.date {
+        date = moment
+      }
+      method = start.method
+      balance = dependencies.flatMap { DebtActions($0).balance(of: start.debt) }
+      closesDebt = Self.closesWhenPaidOff(start.debt)
     }
     refreshCharge()
   }
@@ -571,7 +623,7 @@ struct DebtSheetView: View {
   private var title: String {
     switch sheet {
     case .create: t("form.create.title")
-    case .pay(let debt), .repay(let debt, _, _):
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _):
       environment.format("form.pay.title", table: "Debts", debt.name)
     case .entry(let debt): environment.format("form.entry.title", table: "Debts", debt.name)
     case .offset(let debt): environment.format("form.offset.title", table: "Debts", debt.name)

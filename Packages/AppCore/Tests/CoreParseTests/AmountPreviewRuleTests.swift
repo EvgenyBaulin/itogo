@@ -22,8 +22,10 @@ struct AmountPreviewRuleTests {
   static let previews: [(String, String?)] = [
     // Written the way the app writes it: nothing to show.
     ("250", nil), ("1,500", nil), ("1,234.50", nil), ("0.5", nil), ("12.09", nil), ("2k", nil),
-    ("1,500k", nil), ("4,625", nil), ("+500", nil), ("0.500", nil), ("0.500k", nil),
-    ("1.50k", nil), ("1,500.500k", nil),
+    ("4,625", nil), ("+500", nil), ("0.500", nil), ("0.500k", nil),
+    ("1.50k", nil), ("1,500.500k", nil), ("1500k", nil),
+    // In front of k a lone comma is decimal: «1,500k» is 1.5k, written «1.500k».
+    ("1,500k", "1,500k"), ("12,345\u{043A}", "12,345\u{043A}"),
     // Written some other way: what it comes to is shown.
     ("1500.500", "1500.500"), ("1500", "1500"), ("1500,5", "1500,5"), ("2,5k", "2,5k"),
     ("1 250", "1 250"), ("0,500", "0,500"), ("1.234,56", "1.234,56"), ("007", "007"),

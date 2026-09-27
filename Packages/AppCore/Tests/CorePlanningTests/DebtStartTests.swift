@@ -58,11 +58,12 @@ struct DebtStartTests {
       snapshot.reminders.filter { $0.kind == .debtPayment }.map(\.due) == [Fx.day("2026-10-05")])
   }
 
-  /// A debt that began on its payment day owes on that very day — the careful reading — and
-  /// one that began earlier is overdue as before. A journal line with only a moment counts by
-  /// the day of that moment.
+  /// A debt that began before its payment day is overdue as before. A journal line with only a
+  /// moment counts by the day of that moment. Bought on its payment day, the phone pays its
+  /// first instalment a month later; a loan taken on its payment day owes on that very day —
+  /// the careful reading.
   @Test func aDebtThatBeganByItsDayOwesThisMonth() {
-    for (start, dated) in [("2026-09-05", true), ("2026-08-20", true), ("2026-09-03", false)] {
+    for (start, dated) in [("2026-08-20", true), ("2026-09-03", false)] {
       let snapshot = book(startedOn: start, dated: dated).snapshot()
       #expect(snapshot.debts.iOwe.first?.nextPayment == Fx.day("2026-09-05"), "\(start)")
       #expect(
@@ -71,6 +72,18 @@ struct DebtStartTests {
         snapshot.reminders.filter { $0.kind == .debtPayment }.map(\.due)
           == [Fx.day("2026-09-05")], "\(start)")
     }
+
+    let bought = book(startedOn: "2026-09-05").snapshot()
+    #expect(bought.debts.iOwe.first?.nextPayment == Fx.day("2026-10-05"))
+    #expect(!bought.upcoming.contains { $0.kind == .debt })
+    #expect(!bought.reminders.contains { $0.kind == .debtPayment })
+
+    var loan = book(startedOn: "2026-09-05")
+    loan.debts[0].type = .loan
+    loan.debts[0].origin = .existing
+    let taken = loan.snapshot()
+    #expect(taken.debts.iOwe.first?.nextPayment == Fx.day("2026-09-05"))
+    #expect(taken.upcoming.filter { $0.kind == .debt }.map(\.isOverdue) == [true])
   }
 
   /// A debt with an empty journal has nothing to say when it began: this month's day, as
@@ -90,19 +103,28 @@ struct DebtStartTests {
         startsOn: start.map(Fx.day))
     }
     #expect(next("2026-09-19", paid: false, start: "2026-09-15") == Fx.day("2026-10-05"))
-    #expect(next("2026-09-19", paid: false, start: "2026-09-05") == Fx.day("2026-09-05"))
+    #expect(next("2026-09-19", paid: false, start: "2026-09-03") == Fx.day("2026-09-05"))
     #expect(next("2026-09-19", paid: false, start: nil) == Fx.day("2026-09-05"))
+    // Bought on its payment day, the phone first owes a month later.
+    #expect(next("2026-09-19", paid: false, start: "2026-09-05") == Fx.day("2026-10-05"))
     // Paid in the month it began, which owed nothing: that payment pays 5 October, the first
     // due (`DebtStartPrepaymentTests`).
     #expect(next("2026-09-19", paid: true, start: "2026-09-15") == Fx.day("2026-11-05"))
     // Written today for a debt that begins in November: its first payment is 5 December.
     #expect(next("2026-09-19", paid: false, start: "2026-11-10") == Fx.day("2026-12-05"))
-    // The 31st of a debt that began on 30 September: 31 October, not 30 September.
+    // The 31st of a phone bought on 30 September: 31 October, not 30 September; a loan taken
+    // that day owes on 30 September.
     var monthEnd = Self.phone
     monthEnd.paymentDay = 31
     #expect(
       DebtSchedule.nextPaymentDate(
         of: monthEnd, today: Fx.day("2026-09-30"), paidThisMonth: false, calendar: .utc,
+        startsOn: Fx.day("2026-09-30")) == Fx.day("2026-10-31"))
+    var monthEndLoan = monthEnd
+    monthEndLoan.origin = .existing
+    #expect(
+      DebtSchedule.nextPaymentDate(
+        of: monthEndLoan, today: Fx.day("2026-09-30"), paidThisMonth: false, calendar: .utc,
         startsOn: Fx.day("2026-09-30")) == Fx.day("2026-09-30"))
     #expect(
       DebtSchedule.nextPaymentDate(
@@ -176,5 +198,44 @@ extension DebtStartTests {
         }
       }
     }
+  }
+}
+
+extension DebtStartTests {
+  /// A phone bought on credit on 12 September for 60 000, 5 000 a month on the 12th — the day
+  /// it was bought —, paid on 12 October and 12 November. On 20 November nothing of it is due
+  /// through the month's end: the grey line takes nothing, nothing is overdue, the launch asks
+  /// about nothing, and 12 December is next.
+  @Test func aPurchaseOnCreditBoughtOnItsDayIsNeverOneDueBehind() {
+    let phone = Debt(
+      id: Fx.id(307), direction: .iOwe, type: .installment, name: "Phone",
+      monthlyPaymentE4: Fx.money("5000"), paymentDay: 12, paymentsAreExpenses: false,
+      origin: .purchase)
+    var fx = Fx()
+    fx.debts = [phone]
+    fx.debtEntries = [
+      DebtEntry(
+        debtId: phone.id, date: Fx.day("2026-09-12"), amountE4: Fx.money("60000"),
+        kind: .borrowed),
+      DebtEntry(
+        debtId: phone.id, date: Fx.day("2026-10-12"), amountE4: Fx.money("-5000"),
+        kind: .payment),
+      DebtEntry(
+        debtId: phone.id, date: Fx.day("2026-11-12"), amountE4: Fx.money("-5000"),
+        kind: .payment),
+    ]
+    let today = Fx.day("2026-11-20")
+    let snapshot = fx.snapshot(today: today, now: Fx.at("2026-11-20", 12))
+    #expect(
+      CashPlan.debtDues(
+        ledger: fx.ledger, book: fx.book, debts: snapshot.debts, today: today,
+        until: Fx.day("2026-11-30")
+      ).isEmpty)
+    let plan = fx.plan(until: "2026-11-30", today: today)
+    #expect(plan.debts == .zero)
+    #expect(plan.overdue == .zero)
+    #expect(snapshot.overdue.isEmpty)
+    #expect(snapshot.debts.iOwe.first?.nextPayment == Fx.day("2026-12-12"))
+    #expect(fx.plan(until: "2026-12-31", today: today).debts == Fx.money("5000"))
   }
 }

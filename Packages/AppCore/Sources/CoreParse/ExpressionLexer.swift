@@ -31,7 +31,11 @@ struct ExpressionToken: Equatable {
 /// a plain space, a non-breaking space, a thin space, `.` or `,`. Which separator is the
 /// decimal one is decided by `TypedNumber`, the rule of amounts typed by hand: `1,250.50` and
 /// `1.250,50` both mean 1250.5, `1,500` is 1500 and `1,5` is 1.5. A trailing `k` / `к`
-/// multiplies by a thousand: `2k` and `2к` are 2000.
+/// multiplies by a thousand: `2k` and `2к` are 2000, and a lone comma in front of it is always
+/// decimal — `1,500к` is 1500, not a million and a half.
+///
+/// `x` or `х` (Latin or Cyrillic, either case) with a digit right before and right after it is
+/// the sign of multiplication: `250x2` is 500. With a space on either side it is a letter.
 enum ExpressionLexer {
   /// Spaces that may sit inside a number as a thousand separator.
   static let spaces: Set<Character> = [
@@ -40,6 +44,23 @@ enum ExpressionLexer {
   /// `k` and its Russian twin `к`, both cases.
   static let thousandSuffixes: Set<Character> = ["k", "K", "к", "К"]
   static let decimalSeparators: Set<Character> = [".", ","]
+  /// `x`/`х` in either case: a multiplication sign when glued to digits on both sides.
+  static let timesLetters: Set<Character> = ["x", "X", "\u{0445}", "\u{0425}"]
+
+  /// Whether the character at `index` is a letter `x`/`х` with a digit right before and right
+  /// after it: «250x2», «2,5х400».
+  static func isGluedTimes(_ characters: [Character], at index: Int) -> Bool {
+    guard characters.indices.contains(index), timesLetters.contains(characters[index]),
+      index > 0, index + 1 < characters.count
+    else { return false }
+    return isDigit(characters[index - 1]) && isDigit(characters[index + 1])
+  }
+
+  /// Whether the text holds a letter `x`/`х` glued to digits on both sides.
+  static func hasGluedTimes(_ text: String) -> Bool {
+    let characters = Array(text)
+    return characters.indices.contains { isGluedTimes(characters, at: $0) }
+  }
 
   static func isDigit(_ character: Character) -> Bool {
     character >= "0" && character <= "9"
@@ -82,6 +103,11 @@ enum ExpressionLexer {
             kind: .number(scanned.value, exact: scanned.exact), position: index,
             end: scanned.end, canonical: scanned.canonical))
         index = scanned.end
+        continue
+      }
+      if isGluedTimes(characters, at: index) {
+        tokens.append(ExpressionToken(kind: .times, position: index, end: index + 1))
+        index += 1
         continue
       }
       guard let kind = operatorKind(character) else {
@@ -135,16 +161,34 @@ enum ExpressionLexer {
       }
     }
 
-    guard let reading = TypedNumber.read(digits) else {
+    // In front of the `k` of thousands a lone comma is the decimal one: «1,500к» is 1.5k.
+    let thousands = !suffix.isEmpty
+    guard let reading = TypedNumber.read(digits, loneCommaIsDecimal: thousands) else {
       // Hundreds of digits are a number too large to be an amount, not a typo.
-      if TypedNumber.isTooLarge(digits) { throw CoreError.amountOutOfRange }
+      if TypedNumber.isTooLarge(digits, loneCommaIsDecimal: thousands) {
+        throw CoreError.amountOutOfRange
+      }
       throw CoreError.malformedExpression(position: start)
     }
     var exact = ExactFraction(
       integerDigits: reading.integerDigits, fractionDigits: reading.fractionDigits,
       multiplier: suffix.isEmpty ? 1 : 1_000)
     if reading.isNegative { exact = exact?.negated() }
-    return (reading.value * multiplier, exact, index, reading.canonical + suffix)
+    return (
+      reading.value * multiplier, exact, index,
+      canonicalText(of: reading, thousands: thousands) + suffix
+    )
+  }
+
+  /// The number written the way the app writes numbers. In front of the `k` of thousands a
+  /// whole number with a single comma between its thousands would read back as a fraction —
+  /// «1,234к» is 1.234k —, so there it is written without the comma: «1234к».
+  private static func canonicalText(of reading: TypedNumber.Reading, thousands: Bool) -> String {
+    let canonical = reading.canonical
+    guard thousands, reading.fractionDigits.isEmpty,
+      canonical.filter({ $0 == "," }).count == 1
+    else { return canonical }
+    return canonical.replacingOccurrences(of: ",", with: "")
   }
 
   /// A space belongs to a number only when exactly three digits follow it, the way

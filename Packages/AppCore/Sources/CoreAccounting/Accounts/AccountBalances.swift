@@ -123,6 +123,20 @@ public struct AccountBalances: Hashable, Sendable {
     var day: DateOnly
   }
 
+  /// The owner's calendar the days were read in, kept to read the day of any other moment the
+  /// same way. Two are the same when their time zones are.
+  private struct Days: Hashable, Sendable {
+    var calendar: CalendarContext
+
+    static func == (left: Days, right: Days) -> Bool {
+      left.calendar.timeZone == right.calendar.timeZone
+    }
+
+    func hash(into hasher: inout Hasher) {
+      hasher.combine(calendar.timeZone)
+    }
+  }
+
   private var balances: [BalanceKey: AccountBalance]
   /// Every movement of every key, oldest first — up to now and after.
   private var movementsByKey: [BalanceKey: [AccountMovement]]
@@ -136,15 +150,16 @@ public struct AccountBalances: Hashable, Sendable {
   public private(set) var unassignedOperations: Int
   /// The moment the balances are worked out for.
   public private(set) var now: Date
+  private var days: Days
 
   public static let empty = AccountBalances(
     balances: [:], movementsByKey: [:], anchorsByKey: [:], keys: [], unassignedOperations: 0,
-    now: Date(timeIntervalSince1970: 0))
+    now: Date(timeIntervalSince1970: 0), calendar: .utc)
 
   private init(
     balances: [BalanceKey: AccountBalance], movementsByKey: [BalanceKey: [AccountMovement]],
     anchorsByKey: [BalanceKey: [Anchor]], keys: [BalanceKey], unassignedOperations: Int,
-    now: Date
+    now: Date, calendar: CalendarContext
   ) {
     self.balances = balances
     self.movementsByKey = movementsByKey
@@ -152,6 +167,7 @@ public struct AccountBalances: Hashable, Sendable {
     self.keys = keys
     self.unassignedOperations = unassignedOperations
     self.now = now
+    self.days = Days(calendar: calendar)
   }
 
   /// The balances as of `now`.
@@ -220,7 +236,7 @@ public struct AccountBalances: Hashable, Sendable {
     }
     var result = AccountBalances(
       balances: [:], movementsByKey: movements, anchorsByKey: anchors, keys: keys.sorted(),
-      unassignedOperations: unassigned, now: now)
+      unassignedOperations: unassigned, now: now, calendar: calendar)
     for key in result.keys {
       result.balances[key] = result.balance(of: key, anchor: anchors[key]?.last, through: now)
     }
@@ -241,9 +257,90 @@ public struct AccountBalances: Hashable, Sendable {
     anchorsByKey[key]?.last.map { ($0.balance, $0.at) }
   }
 
+  /// The moment everything written on the key has happened by: now, or its latest movement when
+  /// that is typed ahead of now.
+  public func momentAhead(_ key: BalanceKey) -> Date {
+    max(now, movementsByKey[key]?.last?.at ?? now)
+  }
+
+  /// The money on the key once everything written on it has happened (`momentAhead`): the
+  /// balance now plus every movement typed ahead of now — what the key holds for good, the way
+  /// an account in the archive is kept at zero. `nil` while the key was not counted.
+  public func balanceAhead(_ key: BalanceKey) -> AmountE4? {
+    balance(key, at: momentAhead(key))
+  }
+
   /// Whether the key was ever counted or ever moved, at any moment.
   public func hasHistory(_ key: BalanceKey) -> Bool {
     !(anchorsByKey[key]?.isEmpty ?? true) || !(movementsByKey[key]?.isEmpty ?? true)
+  }
+
+  /// Every count of the key, in the order of the book, each with its moment: the one the
+  /// balance counts from at a moment is the last of them made by then.
+  public func anchors(_ key: BalanceKey) -> [(balance: ReconciledBalance, at: Date)] {
+    (anchorsByKey[key] ?? []).map { ($0.balance, $0.at) }
+  }
+
+  /// The owner's day of `instant`, read in the calendar the balances were worked out in — the
+  /// one that gave every count its day.
+  public func day(of instant: Date) -> DateOnly {
+    days.calendar.day(of: instant)
+  }
+
+  /// What moved on the key after `after` and up to `through`, signed: the rule of a balance
+  /// counted at `after`, so the balance at `through` of a count made at `after` is the count
+  /// plus this. A movement at `after` itself is not in it, one at `through` is; a line of a
+  /// debt journal dated only by the day of `after` says nothing of before or after, and one
+  /// with no date at all never counts. Zero when `through` is not after `after`.
+  public func moved(_ key: BalanceKey, after: Date, through: Date) -> AmountE4 {
+    let start = Anchor(
+      balance: ReconciledBalance(
+        reconciliationId: UUID(), accountId: key.accountId, currency: key.currency,
+        actualE4: .zero),
+      at: after, day: days.calendar.day(of: after))
+    return balance(of: key, anchor: start, through: through).movedSinceAnchor
+  }
+
+  /// What the books expect for the count `countId`: the count before it, in the order of the
+  /// book, plus what moved between the two — the window of the count. `nil` for a first count,
+  /// which compares with nothing, and for a count these balances do not hold.
+  public func expected(forCount countId: UUID) -> AmountE4? {
+    for (key, anchors) in anchorsByKey {
+      guard let index = anchors.firstIndex(where: { $0.balance.id == countId }) else { continue }
+      guard index > 0 else { return nil }
+      let previous = anchors[index - 1]
+      return previous.balance.actualE4
+        + balance(of: key, anchor: previous, through: anchors[index].at).movedSinceAnchor
+    }
+    return nil
+  }
+
+  /// Whether a movement lies in the window of a count made at `through` whose previous count was
+  /// made at `after`: after the one and not after the other, by the rule of a balance — a line
+  /// of a debt journal dated only by the day of `after` belongs to no window, one without a
+  /// date to none at all.
+  public func windowHolds(_ movement: AccountMovement, after: Date, through: Date) -> Bool {
+    switch movement.timing {
+    case .undated:
+      return false
+    case .day(let day):
+      if day == days.calendar.day(of: after) { return false }
+    case .moment:
+      break
+    }
+    return movement.at > after && movement.at <= through
+  }
+
+  /// The count whose window holds the movement: the earliest count of its key, in the order of
+  /// the book, with a count before it whose window holds it (`windowHolds`). `nil` before the
+  /// first count, after the latest, and for a line with no date.
+  public func countHolding(_ movement: AccountMovement) -> ReconciledBalance? {
+    let anchors = anchorsByKey[movement.key] ?? []
+    for index in anchors.indices.dropFirst()
+    where windowHolds(movement, after: anchors[index - 1].at, through: anchors[index].at) {
+      return anchors[index].balance
+    }
+    return nil
   }
 
   private func balance(of key: BalanceKey, anchor: Anchor?, through end: Date) -> AccountBalance {

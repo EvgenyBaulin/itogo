@@ -80,13 +80,15 @@ public enum ExpressionEvaluator: Sendable {
   }
 
   /// True when the text is a formula rather than a plain number, so the entry keeps it in
-  /// `amount_expr`. A single leading sign does not make a formula: `+50000` marks income.
+  /// `amount_expr`. A single leading sign does not make a formula: `+50000` marks income. An
+  /// `x`/`х` glued to digits on both sides does: «250x2».
   public static func isFormula(_ text: String) -> Bool {
     var characters = Array(text.trimmingCharacters(in: .whitespaces))
     if let first = characters.first, first == "+" || ExpressionLexer.operatorKind(first) == .minus {
       characters.removeFirst()
     }
     return characters.contains { ExpressionLexer.operatorKind($0) != nil }
+      || characters.indices.contains { ExpressionLexer.isGluedTimes(characters, at: $0) }
   }
 }
 

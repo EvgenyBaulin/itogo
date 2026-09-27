@@ -41,7 +41,8 @@ struct MoneyBackConfirmation {
   /// foreign amount is laid from `rates` the way the save lays it, unless it was typed.
   static func make(
     draft: TransactionDraft, owed: [OwedPart], debts: [Debt], rates: RateTable,
-    calendar: CalendarContext, id: UUID = UUID(), now: Date = Date()
+    calendar: CalendarContext, id: UUID = UUID(), now: Date = Date(),
+    debtBalances: [UUID: AmountE4] = [:]
   ) throws -> MoneyBackConfirmation {
     guard let person = draft.parts.first?.forPersonId else { throw Problem.noPerson }
     var money = draft
@@ -70,7 +71,7 @@ struct MoneyBackConfirmation {
       receivedRub: transaction.amountRubE4,
       rateProvisional: transaction.currency != .rub && transaction.rateProvisional
         && transaction.rateSource != .manual,
-      person: person, owed: theirs, openDebts: debts)
+      person: person, owed: theirs, openDebts: debts, debtBalances: debtBalances)
     var confirmation = MoneyBackConfirmation(entry: entry, plan: plan, owed: theirs)
     confirmation.unnamedPartsWait = owed.contains { $0.debtorPersonId == nil }
     return confirmation
@@ -111,6 +112,78 @@ struct MoneyBackConfirmation {
   }
 
   var stillOwedRub: AmountE4 { AmountE4.sum(plan.stillOwed.map(\.remainingRubE4)) }
+
+  /// The parts the money reaches: those it closes, covers partly or passes over for their rate.
+  var reachedParts: [OwedPart] {
+    let reached = Set(plan.allocations.map(\.partId) + plan.closes + plan.skippedProvisional)
+    return owed.filter { reached.contains($0.partId) }
+  }
+
+  /// The rubles one unit of the money came at: its rubles over its amount; 1 for rubles.
+  var moneyRubPerUnit: Decimal? {
+    let transaction = entry.transaction
+    guard transaction.currency != .rub else { return 1 }
+    guard transaction.amountE4.raw > 0, transaction.amountRubE4.raw > 0 else { return nil }
+    return transaction.amountRubE4.decimal / transaction.amountE4.decimal
+  }
+
+  /// Money back that repays `debt` kept in another currency than the money came in, as the
+  /// line writes it on the debt: the money converted at `debtRate` — rubles per unit of the
+  /// debt, for this repayment only — into the debt's currency, that rate as the operation's
+  /// own (manual) rate, and the money as it reached the account as what the account received.
+  /// 10,000 ₽ back on a debt of 100 $ at 90 are 111.1111 $, the card getting 10,000 ₽.
+  ///
+  /// A debt kept in rubles has no rate of its own: the money's rubles are what it repays, and
+  /// the operation, in rubles, carries no rate — `debtRate` is not read.
+  ///
+  /// `nil` when the account holds the debt's currency — the account received dollars, not
+  /// rubles, and the figure is typed in the debt's own form — or when the money reached it in
+  /// a currency it holds only besides its main one; and for a rate that does not convert.
+  static func debtRepayment(
+    of draft: TransactionDraft, money: TransactionEntry, debt: Debt, debtRate: Decimal,
+    account: PaymentMethod?, received leg: MoneyLeg?, calendar: CalendarContext
+  ) -> TransactionDraft? {
+    let transaction = money.transaction
+    guard debt.currency != transaction.currency,
+      let account, let main = AccountRules.legCurrency(for: debt.currency, account: account)
+    else { return nil }
+    let moneyRate =
+      transaction.currency == .rub
+      ? Decimal(1)
+      : (transaction.amountE4.raw > 0
+        ? transaction.amountRubE4.decimal / transaction.amountE4.decimal : 0)
+    let inRubles = debt.currency == .rub
+    guard
+      let amount = DebtRules.convert(
+        transaction.amountE4, moneyRubPerUnit: moneyRate, debtRubPerUnit: inRubles ? 1 : debtRate),
+      amount.raw > 0
+    else { return nil }
+    let received: MoneyLeg
+    if main == transaction.currency {
+      received = MoneyLeg(currency: transaction.currency, amount: transaction.amountE4)
+    } else if !account.holds(transaction.currency), let leg, leg.currency == main,
+      leg.amount.raw > 0
+    {
+      received = leg
+    } else {
+      return nil
+    }
+    var repayment = draft
+    repayment.kind = .reimbursement
+    repayment.currency = debt.currency
+    repayment.amount = amount
+    repayment.amountExpression = nil
+    repayment.rate = inRubles ? nil : debtRate
+    repayment.rateDate = inRubles ? nil : calendar.day(of: draft.occurredAt)
+    repayment.rateSource = inRubles ? nil : .manual
+    repayment.rateProvisional = false
+    repayment.paymentMethodId = account.id
+    repayment.accountCurrency = received.currency
+    repayment.accountAmount = received.amount
+    repayment.debtId = debt.id
+    repayment.parts = [PartDraft(amount: amount, forPersonId: draft.parts.first?.forPersonId)]
+    return repayment
+  }
 
   /// Whether the money can be recorded as income instead: the person owes nothing, and no
   /// part that names nobody may be theirs.
@@ -190,6 +263,15 @@ struct MoneyBackConfirmSheet: View {
   @State private var rates = RateTable()
   @State private var errorKey: String?
   @State private var manual: ReimbursementPrefill?
+  /// The purchases in other currencies the person's parts belong to, as the database has them.
+  @State private var purchases: [UUID: TransactionEntry] = [:]
+  /// The rate typed for a purchase, purchase → text; empty follows what the part cost.
+  @State private var purchaseRates: [UUID: String] = [:]
+  /// What is left on each open «Мне должны» debt, and its journal.
+  @State private var debtBalances: [UUID: AmountE4] = [:]
+  @State private var debtJournals: [UUID: [DebtEntry]] = [:]
+  /// The rate typed for a repayment of a debt in another currency than the money's.
+  @State private var debtRateText = ""
 
   init(
     prefill: MoneyBackPrefill, recordAsIncome: @escaping (TransactionDraft) -> Void,
@@ -303,29 +385,54 @@ struct MoneyBackConfirmSheet: View {
           }
         }
       }
-      // The bank has no rate of the day yet, or none at all: the rate is typed, or the money
-      // back waits for it (Cancel keeps the line).
-      if currency != .rub, needsRate || !typedRate.isEmpty {
-        GridRow {
-          label("entry.rate")
-          TextField(text: $typedRate, prompt: Text(verbatim: "0.00")) {
-            Text(verbatim: t("entry.rate"))
-          }
-          .labelsHidden()
-          .frame(width: 140)
-          .onChange(of: typedRate) { _, _ in typedLeg = nil }
-        }
-      }
+      // The rate of the money — typed when the bank has none of the day yet, or none at all —
+      // and the rate of every purchase in a third currency the money reaches.
+      MoneyBackRateRows(
+        currency: currency, moneyRate: moneyRate, moneyRateLocked: legShown?.currency == .rub,
+        typedMoneyRate: $typedRate, purchases: purchaseRows, purchaseRates: $purchaseRates
+      )
+      .onChange(of: typedRate) { _, _ in typedLeg = nil }
     }
+    // A rate typed for a purchase goes with its row: when the row goes — another person, the
+    // money in the purchase's own currency, less money that no longer reaches it —, so does
+    // the rate.
+    .onChange(of: purchaseRows.map(\.id)) { _, ids in
+      purchaseRates = MoneyBackRateRows.keeping(purchaseRates, rows: ids)
+    }
+    .onChange(of: personId) { _, _ in purchaseRates = [:] }
+    .onChange(of: currency) { _, _ in purchaseRates = [:] }
   }
 
-  /// The money back cannot be worked out at the bank's rate: it has none, or not a final one.
-  private var needsRate: Bool {
-    switch confirmation {
-    case .failure(.rateMissing): return true
-    case .success(let confirmation): return confirmation.plan.refusal == .provisionalRate
-    case .failure: return false
+  /// The rate the money is worked out at: its rubles over its amount.
+  private var moneyRate: Decimal? {
+    guard case .success(let confirmation) = confirmation else { return manualRate }
+    return confirmation.moneyRubPerUnit
+  }
+
+  /// A row for every purchase in a third currency the money reaches, from the plan as the
+  /// typed rates make it.
+  private var purchaseRows: [PurchaseRateRow] {
+    guard case .success(let confirmation) = confirmation else { return [] }
+    return MoneyBackRateRows.rows(
+      reaching: confirmation.reachedParts, money: currency, purchases: purchases,
+      note: { $0.note ?? t("moneyBack.partWithoutNote") })
+  }
+
+  /// The purchases with a rate typed, and those rates. A rate stays only while its row does
+  /// (`MoneyBackRateRows.keeping`): a purchase the plan no longer reaches is never written again
+  /// at a rate nobody sees.
+  private var repricing: [UUID: Decimal] {
+    var rates: [UUID: Decimal] = [:]
+    for (id, text) in purchaseRates {
+      if purchases[id] != nil, let rate = MoneyBackRateRows.typedRate(text) { rates[id] = rate }
     }
+    return rates
+  }
+
+  /// What the person owes, as the rates typed for the purchases make it.
+  private var repricedOwed: [OwedPart] {
+    MoneyBackRateRows.owed(
+      owed, purchases: purchases, rates: repricing, calendar: environment.calendar)
   }
 
   /// The rate typed, when it is a number above zero.
@@ -432,15 +539,141 @@ struct MoneyBackConfirmSheet: View {
             dismiss()
           }
         }
-      case .owesOnDebt(let debt):
-        Button(t("moneyBack.asDebtRepayment")) {
-          recordAsDebtRepayment(debt, draft)
-          dismiss()
-        }
+      case .owesOnDebt(let debtId):
+        debtRepaymentView(debtId, of: confirmation)
       case .onlyProvisional, .provisionalRate, .provisionalPartsOwed:
         EmptyView()
       }
     }
+  }
+
+  /// The repayment of a debt owed to me the money turns out to be: what the debt takes and
+  /// whether it closes, the income above it, and — for a debt in another currency — the rate
+  /// this repayment converts at. «Записать возвратом долга» hands the line the money as the
+  /// debt's own (`MoneyBackConfirmation.debtRepayment`), or, when the account holds the debt's
+  /// currency, the money as it is: the debt's form then asks how much of it was repaid.
+  @ViewBuilder
+  private func debtRepaymentView(
+    _ debtId: UUID, of confirmation: MoneyBackConfirmation
+  ) -> some View {
+    let debt = debts.first { $0.id == debtId }
+    let converted = debt.flatMap { debtRepaymentDraft(for: $0, of: confirmation) }
+    // A debt in rubles takes the money's rubles: «Курс возврата» is its rate, and it has none
+    // of its own to ask.
+    if let debt, debt.currency != currency, debt.currency != .rub {
+      Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+        GridRow {
+          Text(verbatim: environment.format("moneyBack.debtRate", table: "Entry", debt.name))
+            .font(.caption).foregroundStyle(.secondary)
+          HStack(spacing: 6) {
+            Text(verbatim: "1 \(debt.currency.code) =").foregroundStyle(.secondary)
+            TextField(
+              text: $debtRateText,
+              prompt: Text(
+                verbatim: defaultDebtRate(debt).map { MoneyBackRateRows.shown($0) } ?? "0.00")
+            ) {
+              Text(verbatim: environment.format("moneyBack.debtRate", table: "Entry", debt.name))
+            }
+            .labelsHidden()
+            .frame(width: 110)
+            Text(verbatim: "RUB").foregroundStyle(.secondary)
+          }
+        }
+      }
+      if let converted {
+        caption(
+          text: environment.format(
+            "moneyBack.debtRate.caption", table: "Entry",
+            money.exact(confirmation.entry.transaction.amountE4, currency: currency),
+            money.exact(converted.amount, currency: debt.currency)))
+      } else if let account {
+        caption(
+          text: environment.format(
+            "moneyBack.debtForm", table: "Entry", account.name, debt.currency.code))
+      }
+    } else if let debt, debt.currency != currency, converted == nil, let account {
+      caption(
+        text: environment.format(
+          "moneyBack.debtForm", table: "Entry", account.name, debt.currency.code))
+    }
+    if let debt, let preview = repaymentPreview(debt, converted: converted, of: confirmation) {
+      caption(text: preview)
+    }
+    Button(t("moneyBack.asDebtRepayment")) {
+      recordAsDebtRepayment(debtId, converted ?? draft)
+      dismiss()
+    }
+  }
+
+  /// The rate a repayment of `debt` converts at: 1 for a debt in rubles, whatever was typed;
+  /// else the one typed, else what a unit of the debt cost when it was lent
+  /// (`DebtRules.costRate`), else the bank's rate of the money's day.
+  private func debtRate(_ debt: Debt) -> Decimal? {
+    guard debt.currency != .rub else { return 1 }
+    return MoneyBackRateRows.typedRate(debtRateText) ?? defaultDebtRate(debt)
+  }
+
+  private func defaultDebtRate(_ debt: Debt) -> Decimal? {
+    guard debt.currency != .rub else { return 1 }
+    let journal = debtJournals[debt.id] ?? []
+    var operations: [UUID: CoreKit.Transaction] = [:]
+    for id in journal.compactMap(\.transactionId) {
+      if let entry = try? environment.transactions?.entry(id: id) {
+        operations[id] = entry.transaction
+      }
+    }
+    if let cost = DebtRules.costRate(of: debt, journal: journal, operations: operations) {
+      return cost
+    }
+    return rates.resolve(debt.currency, on: environment.calendar.day(of: draft.occurredAt))?
+      .rate.perUnit
+  }
+
+  private func debtRepaymentDraft(
+    for debt: Debt, of confirmation: MoneyBackConfirmation
+  ) -> TransactionDraft? {
+    guard debt.currency != currency, let rate = debtRate(debt) else { return nil }
+    return MoneyBackConfirmation.debtRepayment(
+      of: draft, money: confirmation.entry, debt: debt, debtRate: rate, account: account,
+      received: legShown.map { MoneyLeg(currency: $0.currency, amount: typedLeg ?? $0.amount) },
+      calendar: environment.calendar)
+  }
+
+  /// «В счёт долга «Маша»: 1,000.00 ₽ — долг закроется», and the income above it.
+  private func repaymentPreview(
+    _ debt: Debt, converted: TransactionDraft?, of confirmation: MoneyBackConfirmation
+  ) -> String? {
+    guard let balance = debtBalances[debt.id] else { return nil }
+    var transaction = confirmation.entry.transaction
+    var rubPerUnit: Decimal?
+    if let converted {
+      transaction.currency = converted.currency
+      transaction.amountE4 = converted.amount
+      transaction.accountCurrency = converted.accountCurrency
+      transaction.accountAmountE4 = converted.accountAmount
+      rubPerUnit = converted.rate
+    } else if debt.currency != currency {
+      return nil
+    }
+    guard
+      let outcome = try? DebtRules.repayment(
+        on: debt, by: transaction, balance: balance, date: nil, rubPerUnit: rubPerUnit)
+    else { return nil }
+    let applied = money.exact(outcome.applied, currency: debt.currency)
+    var lines = [
+      outcome.closes
+        ? environment.format("moneyBack.debt.closes", table: "Entry", debt.name, applied)
+        : environment.format(
+          "moneyBack.debt.repays", table: "Entry", debt.name, applied,
+          money.exact(balance - outcome.applied, currency: debt.currency))
+    ]
+    if let surplus = outcome.surplus {
+      lines.append(
+        environment.format(
+          "moneyBack.surplus", table: "Entry",
+          money.exact(surplus.amountE4, currency: surplus.currency)))
+    }
+    return lines.joined(separator: "\n")
   }
 
   static func refusalKey(_ refusal: MoneyBackRefusal) -> String {
@@ -525,7 +758,8 @@ struct MoneyBackConfirmSheet: View {
     do {
       return .success(
         try MoneyBackConfirmation.make(
-          draft: draft, owed: owed, debts: debts, rates: rates, calendar: environment.calendar))
+          draft: draft, owed: repricedOwed, debts: debts, rates: rates,
+          calendar: environment.calendar, debtBalances: debtBalances))
     } catch let problem as MoneyBackConfirmation.Problem {
       return .failure(problem)
     } catch {
@@ -541,6 +775,19 @@ struct MoneyBackConfirmSheet: View {
     debts = (try? environment.references?.debts()) ?? []
     accounts = (try? environment.references?.paymentMethods()) ?? []
     rates = (try? environment.rates?.table()) ?? RateTable()
+    purchases = [:]
+    for id in Set(owed.filter { $0.currency != .rub }.map(\.transactionId)) {
+      if let entry = try? environment.transactions?.entry(id: id) { purchases[id] = entry }
+    }
+    debtBalances = [:]
+    debtJournals = [:]
+    for debt in debts where debt.direction == .owedToMe && !debt.closed {
+      guard let journal = try? environment.references?.debtEntries(debtId: debt.id) else {
+        continue
+      }
+      debtJournals[debt.id] = journal
+      debtBalances[debt.id] = DebtRules.balance(entries: journal)
+    }
     if accountId == nil { accountId = accounts.first(where: \.isDefault)?.id }
     // With nobody named, the one person who owes anything is the one.
     if personId == nil {
@@ -557,12 +804,21 @@ struct MoneyBackConfirmSheet: View {
       guard let written = try confirmation.recording(setting: try setting(repository)) else {
         return
       }
-      try repository.apply(
-        written.outcome, reimbursement: written.reimbursement, extra: written.extra)
+      let write = try repository.apply(
+        written.outcome, reimbursement: written.reimbursement, extra: written.extra,
+        repricing: repricing,
+        settlement: SettlementSetting(surplusNote: t("reimbursement.surplus")),
+        calendar: environment.calendar)
+      if !write.repricedBefore.isEmpty {
+        AppLog.info(
+          "moneyBack.repriced", .db, "purchases were written at a rate typed for money back",
+          [LogPair("purchases", .count(write.repricedBefore.count))])
+      }
+      write.settlement.counts.log()
       environment.scheduleBackup()
-      // Several operations and the links between them went in at once; a single undo step
-      // cannot take that back, so ⌘Z is not offered rather than undoing something else.
-      store.forgetUndoHistory()
+      // Several operations and the links between them went in at once, in one write: one step
+      // of ⌘Z takes all of it back.
+      store.recordedMoneyBack(write)
       recorded()
       dismiss()
     } catch ReimbursementError.partNoLongerOwed {
@@ -647,9 +903,14 @@ struct MoneyBackConfirmSheet: View {
   }
 
   private func caption(_ key: String) -> some View {
-    Text(verbatim: t(key))
+    caption(text: t(key))
+  }
+
+  private func caption(text: String) -> some View {
+    Text(verbatim: text)
       .font(.caption)
       .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Entry") }

@@ -6,7 +6,7 @@ import Testing
 
 @testable import AppDatabase
 
-/// Every value of the database reaches the export and comes back from it: the 21 files are
+/// Every value of the database reaches the export and comes back from it: the 23 files are
 /// read back with the CSV reader, and each cell is checked against the raw value of its column
 /// in SQLite by a rule written apart from the export — an amount times 10 000 is the stored
 /// integer, a boolean is a word, an instant is the stored one to the second in UTC, a
@@ -21,7 +21,7 @@ struct ExportRoundTripPropertyTests {
   /// Columns holding 0/1 that the export writes as words.
   private static let booleans: Set<String> = [
     "archived", "is_default", "reimbursable", "rate_provisional", "pinned", "recurring_yearly",
-    "payments_are_expenses", "closed", "rollover", "active", "in_summary",
+    "payments_are_expenses", "closed", "rollover", "active", "in_summary", "records_difference",
   ]
   /// Columns holding an instant, written in UTC to the second.
   private static let instants: Set<String> = [
@@ -32,6 +32,7 @@ struct ExportRoundTripPropertyTests {
   /// Columns holding a currency code.
   private static let currencies: Set<String> = [
     "currency", "account_currency", "reimbursement_currency", "from_currency", "to_currency",
+    "cashback_currency",
   ]
 
   private static let posix = Locale(identifier: "en_US_POSIX")
@@ -147,10 +148,11 @@ struct ExportRoundTripPropertyTests {
     }
   }
 
-  /// A history with accounts — every one of the 21 tables has rows — whose texts carry what a
-  /// CSV file must never break on.
+  /// A history with accounts — every one of the 23 tables has rows, and every column the cards
+  /// brought a value somewhere — whose texts carry what a CSV file must never break on.
   @Test func aHistoryWithAccountsAndOddTextsIsExportedValueForValue() throws {
     let stack = try PlanningUndoPropertyTests.stack()
+    try Self.addCards(to: stack)
     let odd = [
       "comma, inside", "a \"quoted\" word", "two\nlines", "carriage\r\nreturn", "emoji 🎂🇷🇺",
       "e\u{301}", "  spaces  ", "tab\tinside", "", "semi;colon", "back\\slash",
@@ -206,11 +208,12 @@ struct ExportRoundTripPropertyTests {
     try expectEveryValueKept(stack, "seed \(seed)")
   }
 
-  /// The archive of a history: the database snapshot and the 21 files go in, and opening the
+  /// The archive of a history: the database snapshot and the 23 files go in, and opening the
   /// archive — plain or sealed with a password — gives every one of them back byte for byte;
   /// the database inside holds the same data as the one it was taken of.
   @Test func theArchiveGivesBackEveryFileByteForByte() throws {
     let stack = try PlanningUndoPropertyTests.stack()
+    try Self.addCards(to: stack)
     let folder = FileManager.default.temporaryDirectory
       .appendingPathComponent("itogo-archive-round-trip-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: folder) }
@@ -233,17 +236,17 @@ struct ExportRoundTripPropertyTests {
     try builder.add(path: ArchivePaths.settings, data: settings)
     files[ArchivePaths.settings] = settings
 
-    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 4)
+    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 5)
     #expect(plain.files == files)
-    #expect(plain.csvTables.count == 21)
-    #expect(plain.manifest.schemaVersion == 4)
+    #expect(plain.csvTables.count == 23)
+    #expect(plain.manifest.schemaVersion == 5)
 
     var random = SeededRandom(seed: 7)
     let sealed = try builder.build(
       password: "пароль 🔑", cipher: RoundTripCipher(), random: &random, iterations: 1_000)
     #expect(ArchiveOpener.isEncrypted(sealed))
     let opened = try ArchiveOpener.open(
-      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 4)
+      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 5)
     #expect(opened.files == files)
 
     let inside = folder.appendingPathComponent("inside.sqlite")
@@ -268,6 +271,7 @@ struct ExportRoundTripPropertyTests {
         fileName: table.fileName,
         columns: table.columns.filter {
           !Self.addedByTheAccounts.contains("\(table.fileName):\($0)")
+            && !Self.addedByTheCards.contains("\(table.fileName):\($0)")
         })
     }
     var counts: [String: Int] = [:]
@@ -303,7 +307,7 @@ struct ExportRoundTripPropertyTests {
     }
     try builder.add(path: ArchivePaths.settings, text: #"{"language":"ru"}"#)
 
-    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 4)
+    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 5)
     #expect(opened.manifest.schemaVersion == 3)
     #expect(opened.csvTables.count == 18)
 
@@ -313,7 +317,7 @@ struct ExportRoundTripPropertyTests {
     #expect(try DatabaseStack.check(fileAt: staged, schema: TestSupport.schemaSource) == .sound)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: staged, schema: TestSupport.schemaSource)
-        == ["0004_accounts"])
+        == ["0004_accounts", "0005_cards"])
     let stack = try DatabaseStack(url: staged, schema: TestSupport.schemaSource)
     defer { try? stack.close() }
     let after = try ExportRepository(writer: stack.writer).rowCounts()
@@ -321,13 +325,14 @@ struct ExportRoundTripPropertyTests {
     for (table, count) in counts {
       #expect(after[table] == count + (table == "payment_methods" ? created : 0), "\(table)")
     }
-    for table in ["account_groups", "transfers", "reconciliation_balances"] {
+    for table in ["account_groups", "transfers", "reconciliation_balances", "cashback_rules"] {
       #expect(after[table] == 0)
     }
+    #expect(after["cards"] == stack.applied.dataSteps["cardsCreated"] ?? 0)
   }
 
   /// The archive checks its manifest against the rows it counts in each file, and it counts
-  /// them the way the reader reads them: for the 21 files of an export and for tables of drawn
+  /// them the way the reader reads them: for the 23 files of an export and for tables of drawn
   /// texts full of quotes and line breaks.
   @Test func theArchiveCountsTheRowsTheReaderReads() throws {
     let stack = try PlanningUndoPropertyTests.stack()
@@ -408,6 +413,93 @@ struct ExportRoundTripPropertyTests {
     "debt_entries.csv:occurred_at", "debt_entries.csv:account_currency",
     "debt_entries.csv:account_amount", "reconciliations.csv:kind",
   ]
+
+  /// The columns the cards added to the files of the older build, file by file.
+  private static let addedByTheCards: Set<String> = [
+    "transactions.csv:card_id", "transactions.csv:cashback_currency", "transactions.csv:cashback",
+    "scheduled_payments.csv:card_id", "scheduled_payments.csv:event_id",
+    "expected_income.csv:payment_method_id", "goals.csv:plan_start_month", "debts.csv:deleted_at",
+    "reconciliations.csv:origin",
+  ]
+
+  /// Cards on two accounts of the history, one with other names that break a CSV cell; the
+  /// cashback rules of one of them, a month and a category among them; operations and a payment
+  /// that name a card, cashback typed for some purchases; a payment of an event, the plan start
+  /// of a goal, the account of an expected income and a deleted debt — every column the cards
+  /// brought holds a value somewhere.
+  static func addCards(to stack: DatabaseStack) throws {
+    try stack.writer.write { db in
+      let accounts = try String.fetchAll(
+        db, sql: "SELECT id FROM payment_methods WHERE archived = 0 ORDER BY rowid LIMIT 2")
+      let category = try String.fetchOne(
+        db, sql: "SELECT id FROM categories WHERE kind = 'expense' ORDER BY rowid LIMIT 1")
+      let event = try String.fetchOne(db, sql: "SELECT id FROM events ORDER BY rowid LIMIT 1")
+      for (index, account) in accounts.enumerated() {
+        let card = UUID().uuidString
+        try db.execute(
+          sql: """
+            INSERT INTO cards (id, payment_method_id, name, aliases, sort, archived)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+          arguments: [
+            card, account, index == 0 ? "Visa, «золотая» \"1\"" : "Mir",
+            index == 0 ? "gold\nзолотая, карта" : "", index, index == 1,
+          ])
+        try db.execute(
+          sql: """
+            INSERT INTO cashback_rules (id, payment_method_id, card_id, category_id, month,
+              percent_e4)
+            VALUES (?, ?, ?, NULL, NULL, 15000), (?, ?, ?, ?, '2026-09', 333333),
+              (?, ?, NULL, NULL, NULL, 7500)
+            """,
+          arguments: [
+            UUID().uuidString, account, card, UUID().uuidString, account, card, category,
+            UUID().uuidString, account,
+          ])
+        try db.execute(
+          sql: """
+            UPDATE transactions SET card_id = ?
+            WHERE id IN (
+              SELECT id FROM transactions WHERE payment_method_id = ? ORDER BY rowid LIMIT 12)
+            """,
+          arguments: [card, account])
+        try db.execute(
+          sql: """
+            UPDATE scheduled_payments SET card_id = ?, event_id = ?
+            WHERE id IN (
+              SELECT id FROM scheduled_payments WHERE payment_method_id = ? ORDER BY rowid
+              LIMIT 1)
+            """,
+          arguments: [card, event, account])
+      }
+      try db.execute(
+        sql: """
+          UPDATE transactions
+          SET cashback_currency = COALESCE(account_currency, currency),
+            cashback_e4 = amount_e4 / 100
+          WHERE id IN (
+            SELECT id FROM transactions WHERE kind = 'expense' ORDER BY rowid LIMIT 15)
+          """)
+      try db.execute(
+        sql: """
+          UPDATE goals SET plan_start_month = '2026-07'
+          WHERE id IN (SELECT id FROM goals ORDER BY rowid LIMIT 1)
+          """)
+      if let account = accounts.first {
+        try db.execute(
+          sql: """
+            UPDATE expected_income SET payment_method_id = ?
+            WHERE id IN (SELECT id FROM expected_income ORDER BY rowid LIMIT 1)
+            """,
+          arguments: [account])
+      }
+      try db.execute(
+        sql: """
+          UPDATE debts SET deleted_at = '2026-09-10 08:15:30.250'
+          WHERE id IN (SELECT id FROM debts ORDER BY rowid LIMIT 1)
+          """)
+    }
+  }
 }
 
 /// A stand-in cipher for sealing an archive in a test of the database package: a keystream of

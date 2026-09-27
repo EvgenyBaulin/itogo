@@ -229,16 +229,18 @@ final class TransfersTests: XCTestCase {
     XCTAssertEqual(balance(undone, sber.id, .rub), AmountE4(whole: 10_000))
   }
 
-  /// With no category of fees yet, the first fee makes one — under «Прочее» when there is
-  /// one, rated bad — remembers it, and ⌘Z takes the category and the memory back with it.
-  func testTheFirstFeeMakesTheCategoryOfFeesInTheSameStep() async throws {
+  /// With no category of fees yet, live or in the archive, the first fee makes one — under
+  /// «Прочее» when there is one, rated bad — remembers it, and ⌘Z takes the category and the
+  /// memory back with it.
+  func testTheFirstFeeWithNoFeesEvenInTheArchiveMakesTheCategoryInTheSameStep() async throws {
     let sber = try account("Сбер", main: true)
     let tbank = try account("Т-Банк")
     let references = try XCTUnwrap(environment.references)
-    // Whatever the starter tree has for fees goes to the archive: none is left to find.
-    for var category in try references.categories(includeArchived: false)
+    // An archived «Комиссии» would come back with the fee rather than be made again, so
+    // whatever the starter tree has for fees is renamed: none is left to find, live or archived.
+    for var category in try references.categories(includeArchived: true)
     where ["комиссии", "fees"].contains(category.name.lowercased()) {
-      category.archived = true
+      category.name = "Банковские сборы"
       try references.save(category)
     }
     let before = try references.categories(includeArchived: true)
@@ -565,10 +567,8 @@ final class TransfersTests: XCTestCase {
     form.chooseTo(tbank)
     form.sent = AmountE4(whole: 5_000)
     let occurredAt = form.occurredAt(now: savedAt, calendar: calendar)
-    let transfer = try XCTUnwrap(form.transfer(id: UUID(), occurredAt: occurredAt, now: savedAt))
     let books = try await freshBooks()
-    let counts = TransferActions.countMoments(
-      for: transfer, savedAt: savedAt, balances: books.balances, calendar: calendar)
+    let counts = askedCounts(form, occurredAt: occurredAt, books: books, now: savedAt)
     XCTAssertEqual(counts, [early, late])
 
     let first = CountQuestions(counts: counts, occurredAt: occurredAt, calendar: calendar)
@@ -658,9 +658,7 @@ final class TransfersTests: XCTestCase {
     XCTAssertEqual(occurredAt, savedAt, "a transfer of today happened now")
     let transfer = try XCTUnwrap(form.transfer(id: UUID(), occurredAt: occurredAt, now: savedAt))
     XCTAssertTrue(form.asksAboutTheCount(transfer, calendar: calendar))
-    let asked = TransferActions.countMoments(
-      for: transfer, savedAt: savedAt, balances: books.balances, calendar: calendar
-    ).first
+    let asked = askedCounts(form, occurredAt: occurredAt, books: books, now: savedAt).first
     XCTAssertEqual(asked, countAt, "the transfer asks about the count of 14:05")
 
     let stamped = AccountReconciliation.stamped(
@@ -693,11 +691,8 @@ final class TransfersTests: XCTestCase {
     let occurredAt = form.occurredAt(now: savedAt, calendar: calendar)
     XCTAssertEqual(occurredAt, calendar.noon(of: yesterday), "another day is at its noon")
     let books = try await freshBooks()
-    let transfer = try XCTUnwrap(form.transfer(id: UUID(), occurredAt: occurredAt, now: savedAt))
     let asked = try XCTUnwrap(
-      TransferActions.countMoments(
-        for: transfer, savedAt: savedAt, balances: books.balances, calendar: calendar
-      ).first)
+      askedCounts(form, occurredAt: occurredAt, books: books, now: savedAt).first)
     XCTAssertEqual(asked, countAt)
 
     let stamped = AccountReconciliation.stamped(
@@ -722,9 +717,8 @@ final class TransfersTests: XCTestCase {
     let books = try await freshBooks()
     let transfer = try XCTUnwrap(form.transfer(id: UUID(), occurredAt: now, now: now))
     XCTAssertEqual(
-      TransferActions.countMoments(
-        for: transfer, savedAt: now, balances: books.balances, calendar: calendar),
-      [], "no count that day: nothing to ask")
+      askedCounts(form, occurredAt: now, books: books, now: now), [],
+      "no count that day: nothing to ask")
 
     var edit = TransferForm(editing: transfer, fee: nil, calendar: calendar)
     edit.sent = AmountE4(whole: 200)
@@ -766,9 +760,242 @@ final class TransfersTests: XCTestCase {
     XCTAssertEqual(form.receivedAmount, AmountE4(whole: 100), "one currency: sent is received")
   }
 
+  // MARK: The time of a transfer
+
+  /// A time the owner chose is the moment of the transfer, on its day, to the minute, and
+  /// survives a change of the day; it is never asked «до сверки?» — it says itself where the
+  /// transfer was. Without one the question is asked as before.
+  func testAChosenTimeIsKeptAndNotAsked() async throws {
+    let sber = try account("Сбер", main: true)
+    let tbank = try account("Т-Банк")
+    let yesterday = calendar.adding(days: -1, to: environment.today)
+    let counted = calendar.moment(yesterday, hour: 14, minute: 5).addingTimeInterval(23)
+    try count([(sber.id, .rub, 10_000), (tbank.id, .rub, 0)], at: counted)
+
+    var form = TransferForm(from: sber, accounts: [sber, tbank], day: yesterday)
+    form.chooseTo(tbank)
+    form.sent = AmountE4(whole: 1_000)
+    let now = environment.now()
+    let plain = try XCTUnwrap(
+      form.transfer(id: UUID(), occurredAt: form.occurredAt(now: now, calendar: calendar), now: now)
+    )
+    XCTAssertTrue(form.asksAboutTheCount(plain, calendar: calendar), "no time chosen: asked")
+
+    form.time = TimeOfDay(hour: 14, minute: 5)
+    let occurredAt = form.occurredAt(now: now, calendar: calendar)
+    XCTAssertEqual(occurredAt, calendar.moment(yesterday, hour: 14, minute: 5))
+    let chosen = try XCTUnwrap(form.transfer(id: UUID(), occurredAt: occurredAt, now: now))
+    XCTAssertFalse(form.asksAboutTheCount(chosen, calendar: calendar), "a chosen time is not asked")
+    let saved = try await save(form)
+    XCTAssertEqual(saved, .done)
+    let books = try await freshBooks()
+    XCTAssertEqual(try XCTUnwrap(books.dataset.transfers.first).occurredAt, occurredAt)
+    XCTAssertEqual(
+      balance(books, sber.id, .rub), AmountE4(whole: 10_000),
+      "14:05:00 is before the count of 14:05:23: inside the counted balance")
+
+    // Another day keeps the time.
+    form.day = calendar.adding(days: -2, to: environment.today)
+    XCTAssertEqual(
+      calendar.timeOfDay(form.occurredAt(now: now, calendar: calendar)),
+      TimeOfDay(hour: 14, minute: 5))
+  }
+
+  // MARK: «Больше не спрашивать для этой сверки»
+
+  /// Two counts on one day, 10:00 and 18:00, asked in turn the way the sheet asks them. «Нет»
+  /// to both with «Больше не спрашивать для этой сверки» ticked on the second puts the transfer
+  /// after 18:00 and keeps the answer: the next transfer of that day is dated after 18:00
+  /// without a question. With the box left unticked nothing is kept.
+  func testTransferQuestionsSkipRememberedCounts() async throws {
+    let sber = try account("Сбер", main: true)
+    let tbank = try account("Т-Банк")
+    let yesterday = calendar.adding(days: -1, to: environment.today)
+    let early = calendar.moment(yesterday, hour: 10, minute: 0)
+    let late = calendar.moment(yesterday, hour: 18, minute: 0)
+    try count([(sber.id, .rub, 10_000)], at: early)
+    try count([(tbank.id, .rub, 3_000)], at: late)
+
+    var form = TransferForm(from: sber, accounts: [sber, tbank], day: yesterday)
+    form.chooseTo(tbank)
+    form.sent = AmountE4(whole: 5_000)
+    let now = environment.now()
+    let occurredAt = form.occurredAt(now: now, calendar: calendar)
+    let books = try await freshBooks()
+    guard
+      case .ask(let questions) = transfers.countStep(
+        for: form, occurredAt: occurredAt, books: books, now: now)
+    else { return XCTFail("nothing kept: the first count is asked") }
+    XCTAssertEqual(questions.count, early)
+    guard case .ask(let next) = transfers.answer(questions, wasBefore: false, remember: false)
+    else { return XCTFail("«Нет» to 10:00 asks about 18:00") }
+    XCTAssertEqual(next.count, late)
+    XCTAssertTrue(environment.rememberedCountAnswers().isEmpty, "an unticked answer is not kept")
+    guard case .stamp(let after) = transfers.answer(next, wasBefore: false, remember: true)
+    else { return XCTFail("«Нет» to the last count stamps") }
+    XCTAssertGreaterThan(after, late)
+    XCTAssertEqual(transfers.save(form, occurredAt: after, books: books), .done)
+
+    // The next transfer of that day: the kept «Нет» answers both counts, nothing is asked.
+    var second = TransferForm(from: sber, accounts: [sber, tbank], day: yesterday)
+    second.chooseTo(tbank)
+    second.sent = AmountE4(whole: 1_000)
+    let later = environment.now()
+    let fresh = try await freshBooks()
+    guard
+      case .answered(let stamp) = transfers.countStep(
+        for: second, occurredAt: second.occurredAt(now: later, calendar: calendar), books: fresh,
+        now: later)
+    else { return XCTFail("a kept answer answers without a question") }
+    XCTAssertGreaterThan(stamp, late)
+    XCTAssertEqual(calendar.day(of: stamp), yesterday)
+    XCTAssertEqual(transfers.save(second, occurredAt: stamp, books: fresh), .done)
+    let saved = try await freshBooks()
+    let written = try XCTUnwrap(
+      saved.dataset.transfers.first { $0.fromAmountE4 == AmountE4(whole: 1_000) })
+    XCTAssertGreaterThan(written.occurredAt, late, "written after 18:00")
+    XCTAssertEqual(
+      balance(saved, tbank.id, .rub), AmountE4(whole: 9_000),
+      "both transfers reach Т-Банк's counted balance")
+  }
+
+  // MARK: Transfers of an archived account
+
+  /// A comment on a transfer of an account in the archive is saved: it moves no money. An edit
+  /// of its money would leave money on the archived account, and says so before anything is
+  /// written.
+  func testANoteOfAnArchivedTransferCanBeEdited() async throws {
+    let sber = try account("Сбер", main: true)
+    var cash = try account("Наличные")
+    let start = Date().addingTimeInterval(-7_200)
+    try count([(sber.id, .rub, 10_000), (cash.id, .rub, 0)], at: start)
+    let moved = try await transferWithFee(from: sber, to: cash, sent: 1_000, fee: 0)
+    cash.archived = true
+    try XCTUnwrap(environment.references).save(cash)
+
+    let books = try await freshBooks()
+    var form = TransferForm(editing: moved, fee: nil, calendar: calendar)
+    form.note = "wallet"
+    let occurredAt = form.occurredAt(now: environment.now(), calendar: calendar)
+    let change = try XCTUnwrap(
+      try? transfers.change(for: form, occurredAt: occurredAt, books: books).get())
+    XCTAssertTrue(TransferActions.leftovers(of: change, books: books).leftovers.isEmpty)
+    XCTAssertEqual(transfers.save(form, occurredAt: occurredAt, books: books), .done)
+    let noted = try await theTransfer()
+    XCTAssertEqual(noted.note, "wallet")
+
+    form = TransferForm(editing: noted, fee: nil, calendar: calendar)
+    form.sent = AmountE4(whole: 800)
+    let fresh = try await freshBooks()
+    let smaller = try XCTUnwrap(
+      try? transfers.change(for: form, occurredAt: occurredAt, books: fresh).get())
+    let check = TransferActions.leftovers(of: smaller, books: fresh)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: -200)])
+
+    // A new transfer to the archived account is still refused.
+    var new = TransferForm(from: sber, accounts: [sber, cash], day: environment.today)
+    new.chooseTo(cash)
+    new.sent = AmountE4(whole: 100)
+    XCTAssertEqual(refusal(new, fresh, Date()), .issue(.archivedAccount))
+  }
+
+  /// «Сбер → Наличные» 1,000 and back 1,000, then «Наличные» archived at zero. Deleting the
+  /// first transfer would take it to −1,000: the deletion asks which account covers it, and
+  /// the deletion and the transfer are one step of ⌘Z. Without the transfer nothing is written.
+  func testDeletingAnArchivedTransferAsksForACounterpart() async throws {
+    let sber = try account("Сбер", main: true)
+    var cash = try account("Наличные")
+    try count(
+      [(sber.id, .rub, 10_000), (cash.id, .rub, 0)], at: Date().addingTimeInterval(-7_200))
+    let toCash = try await transferWithFee(from: sber, to: cash, sent: 1_000, fee: 0)
+    var back = TransferForm(from: cash, accounts: [sber, cash], day: environment.today)
+    back.chooseTo(sber)
+    back.sent = AmountE4(whole: 1_000)
+    let savedBack = try await save(back)
+    XCTAssertEqual(savedBack, .done)
+    cash.archived = true
+    try XCTUnwrap(environment.references).save(cash)
+    store.forgetUndoHistory()
+
+    let books = try await freshBooks()
+    XCTAssertEqual(balance(books, cash.id, .rub), .zero)
+    let check = transfers.deletion(of: toCash, books: books)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: -1_000)])
+    let form = ArchivedMoneyForm(
+      check: check, accounts: books.dataset.paymentMethods, locale: Locale(identifier: "en"))
+    XCTAssertEqual(form.rows.first?.chosen, sber.id)
+    let settling = form.transfers(now: environment.now(), note: "left over")
+    XCTAssertEqual(transfers.delete(toCash, books: books, settling: settling), .done)
+
+    let after = try await freshBooks()
+    XCTAssertEqual(balance(after, cash.id, .rub), .zero, "the archived account stays at zero")
+    XCTAssertEqual(balance(after, sber.id, .rub), AmountE4(whole: 10_000))
+    XCTAssertFalse(after.dataset.transfers.contains { $0.id == toCash.id })
+    store.undo()
+    let undone = try await freshBooks()
+    XCTAssertTrue(undone.dataset.transfers.contains { $0.id == toCash.id })
+    XCTAssertFalse(undone.dataset.transfers.contains { $0.id == settling[0].id })
+  }
+
+  /// «Перевести остаток…» on a credit card at −30,000: the form covers it from the main
+  /// account, the whole of it.
+  func testMovingANegativeBalanceTransfersIntoTheAccount() async throws {
+    let sber = try account("Сбер", main: true)
+    let credit = try account("Кредитка")
+    try count(
+      [(sber.id, .rub, 100_000), (credit.id, .rub, -30_000)], at: Date().addingTimeInterval(-60))
+    let books = try await freshBooks()
+    let form = TransferForm(
+      movingBalanceOf: credit, balances: books.balances, accounts: [sber, credit],
+      day: environment.today)
+    XCTAssertEqual(form.fromAccountId, sber.id)
+    XCTAssertEqual(form.toAccountId, credit.id)
+    XCTAssertEqual(form.sent, AmountE4(whole: 30_000))
+    let saved = try await save(form)
+    XCTAssertEqual(saved, .done)
+    let after = try await freshBooks()
+    XCTAssertEqual(balance(after, credit.id, .rub), .zero)
+    XCTAssertEqual(balance(after, sber.id, .rub), AmountE4(whole: 70_000))
+  }
+
+  /// A dollar credit card at −500 $ and a main account of rubles only: the form covers the
+  /// 500 $ from the main account in rubles, and what left in rubles is the owner's to type —
+  /// never 500 ₽ for 500 $.
+  func testMovingANegativeBalanceInAnotherCurrencyLeavesTheRublesToType() async throws {
+    let sber = try account("Сбер", main: true)
+    let credit = try account("Card $", currencies: [.usd])
+    try count(
+      [(sber.id, .rub, 100_000), (credit.id, .usd, -500)], at: Date().addingTimeInterval(-60))
+    let books = try await freshBooks()
+    let form = TransferForm(
+      movingBalanceOf: credit, balances: books.balances, accounts: [sber, credit],
+      day: environment.today)
+    XCTAssertEqual(form.fromAccountId, sber.id)
+    XCTAssertEqual(form.fromCurrency, .rub)
+    XCTAssertEqual(form.toAccountId, credit.id)
+    XCTAssertEqual(form.toCurrency, .usd)
+    XCTAssertTrue(form.isExchange)
+    XCTAssertEqual(form.received, AmountE4(whole: 500), "the debt is what arrives")
+    XCTAssertEqual(form.sent, .zero, "the rubles it cost are typed, not taken one to one")
+  }
+
   // MARK: Helpers
 
   private var calendar: CalendarContext { environment.calendar }
+
+  /// The counts saving `form` at `occurredAt`, at `now`, asks about, oldest first, as the sheet
+  /// asks them with nothing kept; empty when it asks nothing.
+  private func askedCounts(
+    _ form: TransferForm, occurredAt: Date, books: AccountBooks, now: Date
+  ) -> [Date] {
+    switch transfers.countStep(
+      for: form, occurredAt: occurredAt, books: books, now: now, remembered: [:])
+    {
+    case .none: return []
+    case .ask(let questions): return questions.counts
+    case .answered: return []
+    }
+  }
 
   /// A transfer with a fee, saved; as the books have it.
   private func transferWithFee(

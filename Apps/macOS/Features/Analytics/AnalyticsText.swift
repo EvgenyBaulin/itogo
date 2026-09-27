@@ -12,6 +12,114 @@ enum AnalyticsText {
     environment.language(key, table: "Analytics")
   }
 
+  /// A card's line under its account in «Оборот и кэшбэк»: the card's name, or «Без карты» for
+  /// the account's own line.
+  static func cardLine(
+    _ cardId: UUID?, _ names: AnalyticsNames, _ environment: AppEnvironment
+  ) -> String {
+    guard let cardId else { return t("analytics.cashback.noCard", environment) }
+    return names[cardId]?.text ?? "—"
+  }
+
+  /// A choice of «Кэшбэк по месяцам»: «Все счета», an account, or «Т-Банк · Black».
+  static func cashbackChoice(
+    _ choice: CashbackMonthsModel.Choice, model: CashbackMonthsModel, _ names: AnalyticsNames,
+    _ environment: AppEnvironment
+  ) -> String {
+    switch choice {
+    case .all: return t("analytics.cashback.allHolders", environment)
+    case .account(let id): return names[id]?.text ?? "—"
+    case .card(let id):
+      let card = names[id]?.text ?? "—"
+      guard let account = model.cardAccounts[id].flatMap({ names[$0]?.text }) else {
+        return card
+      }
+      return account + " · " + card
+    }
+  }
+
+  // MARK: - Lines of the cashback tables
+
+  /// A line of a grid of figures: each cell as shown, and the whole line as VoiceOver hears it
+  /// once — the first cell, then every figure after the header of its column in lower case:
+  /// «Сентябрь 2026, ожидаемый кэшбэк 118 ₽, полученный кэшбэк 25 ₽, разница −93 ₽». A modifier
+  /// on a `GridRow` reaches each cell on its own, so the first cell says the line and the others
+  /// are silent.
+  struct GridLine: Hashable, Sendable {
+    var first: String
+    var figures: [String]
+    var spoken: String
+  }
+
+  /// The line of `first` and `figures`, each figure under the header of the key given with it.
+  /// A figure shown as «—» or left empty is not said.
+  static func gridLine(
+    _ first: String, _ figures: [(header: String, text: String)], _ environment: AppEnvironment
+  ) -> GridLine {
+    let locale = environment.language.locale
+    let said = figures.filter { !$0.text.isEmpty && $0.text != "—" }.map {
+      t($0.header, environment).lowercased(with: locale) + " " + $0.text
+    }
+    return GridLine(
+      first: first, figures: figures.map(\.text), spoken: ([first] + said).joined(separator: ", "))
+  }
+
+  /// A month of «Кэшбэк по месяцам»: expected, received and the difference with its sign.
+  static func cashbackMonthLine(
+    _ row: CashbackMonthsModel.Month, _ environment: AppEnvironment
+  ) -> GridLine {
+    let money = environment.money
+    return gridLine(
+      environment.dates.monthTitle(row.month),
+      [
+        ("analytics.column.cashbackExpected", money.rubles(row.expected)),
+        ("analytics.column.cashback", money.rubles(row.received)),
+        ("analytics.column.cashbackDifference", money.signedRubles(row.difference)),
+      ], environment)
+  }
+
+  /// An account of «Оборот и кэшбэк»: my spending, the turnover, the cashback expected and
+  /// received, and the actual share — «—» when there was no turnover.
+  static func methodLine(
+    _ row: MethodRow, _ names: AnalyticsNames, _ environment: AppEnvironment
+  ) -> GridLine {
+    let money = environment.money
+    return gridLine(
+      name(of: row.key, names, environment),
+      [
+        ("analytics.column.mySpending", money.rubles(row.mySpending)),
+        ("analytics.column.turnover", money.rubles(row.turnover)),
+        ("analytics.column.cashbackExpected", expectedCashback(row.expectedCashback, environment)),
+        ("analytics.column.cashback", money.rubles(row.cashback)),
+        (
+          "analytics.column.cashbackShare",
+          row.cashbackShare.map { money.percent(basisPoints: $0, fractionDigits: 1) } ?? "—"
+        ),
+      ], environment)
+  }
+
+  /// A card's line under its account — or the account's own, «Без карты»: the same figures but
+  /// the share, which a card has not of its own.
+  static func cardMethodLine(
+    _ card: CardMethodRow, _ names: AnalyticsNames, _ environment: AppEnvironment
+  ) -> GridLine {
+    let money = environment.money
+    return gridLine(
+      cardLine(card.cardId, names, environment),
+      [
+        ("analytics.column.mySpending", money.rubles(card.mySpending)),
+        ("analytics.column.turnover", money.rubles(card.turnover)),
+        ("analytics.column.cashbackExpected", expectedCashback(card.expected, environment)),
+        ("analytics.column.cashback", money.rubles(card.received)),
+      ], environment)
+  }
+
+  /// An expectation, never income: «≈» before a figure that is not zero.
+  static func expectedCashback(_ value: Int64, _ environment: AppEnvironment) -> String {
+    let text = environment.money.rubles(value)
+    return value == 0 ? text : "≈\u{00A0}" + text
+  }
+
   static func format(
     _ key: String, _ environment: AppEnvironment, _ arguments: CVarArg...
   )

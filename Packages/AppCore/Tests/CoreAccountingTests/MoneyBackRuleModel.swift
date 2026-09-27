@@ -8,7 +8,7 @@ import Foundation
 /// money covers them in turn — a part is reached by the money that is left after every part
 /// before it took all it needed —; a part covered whole closes with exactly what was left of its
 /// rubles, a part covered partly closes only when the rest is within the drift of rates; money
-/// over everything is a surplus unless it is itself drift. Parts on a rate still provisional are
+/// over everything is a surplus unless it is less than a kopeck. Parts on a rate still provisional are
 /// passed over and said so. All arithmetic is on whole units with exact fractions.
 struct MoneyBackRuleModel: Equatable {
   var allocations: [ReimbursementAllocation] = []
@@ -124,10 +124,8 @@ struct MoneyBackRuleModel: Equatable {
     // The rubles over are the rubles received less the rubles the parts took: every ruble that
     // came in is written once, a link or the surplus.
     let overRub = inRubles ? over : max(.zero, receivedRub - takenRub)
-    // Money is over only once every part took all it needed: the last part is the last reached.
-    if let last = parts.last, over.raw > 0, last.currency != .rub || !inRubles,
-      overRub <= drift(last.amountRubE4, foreign: true)
-    {
+    // Money over is income however little, but for less than a kopeck: the rounding of shares.
+    if over.raw > 0, overRub < AmountE4(raw: 100) {
       over = .zero
     }
     if over.raw > 0, !passed.isEmpty {

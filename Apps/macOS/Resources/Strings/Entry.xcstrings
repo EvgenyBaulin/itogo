@@ -324,19 +324,36 @@
         }
       }
     },
+    "entry.beforeCount.dontAsk": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't ask again for this reconciliation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Больше не спрашивать для этой сверки"
+          }
+        }
+      }
+    },
     "entry.beforeCount.message": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This account was reconciled that day. If the operation happened before that, its money is already in the reconciled balance."
+            "value": "This account was reconciled that day. If the operation happened before that, its money is already in the reconciled balance: the reconciliation's difference changes, not the balance."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "В этот день счёт сверяли. Если операция прошла до сверки, её деньги уже в сверенном остатке."
+            "value": "В этот день счёт сверяли. Если операция прошла до сверки, её деньги уже в сверенном остатке: изменится разница сверки, а не остаток."
           }
         }
       }
@@ -388,6 +405,278 @@
           "stringUnit": {
             "state": "translated",
             "value": "Да, до сверки"
+          }
+        }
+      }
+    },
+    "entry.cashback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк"
+          }
+        }
+      }
+    },
+    "entry.cashback.byRules": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "by the rules of “%@”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "по правилам «%@»"
+          }
+        }
+      }
+    },
+    "entry.cashback.chooseCard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account has several cards — choose one to work out the cashback."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У счёта несколько карт — выберите карту, чтобы посчитать кэшбэк."
+          }
+        }
+      }
+    },
+    "entry.cashback.clear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Rules"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По правилам"
+          }
+        }
+      }
+    },
+    "entry.cashback.ignored": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback not saved: the field can’t be read."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк не записан: поле не читается."
+          }
+        }
+      }
+    },
+    "entry.cashback.noRules": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@” has no cashback rules — type an amount or a percent (“5%”)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У «%@» нет правил кэшбэка — впишите сумму или процент («5%»)."
+          }
+        }
+      }
+    },
+    "entry.cashback.ofBase": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ of %2$@ = %3$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ от %2$@ = %3$@"
+          }
+        }
+      }
+    },
+    "entry.cashback.percentAboveHundred": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "At most 100%."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не больше 100 %."
+          }
+        }
+      }
+    },
+    "entry.cashback.percentTooPrecise": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "At most four digits after the point."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не больше четырёх знаков после точки."
+          }
+        }
+      }
+    },
+    "entry.cashback.remember": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remember"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запомнить"
+          }
+        }
+      }
+    },
+    "entry.cashback.rememberAlways": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always: %1$@ on “%2$@”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Всегда: %1$@ на «%2$@»"
+          }
+        }
+      }
+    },
+    "entry.cashback.rememberMonth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only %1$@: %2$@ on “%3$@”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Только %1$@: %2$@ на «%3$@»"
+          }
+        }
+      }
+    },
+    "entry.cashback.rememberNoCategory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a category first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала выберите категорию."
+          }
+        }
+      }
+    },
+    "entry.cashback.rememberSplit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The parts have different categories — set the rule in the account’s Cashback Rules."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У частей разные категории — правило задаётся в «Правилах кэшбэка» счёта."
+          }
+        }
+      }
+    },
+    "entry.cashback.typed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "set for this operation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "задано для этой операции"
+          }
+        }
+      }
+    },
+    "entry.cashback.unreadable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can’t read it: type an amount (“45”) or a percent (“5%”)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не читается: впишите сумму («45») или процент («5%»)."
           }
         }
       }
@@ -490,6 +779,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Долг"
+          }
+        }
+      }
+    },
+    "entry.debt.closed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (closed)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (закрыт)"
+          }
+        }
+      }
+    },
+    "entry.debt.gone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (deleted)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (удалён)"
           }
         }
       }
@@ -834,6 +1157,40 @@
         }
       }
     },
+    "entry.error.noLeapDay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There is no 29 February %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "29 февраля %@ года нет"
+          }
+        }
+      }
+    },
+    "entry.error.noSuchDate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — there is no such date"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — такой даты нет"
+          }
+        }
+      }
+    },
     "entry.error.notBalanced": {
       "extractionState": "manual",
       "localizations": {
@@ -1119,6 +1476,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "От кого"
+          }
+        }
+      }
+    },
+    "entry.gap.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The line does not say the category — choose it in the panel, or with ↓ ↑ here, and press Return"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Категорию по строке не определить — выберите её в панели или стрелками ↓ ↑ здесь и нажмите Return"
+          }
+        }
+      }
+    },
+    "entry.gap.mark.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a category"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите категорию"
+          }
+        }
+      }
+    },
+    "entry.gap.mark.subcategory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a subcategory or leave “—”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите подкатегорию или оставьте «—»"
+          }
+        }
+      }
+    },
+    "entry.gap.subcategory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The line does not say the subcategory — choose it in the panel, or with ↓ ↑ here, or leave “—”, and press Return"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подкатегорию по строке не определить — выберите её в панели или стрелками ↓ ↑ здесь, или оставьте «—», и нажмите Return"
           }
         }
       }
@@ -1650,6 +2075,91 @@
         }
       }
     },
+    "moneyBack.debt.closes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Towards the debt «%1$@»: %2$@ — the debt closes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В счёт долга «%1$@»: %2$@ — долг закроется"
+          }
+        }
+      }
+    },
+    "moneyBack.debt.repays": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Towards the debt «%1$@»: %2$@, %3$@ still owed"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В счёт долга «%1$@»: %2$@, останется %3$@"
+          }
+        }
+      }
+    },
+    "moneyBack.debtForm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account «%1$@» holds %2$@: type how much of the debt was repaid in the debt's form."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт «%1$@» хранит %2$@: сколько долга погасили, впишите в форме долга."
+          }
+        }
+      }
+    },
+    "moneyBack.debtRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rate for the debt «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Курс долга «%@»"
+          }
+        }
+      }
+    },
+    "moneyBack.debtRate.caption": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ is %2$@ of the debt. The rate is for this repayment only."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — это %2$@ долга. Курс — только для этого возврата."
+          }
+        }
+      }
+    },
     "moneyBack.fromNote": {
       "extractionState": "manual",
       "localizations": {
@@ -1680,6 +2190,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Вручную…"
+          }
+        }
+      }
+    },
+    "moneyBack.moneyRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rate of the money"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Курс возврата"
           }
         }
       }
@@ -1799,6 +2326,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Курс этих денег ещё предварительный. Введите курс в панели ↓ или запишите позже."
+          }
+        }
+      }
+    },
+    "moneyBack.purchaseRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Purchase rate, «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Курс покупки «%@»"
+          }
+        }
+      }
+    },
+    "moneyBack.purchaseRate.caption": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ at this rate is %2$@. The purchase is recorded at it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ по этому курсу — %2$@. Покупка будет записана по нему."
+          }
+        }
+      }
+    },
+    "moneyBack.purchaseRate.provisional": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The purchase rate is still provisional: type the rate from the statement and the part closes now."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Курс покупки ещё предварительный: впишите курс из выписки, и часть закроется сейчас."
           }
         }
       }
@@ -2313,6 +2891,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Возврат записать не удалось"
+          }
+        }
+      }
+    },
+    "reimbursement.moneyRateProvisional": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bank has not published the rate of this day yet. Type the rate of the money, or record it later."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк ещё не опубликовал курс этого дня. Введите курс возврата или запишите позже."
           }
         }
       }

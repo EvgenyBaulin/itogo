@@ -172,16 +172,14 @@ struct EditRefusalModelPropertyTests {
         }
         if edited.amountE4 < refunded { rules.insert(.linked(.refundedPartReduced)) }
       }
-      // Some money back came for it while it still waits: its money stays as it was, and its
-      // rubles above what came back.
+      // Some money back came for it while it still waits: its money stays as it was; its
+      // rubles may change (the money back is balanced again in the same write).
       let linked = facts.linkedRubByPart[part.id] ?? .zero
       if part.reimbursable, (part.reimbursementStatus ?? .expected) == .expected, linked.raw > 0 {
         if kindOrCurrency {
           rules.insert(.linked(.partlyReturnedPartChanged))
         } else if let edited {
-          if edited.amountE4 != part.amountE4 || edited.reimbursable != part.reimbursable
-            || edited.amountRubE4 <= linked
-          {
+          if edited.amountE4 != part.amountE4 || edited.reimbursable != part.reimbursable {
             rules.insert(.linked(.partlyReturnedPartChanged))
           }
         } else {

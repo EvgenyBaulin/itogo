@@ -217,9 +217,9 @@ struct ScheduledMatchingTests {
   }
 
   /// A weekly payment on Tuesdays, counted on Saturday 12 September. The payment of Sunday the
-  /// 13th is two days from the 15th and five from the 8th: it pays the nearer one. The 8th is
-  /// inside the count anyway, so nothing is taken twice.
-  @Test func theNearestPairWinsOverTheOlderDue() {
+  /// 13th is two days from the 15th and five from the 8th: a payment is paid oldest due first,
+  /// so it pays the 8th — the count settles no due date any more — and the 15th waits.
+  @Test func theOlderDuePaysFirst() {
     var fx = Fx()
     fx.count([(Fx.main, .rub, "100000")], at: Fx.at("2026-09-12", 9))
     var cleaning = Fx.payment(5, "Cleaning", "2000", day: 2, next: "2026-09-08")
@@ -228,10 +228,10 @@ struct ScheduledMatchingTests {
     fx.settings.reserveGoalPlan = false
     let paid = fx.add(.expense, "2000", at: Fx.at("2026-09-13", 10), category: Fx.housing)
     let found = matches(fx)
-    #expect(found.operation(for: cleaning.id, Fx.day("2026-09-15")) == paid)
-    #expect(!found.isPaid(cleaning.id, Fx.day("2026-09-08")))
-    // Due through the 30th: the 22nd and the 29th.
-    #expect(fx.plan(until: "2026-09-30").scheduled == Fx.money("4000"))
+    #expect(found.operation(for: cleaning.id, Fx.day("2026-09-08")) == paid)
+    #expect(!found.isPaid(cleaning.id, Fx.day("2026-09-15")))
+    // Due through the 30th: the 15th, the 22nd and the 29th.
+    #expect(fx.plan(until: "2026-09-30").scheduled == Fx.money("6000"))
   }
 
   /// Two payments of one category, on the 20th and on the 22nd, and one operation on the
@@ -299,5 +299,35 @@ struct ScheduledMatchingTests {
     #expect(fx.snapshot().matches.isPaid(video.id, Fx.day("2026-09-15")))
     #expect(fx.plan(until: "2026-09-30").scheduled == .zero)
     #expect(matches(fx).operationIds.isEmpty)
+  }
+
+  /// The plan of the end of the month asks which due dates operations already typed for later
+  /// days pay. «Through» today — or not said — is the free sum's pass exactly; through the 30th,
+  /// the rent of the 25th typed ahead for the 27th pays its due, and nothing else moves: the
+  /// dues matched by operations of the past and the ones of earlier months stay as they were.
+  @Test func operationsThroughMovesTheGateAndNothingElse() {
+    var fx = Fx()
+    let rent = Fx.payment(1, "Rent", "30000", day: 25, next: "2026-09-25")
+    let phone = Fx.payment(2, "Phone", "700", day: 17, next: "2026-09-17", category: Fx.fun)
+    fx.scheduled = [rent, phone]
+    let ahead = fx.add(.expense, "30000", at: Fx.at("2026-09-27", 10), category: Fx.housing)
+    let calls = fx.add(.expense, "700", at: Fx.at("2026-09-17", 10), category: Fx.fun)
+    let august = fx.add(.expense, "30000", at: Fx.at("2026-08-25", 10), category: Fx.housing)
+    func found(through: DateOnly?) -> ScheduledMatches {
+      ScheduledMatching.matches(
+        book: fx.book, ledger: fx.ledger, today: Fx.today, rejections: [],
+        operationsThrough: through)
+    }
+    let now = found(through: nil)
+    #expect(found(through: Fx.today) == now)
+    #expect(!now.isPaid(rent.id, Fx.day("2026-09-25")))
+    #expect(now.operation(for: phone.id, Fx.day("2026-09-17")) == calls)
+    #expect(now.operationIds == [calls, august])
+
+    let endOfMonth = found(through: Fx.day("2026-09-30"))
+    #expect(endOfMonth.operation(for: rent.id, Fx.day("2026-09-25")) == ahead)
+    #expect(endOfMonth.operation(for: phone.id, Fx.day("2026-09-17")) == calls)
+    #expect(endOfMonth.operationIds == [ahead, calls, august])
+    #expect(endOfMonth.matchedDues(of: phone.id) == now.matchedDues(of: phone.id))
   }
 }

@@ -153,6 +153,11 @@ struct DebtActions {
   /// covers the balance — a line landed since the form opened — is written alone, and the rest
   /// stays owed where it can be seen.
   ///
+  /// Money given back on a debt owed to me follows the one rule of repayments
+  /// (`DebtRules.repayment`): the journal takes what was owed, the debt closes once it is
+  /// covered (with exactly the balance, as `closing` says), and what came back above it is
+  /// income in «Доплаты» — an operation of its own in the same write, on the same account.
+  ///
   /// The operation is on `paymentMethodId` while that account is live, else on the main one,
   /// with what the account was charged when it does not hold the debt's currency: `charged`
   /// when typed from the statement, else the prefill at the rate of the operation.
@@ -168,7 +173,21 @@ struct DebtActions {
     let date = planning.environment.calendar.day(of: day)
     guard
       let entry = try? paymentOperation(
-        debt, amount: amount, on: day, account: paymentMethodId, charged: charged),
+        debt, amount: amount, on: day, account: paymentMethodId, charged: charged)
+    else { return false }
+    if debt.direction == .owedToMe, let left = balance(of: debt) {
+      guard
+        let written = try? repayment(debt, by: entry, balance: left, date: date, closing: closing)
+      else { return false }
+      rows.debtEntries = written.line.map { [$0] } ?? []
+      if written.closes {
+        var closed = debt
+        closed.closed = true
+        rows.debts = [closed]
+      }
+      return apply(PlanningChange(created: [entry] + written.surplus, upsert: rows))
+    }
+    guard
       let outcome = try? DebtRules.payment(
         on: debt, amountE4: amount, date: date, transactionId: entry.id)
     else { return false }
@@ -180,6 +199,68 @@ struct DebtActions {
       if let writeOff = closed.entry { rows.debtEntries.append(writeOff) }
     }
     return apply(PlanningChange(created: [entry], upsert: rows))
+  }
+
+  /// A repayment `entry` of `debt` owed to me, against what is left of it: the journal line,
+  /// whether the debt closes, and the income in «Доплаты» of what came back above it — built
+  /// like every surplus of money back (`MoneyBack.surplusEntry`), in the interface language.
+  /// Throws when there is a surplus and no system Surcharges category to put it in.
+  func repayment(
+    _ debt: Debt, by entry: TransactionEntry, balance: AmountE4, date: DateOnly,
+    closing: Bool = true, rubPerUnit: Decimal? = nil
+  ) throws -> (line: DebtEntry?, closes: Bool, surplus: [TransactionEntry]) {
+    let outcome = try DebtRules.repayment(
+      on: debt, by: entry.transaction, balance: balance, date: date,
+      description: entry.transaction.note, rubPerUnit: rubPerUnit, closeWhenPaidOff: closing)
+    guard let surplus = outcome.surplus else { return (outcome.line, outcome.closes, []) }
+    let environment = planning.environment
+    guard
+      let surcharges = try environment.references?.category(
+        systemRole: .surcharges, kind: .income)?.id
+    else { throw ReimbursementRecording.Failure.noSurchargesCategory }
+    let transaction = entry.transaction
+    let income = try MoneyBack.surplusEntry(
+      surplus, of: entry.id, on: transaction.occurredAt, now: Date(),
+      rate: surplus.currency == .rub ? nil : transaction.rate, rateDate: transaction.rateDate,
+      categoryId: surcharges, note: environment.language("reimbursement.surplus", table: "Entry"))
+    return (outcome.line, outcome.closes, [income])
+  }
+
+  // MARK: Deleting a debt
+
+  /// What deleting `debt` writes and what it leaves, from the data on screen: its journal, the
+  /// operations that point at it, the categories and the main account.
+  static func deletion(of debt: Debt, snapshot: DataSnapshot, at instant: Date) -> DebtDeletion {
+    let dataset = snapshot.dataset
+    return DebtRules.deletion(
+      of: debt, journal: dataset.planning.debtEntries.filter { $0.debtId == debt.id },
+      entries: dataset.entries, tree: snapshot.ledger.tree,
+      mainAccountId: dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id,
+      calendar: snapshot.ledger.calendar, at: instant)
+  }
+
+  /// «Удалить…»: the debt leaves every list, reminder, due date, the free sum and the pickers;
+  /// its live subcategory of «Кредиты» goes to the archive. Nothing else is written — the
+  /// operations that paid it and its journal keep every figure they made. One write, one ⌘Z.
+  @discardableResult
+  func delete(_ debt: Debt, at instant: Date = Date()) -> Bool {
+    guard let snapshot, debt.deletedAt == nil else { return false }
+    let deletion = Self.deletion(of: debt, snapshot: snapshot, at: instant)
+    var rows = PlanningRows.empty
+    rows.debts = [deletion.debt]
+    if let subcategory = deletion.archivedSubcategory { rows.categories = [subcategory] }
+    guard apply(PlanningChange(upsert: rows, at: instant)) else {
+      AppLog.error(
+        "debt.deleteFailed", .db, "a debt was not deleted", [LogPair("debt", .id(debt.id))])
+      return false
+    }
+    AppLog.info(
+      "debt.deleted", .db, "a debt was deleted",
+      [
+        LogPair("debt", .id(debt.id)), LogPair("lines", .count(deletion.journalLines)),
+        LogPair("operations", .count(deletion.operations)),
+      ])
+    return true
   }
 
   /// The operation a payment of `debt` writes — «Pay», or «Offset» with its note — on

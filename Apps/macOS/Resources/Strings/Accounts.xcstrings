@@ -1,6 +1,23 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "account.balance.creditHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For a credit card, type what you owe the bank with a minus: −30,000."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для кредитной карты впишите долг банку со знаком минус: −30,000."
+          }
+        }
+      }
+    },
     "account.editor.addCurrency": {
       "extractionState": "manual",
       "localizations": {
@@ -443,6 +460,278 @@
         }
       }
     },
+    "account.forecast.ahead": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already entered for later days"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Уже записано на следующие дни"
+          }
+        }
+      }
+    },
+    "account.forecast.debts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Debt payments"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платежи по долгам"
+          }
+        }
+      }
+    },
+    "account.forecast.income": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expected income"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидаемые поступления"
+          }
+        }
+      }
+    },
+    "account.forecast.leftOut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No rate, left out: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без курса, не учтено: %@"
+          }
+        }
+      }
+    },
+    "account.forecast.lowData": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Little history yet: the range is wide"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Истории пока мало: интервал широкий"
+          }
+        }
+      }
+    },
+    "account.forecast.negative": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "May go below zero by the end of the month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "К концу месяца может уйти в минус"
+          }
+        }
+      }
+    },
+    "account.forecast.noRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No rate for %@ — spending cannot be converted"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет курса %@ — траты не пересчитать"
+          }
+        }
+      }
+    },
+    "account.forecast.notCounted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never reconciled — no forecast"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ещё не сверен — прогноза нет"
+          }
+        }
+      }
+    },
+    "account.forecast.now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Now"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сейчас"
+          }
+        }
+      }
+    },
+    "account.forecast.overdueIncome": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expected on %@ — not in yet?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидалось %@ — не пришло?"
+          }
+        }
+      }
+    },
+    "account.forecast.range": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "from %1$@ to %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "от %1$@ до %2$@"
+          }
+        }
+      }
+    },
+    "account.forecast.scheduled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Payments and subscriptions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платежи и подписки"
+          }
+        }
+      }
+    },
+    "account.forecast.spending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Day-to-day spending (%@ of all spending)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Повседневные траты (%@ всех трат)"
+          }
+        }
+      }
+    },
+    "account.forecast.spoken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, about %2$@, %3$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, примерно %2$@, %3$@"
+          }
+        }
+      }
+    },
+    "account.forecast.spokenFlat": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, about %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, примерно %2$@"
+          }
+        }
+      }
+    },
+    "account.forecast.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balance forecast for %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Прогноз остатка на %@"
+          }
+        }
+      }
+    },
     "account.group.accounts": {
       "extractionState": "manual",
       "localizations": {
@@ -715,6 +1004,23 @@
         }
       }
     },
+    "account.merge.cardsMove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The cards of “%1$@” move to “%2$@”."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карты «%1$@» перейдут к «%2$@»."
+          }
+        }
+      }
+    },
     "account.merge.confirm": {
       "extractionState": "manual",
       "localizations": {
@@ -728,6 +1034,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Объединить"
+          }
+        }
+      }
+    },
+    "account.merge.emptyKeepsCount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Empty — «%@» keeps its latest count; the other account's past becomes history."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пусто — «%@» останется со своей последней сверкой, прошлое второго счёта станет историей."
           }
         }
       }
@@ -1159,6 +1482,23 @@
         }
       }
     },
+    "account.refusal.nameTakenByCard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A card is called “%@” — choose another name."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Так называется карта «%@» — выберите другое название."
+          }
+        }
+      }
+    },
     "account.refusal.needsNewMain": {
       "extractionState": "manual",
       "localizations": {
@@ -1312,6 +1652,74 @@
         }
       }
     },
+    "account.screen.cashback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback · %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк · %@"
+          }
+        }
+      }
+    },
+    "account.screen.cashbackAccountLine": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без карты"
+          }
+        }
+      }
+    },
+    "account.screen.cashbackLine": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "expected ≈ %1$@ · received %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ожидается ≈ %1$@ · получено %2$@"
+          }
+        }
+      }
+    },
+    "account.screen.cashbackNone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No rules, and no cashback this month."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правил нет, и кэшбэка в этом месяце не было."
+          }
+        }
+      }
+    },
     "account.screen.countedAt": {
       "extractionState": "manual",
       "localizations": {
@@ -1393,6 +1801,91 @@
           "stringUnit": {
             "state": "translated",
             "value": "вне списка валют"
+          }
+        }
+      }
+    },
+    "account.screen.paymentAdd": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Payment…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить платёж…"
+          }
+        }
+      }
+    },
+    "account.screen.paymentCard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "card %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "карта %@"
+          }
+        }
+      }
+    },
+    "account.screen.paymentCardArchived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "card archived"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "карта в архиве"
+          }
+        }
+      }
+    },
+    "account.screen.payments": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Payments and Subscriptions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платежи и подписки"
+          }
+        }
+      }
+    },
+    "account.screen.paymentsNone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No scheduled payment is paid from this account."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "С этого счёта не оплачивается ни один платёж."
           }
         }
       }
@@ -1998,23 +2491,6 @@
         }
       }
     },
-    "accounts.rowMenu": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Actions"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Действия"
-          }
-        }
-      }
-    },
     "accounts.section.accounts": {
       "extractionState": "manual",
       "localizations": {
@@ -2149,6 +2625,958 @@
           "stringUnit": {
             "state": "translated",
             "value": "Перевод…"
+          }
+        }
+      }
+    },
+    "archived.archive.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer and Archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перевести и убрать в архив"
+          }
+        }
+      }
+    },
+    "archived.archive.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where should the balance of «%@» go?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Куда перевести остаток «%@»?"
+          }
+        }
+      }
+    },
+    "archived.leftover.changed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The balance of «%@» has just changed — check the amounts again."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток «%@» только что изменился — проверьте суммы ещё раз."
+          }
+        }
+      }
+    },
+    "archived.leftover.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record the Transfer"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать перевод"
+          }
+        }
+      }
+    },
+    "archived.leftover.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» is in the archive, and its balance has to stay at zero. A transfer of this amount will be recorded now."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт «%@» в архиве, и его остаток должен остаться нулём. Сейчас будет записан перевод на эту сумму."
+          }
+        }
+      }
+    },
+    "archived.leftover.minusTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which account should cover %1$@ for «%2$@»?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "С какого счёта списать %1$@ для «%2$@»?"
+          }
+        }
+      }
+    },
+    "archived.leftover.noCounterpart": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No other account holds %1$@. Add the currency to an account or bring «%2$@» back from the archive."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет другого счёта в %1$@. Добавьте эту валюту счёту или верните «%2$@» из архива."
+          }
+        }
+      }
+    },
+    "archived.leftover.note": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balance of an archived account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток счёта в архиве"
+          }
+        }
+      }
+    },
+    "archived.leftover.plusTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which account should get %1$@ from «%2$@»?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На какой счёт зачислить %1$@ с «%2$@»?"
+          }
+        }
+      }
+    },
+    "card.add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Card…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить карту…"
+          }
+        }
+      }
+    },
+    "card.archive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В архив"
+          }
+        }
+      }
+    },
+    "card.archivedCount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archived: %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В архиве: %lld"
+          }
+        }
+      }
+    },
+    "card.caption": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cashback rules: %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "правил кэшбэка: %lld"
+          }
+        }
+      }
+    },
+    "card.cashback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк…"
+          }
+        }
+      }
+    },
+    "card.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить…"
+          }
+        }
+      }
+    },
+    "card.delete.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its cashback rules go with it. ⌘Z brings everything back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Её правила кэшбэка удалятся вместе с ней. ⌘Z вернёт всё."
+          }
+        }
+      }
+    },
+    "card.delete.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the card “%@”?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить карту «%@»?"
+          }
+        }
+      }
+    },
+    "card.editor.account": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт"
+          }
+        }
+      }
+    },
+    "card.editor.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Money and balance belong to the account; a card says what paid and keeps its own cashback rules."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги и остаток — у счёта; карта говорит, чем заплатили, и держит свои правила кэшбэка."
+          }
+        }
+      }
+    },
+    "card.editor.name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название"
+          }
+        }
+      }
+    },
+    "card.editor.newTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New Card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новая карта"
+          }
+        }
+      }
+    },
+    "card.editor.otherNames": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other names"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Другие названия"
+          }
+        }
+      }
+    },
+    "card.editor.otherNamesHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The entry line knows the card by any of these names and puts it on its account: “coffee 300 virtual”."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Строка ввода узнаёт карту по любому из названий и ставит её счёт: «кофе 300 виртуалка»."
+          }
+        }
+      }
+    },
+    "card.editor.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карта"
+          }
+        }
+      }
+    },
+    "card.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No cards"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карт нет"
+          }
+        }
+      }
+    },
+    "card.refusal.accountArchived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account is archived — restore it first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт в архиве — сначала верните его."
+          }
+        }
+      }
+    },
+    "card.refusal.emptyName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter a name for the card."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Введите название карты."
+          }
+        }
+      }
+    },
+    "card.refusal.inUse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operations or payments name this card — it can only be archived."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По карте есть операции или платежи — её можно только убрать в архив."
+          }
+        }
+      }
+    },
+    "card.refusal.nameTaken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@” already has this name."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Такое название уже есть у «%@»."
+          }
+        }
+      }
+    },
+    "card.refusal.notFound": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The card is no longer there."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этой карты уже нет."
+          }
+        }
+      }
+    },
+    "card.refusal.otherNameTaken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The other name “%1$@” is already used by “%2$@”."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Другое название «%1$@» уже есть у «%2$@»."
+          }
+        }
+      }
+    },
+    "card.restore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть"
+          }
+        }
+      }
+    },
+    "card.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cards"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карты"
+          }
+        }
+      }
+    },
+    "cashback.everythingElse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Everything else"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Всё остальное"
+          }
+        }
+      }
+    },
+    "cashback.refusal.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A rule names an expense category outside Goals and the reconciliation."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правило задаётся для категории расходов, кроме «Целей» и «Сверки»."
+          }
+        }
+      }
+    },
+    "cashback.refusal.duplicate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There is already a rule for “%@”."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правило для «%@» уже есть."
+          }
+        }
+      }
+    },
+    "cashback.refusal.holderHasCards": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account has cards — its rules are set on each card."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У счёта есть карты — правила задаются на каждой карте."
+          }
+        }
+      }
+    },
+    "cashback.refusal.percent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The percent is from 0 to 100, with at most four digits after the point."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Процент — от 0 до 100, не больше четырёх знаков после точки."
+          }
+        }
+      }
+    },
+    "cashback.rule.always": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "always"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "всегда"
+          }
+        }
+      }
+    },
+    "cashback.rule.line": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@, %3$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — %2$@, %3$@"
+          }
+        }
+      }
+    },
+    "cashback.rule.onlyIn": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "only %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "только %@"
+          }
+        }
+      }
+    },
+    "cashback.rules": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback Rules…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правила кэшбэка…"
+          }
+        }
+      }
+    },
+    "cashback.sheet.addRule": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Rule"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить правило"
+          }
+        }
+      }
+    },
+    "cashback.sheet.always": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Всегда"
+          }
+        }
+      }
+    },
+    "cashback.sheet.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Category"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Категория"
+          }
+        }
+      }
+    },
+    "cashback.sheet.copyLastMonth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Same as Last Month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Как в прошлом месяце"
+          }
+        }
+      }
+    },
+    "cashback.sheet.expectationHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expected cashback is only an expectation, never income. Record what you receive as income in the cashback category."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидаемый кэшбэк — только ожидание, не доход. Полученный записывайте доходом в категории кэшбэка."
+          }
+        }
+      }
+    },
+    "cashback.sheet.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A month rule beats an “always” rule, and a subcategory beats its category; “Everything else” applies when nothing else does."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правило месяца важнее правила «всегда», подкатегория — важнее категории; «Всё остальное» — когда ничего не подошло."
+          }
+        }
+      }
+    },
+    "cashback.sheet.holder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карта"
+          }
+        }
+      }
+    },
+    "cashback.sheet.month": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only in a month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Только в месяце"
+          }
+        }
+      }
+    },
+    "cashback.sheet.monthPicker": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Месяц"
+          }
+        }
+      }
+    },
+    "cashback.sheet.otherMonths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other months"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Другие месяцы"
+          }
+        }
+      }
+    },
+    "cashback.sheet.percent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Percent"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Процент"
+          }
+        }
+      }
+    },
+    "cashback.sheet.problemOn": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A rule of “%@” can’t be read or repeats another."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У «%@» есть правило, которое не читается или повторяется."
+          }
+        }
+      }
+    },
+    "cashback.sheet.removeRule": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Rule"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить правило"
+          }
+        }
+      }
+    },
+    "cashback.sheet.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк: %@"
           }
         }
       }
@@ -2408,19 +3836,36 @@
         }
       }
     },
+    "transfer.beforeCount.dontAsk": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't ask again for this reconciliation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Больше не спрашивать для этой сверки"
+          }
+        }
+      }
+    },
     "transfer.beforeCount.message": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "That day's balance was counted then. Made before the count, the transfer is already inside the balance counted."
+            "value": "That day's balance was counted then. Made before the count, the transfer is already inside the balance counted: the difference of the count changes, not the balance."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "В это время в тот день был сверен остаток. Если перевод был до сверки, он уже внутри сверенного остатка."
+            "value": "В это время в тот день был сверен остаток. Если перевод был до сверки, он уже внутри сверенного остатка: изменится разница сверки, а не остаток."
           }
         }
       }
@@ -2493,6 +3938,40 @@
         }
       }
     },
+    "transfer.fee.fromArchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The fee goes to «%@», which comes back from the archive."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Комиссия пойдёт в «%@» — она вернётся из архива."
+          }
+        }
+      }
+    },
+    "transfer.fee.fromArchiveWithParent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The fee goes to «%1$@», which comes back from the archive with «%2$@»."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Комиссия пойдёт в «%1$@» — она вернётся из архива вместе с «%2$@»."
+          }
+        }
+      }
+    },
     "transfer.refusal.amountsDiffer": {
       "extractionState": "manual",
       "localizations": {
@@ -2516,13 +3995,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "One of the accounts is in the archive."
+            "value": "The account is in the archive: bring it back to transfer to or from it."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Один из счетов в архиве."
+            "value": "Счёт в архиве — верните его, чтобы переводить на него или с него."
           }
         }
       }
@@ -2999,6 +4478,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Списано"
+          }
+        }
+      }
+    },
+    "transfer.sheet.time": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Время"
           }
         }
       }

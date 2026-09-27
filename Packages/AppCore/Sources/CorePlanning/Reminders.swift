@@ -180,40 +180,18 @@ public enum ReminderRules {
   // MARK: - Debts
 
   /// The monthly payment of an open debt I owe, on its payment day — the 31st is the last
-  /// day of a shorter month. Paid this month (any live operation on the debt dated in it, or
-  /// a journal `payment` line dated in it: `DebtSchedule.isPaid`, the rule of the debt card),
-  /// the next due date is next month's; so it is when this month's day came before the debt
-  /// began (`DebtSchedule.nextPaymentDate`), and a payment made in the month the debt began,
-  /// which owed nothing, pays its first due (`DebtSchedule.isPaid(_:for:startsOn:…)`). It is
-  /// reminded only while its month has no payment.
+  /// day of a shorter month: the earliest due nothing paid yet (`DebtDueState.firstUnpaid` —
+  /// each payment closes the earliest due still unpaid, counted from the start of the debt),
+  /// overdue ones of earlier months included, while it is within the days the debt is reminded
+  /// ahead. A debt with nothing left on it reminds of nothing.
   private static func debtPayments(
     debts: [Debt], journal: [DebtEntry], ledger: Ledger, today: DateOnly
   ) -> [Reminder] {
-    let month = today.monthKey
-    var paidIn: [MonthKey: Set<UUID>] = [:]
-    func paid(_ debt: Debt, in month: MonthKey) -> Bool {
-      if paidIn[month] == nil {
-        paidIn[month] = DebtSchedule.debtsPaid(in: month, ledger: ledger, journal: journal)
-      }
-      return DebtSchedule.isPaid(
-        debt.id, in: month, paidByOperation: paidIn[month] ?? [], journal: journal)
-    }
-
+    let owed = debts.filter { !$0.closed && $0.direction == .iOwe }
+    let states = DebtDues.states(debts: owed, ledger: ledger, journal: journal, today: today)
     var reminders: [Reminder] = []
-    for debt in debts where !debt.closed && debt.direction == .iOwe {
-      let start = DebtSchedule.start(
-        of: journal.lazy.filter { $0.debtId == debt.id }, calendar: ledger.calendar)
-      func covered(_ month: MonthKey) -> Bool {
-        DebtSchedule.isPaid(debt, for: month, startsOn: start, calendar: ledger.calendar) {
-          paid(debt, in: $0)
-        }
-      }
-      guard
-        let due = DebtSchedule.nextPaymentDate(
-          of: debt, today: today, paidThisMonth: covered(month), calendar: ledger.calendar,
-          startsOn: start)
-      else { continue }
-      if due.monthKey != month, covered(due.monthKey) { continue }
+    for debt in owed {
+      guard let due = states[debt.id]?.firstUnpaid else { continue }
       let ahead = max(0, debt.remindDaysBefore ?? defaultDaysBefore)
       guard due <= today.adding(days: ahead) else { continue }
       reminders.append(

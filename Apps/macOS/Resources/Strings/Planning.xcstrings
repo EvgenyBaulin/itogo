@@ -2555,6 +2555,23 @@
         }
       }
     },
+    "events.tiedPayments": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "from the budget — payments: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "из бюджета — платежи: %@"
+          }
+        }
+      }
+    },
     "events.title": {
       "extractionState": "manual",
       "localizations": {
@@ -2708,6 +2725,23 @@
         }
       }
     },
+    "form.accountArchived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account «%@» is archived — pick another, or the payment is taken from the main account."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт «%@» в архиве — выберите другой, иначе платёж спишется с основного."
+          }
+        }
+      }
+    },
     "form.amount": {
       "extractionState": "manual",
       "localizations": {
@@ -2823,6 +2857,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Заканчивается"
+          }
+        }
+      }
+    },
+    "form.event": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Event"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Событие"
+          }
+        }
+      }
+    },
+    "form.event.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The payment is part of the event's budget: the free sum does not take it off separately."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платёж войдёт в бюджет события: свободная сумма не вычтет его отдельно."
+          }
+        }
+      }
+    },
+    "form.event.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не относится"
           }
         }
       }
@@ -3243,6 +3328,23 @@
         }
       }
     },
+    "form.goal.archivedNamesake": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A goal of this name is in the archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Такая цель есть в архиве"
+          }
+        }
+      }
+    },
     "form.goal.date": {
       "extractionState": "manual",
       "localizations": {
@@ -3256,6 +3358,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "К дате"
+          }
+        }
+      }
+    },
+    "form.goal.delete.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its contributions stay spending as they were, and the goal's subcategory goes to the archive. A new goal starts from zero. ⌘Z takes it back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Её взносы останутся расходами, как были, а подкатегория цели уйдёт в архив. Новая цель начнётся с нуля. Отменить можно через ⌘Z."
+          }
+        }
+      }
+    },
+    "form.goal.delete.outsideGoals": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This goal cannot be deleted: some of its contributions are filed outside the goals category."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эту цель не удалить: у неё есть взносы вне категории целей."
+          }
+        }
+      }
+    },
+    "form.goal.delete.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the archived goal «%@»?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить архивную цель «%@»?"
+          }
+        }
+      }
+    },
+    "form.goal.deleteOld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the old one…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить старую…"
           }
         }
       }
@@ -3341,6 +3511,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "План в месяц"
+          }
+        }
+      }
+    },
+    "form.goal.planHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The plan starts in %@. What goes in above a month's plan counts towards the following months."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Начало плана — %@. Внесённое сверх плана месяца засчитывается в следующие месяцы."
           }
         }
       }
@@ -4163,6 +4350,40 @@
         }
       }
     },
+    "form.toAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На счёт"
+          }
+        }
+      }
+    },
+    "form.toAccount.auto": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As last time, else the main one"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Как в последний раз, иначе основной"
+          }
+        }
+      }
+    },
     "form.trialEnd": {
       "extractionState": "manual",
       "localizations": {
@@ -4333,23 +4554,6 @@
         }
       }
     },
-    "free.goalSavingsInside": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "of it put aside for goals: %@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "из них отложено на цели: %@"
-          }
-        }
-      }
-    },
     "free.grey": {
       "extractionState": "manual",
       "localizations": {
@@ -4384,6 +4588,23 @@
         }
       }
     },
+    "free.mainSpendable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "can spend now"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "можно тратить сейчас"
+          }
+        }
+      }
+    },
     "free.mainWithoutRate": {
       "extractionState": "manual",
       "localizations": {
@@ -4401,6 +4622,23 @@
         }
       }
     },
+    "free.moneyAndGoals": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "on the accounts %1$@ · in goals %2$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "на счетах %1$@ · на целях %2$@"
+          }
+        }
+      }
+    },
     "free.noReconciliation": {
       "extractionState": "manual",
       "localizations": {
@@ -4414,6 +4652,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Мало данных: сделайте первую сверку"
+          }
+        }
+      }
+    },
+    "free.overdue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "overdue due dates included: %@ — their money is counted as not yet gone"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "в том числе просроченные сроки: %@ — считаем, что деньги ещё не ушли"
+          }
+        }
+      }
+    },
+    "free.overdueReview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разобрать…"
           }
         }
       }
@@ -4635,6 +4907,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "+ Цель"
+          }
+        }
+      }
+    },
+    "goals.ahead": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "paid ahead of the plan: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "внесено вперёд по плану: %@"
           }
         }
       }
@@ -4994,6 +5283,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Лимит должен быть больше нуля"
+          }
+        }
+      }
+    },
+    "limit.issue.reconciliationCategory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reconciliation category takes no limit"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На категорию сверки лимит не ставится"
           }
         }
       }
@@ -5718,6 +6024,40 @@
         }
       }
     },
+    "overview.upcoming.approxHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "About this much in the default currency, at today's CBR rate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Примерно в валюте по умолчанию, по сегодняшнему курсу ЦБ"
+          }
+        }
+      }
+    },
+    "overview.upcoming.noRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no rate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "нет курса"
+          }
+        }
+      }
+    },
     "overview.upcomingNone": {
       "extractionState": "manual",
       "localizations": {
@@ -5731,6 +6071,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "В ближайшие 7 дней платить нечего"
+          }
+        }
+      }
+    },
+    "planning.dueBeforeCount.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It was due %@. «Yes» — the operation is dated on the due date, before the reconciliation: its money is already in the reconciled balance. «No» — it is dated now and lowers the balance."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Срок был %@. «Да» — операция встанет в день срока, до сверки: её деньги уже в сверенном остатке. «Нет» — операция запишется сейчас и уменьшит остаток."
+          }
+        }
+      }
+    },
+    "planning.dueBeforeCount.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Did the money for «%1$@» leave before the reconciliation of %2$@ at %3$@?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги за «%1$@» ушли до сверки %2$@ в %3$@?"
           }
         }
       }
@@ -5869,23 +6243,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "план взносов на цели до этой даты"
-          }
-        }
-      }
-    },
-    "planning.free.goalSavings": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "already put aside for goals"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "уже отложено на цели"
           }
         }
       }
@@ -6247,6 +6604,212 @@
         }
       }
     },
+    "reconcile.firstCount.card": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The count of %1$@ recorded %2$@ on «%3$@», while before it the account had only a zero opening balance. If that was the first time you counted the money, it is neither income nor spending."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сверка %1$@ записала %2$@ на «%3$@», хотя до неё у счёта был только нулевой начальный остаток. Если тогда вы впервые пересчитали деньги, это не доход и не расход."
+          }
+        }
+      }
+    },
+    "reconcile.firstCount.fix": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This was the first count — make it the starting point"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это первая сверка — сделать точкой отсчёта"
+          }
+        }
+      }
+    },
+    "reconcile.firstCount.keep": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It is a real difference"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это настоящая разница"
+          }
+        }
+      }
+    },
+    "reconcile.firstCount.more": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "and %lld more"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "and %lld more"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "reconcile.firstCount.total": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The one-total count of %1$@ recorded %2$@ with no count before it. If that was the first time you counted the money, it is neither income nor spending."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сверка одной суммой %1$@ записала %2$@, а до неё сверок не было. Если это был первый пересчёт денег, это не доход и не расход."
+          }
+        }
+      }
+    },
+    "reconcile.firstCountToggle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starting point"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Точка отсчёта"
+          }
+        }
+      }
+    },
+    "reconcile.firstCountToggle.offExpense": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unticked: «Reconciliation» spending %@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если снять: расход «Сверка» %@."
+          }
+        }
+      }
+    },
+    "reconcile.firstCountToggle.offIncome": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unticked: «Reconciliation» income %@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если снять: доход «Сверка» %@."
+          }
+        }
+      }
+    },
+    "reconcile.firstCountToggle.on": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The balance %@ becomes the starting point: no income, no spending."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток %@ — точка отсчёта, без дохода и расхода."
+          }
+        }
+      }
+    },
+    "reconcile.firstCountToggleHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Before 1.2 an empty balance was written as zero, so this is most likely the first real count of the money, and it becomes the starting point. Untick it only if that zero was real."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "До 1.2 пустое поле остатка записывалось нулём, поэтому это, скорее всего, первый настоящий пересчёт денег, и он станет точкой отсчёта. Снимите отметку, только если тот ноль был настоящим."
+          }
+        }
+      }
+    },
     "reconcile.help": {
       "extractionState": "manual",
       "localizations": {
@@ -6298,6 +6861,23 @@
         }
       }
     },
+    "reconcile.kind.account": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "new account's balance"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "остаток нового счёта"
+          }
+        }
+      }
+    },
     "reconcile.kind.accounts": {
       "extractionState": "manual",
       "localizations": {
@@ -6311,6 +6891,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "по счетам"
+          }
+        }
+      }
+    },
+    "reconcile.kind.merge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "accounts merged"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "объединение счетов"
           }
         }
       }
@@ -6332,6 +6929,23 @@
         }
       }
     },
+    "reconcile.kind.setup": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "account setup"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "настройка счетов"
+          }
+        }
+      }
+    },
     "reconcile.kind.total": {
       "extractionState": "manual",
       "localizations": {
@@ -6345,23 +6959,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "одной суммой"
-          }
-        }
-      }
-    },
-    "reconcile.negative": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A balance cannot be below zero."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Остаток не может быть меньше нуля."
           }
         }
       }
@@ -6502,6 +7099,23 @@
         }
       }
     },
+    "reconcile.notRecordedMark": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not recorded"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "не записана"
+          }
+        }
+      }
+    },
     "reconcile.notSaved": {
       "extractionState": "manual",
       "localizations": {
@@ -6593,13 +7207,30 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Every difference becomes an operation in «Reconciliation» on its account, in its currency, dated now"
+            "value": "Every difference becomes an operation in «Reconciliation» on its account and in its currency. Add or fix an operation dated before this count later, and the difference follows by itself."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Каждая разница — операция в категории «Сверка» на своём счёте, в своей валюте, текущим моментом"
+            "value": "Каждая разница — операция в «Сверке» на своём счёте и в своей валюте. Добавите или поправите потом операцию до этой сверки — разница пересчитается сама."
+          }
+        }
+      }
+    },
+    "reconcile.save": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранить"
           }
         }
       }
@@ -6617,6 +7248,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сохранить без записи"
+          }
+        }
+      }
+    },
+    "reconcile.saveOnlyHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The balances are kept; the difference is not recorded as an operation, now or later."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остатки запомнятся, а разница не запишется операцией — ни сейчас, ни потом."
           }
         }
       }
@@ -6770,6 +7418,127 @@
           "stringUnit": {
             "state": "translated",
             "value": "Открыть"
+          }
+        }
+      }
+    },
+    "reminders.overdue.explain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Until a due date is closed, the free sum counts its money as still on the account. If the bank took it before the reconciliation, press «Taken before the reconciliation»."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пока срок не закрыт, свободная сумма считает, что деньги ещё не ушли. Если банк списал их до сверки, нажмите «Уже списано до сверки»."
+          }
+        }
+      }
+    },
+    "reminders.overdue.more": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "and %lld more overdue due date"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "and %lld more overdue due dates"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld просроченных срока"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld просроченных сроков"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld просроченный срок"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "и ещё %lld просроченного срока"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "reminders.overdue.settled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taken before the reconciliation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Уже списано до сверки"
+          }
+        }
+      }
+    },
+    "reminders.overdue.settledHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close the due date without an operation: the money left before the reconciliation of %@, and its balance already holds that."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрыть срок без операции: деньги ушли до сверки %@, и её остаток это уже учёл."
+          }
+        }
+      }
+    },
+    "reminders.overdue.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overdue payments"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Просроченные платежи"
           }
         }
       }
@@ -6963,6 +7732,23 @@
         }
       }
     },
+    "scheduled.accountArchived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the account is archived — move the payment to another one"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "счёт в архиве — перенесите платёж на другой"
+          }
+        }
+      }
+    },
     "scheduled.add": {
       "extractionState": "manual",
       "localizations": {
@@ -7065,6 +7851,23 @@
         }
       }
     },
+    "scheduled.cardArchived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "card archived"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "карта в архиве"
+          }
+        }
+      }
+    },
     "scheduled.chargedDifferently": {
       "extractionState": "manual",
       "localizations": {
@@ -7129,6 +7932,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Подробности"
+          }
+        }
+      }
+    },
+    "scheduled.event": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "event «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "событие «%@»"
           }
         }
       }

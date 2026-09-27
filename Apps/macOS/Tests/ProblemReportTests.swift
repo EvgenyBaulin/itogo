@@ -394,6 +394,55 @@ final class ProblemReportTests: XCTestCase {
     XCTAssertEqual(report.settings["planning.scheduledMatchRejections.count"], "0")
   }
 
+  /// How goal money in another currency is valued goes in as its value; the counts whose
+  /// difference the owner called real and the answers about a count remembered are ids of
+  /// reconciliations and counts: only how many of each.
+  @MainActor
+  func testTheNewPlanningKeys() async throws {
+    let before = ProcessInfo.processInfo.environment["ITOGO_DATA_DIR"]
+    setenv("ITOGO_DATA_DIR", directory.path, 1)
+    defer {
+      if let before { setenv("ITOGO_DATA_DIR", before, 1) } else { unsetenv("ITOGO_DATA_DIR") }
+    }
+    let environment = AppEnvironment()
+    await environment.start(preparing: {
+      try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    })
+    XCTAssertEqual(environment.state, .ready)
+    let settings = try XCTUnwrap(environment.settings)
+    let kept = [UUID(), UUID(), UUID()]
+    let answered = [UUID(), UUID()]
+    try settings.set(
+      PlanningSettings.firstCountKeptKey, to: kept.map(\.uuidString).joined(separator: "\n"))
+    try settings.set(
+      PlanningSettings.beforeCountAnswersKey,
+      to: "\(answered[0].uuidString) before\n\(answered[1].uuidString) after")
+
+    let report = await ProblemReportService.gather(
+      environment: environment, compute: ComputeStore(calendar: .utc))
+
+    XCTAssertEqual(report.settings[PlanningSettings.goalSavingsValuationKey], "today")
+    XCTAssertEqual(report.settings["reconcile.firstCountKept.count"], "3")
+    XCTAssertEqual(report.settings["reconcile.beforeCountAnswers.count"], "2")
+    XCTAssertNil(report.settings[PlanningSettings.firstCountKeptKey])
+    XCTAssertNil(report.settings[PlanningSettings.beforeCountAnswersKey])
+    let files = try ZipReader.files(in: report.zipped())
+    let text = try XCTUnwrap(String(data: try XCTUnwrap(files["settings.txt"]), encoding: .utf8))
+    for id in kept + answered {
+      XCTAssertFalse(text.contains(id.uuidString), text)
+      XCTAssertFalse(text.contains(id.uuidString.lowercased()), text)
+    }
+
+    // Valued at the rates of the deposits, the setting says so; nothing kept, the counts are 0.
+    try settings.set(PlanningSettings.goalSavingsValuationKey, to: "deposits")
+    try settings.set(PlanningSettings.firstCountKeptKey, to: "")
+    let second = await ProblemReportService.gather(
+      environment: environment, compute: ComputeStore(calendar: .utc))
+    await environment.close()
+    XCTAssertEqual(second.settings[PlanningSettings.goalSavingsValuationKey], "deposits")
+    XCTAssertEqual(second.settings["reconcile.firstCountKept.count"], "0")
+  }
+
   /// The list said «Файлов журнала: 2» and the zip held one: a journal that could not be read
   /// when the file was saved — rolled away since the list was gathered, or taken from the
   /// app's reach — was skipped without a word. It leaves a note in its place instead.

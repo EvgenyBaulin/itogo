@@ -179,7 +179,8 @@ struct RemindersTests {
   }
 
   /// Paid this month, the next due date is next month's: on 29 September a debt due on the
-  /// 1st is reminded of 1 October — unless October is already paid too.
+  /// 1st is reminded of 1 October. A payment typed for 1 October pays nothing before its day:
+  /// until then October is still reminded; on the 1st it is paid, and November is not near.
   @Test func aDebtPaidThisMonthIsDueNextMonth() {
     var sketch = quietSketch()
     sketch.book.reconciliations = [
@@ -194,7 +195,11 @@ struct RemindersTests {
     #expect(reminders.first?.urgency == .soon)
 
     sketch.add(.expense, "5000", at: S.at("2026-10-01", 9), debt: S.id(441))
-    #expect(build(sketch, today: S.day("2026-09-29")).isEmpty)
+    #expect(
+      build(sketch, today: S.day("2026-09-29")).map(\.id) == [
+        "debt:\(S.id(441).uuidString.lowercased()):2026-10-01"
+      ])
+    #expect(build(sketch, today: S.day("2026-10-01")).filter { $0.kind == .debtPayment }.isEmpty)
   }
 
   /// A payment written on the debt card alone — a journal `payment` line without an
@@ -258,7 +263,8 @@ struct RemindersTests {
         == nil)
   }
 
-  @Test func aJournalPaymentSettlesTheMonth() {
+  /// A payment written on the debt card alone closes the earliest due, as an operation does.
+  @Test func aJournalPaymentSettlesTheEarliestDue() {
     var sketch = quietSketch()
     sketch.book.reconciliations = [
       Reconciliation(id: S.id(1), date: S.day("2026-09-29"), actualTotalRubE4: .zero)
@@ -266,10 +272,15 @@ struct RemindersTests {
     sketch.debts = [
       Debt(id: S.id(451), direction: .iOwe, type: .loan, name: "Debt", paymentDay: 1)
     ]
+    // Borrowed in the middle of August: the 1st of September is the first due, and the
+    // payment written on the card alone pays it.
     sketch.book.debtEntries = [
       DebtRules.makeEntry(
+        id: S.id(453), debtId: S.id(451), kind: .borrowed, amountE4: S.money("50000"),
+        date: S.day("2026-08-15")),
+      DebtRules.makeEntry(
         id: S.id(452), debtId: S.id(451), kind: .payment, amountE4: S.money("5000"),
-        date: S.day("2026-09-01"))
+        date: S.day("2026-09-01")),
     ]
     let reminders = build(sketch, today: S.day("2026-09-29"))
     #expect(reminders.map(\.id) == ["debt:\(S.id(451).uuidString.lowercased()):2026-10-01"])

@@ -50,9 +50,10 @@ struct FreeToSpendTests: SavingsFixtures {
   }
 
   /// «Несделанный плановый взнос этого месяца» is never more than the plan: with
-  /// a plan of 3 000 and 5 000 taken out of the savings of earlier months, the reserve is the
-  /// 3 000 still to put in, not 8 000 — putting the 5 000 back is no plan of this month.
-  /// Taking back part of this month's own contribution still unmakes that part.
+  /// a plan of 3 000 that starts in September and 5 000 taken out of the savings of earlier
+  /// months, the reserve is the 3 000 still to put in, not 8 000 — putting the 5 000 back is no
+  /// plan of this month. Taking back part of this month's own contribution still unmakes that
+  /// part.
   @Test(arguments: [
     (["-5000"], "3000"),
     (["2000", "-5000"], "3000"),
@@ -62,7 +63,8 @@ struct FreeToSpendTests: SavingsFixtures {
   func theGoalReserveIsNeverMoreThanThePlan(moves: [String], reserve: String) {
     var book = SavingsBook()
     let trip = Goal(
-      id: uid(502), name: "Trip", targetE4: rub("100000"), monthlyPlanE4: rub("3000"))
+      id: uid(502), name: "Trip", targetE4: rub("100000"), monthlyPlanE4: rub("3000"),
+      planStartMonth: MonthKey(year: 2026, month: 9))
     book.contribute("2026-08-10", "20000", goal: trip.id, category: book.goalsRoot)
     for (index, move) in moves.enumerated() {
       let day = "2026-09-0\(index + 2)"

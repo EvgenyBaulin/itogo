@@ -363,17 +363,79 @@ enum AnalyticsBuilder {
 
   static func paymentMethods(ledger: Ledger, period: Period) -> PaymentMethodsSectionModel {
     let report = PaymentMethodsReport(ledger: ledger, period: period)
-    let rows = report.methods.map {
-      MethodRow(
-        key: $0.key, mySpending: $0.mySpending.wholeRubles, turnover: $0.turnover.wholeRubles,
-        cashback: $0.cashback.wholeRubles, cashbackShare: $0.cashbackShare)
+    let cashback = CashbackReport(ledger: ledger, period: period)
+    let lines = Dictionary(grouping: cashback.byHolder(), by: \.holder.accountId)
+    let rows = report.methods.map { method in
+      let accountId: UUID? =
+        if case .paymentMethod(let id) = method.key { id } else { nil }
+      let own = lines[accountId] ?? []
+      return MethodRow(
+        key: method.key, mySpending: method.mySpending.wholeRubles,
+        turnover: method.turnover.wholeRubles, cashback: method.cashback.wholeRubles,
+        cashbackShare: method.cashbackShare,
+        expectedCashback: method.expectedCashback.wholeRubles,
+        cards: own.count > 1
+          ? own.map {
+            CardMethodRow(
+              cardId: $0.holder.cardId, mySpending: $0.mySpending.wholeRubles,
+              turnover: $0.turnover.wholeRubles, expected: $0.expectedRub.wholeRubles,
+              received: $0.receivedRub.wholeRubles)
+          } : [])
     }
     let bars = rows.filter { $0.mySpending > 0 }.map {
       RankedValue(key: $0.key, value: $0.mySpending)
     }
     return PaymentMethodsSectionModel(
       spending: bars.isEmpty ? .notEnoughData(.noSpending) : .ready(bars),
-      table: rows.isEmpty ? .notEnoughData(.noPayments) : .ready(rows))
+      table: rows.isEmpty ? .notEnoughData(.noPayments) : .ready(rows),
+      cashbackMonths: cashbackMonths(cashback, cards: ledger.dataset.cards))
+  }
+
+  /// «Кэшбэк по месяцам» of every line of `report`: all accounts, each account with a line,
+  /// each card with a line. Nothing to show while there are no rules and nothing came.
+  static func cashbackMonths(
+    _ report: CashbackReport, cards: [PaymentCard]
+  ) -> ChartBlock<CashbackMonthsModel> {
+    let received = report.cells.contains { !$0.receivedRub.isZero }
+    guard report.hasRules || received else { return .notEnoughData(.noCashbackRules) }
+    func months(accountId: UUID? = nil, cardId: UUID? = nil) -> [CashbackMonthsModel.Month] {
+      report.byMonth(accountId: accountId, cardId: cardId).map {
+        CashbackMonthsModel.Month(
+          month: $0.month, expected: $0.expectedRub.wholeRubles,
+          received: $0.receivedRub.wholeRubles,
+          difference: ($0.receivedRub - $0.expectedRub).wholeRubles)
+      }
+    }
+    // Every month over all accounts, so every choice lists the same months.
+    let all = months()
+    func filled(_ rows: [CashbackMonthsModel.Month]) -> [CashbackMonthsModel.Month] {
+      let byMonth = Dictionary(rows.map { ($0.month, $0) }, uniquingKeysWith: { a, _ in a })
+      return all.map {
+        byMonth[$0.month]
+          ?? CashbackMonthsModel.Month(month: $0.month, expected: 0, received: 0, difference: 0)
+      }
+    }
+    var choices: [CashbackMonthsModel.Choice] = [.all]
+    var result: [CashbackMonthsModel.Choice: [CashbackMonthsModel.Month]] = [.all: all]
+    var seenAccounts: Set<UUID> = []
+    for line in report.byHolder() {
+      guard let accountId = line.holder.accountId else { continue }
+      if seenAccounts.insert(accountId).inserted {
+        choices.append(.account(accountId))
+        result[.account(accountId)] = filled(months(accountId: accountId))
+      }
+      if let cardId = line.holder.cardId {
+        choices.append(.card(cardId))
+        result[.card(cardId)] = filled(months(cardId: cardId))
+      }
+    }
+    let offered = Set(choices.compactMap { if case .card(let id) = $0 { id } else { nil } })
+    return .ready(
+      CashbackMonthsModel(
+        choices: choices, months: result,
+        cardAccounts: Dictionary(
+          cards.filter { offered.contains($0.id) }.map { ($0.id, $0.accountId) },
+          uniquingKeysWith: { a, _ in a })))
   }
 
   // MARK: - Forecast
@@ -393,7 +455,22 @@ enum AnalyticsBuilder {
     return ForecastSectionModel(
       month: month,
       chart: plot.spent == 0 && plot.p90 == 0
-        ? .notEnoughData(.noSpendingThisMonth) : .ready(plot))
+        ? .notEnoughData(.noSpendingThisMonth) : .ready(plot),
+      accounts: accountBalances(inputs.accounts, remainder: inputs.remainder))
+  }
+
+  /// The balance of every account at the end of the month: the plan of the data with the
+  /// forecast's remainder laid over it. Nothing to show while no pair of any account — in the
+  /// summary or out of it — was counted. A pair counted but without a rate today is shown with
+  /// «нет курса» and its currency listed, never said to be uncounted.
+  static func accountBalances(
+    _ plan: AccountMonthPlan, remainder: MonthForecast.Remainder
+  ) -> ChartBlock<AccountForecast> {
+    let forecast = plan.forecast(remainder: remainder)
+    let counted = forecast.sections.contains { section in
+      section.lines.contains { $0.status != .notCounted }
+    }
+    return counted ? .ready(forecast) : .notEnoughData(.noCountedBalance)
   }
 
   /// The running total of my expenses from the 1st through today; from today straight lines

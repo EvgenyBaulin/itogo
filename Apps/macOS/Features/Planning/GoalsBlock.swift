@@ -6,13 +6,17 @@ import SwiftUI
 // words and symbols, never colour alone.
 
 /// Goals: progress, what is needed a month and whether it is realistic; «Contribute» and
-/// «Withdraw». A goal put in the archive is listed when asked, with «Вернуть».
+/// «Withdraw». A goal put in the archive is listed when asked, with «Вернуть» and «Удалить…».
 struct GoalsBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
   @Binding var sheet: PlanningSheet?
   @State private var showsArchive = false
+  /// The archived goal «Удалить…» asks about.
+  @State private var deleting: Goal?
+  /// Why an archived goal was not deleted, as a key of the Planning table, by the goal's id.
+  @State private var deletionNotes: [UUID: String] = [:]
 
   var body: some View {
     ComputedBlock(
@@ -75,6 +79,15 @@ struct GoalsBlock: View {
               .font(.caption)
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
+            if let ahead = Self.paidAhead(of: status.goal, snapshot), ahead.raw > 0 {
+              Text(
+                verbatim: environment.format(
+                  "goals.ahead", table: "Planning",
+                  environment.money.rounded(ahead, currency: status.currency))
+              )
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(.secondary)
+            }
             HStack(spacing: 8) {
               Button(t("goals.contribute")) { sheet = .moveGoal(status, withdraw: false) }
                 .buttonStyle(.bordered)
@@ -97,10 +110,25 @@ struct GoalsBlock: View {
         archive(snapshot.dataset.goals.filter(\.archived))
       }
     }
+    .confirmationDialog(
+      environment.format("form.goal.delete.title", table: "Planning", deleting?.name ?? ""),
+      isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+      titleVisibility: .visible
+    ) {
+      Button(environment.language("action.delete"), role: .destructive) {
+        if let deleting { delete(deleting) }
+        deleting = nil
+      }
+      Button(environment.language("action.cancel"), role: .cancel) { deleting = nil }
+    } message: {
+      Text(verbatim: t("form.goal.delete.message"))
+    }
   }
 
   /// The goals in the archive, behind «Показывать архив» while there are any. «Вернуть» brings
-  /// one back as it was — one step of ⌘Z, as its archiving was.
+  /// one back as it was — one step of ⌘Z, as its archiving was. «Удалить…» asks the question
+  /// of the goal form: the goal goes, its contributions stay spending as they were; a goal with
+  /// a contribution filed outside «Цели» is not deleted, and the row says so instead.
   @ViewBuilder
   private func archive(_ archived: [Goal]) -> some View {
     if !archived.isEmpty {
@@ -113,17 +141,30 @@ struct GoalsBlock: View {
       .controlSize(.small)
       if showsArchive {
         ForEach(archived) { goal in
-          HStack(spacing: 6) {
-            Image(systemName: "archivebox")
-              .foregroundStyle(.secondary)
-              .accessibilityLabel(Text(verbatim: s("goals.inArchive")))
-            Text(verbatim: goal.name)
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-            Spacer(minLength: 6)
-            Button(s("goals.restore")) { restore(goal) }
-              .buttonStyle(.bordered)
-              .controlSize(.small)
+          VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+              Image(systemName: "archivebox")
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(Text(verbatim: s("goals.inArchive")))
+              Text(verbatim: goal.name)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+              Spacer(minLength: 6)
+              Button(s("goals.restore")) { restore(goal) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+              if GoalForm.offersDeletion(after: deletionNotes[goal.id]) {
+                Button(s("references.deleteAsk")) { askToDelete(goal) }
+                  .buttonStyle(.bordered)
+                  .controlSize(.small)
+              }
+            }
+            if let note = deletionNotes[goal.id] {
+              Text(verbatim: t(note))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
           }
         }
       }
@@ -132,7 +173,55 @@ struct GoalsBlock: View {
 
   private func restore(_ goal: Goal) {
     guard let dependencies else { return }
+    deletionNotes[goal.id] = nil
     Self.restore(goal.id, with: PlanningActions(dependencies), references: environment.references)
+  }
+
+  private func askToDelete(_ goal: Goal) {
+    guard let dependencies else { return }
+    switch Self.askToDelete(goal, with: PlanningActions(dependencies)) {
+    case .ask:
+      deletionNotes[goal.id] = nil
+      deleting = goal
+    case .refused(let note):
+      deletionNotes[goal.id] = note
+    }
+  }
+
+  private func delete(_ goal: Goal) {
+    guard let dependencies else { return }
+    deletionNotes[goal.id] = Self.delete(goal, with: PlanningActions(dependencies))
+  }
+
+  /// What «Удалить…» of an archived row comes to before anything is written.
+  enum DeletionAsk: Equatable {
+    /// The goal may go: the question is asked.
+    case ask
+    /// It may not, or the database could not be read: what the row says instead, as a key
+    /// of the Planning table.
+    case refused(note: String)
+  }
+
+  /// «Удалить…» of the archived `goal`: the question, or why it is not asked — a contribution
+  /// filed outside «Цели» keeps the goal for good (the button then goes), anything else is
+  /// «not saved» and may be tried again. Read from the database as it is now.
+  static func askToDelete(_ goal: Goal, with actions: PlanningActions) -> DeletionAsk {
+    switch actions.deletion(of: goal) {
+    case .success: return .ask
+    case .failure(let refusal): return .refused(note: GoalForm.deletionNote(refusedBy: refusal))
+    case .none: return .refused(note: GoalForm.deletionNote(refusedBy: nil))
+    }
+  }
+
+  /// «Удалить» in the question: the archived `goal` deleted, its operations kept — one step of
+  /// ⌘Z. Nil once it is gone; otherwise what the row says, as a key of the Planning table.
+  @discardableResult
+  static func delete(_ goal: Goal, with actions: PlanningActions) -> String? {
+    switch actions.deleteArchived(goal) {
+    case .deleted: return nil
+    case .refused(let refusal): return GoalForm.deletionNote(refusedBy: refusal)
+    case .notWritten: return GoalForm.deletionNote(refusedBy: nil)
+    }
   }
 
   /// «Вернуть» of the goal `id`: read again from the database — the snapshot the block shows
@@ -168,6 +257,15 @@ struct GoalsBlock: View {
           "goals.projected", table: "Planning", environment.dates.monthTitle(month)))
     }
     return pieces.joined(separator: " · ")
+  }
+
+  /// What went into `goal` above its monthly plans and counts towards the months after this
+  /// one, in the goal's currency (`GoalPlanState.creditOut`); `nil` without a plan.
+  static func paidAhead(of goal: Goal, _ snapshot: DataSnapshot) -> AmountE4? {
+    GoalMath.planState(
+      goal: goal, rows: snapshot.ledger.rows, month: snapshot.today.monthKey,
+      rates: snapshot.planning.dayRates
+    )?.creditOut
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Planning") }

@@ -172,6 +172,97 @@ struct AccountReconciliationTests {
     #expect(saved.balances.allSatisfy { $0.transactionId == nil })
   }
 
+  // MARK: - How a count keeps its difference
+
+  /// Main expected 98 500, the card's dollars 50; its rubles never counted.
+  func sheet() -> (fx: CashFx, rows: [ReconcileRow], t0: Date) {
+    var fx = Fx()
+    fx.count([(Fx.main, .rub, "100000"), (Fx.card, .usd, "50")], at: Fx.at("2026-09-10", 14))
+    fx.add(.expense, "1500", at: Fx.at("2026-09-12", 12))
+    let t0 = Fx.at("2026-09-19", 14, 5)
+    let rows = AccountReconciliation.rows(
+      accounts: fx.accounts, groups: fx.groups, balances: balances(fx), at: t0,
+      locale: Locale(identifier: "en"))
+    return (fx, rows, t0)
+  }
+
+  func record(
+    _ counted: [BalanceKey: AmountE4], write: Bool, startingPoints: Set<BalanceKey> = []
+  ) -> AccountReconciliationRecord {
+    let (fx, rows, t0) = sheet()
+    return AccountReconciliation.record(
+      counted: counted, rows: rows, writeDifference: write, kind: .accounts, at: t0,
+      calendar: .utc, tree: CategoryTree(Fx.categories), categories: (Fx.id(801), Fx.id(802)),
+      rubPerUnit: fx.rubPerUnit, makeId: Ids().make, startingPoints: startingPoints)
+  }
+
+  let mainRub = BalanceKey(accountId: CashFx.main, currency: .rub)
+  let cardUsd = BalanceKey(accountId: CashFx.card, currency: .usd)
+  let cardRub = BalanceKey(accountId: CashFx.card, currency: .rub)
+
+  /// Nothing differs: there was nothing to decline, so every compared count records — its
+  /// difference follows the books from now on. A starting point keeps nothing.
+  @Test func aSaveWithNothingDifferentRecords() {
+    let counted = [mainRub: Fx.money("98500"), cardUsd: Fx.money("50"), cardRub: Fx.money("10")]
+    for write in [false, true] {
+      let saved = record(counted, write: write)
+      #expect(saved.balances.map(\.key) == [mainRub, cardRub, cardUsd])
+      #expect(saved.balances.map(\.recordsDifference) == [true, nil, true])
+      #expect(saved.differences.isEmpty)
+    }
+  }
+
+  /// «Сохранить без записи» with a difference keeps: no operation, and every compared count of
+  /// the sheet — the one at zero too — only follows the numbers. «Записать разницу» records
+  /// every compared count, the one at zero included.
+  @Test func saveWithoutRecordingKeeps() {
+    let counted = [mainRub: Fx.money("98000"), cardUsd: Fx.money("50"), cardRub: Fx.money("10")]
+    let kept = record(counted, write: false)
+    #expect(kept.balances.map(\.recordsDifference) == [false, nil, false])
+    #expect(kept.differences.isEmpty)
+    #expect(kept.balances.allSatisfy { $0.transactionId == nil })
+    let recorded = record(counted, write: true)
+    #expect(recorded.balances.map(\.recordsDifference) == [true, nil, true])
+    #expect(recorded.differences.count == 1)
+  }
+
+  /// A key the owner makes a starting point is written like a first count — no expected
+  /// balance, no difference, nothing to keep and no operation — whatever the books expected.
+  @Test func startingPointsWriteNoDifference() {
+    let counted = [mainRub: Fx.money("98000"), cardUsd: Fx.money("52")]
+    let saved = record(counted, write: true, startingPoints: [mainRub])
+    #expect(saved.balances.map(\.key) == [mainRub, cardUsd])
+    #expect(saved.balances[0].expectedE4 == nil)
+    #expect(saved.balances[0].differenceE4 == nil)
+    #expect(saved.balances[0].recordsDifference == nil)
+    #expect(saved.balances[0].transactionId == nil)
+    #expect(saved.balances[0].actualE4 == Fx.money("98000"))
+    // The dollars still compare: 2 more than expected, recorded.
+    #expect(saved.balances[1].differenceE4 == Fx.money("2"))
+    #expect(saved.balances[1].recordsDifference == true)
+    #expect(saved.differences.map(\.transaction.paymentMethodId) == [Fx.card])
+    // Only compared rows give the expected rubles: the dollars at their rate.
+    #expect(saved.reconciliation.expectedTotalRubE4 != nil)
+    // A starting point that differs does not make the others keep.
+    let alone = record(
+      [mainRub: Fx.money("98000"), cardUsd: Fx.money("50")], write: false,
+      startingPoints: [mainRub])
+    #expect(alone.balances.map(\.recordsDifference) == [nil, true])
+  }
+
+  /// The operation of a difference and its one part take the ids derived from the count, so
+  /// the count and its operation always name each other, whenever it is written again.
+  @Test func aNewDifferenceOperationHasTheDerivedIds() throws {
+    let saved = record([mainRub: Fx.money("98000")], write: true)
+    let count = try #require(saved.balances.first)
+    let operation = try #require(saved.differences.first)
+    #expect(operation.id == ReconcileDifferenceIds.operation(forCount: count.id))
+    #expect(operation.parts.map(\.id) == [ReconcileDifferenceIds.part(forCount: count.id)])
+    #expect(operation.parts.allSatisfy { $0.transactionId == operation.id })
+    #expect(count.transactionId == operation.id)
+    #expect(operation.isBalanced)
+  }
+
   // MARK: - Before the count
 
   /// Counted today at 14:05. Saved at 15:00 and dated today, an operation asks; «Да» stamps

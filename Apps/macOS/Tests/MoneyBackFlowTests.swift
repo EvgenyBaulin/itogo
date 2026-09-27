@@ -355,3 +355,64 @@ final class MoneyBackFlowTests: XCTestCase {
         account: card.id, among: [loan]))
   }
 }
+
+extension MoneyBackFlowTests {
+  /// Anya's 20 $ of a dollar dinner at 90 (1,800 ₽), 2,000 ₽ given back onto the card with the
+  /// purchase's rate typed as 88 from the statement: the purchase is 1,760 ₽, the part closes and
+  /// 240 ₽ are income — one write, which the sheet hands the store as one step. ⌘Z puts it all
+  /// back: the purchase at 90 and 1,800 ₽, no money back, no surplus, no link.
+  func testRecordingWithATypedPurchaseRateIsOneUndoStep() throws {
+    let purchase = try dinner(
+      "подписка", owed: AmountE4(whole: 20), by: anya, daysAgo: 3, currency: .usd, rate: 90,
+      account: freedom)
+    let part = try XCTUnwrap(purchase.parts.first { $0.reimbursable })
+    XCTAssertEqual(part.amountRubE4, AmountE4(whole: 1_800))
+    let store = TransactionsStore(repository: transactions, references: references)
+    store.attach(transactions, references: references)
+    var writes: [StoreWrite] = []
+    store.didWrite = { writes.append($0) }
+
+    let repriced = try PurchaseRate.repriced(
+      purchase, rate: 88, day: calendar.day(of: purchase.transaction.occurredAt))
+    let owed = PurchaseRate.repriced(
+      [OwedPart(part: part, in: purchase.transaction)], of: repriced)
+    let plan = MoneyBack.plan(
+      received: AmountE4(whole: 2_000), currency: .rub, receivedRub: AmountE4(whole: 2_000),
+      rateProvisional: false, person: anya.id, owed: owed, openDebts: [])
+    var draft = TransactionDraft(
+      kind: .reimbursement, occurredAt: noon(today), currency: .rub,
+      amount: AmountE4(whole: 2_000), paymentMethodId: card.id)
+    draft.normalizeSinglePart()
+    let back = try draft.materialize(now: noon(today))
+    let outcome = MoneyBack.outcome(plan, reimbursementTxId: back.id, accountId: card.id)
+    let surplus = try MoneyBack.surplusEntry(
+      try XCTUnwrap(outcome.surplus), of: back.id, on: noon(today), now: noon(today),
+      categoryId: surcharges.id, note: "Доплата")
+    let write = try transactions.apply(
+      outcome, reimbursement: back, extra: [surplus], repricing: [purchase.id: 88],
+      calendar: calendar, at: noon(today))
+    XCTAssertEqual(
+      try transactions.entry(id: purchase.id)?.transaction.amountRubE4,
+      AmountE4(whole: 1_760 + 500 * 88))
+
+    store.recordedMoneyBack(write)
+    XCTAssertTrue(store.canUndo, "recording money back is a step of ⌘Z")
+    store.undo()
+
+    let after = try XCTUnwrap(try transactions.entry(id: purchase.id))
+    XCTAssertEqual(after.transaction.rate, 90)
+    XCTAssertEqual(after.parts.first { $0.reimbursable }?.amountRubE4, AmountE4(whole: 1_800))
+    XCTAssertEqual(after.parts.first { $0.reimbursable }?.reimbursementStatus, .expected)
+    XCTAssertNil(try transactions.entry(id: back.id))
+    XCTAssertNil(try transactions.entry(id: surplus.id))
+    // No link is left: the part waits for all of what it cost again.
+    XCTAssertEqual(
+      try transactions.owedParts().filter { $0.partId == part.id }.map(\.remainingRubE4),
+      [AmountE4(whole: 1_800)])
+    XCTAssertFalse(store.canUndo)
+    let undone = try XCTUnwrap(writes.last)
+    XCTAssertTrue(Set(undone.removed).isSuperset(of: [back.id, surplus.id]))
+    XCTAssertEqual(undone.upserted.first { $0.id == purchase.id }?.transaction.rate, 90)
+    XCTAssertTrue(undone.planningChanged)
+  }
+}

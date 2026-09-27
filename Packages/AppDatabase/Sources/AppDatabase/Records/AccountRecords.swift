@@ -61,6 +61,8 @@ extension Transfer: @retroactive FetchableRecord, @retroactive PersistableRecord
   }
 }
 
+/// `records_difference` is 1, 0 or NULL; any other value — only a hand edit leaves one — reads
+/// as NULL, a count that keeps no mode of its own.
 extension ReconciledBalance: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "reconciliation_balances"
 
@@ -73,7 +75,18 @@ extension ReconciledBalance: @retroactive FetchableRecord, @retroactive Persista
       actualE4: try RowMapping.amount(row, "actual_e4"),
       expectedE4: try RowMapping.optionalAmount(row, "expected_e4"),
       differenceE4: try RowMapping.optionalAmount(row, "difference_e4"),
-      transactionId: RowMapping.optionalUUID(row, "transaction_id"))
+      transactionId: RowMapping.optionalUUID(row, "transaction_id"),
+      recordsDifference: Self.mode(row))
+  }
+
+  private static func mode(_ row: Row) -> Bool? {
+    guard row.hasColumn("records_difference") else { return nil }
+    let value: DatabaseValue = row["records_difference"]
+    switch Int64.fromDatabaseValue(value) {
+    case 1: return true
+    case 0: return false
+    default: return nil
+    }
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -85,5 +98,6 @@ extension ReconciledBalance: @retroactive FetchableRecord, @retroactive Persista
     container["expected_e4"] = expectedE4?.raw
     container["difference_e4"] = differenceE4?.raw
     container["transaction_id"] = transactionId?.uuidString
+    container["records_difference"] = recordsDifference
   }
 }

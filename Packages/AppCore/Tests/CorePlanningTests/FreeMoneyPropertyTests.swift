@@ -212,9 +212,9 @@ struct FreeMoneyPropertyTests {
   // MARK: - Goals
 
   /// For any goal, plan, savings and D: a contribution within this month's plan and within
-  /// what the goal still needs changes neither the money nor the grey line — the money stays
-  /// on the account and moves from «план» to «накоплено». Money saved in earlier months is
-  /// never free.
+  /// what the goal still needs changes neither the money now nor the grey line — the money
+  /// stays on the account and moves from «план» to «накоплено» — and lowers what can be spent
+  /// now by itself. Money saved in earlier months is never free.
   @Test(arguments: seeds)
   func aContributionWithinThePlanChangesNeitherFigure(_ seed: UInt64) {
     var random = SeededRandom(seed: seed)
@@ -224,9 +224,10 @@ struct FreeMoneyPropertyTests {
       let planWhole = random.int(in: 1...50) * 1_000
       let plan = AmountE4(whole: Int64(planWhole))
       let target = AmountE4(whole: Int64(random.int(in: 1...400) * 1_000))
+      // The plan counts from September: what was saved in August is no credit towards it.
       let goal = Goal(
         id: Fx.id(401), name: "Trip", targetE4: target, monthlyPlanE4: plan,
-        subcategoryId: Fx.tripGoal)
+        subcategoryId: Fx.tripGoal, planStartMonth: MonthKey(year: 2026, month: 9))
       fx.goals = [goal]
       // Saved in August, and some of September's plan already put aside.
       let august = AmountE4(whole: Int64(random.int(in: 0...100) * 1_000))
@@ -251,7 +252,10 @@ struct FreeMoneyPropertyTests {
         .expense, contribution.decimal.description, at: Fx.at("2026-09-19", 10),
         category: Fx.tripGoal, goal: goal.id)
       let after = fx.snapshot().freeMoney(until: until, ledger: fx.ledger)
-      #expect(after.main == before.main, "seed \(seed)")
+      // Goal money is not spendable: what can be spent now falls by the contribution, while
+      // the money now and the grey line — the plan now paid — stay.
+      #expect(after.moneyNow == before.moneyNow, "seed \(seed)")
+      #expect(after.main == before.main.map { $0 - contribution }, "seed \(seed)")
       #expect(after.grey == before.grey, "seed \(seed): plan \(plan), +\(contribution)")
       #expect(after.plan.goalSavings == before.plan.goalSavings + contribution)
       #expect(after.plan.goalPlans == before.plan.goalPlans - contribution)
@@ -281,7 +285,7 @@ struct FreeMoneyPropertyTests {
     let after = fx.snapshot().freeMoney
     #expect(after.main == Fx.money("90000"))
     #expect(after.grey == Fx.money("90000"))
-    #expect(!after.lines.contains { $0.key == FreeMoney.Key.goalSavings })
+    #expect(after.goalSavings == .zero)
   }
 
   /// A goal in dollars fed from a ruble account: 9 000 ₽ on a day a dollar was 90 is 100 $ of

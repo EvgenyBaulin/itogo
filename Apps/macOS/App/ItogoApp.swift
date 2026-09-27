@@ -280,12 +280,20 @@ struct MainWindow: View {
   /// The selection of the Overview list and everything opened from it. It lives here
   /// because its bar floats in the entry bar and its sheets hang on the window's root.
   @State private var overviewActions: OperationActions
-  /// The reminders of the day, shown once.
+  /// The reminders of the day, shown once, and the due dates passed and unpaid, asked about
+  /// once a launch.
   @State private var remindersShown: RemindersShown?
 
   struct RemindersShown: Identifiable {
     let reminders: [Reminder]
-    var id: Int { reminders.hashValue }
+    /// The sheet opens with the overdue due dates on top.
+    var asksOverdue = false
+    var id: Int {
+      var hasher = Hasher()
+      hasher.combine(reminders)
+      hasher.combine(asksOverdue)
+      return hasher.finalize()
+    }
   }
 
   /// The day the reminders were last shown, per data set: the owner's are never spent on a
@@ -306,9 +314,11 @@ struct MainWindow: View {
     environment.focusedAccountId = chosen.focusedAccountId
   }
 
+  /// The reminders of the day once a day, and the due dates passed and unpaid at every launch
+  /// (`RemindersPresentation`).
   private func showRemindersOnce() {
-    guard case .ready(let reminders, _) = compute.states.reminders, !reminders.isEmpty,
-      !AppEnvironment.isTestHost, !LaunchOptions.current.suppressesReminders,
+    guard case .ready(let reminders, _) = compute.states.reminders,
+      !AppEnvironment.isTestHost, remindersShown == nil,
       // One question at a time: the setup of the accounts is answered first, then the offer
       // of a report after a crash, then the currencies the bank does not publish, and the
       // reminders follow.
@@ -316,9 +326,33 @@ struct MainWindow: View {
     else { return }
     let today = environment.today.iso
     let defaults = UserDefaults.standard
-    guard defaults.string(forKey: Self.remindersShownKey) != today else { return }
-    defaults.set(today, forKey: Self.remindersShownKey)
-    remindersShown = RemindersShown(reminders: reminders)
+    let overdue = compute.snapshot?.planning.overdue ?? []
+    guard
+      let shown = RemindersPresentation.decide(
+        daily: reminders, overdue: overdue,
+        shownToday: defaults.string(forKey: Self.remindersShownKey) == today,
+        askedThisLaunch: environment.overdueAskedThisLaunch,
+        suppressed: LaunchOptions.current.suppressesReminders)
+    else { return }
+    if shown.marksDailyShown { defaults.set(today, forKey: Self.remindersShownKey) }
+    if shown.asksOverdue {
+      environment.overdueAskedThisLaunch = true
+      AppLog.info(
+        "reminders.overdue.asked", .ui, "the overdue due dates were asked about",
+        [
+          LogPair("scheduled", .count(overdue.filter { !$0.isDebt }.count)),
+          LogPair("debts", .count(overdue.filter(\.isDebt).count)),
+        ])
+    }
+    remindersShown = RemindersShown(reminders: shown.daily, asksOverdue: shown.asksOverdue)
+  }
+
+  /// «Разобрать…» of the free sum: the overdue section alone, whatever was asked at launch.
+  private func showOverdue() {
+    guard environment.showsOverdue else { return }
+    environment.showsOverdue = false
+    guard remindersShown == nil else { return }
+    remindersShown = RemindersShown(reminders: [], asksOverdue: true)
   }
 
   enum Section: String, CaseIterable, Identifiable {
@@ -427,9 +461,12 @@ struct MainWindow: View {
       ReconcileSheet().appDependencies(deps)
     }
     .sheet(item: $remindersShown) { shown in
-      RemindersSheet(reminders: shown.reminders) { selection = .section($0) }
-        .appDependencies(deps)
+      RemindersSheet(reminders: shown.reminders, asksOverdue: shown.asksOverdue) {
+        selection = .section($0)
+      }
+      .appDependencies(deps)
     }
+    .onChange(of: environment.showsOverdue) { _, _ in showOverdue() }
     // A restore or an import this launch could not put in place: said once, with the way on,
     // instead of tried again in silence at every launch. This alert and the two after it wait
     // for the setup of the accounts, the first question of the window.

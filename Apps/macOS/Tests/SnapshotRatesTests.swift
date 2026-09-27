@@ -61,6 +61,18 @@ final class SnapshotRatesTests: XCTestCase {
     XCTAssertEqual(enabled.dayRates.perUnit(CurrencyCode("CNY"), on: day(12)), 13)
   }
 
+  /// The default currency always has today's rate, even when nothing else counts in it and the
+  /// enabled currencies could not be read: «≈ N» of another currency is written in it.
+  func testTheDefaultCurrencyIsInTheRateSet() {
+    let yuan = CurrencyCode("CNY")
+    let dataset = Dataset(accountSettings: AccountSettings(defaultCurrency: yuan))
+    let context = SnapshotContext(dataset: dataset, rates: table, today: today)
+    XCTAssertEqual(context.rubPerUnit[yuan], 13)
+    XCTAssertNil(
+      SnapshotContext(dataset: Dataset(), rates: table, today: today).rubPerUnit[yuan],
+      "a currency nothing counts in gets no rate")
+  }
+
   /// 1 000 ₽ put into the tenge goal on the 5th are 1 000 ÷ 0.185 = 5 405.4054 ₸; the
   /// snapshot shows them in rubles at today's 0.19 ₽ and carries the accounts and the rates.
   func testTheSnapshotCountsAGoalInTengeAtTheRateOfItsDay() throws {

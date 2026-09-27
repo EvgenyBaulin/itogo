@@ -68,6 +68,9 @@ public enum BudgetIssue: String, Hashable, Sendable, CaseIterable {
   case duplicate
   /// The amount is zero or below.
   case nonPositive
+  /// «Сверка» or its income twin — the categories the differences of counts are written in —
+  /// or a category under one of them: a limit there would count money that never was spent.
+  case reconciliationCategory
 }
 
 /// What an amount typed into a limit's field asks to write: one change, one step of ⌘Z.
@@ -325,9 +328,11 @@ public enum LimitRules {
   // MARK: - Validation
 
   /// Why the limit cannot be saved next to `existing`, or `nil` when it can. `existing` may
-  /// contain the limit itself (an edit): a limit never duplicates itself.
+  /// contain the limit itself (an edit): a limit never duplicates itself. `limitless` are the
+  /// reconciliation categories (`PlanningSettings.limitlessCategoryIds`): no limit on them or
+  /// on anything under them.
   public static func validate(
-    _ budget: Budget, tree: CategoryTree, existing: [Budget]
+    _ budget: Budget, tree: CategoryTree, existing: [Budget], limitless: Set<UUID> = []
   ) -> BudgetIssue? {
     switch budget.scope {
     case .category:
@@ -335,6 +340,9 @@ public enum LimitRules {
         return .missingTarget
       }
       guard tree.acceptsLimit(categoryId) else { return .systemCategory }
+      if isLimitless(categoryId, tree: tree, limitless: limitless) {
+        return .reconciliationCategory
+      }
       if category.kind == .income || tree.root(of: categoryId)?.kind == .income {
         return .incomeCategory
       }
@@ -353,6 +361,21 @@ public enum LimitRules {
       }
     }
     return taken ? .duplicate : nil
+  }
+
+  /// Whether `categoryId` is one of `limitless` or lies anywhere under one: whatever the owner
+  /// renamed «Сверка» to or wherever he moved it, it and what is under it take no limit.
+  public static func isLimitless(
+    _ categoryId: UUID?, tree: CategoryTree, limitless: Set<UUID>
+  ) -> Bool {
+    guard !limitless.isEmpty else { return false }
+    var current = tree.category(categoryId)
+    var seen: Set<UUID> = []
+    while let category = current, seen.insert(category.id).inserted {
+      if limitless.contains(category.id) { return true }
+      current = tree.parent(of: category.id)
+    }
+    return categoryId.map(limitless.contains) ?? false
   }
 
   // MARK: - Which limits come first
@@ -442,8 +465,12 @@ public enum LimitRules {
   /// Whether the row of a category offers a field for its limit: a limit could be saved on
   /// it — an expense category, not a system one nor under one — and the category is in use,
   /// neither archived nor under an archived one, where its limit would be hidden.
-  public static func offersLimit(on categoryId: UUID, tree: CategoryTree) -> Bool {
-    guard let category = tree.category(categoryId), tree.acceptsLimit(categoryId) else {
+  public static func offersLimit(
+    on categoryId: UUID, tree: CategoryTree, limitless: Set<UUID> = []
+  ) -> Bool {
+    guard let category = tree.category(categoryId), tree.acceptsLimit(categoryId),
+      !isLimitless(categoryId, tree: tree, limitless: limitless)
+    else {
       return false
     }
     let root = tree.root(of: categoryId) ?? category
@@ -466,41 +493,47 @@ public enum LimitRules {
   /// limit starts this month too.
   public static func settingCategoryLimit(
     _ categoryId: UUID, to amount: AmountE4?, budgets: [Budget], tree: CategoryTree,
-    in month: MonthKey
+    in month: MonthKey, limitless: Set<UUID> = []
   ) -> LimitChange {
     let stored = categoryLimit(of: categoryId, in: budgets)
     guard let amount else { return stored.map(LimitChange.delete) ?? .unchanged }
     guard let stored else {
       return saved(
         Budget(scope: .category, categoryId: categoryId, amountE4: amount), over: nil,
-        budgets: budgets, tree: tree, in: month)
+        budgets: budgets, tree: tree, in: month, limitless: limitless)
     }
     guard stored.amountE4 != amount else { return .unchanged }
     var budget = stored
     budget.amountE4 = amount
-    return saved(budget, over: stored, budgets: budgets, tree: tree, in: month)
+    return saved(
+      budget, over: stored, budgets: budgets, tree: tree, in: month, limitless: limitless)
   }
 
   /// What a new amount typed over a limit's amount writes. The limit is taken as `budgets`
   /// has it — the database now, not the screen, which may not have caught up with the last
   /// edit — and only its amount changes; a limit that is gone writes nothing.
+  /// A limit a reconciliation category held before it took none keeps counting and can be
+  /// deleted, but its amount no longer changes (`limitless`).
   public static func changingAmount(
     of budgetId: UUID, to amount: AmountE4, budgets: [Budget], tree: CategoryTree,
-    in month: MonthKey
+    in month: MonthKey, limitless: Set<UUID> = []
   ) -> LimitChange {
     guard let stored = budgets.first(where: { $0.id == budgetId }),
       stored.amountE4 != amount
     else { return .unchanged }
     var budget = stored
     budget.amountE4 = amount
-    return saved(budget, over: stored, budgets: budgets, tree: tree, in: month)
+    return saved(
+      budget, over: stored, budgets: budgets, tree: tree, in: month, limitless: limitless)
   }
 
   private static func saved(
     _ budget: Budget, over stored: Budget?, budgets: [Budget], tree: CategoryTree,
-    in month: MonthKey
+    in month: MonthKey, limitless: Set<UUID>
   ) -> LimitChange {
-    if let issue = validate(budget, tree: tree, existing: budgets) { return .refused(issue) }
+    if let issue = validate(budget, tree: tree, existing: budgets, limitless: limitless) {
+      return .refused(issue)
+    }
     return .save(saving(budget, over: stored, in: month))
   }
 

@@ -52,8 +52,8 @@ struct FreeMoneyTests {
     let free = fx.snapshot().freeMoney
     #expect(
       free.lines.map(\.key) == [
-        FreeMoney.Key.scheduled, FreeMoney.Key.debts, FreeMoney.Key.goalSavings,
-        FreeMoney.Key.goalPlans, FreeMoney.Key.events,
+        FreeMoney.Key.scheduled, FreeMoney.Key.debts, FreeMoney.Key.goalPlans,
+        FreeMoney.Key.events,
       ])
     #expect(free.lines.allSatisfy { $0.sign == .minus })
     #expect(free.grey == Fx.money("48000"))
@@ -76,38 +76,6 @@ struct FreeMoneyTests {
     #expect(FreeMoney.window(today: today, until: Fx.day("2026-09-01")).end == today)
     #expect(FreeMoney.window(today: today, until: Fx.day("2027-03-01")).end == Fx.day("2027-03-01"))
     #expect(FreeMoney.window(today: today, until: Fx.day("2028-01-01")).end == Fx.day("2027-09-19"))
-  }
-
-  /// Money put into a goal stays on the account, and the grey line holds it back: a
-  /// contribution changes neither figure. 100 000 on the account, a plan of 10 000: before,
-  /// 100 000 − 0 saved − 10 000 plan = 90 000; after 10 000 went in, 100 000 − 10 000 saved −
-  /// 0 plan = 90 000. Through November the two later plans come off both times.
-  @Test func aContributionChangesNeitherFigure() {
-    var fx = Fx()
-    fx.count([(Fx.main, .rub, "100000")], at: Fx.at("2026-09-18", 20))
-    fx.goals = [
-      Goal(
-        id: Fx.id(401), name: "Trip", targetE4: Fx.money("1000000"),
-        monthlyPlanE4: Fx.money("10000"), subcategoryId: Fx.tripGoal)
-    ]
-    let before = fx.snapshot()
-    #expect(before.freeMoney.main == Fx.money("100000"))
-    #expect(before.freeMoney.grey == Fx.money("90000"))
-    #expect(
-      before.freeMoney(until: Fx.day("2026-11-30"), ledger: fx.ledger).grey == Fx.money("70000"))
-
-    fx.add(.expense, "10000", at: Fx.at("2026-09-19", 10), category: Fx.tripGoal, goal: Fx.id(401))
-    let after = fx.snapshot()
-    #expect(after.freeMoney.main == Fx.money("100000"))
-    #expect(after.freeMoney.grey == Fx.money("90000"))
-    #expect(
-      after.freeMoney(until: Fx.day("2026-11-30"), ledger: fx.ledger).grey == Fx.money("70000"))
-
-    // Goal money kept on an account out of the summary: not subtracted twice.
-    fx.settings.reconcileIncludesGoalSavings = false
-    let apart = fx.snapshot().freeMoney
-    #expect(!apart.lines.contains { $0.key == FreeMoney.Key.goalSavings })
-    #expect(apart.grey == Fx.money("100000"))
   }
 
   /// Income still expected is a line of its own, never added: the salary of 5 September is

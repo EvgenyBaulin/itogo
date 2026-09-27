@@ -63,6 +63,24 @@ struct SampleAccountsTests {
     return SHA256.hexDigest(Data(text.utf8))
   }
 
+  /// The starting balances say they are the setup of the accounts, and every row of the sheet
+  /// records its difference: the short one has its operation, the others are at zero. Neither
+  /// is a draw, so the sequence above does not move.
+  @Test func theSheetRecordsAndTheOpeningIsTheSetup() throws {
+    let set = Self.layered()
+    let opening = try #require(set.reconciliations.first { $0.kind == .opening })
+    #expect(opening.origin == .setup)
+    let sheet = try #require(set.reconciliations.first { $0.kind == .accounts })
+    #expect(sheet.origin == nil)
+    let openingRows = set.reconciledBalances.filter { $0.reconciliationId == opening.id }
+    let sheetRows = set.reconciledBalances.filter { $0.reconciliationId == sheet.id }
+    #expect(!openingRows.isEmpty)
+    #expect(openingRows.allSatisfy { $0.recordsDifference == nil && $0.expectedE4 == nil })
+    #expect(!sheetRows.isEmpty)
+    #expect(sheetRows.allSatisfy { $0.recordsDifference == true && $0.expectedE4 != nil })
+    #expect(sheetRows.filter { $0.transactionId != nil }.count == 1)
+  }
+
   @Test func theLayerDrawsTheSameSequence() {
     let history = Self.history()
     let set = history.withAccounts(seed: 20_260_920, calendar: .moscow, language: "en")

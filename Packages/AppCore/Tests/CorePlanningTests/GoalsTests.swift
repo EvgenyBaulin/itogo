@@ -316,6 +316,54 @@ struct GoalsTests: SavingsFixtures {
         categories: CategoryTree(book.categories)))
   }
 
+  /// The month a plan counts from: it starts in the month a plan appears — on a new goal or
+  /// on one that had none, or a plan of zero —, goes when the plan goes, and stays through a
+  /// change of the amount, of the name or of anything else.
+  @Test func withPlanStartSetsClearsAndKeeps() {
+    let september = MonthKey(year: 2026, month: 9)
+    let june = MonthKey(year: 2026, month: 6)
+    let planned = Goal(
+      id: uid(500), name: "Car", targetE4: rub("100000"), monthlyPlanE4: rub("10000"))
+    let unplanned = Goal(id: uid(500), name: "Car", targetE4: rub("100000"))
+    // A plan appears.
+    #expect(
+      GoalRules.withPlanStart(planned, previous: nil, today: today).planStartMonth == september)
+    #expect(
+      GoalRules.withPlanStart(planned, previous: unplanned, today: today).planStartMonth
+        == september)
+    var zero = unplanned
+    zero.monthlyPlanE4 = .zero
+    #expect(
+      GoalRules.withPlanStart(planned, previous: zero, today: today).planStartMonth == september)
+    // No plan, or a plan of zero: no month.
+    #expect(GoalRules.withPlanStart(unplanned, previous: nil, today: today).planStartMonth == nil)
+    #expect(GoalRules.withPlanStart(zero, previous: nil, today: today).planStartMonth == nil)
+    // A plan taken away takes its month along.
+    var started = planned
+    started.planStartMonth = june
+    var removed = started
+    removed.monthlyPlanE4 = nil
+    #expect(GoalRules.withPlanStart(removed, previous: started, today: today).planStartMonth == nil)
+    var zeroed = started
+    zeroed.monthlyPlanE4 = .zero
+    #expect(GoalRules.withPlanStart(zeroed, previous: started, today: today).planStartMonth == nil)
+    // A new amount, a new name: the month stays, the one stored before the edit.
+    var larger = started
+    larger.monthlyPlanE4 = rub("15000")
+    larger.name = "New car"
+    let kept = GoalRules.withPlanStart(larger, previous: started, today: today)
+    #expect(kept.planStartMonth == june)
+    #expect(kept.monthlyPlanE4 == rub("15000"))
+    #expect(kept.name == "New car")
+    larger.planStartMonth = nil
+    #expect(GoalRules.withPlanStart(larger, previous: started, today: today).planStartMonth == june)
+    // A plan an older file kept without a month keeps counting from the first contribution.
+    var older = planned
+    older.planStartMonth = nil
+    #expect(
+      GoalRules.withPlanStart(larger, previous: older, today: today).planStartMonth == nil)
+  }
+
   /// «Withdraw» is a refund with the same part; the amount loses its sign. Both drafts,
   /// saved, give 5 000 − 3 000 = 2 000 saved.
   @Test func withdrawalDraftIsARefundThatTakesTheProgressBack() throws {

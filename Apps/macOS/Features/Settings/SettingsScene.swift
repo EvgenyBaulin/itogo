@@ -13,10 +13,11 @@ struct SettingsView: View {
 
   private var environment: AppEnvironment { deps.environment }
 
-  /// The smallest the window may be made: the nine tabs of the toolbar in either language.
-  static let minimumSize = CGSize(width: 780, height: 460)
+  /// The smallest the window may be made: the ten tabs of the toolbar in either language —
+  /// «Ввод» took about seventy points more.
+  static let minimumSize = CGSize(width: 850, height: 460)
   /// The size it opens at.
-  static let idealSize = CGSize(width: 840, height: 620)
+  static let idealSize = CGSize(width: 910, height: 620)
 
   var body: some View {
     TabView {
@@ -66,6 +67,14 @@ struct SettingsView: View {
             Text(verbatim: environment.language("settings.tab.references", table: "Settings"))
           } icon: {
             Image(systemName: "books.vertical")
+          }
+        }
+      EntrySettingsView()
+        .tabItem {
+          Label {
+            Text(verbatim: environment.language("settings.tab.entry", table: "Settings"))
+          } icon: {
+            Image(systemName: "keyboard")
           }
         }
       TemplatesSettingsView()

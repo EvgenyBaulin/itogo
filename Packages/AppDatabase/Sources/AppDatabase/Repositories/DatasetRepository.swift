@@ -25,7 +25,11 @@ public struct DatasetRepository: Sendable {
   ///   count, exactly as after `Dataset.removing`. Links are all read — whether one counts
   ///   is the ledger's rule, not the loader's.
   /// - Reference books come with their archived rows and debts with the closed ones:
-  ///   archiving or closing must not change past months.
+  ///   archiving or closing must not change past months. The debts the owner deleted come
+  ///   apart (`Dataset.deletedDebts`): no list or figure of the debts shows them, and the
+  ///   operations that point at them still find them.
+  /// - The cards of the accounts, archived ones included, in the owner's order, and the
+  ///   cashback rules in the order they were made.
   /// - The planning book comes in the same read: scheduled payments, prices, expected income
   ///   and its links, limits, reconciliations oldest first with the balances they counted,
   ///   the journals of every debt and the planning settings (`PlanningRepository.book`).
@@ -66,7 +70,7 @@ public struct DatasetRepository: Sendable {
     let places = try Place.order(Column("name")).fetchAll(db)
     let events = try Event.order(Column("name")).fetchAll(db)
     let paymentMethods = try PaymentMethod.order(Column("name")).fetchAll(db)
-    let debts = try Debt.order(Column("name")).fetchAll(db)
+    let allDebts = try Debt.order(Column("name")).fetchAll(db)
     let goals = try Goal.order(Column("name")).fetchAll(db)
     let cashback = try String.fetchOne(
       db, sql: "SELECT value FROM settings WHERE key = ?",
@@ -81,6 +85,8 @@ public struct DatasetRepository: Sendable {
     let groups = try AccountGroup.order(Column("sort"), Column("name")).fetchAll(db)
     let accountSettings = AccountSettings(
       storedValues: try SettingsRepository.values(of: AccountSettings.storageKeys, db: db))
+    let cards = try PaymentCard.order(Column("sort"), Column("name")).fetchAll(db)
+    let cashbackRules = try CashbackRule.order(Column.rowID).fetchAll(db)
     try Task.checkCancellation()
     return Dataset(
       entries: entries,
@@ -90,7 +96,7 @@ public struct DatasetRepository: Sendable {
       places: places,
       events: events,
       paymentMethods: paymentMethods,
-      debts: debts,
+      debts: allDebts.filter { !$0.isDeleted },
       goals: goals,
       planning: planning,
       dismissals: dismissals,
@@ -101,6 +107,9 @@ public struct DatasetRepository: Sendable {
       transfers: transfers,
       accountGroups: groups,
       accountSettings: accountSettings,
-      version: version)
+      version: version,
+      cards: cards,
+      cashbackRules: cashbackRules,
+      deletedDebts: allDebts.filter(\.isDeleted))
   }
 }

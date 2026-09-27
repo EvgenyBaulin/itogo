@@ -30,11 +30,24 @@ public struct ParserVocabulary: Hashable, Sendable {
   public var goals: [Entry]
   public var debts: [Entry]
   public var enabledCurrencies: [CurrencyCode]
+  /// The live cards of the live accounts: a card read in the line names its account too.
+  public var cards: [CardEntry]
+
+  /// A card the line may name, with the account it belongs to.
+  public struct CardEntry: Hashable, Sendable {
+    public var entry: Entry
+    public var accountId: UUID
+
+    public init(entry: Entry, accountId: UUID) {
+      self.entry = entry
+      self.accountId = accountId
+    }
+  }
 
   public init(
     people: [Entry] = [], places: [Entry] = [], paymentMethods: [Entry] = [],
     events: [Entry] = [], goals: [Entry] = [], debts: [Entry] = [],
-    enabledCurrencies: [CurrencyCode] = CurrencyCode.defaultEnabled
+    enabledCurrencies: [CurrencyCode] = CurrencyCode.defaultEnabled, cards: [CardEntry] = []
   ) {
     self.people = people
     self.places = places
@@ -43,6 +56,7 @@ public struct ParserVocabulary: Hashable, Sendable {
     self.goals = goals
     self.debts = debts
     self.enabledCurrencies = enabledCurrencies
+    self.cards = cards
   }
 
   public static let empty = ParserVocabulary()
@@ -90,6 +104,16 @@ public struct ParsedInput: Hashable, Sendable {
     case malformed
   }
 
+  /// A day that was typed as a date but is not one of the calendar: the line is refused with
+  /// the reason rather than saved with the word taken for a price.
+  public enum DateProblem: Hashable, Sendable {
+    /// No year has it: «31.09», «30.02», «2026-04-31». `written` is the word as typed.
+    case noSuchDate(written: String)
+    /// 29 February of a year without one — the year the rule of bare days gives, or the one
+    /// typed.
+    case notInYear(day: Int, month: Int, year: Int)
+  }
+
   public var kind: TransactionKind
   public var amount: Decimal?
   /// The expression exactly as typed, kept when the amount was a formula.
@@ -120,6 +144,10 @@ public struct ParsedInput: Hashable, Sendable {
   public var unknownPlacePhrase: String?
   public var note: String
   public var tokens: [ParsedToken]
+  /// The card the line named; `paymentMethodId` is then its account.
+  public var cardId: UUID?
+  /// Set when the line wrote a day the calendar does not have; `date` is nil then.
+  public var dateProblem: DateProblem?
 
   public init(
     kind: TransactionKind = .expense,
@@ -141,7 +169,9 @@ public struct ParsedInput: Hashable, Sendable {
     unknownPersonPhrase: String? = nil,
     unknownPlacePhrase: String? = nil,
     note: String = "",
-    tokens: [ParsedToken] = []
+    tokens: [ParsedToken] = [],
+    cardId: UUID? = nil,
+    dateProblem: DateProblem? = nil
   ) {
     self.kind = kind
     self.amount = amount
@@ -163,10 +193,12 @@ public struct ParsedInput: Hashable, Sendable {
     self.unknownPlacePhrase = unknownPlacePhrase
     self.note = note
     self.tokens = tokens
+    self.cardId = cardId
+    self.dateProblem = dateProblem
   }
 
-  /// Nothing can be saved without an amount.
-  public var isSaveable: Bool { amount != nil }
+  /// Nothing can be saved without an amount, nor on a day the calendar does not have.
+  public var isSaveable: Bool { amount != nil && dateProblem == nil }
 
   /// The amount as written, when what it comes to is worth showing at once, before Enter:
   /// a formula, a number not written the way the app writes numbers — «1500,5» is shown

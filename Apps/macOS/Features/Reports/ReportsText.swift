@@ -211,7 +211,8 @@ enum ReportFileName {
     case .forWhom: "for-whom"
     case .place: "place"
     case .event: "event"
-    case .paymentMethod: "payment-method"
+    // The grouping is stored as `paymentMethod`; what the owner sees and saves is the account.
+    case .paymentMethod: "account"
     }
   }
 

@@ -243,7 +243,7 @@ enum LimitWrites {
   /// the amount back, as Esc does; a limit is deleted from its menu, after a question.
   static func changeAmount(
     of budget: Budget, typed text: String, budgets: [Budget], tree: CategoryTree,
-    month: MonthKey, store: TransactionsStore
+    month: MonthKey, store: TransactionsStore, limitless: Set<UUID> = []
   ) -> String? {
     switch read(text) {
     case .empty: return nil
@@ -251,7 +251,8 @@ enum LimitWrites {
     case .amount(let amount):
       return apply(
         LimitRules.changingAmount(
-          of: budget.id, to: amount, budgets: budgets, tree: tree, in: month),
+          of: budget.id, to: amount, budgets: budgets, tree: tree, in: month,
+          limitless: limitless),
         store: store)
     }
   }
@@ -265,14 +266,14 @@ enum LimitWrites {
     return changeAmount(
       of: budget, typed: text, budgets: budgets(deps.environment, snapshot),
       tree: snapshot?.ledger.tree ?? CategoryTree(), month: deps.environment.today.monthKey,
-      store: deps.store)
+      store: deps.store, limitless: limitless(deps.environment, snapshot))
   }
 
   /// The amount typed into the row of a category: an empty field deletes its limit, zero is
   /// refused (`LimitRules.settingCategoryLimit`).
   static func setCategoryLimit(
     _ categoryId: UUID, typed text: String, budgets: [Budget], tree: CategoryTree,
-    month: MonthKey, store: TransactionsStore
+    month: MonthKey, store: TransactionsStore, limitless: Set<UUID> = []
   ) -> String? {
     let amount: AmountE4?
     switch read(text) {
@@ -282,7 +283,7 @@ enum LimitWrites {
     }
     return apply(
       LimitRules.settingCategoryLimit(
-        categoryId, to: amount, budgets: budgets, tree: tree, in: month),
+        categoryId, to: amount, budgets: budgets, tree: tree, in: month, limitless: limitless),
       store: store)
   }
 
@@ -308,5 +309,30 @@ enum LimitWrites {
   /// last edit — or as the screen has them when the database cannot be read.
   static func budgets(_ environment: AppEnvironment, _ snapshot: DataSnapshot?) -> [Budget] {
     (try? environment.planning?.budgets()) ?? snapshot?.dataset.planning.budgets ?? []
+  }
+
+  /// «Сверка» and its income twin, as the reconciliation remembers them — read from the
+  /// database now, like the limits, or from the screen when the database cannot be read: no
+  /// limit on them or on anything under them (`LimitRules.isLimitless`).
+  static func limitless(_ environment: AppEnvironment, _ snapshot: DataSnapshot?) -> Set<UUID> {
+    guard let settings = environment.settings else {
+      return snapshot?.dataset.planning.settings.limitlessCategoryIds ?? []
+    }
+    var read = PlanningSettings()
+    do {
+      read.reconcileExpenseCategoryId = try settings.string(
+        PlanningSettings.reconcileExpenseCategoryKey
+      ).flatMap(Self.id)
+      read.reconcileIncomeCategoryId = try settings.string(
+        PlanningSettings.reconcileIncomeCategoryKey
+      ).flatMap(Self.id)
+    } catch {
+      return snapshot?.dataset.planning.settings.limitlessCategoryIds ?? []
+    }
+    return read.limitlessCategoryIds
+  }
+
+  private static func id(_ text: String) -> UUID? {
+    UUID(uuidString: text.trimmingCharacters(in: .whitespacesAndNewlines))
   }
 }

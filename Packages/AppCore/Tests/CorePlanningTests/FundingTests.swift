@@ -107,6 +107,30 @@ struct FundingTests {
 
   // MARK: - Accounts
 
+  /// A payment on an account archived since is paid from the main account: its due is on the
+  /// main account's line, in the main account's money, and the archived one needs nothing.
+  @Test func aPaymentOnAnArchivedAccountIsFundedFromTheMain() {
+    let old = PaymentMethod(id: cardOne, name: "Old", currency: .rub, archived: true)
+    let main = PaymentMethod(id: cardTwo, name: "Main", currency: .rub, isDefault: true)
+    let gym = ScheduledPayment(
+      id: Fx.id(1), name: "Gym", amountE4: Fx.money("2000"), paymentMethodId: old.id, day: 25,
+      nextDate: Fx.day("2026-09-25"))
+    let video = ScheduledPayment(
+      id: Fx.id(2), name: "Video", kind: .subscription, amountE4: Fx.money("10"),
+      currency: .usd, paymentMethodId: old.id, day: 26, nextDate: Fx.day("2026-09-26"))
+    let book = PlanningBook(scheduled: [gym, video])
+    let lines = Funding.month(
+      MonthKey(year: 2026, month: 9), book: book, ledger: Fx.ledger([], book: book),
+      today: Fx.day("2026-09-19"), accounts: [old, main], mainId: main.id,
+      rubPerUnit: [.usd: 90])
+    #expect(
+      lines == [
+        FundingLine(
+          paymentMethodId: main.id, currency: .rub, due: Fx.money("2900"), paid: .zero,
+          remaining: Fx.money("2900"))
+      ])
+  }
+
   /// A dollar subscription on a card that holds only rubles is topped up in rubles: 10 $ at
   /// 90. Without a rate it stays in dollars and says so. A payment that names no account goes
   /// to the main one.

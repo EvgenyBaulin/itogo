@@ -836,6 +836,23 @@
         }
       }
     },
+    "categories.cashbackRulesHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How much cashback to expect is set by the cards’ rules: on the account screen or in Settings → Accounts → “Cashback…”."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сколько кэшбэка ждать, задают правила карт: экран счёта или «Настройки → Счета» → «Кэшбэк…»."
+          }
+        }
+      }
+    },
     "categories.delete.blocked": {
       "extractionState": "manual",
       "localizations": {
@@ -2274,6 +2291,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "В архив"
+          }
+        }
+      }
+    },
+    "references.archiveHint.events": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An archived event is no longer offered when you enter operations or in lists; its operations, Analytics and Reports keep it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Событие в архиве не предлагается при вводе и в списках, а его операции, «Аналитика» и «Отчёты» его сохраняют."
+          }
+        }
+      }
+    },
+    "references.archiveHint.people": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An archived person is no longer offered when you enter operations or in lists; their operations, Analytics and Reports keep them."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Человек в архиве не предлагается при вводе и в списках, а его операции, «Аналитика» и «Отчёты» его сохраняют."
+          }
+        }
+      }
+    },
+    "references.archiveHint.places": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An archived place is no longer offered when you enter operations or in lists; its operations, Analytics and Reports keep it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Место в архиве не предлагается при вводе и в списках, а его операции, «Аналитика» и «Отчёты» его сохраняют."
           }
         }
       }
@@ -4319,6 +4387,23 @@
         }
       }
     },
+    "settings.backups.beforeMigrationMirrored": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copies made before updates are here too, in the «before-migration» folder. Copy rotation never deletes them."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Копии «до обновления» лежат и здесь — в папке «before-migration». Ротация копий их не удаляет."
+          }
+        }
+      }
+    },
     "settings.backups.choose": {
       "extractionState": "manual",
       "localizations": {
@@ -4434,6 +4519,363 @@
           "stringUnit": {
             "state": "translated",
             "value": "Не больше 10 валют"
+          }
+        }
+      }
+    },
+    "settings.entry.field.account": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account and “Charged to account”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт и «Списано со счёта»"
+          }
+        }
+      }
+    },
+    "settings.entry.field.amount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amount"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сумма"
+          }
+        }
+      }
+    },
+    "settings.entry.field.cashback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк"
+          }
+        }
+      }
+    },
+    "settings.entry.field.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Category and subcategory"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Категория и подкатегория"
+          }
+        }
+      }
+    },
+    "settings.entry.field.currency": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Currency and rate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Валюта и курс"
+          }
+        }
+      }
+    },
+    "settings.entry.field.date": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Date"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дата"
+          }
+        }
+      }
+    },
+    "settings.entry.field.debt": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Debt"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Долг"
+          }
+        }
+      }
+    },
+    "settings.entry.field.event": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Event"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Событие"
+          }
+        }
+      }
+    },
+    "settings.entry.field.forWhom": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For whom (from whom, for money back)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На кого (у возврата денег — от кого)"
+          }
+        }
+      }
+    },
+    "settings.entry.field.goal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Goal"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цель"
+          }
+        }
+      }
+    },
+    "settings.entry.field.incomeMonth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For month and expected income (income)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "За месяц и ожидаемое поступление (у дохода)"
+          }
+        }
+      }
+    },
+    "settings.entry.field.note": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Note"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Комментарий"
+          }
+        }
+      }
+    },
+    "settings.entry.field.place": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Place"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Место"
+          }
+        }
+      }
+    },
+    "settings.entry.field.quality": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quality"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оценка"
+          }
+        }
+      }
+    },
+    "settings.entry.keyboardHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tab now moves between text fields only. To have it stop at the menus as well, turn on “Keyboard navigation” in System Settings → Keyboard."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сейчас Tab переходит только между полями ввода. Чтобы он останавливался и на списках, включите «Навигация с клавиатуры» в Системных настройках → Клавиатура."
+          }
+        }
+      }
+    },
+    "settings.entry.moveDown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move Down"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ниже"
+          }
+        }
+      }
+    },
+    "settings.entry.moveUp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move Up"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выше"
+          }
+        }
+      }
+    },
+    "settings.entry.order": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Order of the fields in the ↓ panel"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Порядок полей в панели ↓"
+          }
+        }
+      }
+    },
+    "settings.entry.orderHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag a field up or down. The ↓ panel shows its fields in this order, and Tab moves through them in it. The type of the operation always stays on top; “Split”, “Paid for someone” and “On credit” stay at the bottom."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перетащите поле выше или ниже. В этом порядке панель ↓ показывает поля, и в нём же Tab переходит между ними. Тип операции всегда сверху, «Разделить», «За другого» и «В кредит» — внизу."
+          }
+        }
+      }
+    },
+    "settings.entry.reset": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сбросить"
+          }
+        }
+      }
+    },
+    "settings.entry.returnHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Return in the open ↓ panel saves the operation wherever the cursor is; in an open menu Return picks the item."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Return в открытой панели ↓ сохраняет операцию, где бы ни был курсор; в открытом списке Return выбирает пункт."
           }
         }
       }
@@ -4727,6 +5169,74 @@
         }
       }
     },
+    "settings.planning.goalValuation": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Money saved in foreign-currency goals"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Накопленное в валютных целях"
+          }
+        }
+      }
+    },
+    "settings.planning.goalValuation.deposits": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "at the rates of the contributions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "по курсу взносов"
+          }
+        }
+      }
+    },
+    "settings.planning.goalValuation.today": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "at today's rate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "по сегодняшнему курсу"
+          }
+        }
+      }
+    },
+    "settings.planning.goalValuationHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "At today's rate — when the goal's money is kept in its currency. At the rates of the contributions — when it is kept in rubles: each contribution counts with the rubles of its day."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По сегодняшнему курсу — если деньги цели лежат в её валюте. По курсу взносов — если они лежат в рублях: каждый взнос считается рублями своего дня."
+          }
+        }
+      }
+    },
     "settings.planning.includesGoals": {
       "extractionState": "manual",
       "localizations": {
@@ -4750,13 +5260,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "When on, the grey line of the free sum subtracts what is already saved in goals. Turn it off when goal money is kept on an account outside the summary."
+            "value": "When on, «can spend» leaves out the money already put into goals. Turn it off when goal money is kept on an account outside the summary."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Если включено, серая строка свободной суммы вычитает то, что уже отложено на цели. Выключите, если деньги целей лежат на счёте вне сводки."
+            "value": "Если включено, «можно тратить» не считает деньги, уже отложенные на цели. Выключите, если деньги целей лежат на счёте вне сводки."
           }
         }
       }
@@ -4922,13 +5432,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "What is left of this month's planned contributions is not counted as free money."
+            "value": "Planned contributions not yet made by the chosen date are not counted as free money."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Несделанные плановые взносы этого месяца не считаются свободными деньгами."
+            "value": "Несделанные плановые взносы до выбранной даты не считаются свободными деньгами."
           }
         }
       }
@@ -5048,6 +5558,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Валюты"
+          }
+        }
+      }
+    },
+    "settings.tab.entry": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entry"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ввод"
           }
         }
       }
@@ -5303,23 +5830,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Вернуть"
-          }
-        }
-      }
-    },
-    "templates.rowMenu": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Template actions"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Действия с шаблоном"
           }
         }
       }

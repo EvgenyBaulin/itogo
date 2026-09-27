@@ -295,6 +295,32 @@ struct AccountRulesTests {
       .isEmpty)
   }
 
+  /// The words of a clash name the account in the way: «Card» against «Cash», whose other name
+  /// is «card», is a clash with «Cash» by its other name; a clash by name wins over one by other
+  /// name; the account itself, an empty name and a free one clash with nobody.
+  @Test func theRivalIsNamedByItsOtherName() throws {
+    let cash = PaymentMethod(id: id(2), name: "Cash", kind: .cash, aliases: ["card"])
+    let old = account(3, "Old Visa", archived: true)
+    let visa = PaymentMethod(id: id(4), name: "Visa", aliases: ["Old Visa", "Кошелёк"])
+    let others = [cash, old, visa]
+
+    let byOtherName = try #require(AccountRules.rival(of: " CARD ", account: id(1), among: others))
+    #expect(byOtherName.account.id == cash.id)
+    #expect(byOtherName.byOtherName)
+
+    let byName = try #require(AccountRules.rival(of: "old visa", account: id(1), among: others))
+    #expect(byName.account.id == old.id, "the name of an archived account is taken by it")
+    #expect(!byName.byOtherName, "a clash by name wins over the other name of «Visa»")
+
+    let folded = try #require(AccountRules.rival(of: "кошелек", account: id(1), among: others))
+    #expect(folded.account.id == visa.id && folded.byOtherName, "«ё» and «е» are one letter")
+
+    #expect(AccountRules.rival(of: "Cash", account: cash.id, among: others) == nil)
+    #expect(AccountRules.rival(of: "card", account: cash.id, among: others) == nil)
+    #expect(AccountRules.rival(of: "  ", account: id(1), among: others) == nil)
+    #expect(AccountRules.rival(of: "Т-Банк", account: id(1), among: others) == nil)
+  }
+
   /// «Ё» and «е» are one letter to a name, as the entry line reads them: «Ёлка» is the same
   /// account as «Елка», and a name taken by another account's other name stays taken.
   @Test func aNameWrittenWithЁOrЕIsTheSameName() {

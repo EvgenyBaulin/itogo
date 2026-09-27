@@ -807,6 +807,34 @@ extension EntryDraftModelTests {
     XCTAssertNil(model.draft.amountExpression)
   }
 
+  /// The amount follows the rule of the note and the date: corrected in the panel after the line
+  /// wrote it, it stays — with its formula — when Enter reads the same line again, and the ↓
+  /// button says the next line would carry it; a line that says another amount writes that one.
+  func testAnAmountCorrectedInThePanelOutlivesTheSameLine() throws {
+    let model = makeModel()
+    let parser = InputLineParser(vocabulary: .empty, calendar: .utc)
+    func enter(_ text: String) throws {
+      let parsed = parser.parse(text, today: today)
+      model.apply(parsed, amount: try AmountE4(decimal: XCTUnwrap(parsed.amount)), today: today)
+    }
+    try enter("кофе 250")
+    XCTAssertFalse(model.carriesChoices)
+    model.setTotal(AmountE4(whole: 260), typed: "130*2")
+    let formula = try XCTUnwrap(model.draft.amountExpression)
+    XCTAssertTrue(model.carriesChoices, "the amount is the panel's now")
+
+    try enter("кофе 250")
+    XCTAssertEqual(model.draft.amount, AmountE4(whole: 260))
+    XCTAssertEqual(model.draft.parts.first?.amount, AmountE4(whole: 260))
+    XCTAssertEqual(model.draft.amountExpression, formula)
+
+    try enter("кофе 300")
+    XCTAssertEqual(model.draft.amount, AmountE4(whole: 300))
+    XCTAssertEqual(model.draft.parts.first?.amount, AmountE4(whole: 300))
+    XCTAssertNil(model.draft.amountExpression)
+    XCTAssertFalse(model.carriesChoices)
+  }
+
   /// The amount field takes a formula as the line does, and keeps it the same way: its numbers
   /// written the way the app writes them.
   func testAFormulaTypedInTheAmountFieldIsKept() {
@@ -2313,5 +2341,40 @@ extension EntryDraftModelTests {
     model.draft.kind = .income
     model.applyDefaults(today: today)
     XCTAssertNil(model.saveRefusalKey)
+  }
+
+  /// A payment of a debt deleted — or closed — since keeps its debt in the editor: the menu
+  /// shows it, «(удалён)», and the payment is saved with it unless another debt is picked.
+  func testEditingAPaymentOfADeletedDebtKeepsItsDebt() throws {
+    let live = Debt(direction: .iOwe, type: .loan, name: "Car loan")
+    let deleted = Debt(
+      direction: .iOwe, type: .loan, name: "Old loan", deletedAt: Date(timeIntervalSince1970: 1))
+    let closed = Debt(direction: .iOwe, type: .loan, name: "Paid off", closed: true)
+    for debt in [live, deleted, closed] { try references.save(debt) }
+    var payment = TransactionDraft(amount: AmountE4(whole: 5_000), debtId: deleted.id)
+    payment.normalizeSinglePart()
+    let saved = try payment.materialize()
+    try transactions.save(saved)
+
+    let editor = EntryDraftModel(
+      references: references, transactions: transactions, calendar: .utc,
+      editsSavedOperation: true)
+    editor.reload()
+    editor.draft = TransactionDraft(entry: saved)
+    XCTAssertEqual(
+      editor.debtChoices,
+      [
+        .init(id: live.id, name: live.name, state: .open),
+        .init(id: deleted.id, name: deleted.name, state: .deleted),
+      ])
+    editor.draft.note = "the last payment"
+    XCTAssertEqual(editor.draftForSaving.debtId, deleted.id)
+
+    editor.draft.debtId = closed.id
+    XCTAssertEqual(editor.debtChoices.last, .init(id: closed.id, name: closed.name, state: .closed))
+
+    // A new operation is offered the open debts only.
+    let fresh = makeModel()
+    XCTAssertEqual(fresh.debtChoices.map(\.id), [live.id])
   }
 }

@@ -48,7 +48,8 @@ struct ReminderLeadAndSnoozeTests {
     }
   }
 
-  /// A loan paid on the 25th reminded a week ahead: on the 18th, not the 17th.
+  /// A loan paid on the 25th, taken on 1 September, reminded a week ahead: on the 18th, not
+  /// the 17th.
   @Test func aDebtIsRemindedByItsOwnLead() {
     var fx = Fx()
     let loan = Debt(
@@ -57,7 +58,7 @@ struct ReminderLeadAndSnoozeTests {
     fx.debts = [loan]
     fx.debtEntries = [
       DebtEntry(
-        debtId: loan.id, date: Fx.day("2026-01-10"), amountE4: Fx.money("80000"),
+        debtId: loan.id, date: Fx.day("2026-09-01"), amountE4: Fx.money("80000"),
         kind: .borrowed)
     ]
     #expect(debts(fx, today: "2026-09-17").isEmpty)

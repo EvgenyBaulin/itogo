@@ -78,20 +78,21 @@ struct DebtStartPrepaymentTests {
       november.reminders.filter { $0.kind == .debtPayment }.map(\.due) == [Fx.day("2026-11-05")])
   }
 
-  /// A payment made in October as well is October's by the month rule, like the one of
-  /// September: 5 November is still owed (paying months ahead is the rule of every debt, an
-  /// open question of its own).
-  @Test func aSecondPaymentInTheFirstOwingMonthIsThatMonths() {
+  /// A payment made in October as well closes the next due: each payment closes the earliest
+  /// one still unpaid, so the payments of 25 September and 4 October pay 5 October and 5
+  /// November, and 5 December is next.
+  @Test func aSecondPaymentInTheFirstOwingMonthPaysTheNextDue() {
     var fx = book(start: "2026-09-15", paid: "2026-09-25")
     fx.debtEntries.append(
       DebtEntry(
         debtId: Self.phone.id, date: Fx.day("2026-10-04"), amountE4: Fx.money("-3000"),
         kind: .payment))
     let snapshot = fx.snapshot(today: Fx.day("2026-10-06"), now: Fx.at("2026-10-06", 12))
-    #expect(snapshot.debts.iOwe.first?.nextPayment == Fx.day("2026-11-05"))
+    #expect(snapshot.debts.iOwe.first?.nextPayment == Fx.day("2026-12-05"))
     #expect(fx.plan(until: "2026-10-31", today: Fx.day("2026-10-06")).debts == .zero)
+    #expect(fx.plan(until: "2026-11-30", today: Fx.day("2026-10-06")).debts == .zero)
     #expect(
-      fx.plan(until: "2026-11-30", today: Fx.day("2026-10-06")).debts == Fx.money("3000"))
+      fx.plan(until: "2026-12-31", today: Fx.day("2026-10-06")).debts == Fx.money("3000"))
   }
 
   /// A debt that began on 3 September, before its day: September owes, so a payment on the
@@ -151,7 +152,7 @@ struct DebtStartPrepaymentTests {
     // Paid before the month it began: the first due is still owed.
     #expect(next("2026-09-19", paid: true, start: "2026-11-10") == Fx.day("2026-12-05"))
     // The first month owed: paid in it, the next is next month's, as for any debt.
-    #expect(next("2026-09-19", paid: true, start: "2026-09-05") == Fx.day("2026-10-05"))
+    #expect(next("2026-09-19", paid: true, start: "2026-09-03") == Fx.day("2026-10-05"))
     #expect(next("2026-09-19", paid: true, start: nil) == Fx.day("2026-10-05"))
   }
 }

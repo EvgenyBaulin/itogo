@@ -6,6 +6,13 @@ import SwiftUI
 /// the first reminders of the day are counted. «Later» closes it until tomorrow; × on a line
 /// puts that reminder off until it changes.
 ///
+/// With `asksOverdue` — at every launch while due dates have passed unpaid, or from
+/// «Разобрать…» of the free sum — «Просроченные платежи» come first: one row per payment or
+/// debt with its earliest unpaid due, read live, so an answer brings the next due of the same
+/// payment. «Провести» pays it; «Уже списано до сверки» closes it without an operation when a
+/// count made on the due day or later may already hold its money; «Позже» leaves everything for
+/// the next launch.
+///
 /// A line goes away once its action or × lands: acting twice on a row that stayed would pay
 /// or skip the next due date (review of the app, 19.09). Paying a reminder pays its own due
 /// date, never whatever the payment is due next.
@@ -16,6 +23,8 @@ struct RemindersSheet: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.openURL) private var openURL
   let reminders: [Reminder]
+  /// The overdue section on top.
+  var asksOverdue = false
   /// Opens the section a reminder is about: Planning or Debts.
   var openSection: (MainWindow.Section) -> Void = { _ in }
 
@@ -25,18 +34,50 @@ struct RemindersSheet: View {
   /// The reminder whose debt sheet is open: it goes once the payment lands, and the payment
   /// is for its due.
   @State private var debtReminder: Reminder?
-  /// The reminder whose «Провести» waits for the answer to «Это было до сверки в 14:05?».
-  @State private var asking: Reminder?
+  /// The payment whose «Провести» waits for the answer about a count, and what it pays.
+  @State private var asking: Asking?
+  /// «Это было до сверки в 14:05?» about every count of the day, in turn.
   @State private var countQuestion: BeforeTheCountQuestion?
+  /// «Деньги за «X» ушли до сверки 10 сентября в 14:00?» — a due before a later count.
+  @State private var dueQuestion: BeforeTheCountQuestion?
+  /// The due a debt sheet opened from an overdue row pays.
+  @State private var debtDue: DateOnly?
 
-  private var shown: [Reminder] { reminders.filter { !handled.contains($0.id) } }
+  /// What «Провести» is waiting to pay once the question is answered: a daily reminder's due,
+  /// or an overdue row's.
+  struct Asking {
+    var payment: ScheduledPayment?
+    var debt: Debt?
+    var due: DateOnly
+    /// The id the failure is shown under.
+    var rowId: String
+    /// The reminder to take away once it is paid; `nil` for an overdue row, which is live.
+    var reminder: Reminder?
+    /// The moment «Провести» dates the payment with before any answer.
+    var moment: Date
+  }
+
+  /// The overdue rows, live; empty unless the sheet asks about them.
+  private var overdue: [OverdueDue] {
+    asksOverdue ? (compute.snapshot?.planning.overdue ?? []) : []
+  }
+
+  /// The daily reminders not handled yet, less those an overdue row stands for.
+  private var shown: [Reminder] {
+    let asked = Set(overdue.map(\.id))
+    return reminders.filter { !handled.contains($0.id) && !asked.contains($0.id) }
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t("reminders.title")).font(.headline)
       ScrollView {
         VStack(alignment: .leading, spacing: 10) {
-          if shown.isEmpty {
+          if !overdue.isEmpty {
+            overdueSection
+            if !shown.isEmpty { Divider() }
+          }
+          if shown.isEmpty && overdue.isEmpty {
             Text(verbatim: t("reminders.allDone")).foregroundStyle(.secondary)
           }
           ForEach(shown) { reminder in
@@ -45,28 +86,243 @@ struct RemindersSheet: View {
           }
         }
       }
-      .frame(maxHeight: 360)
+      .frame(maxHeight: 420)
+      // «Да» keeps the moment of the due, inside the count where the money already is; «Нет»
+      // dates the payment now. On a view of its own: one dialog per view.
+      .beforeTheCountQuestion($dueQuestion) { count, wasBefore in
+        guard let asking else { return }
+        finish(
+          asking,
+          at: AccountReconciliation.dueAnswer(
+            count: count, occurredAt: asking.moment, wasBefore: wasBefore, now: Date()))
+      }
       HStack {
         Spacer()
-        Button(t(shown.isEmpty ? "reminders.close" : "reminders.later")) { dismiss() }
-          .keyboardShortcut(.cancelAction)
+        Button(t(shown.isEmpty && overdue.isEmpty ? "reminders.close" : "reminders.later")) {
+          dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
       }
     }
     .padding(20)
-    .frame(width: 540)
+    .frame(width: 560)
     .sheet(item: $debtSheet) { sheet in
       DebtSheetView(
         sheet: sheet,
         onDone: {
           if let debtReminder { handled.insert(debtReminder.id) }
-        }, payDue: debtReminder?.due
+        }, payDue: debtReminder?.due ?? debtDue
       )
       .handingOver(dependencies)
     }
-    // The answer dates the payment before or after the count, and «Провести» goes on.
-    .beforeTheCountQuestion($countQuestion) { count, wasBefore in
+    // The answers date the payment before or after the counts of its day, and «Провести»
+    // goes on.
+    .beforeTheCountQuestions($countQuestion) { moment in
       guard let asking else { return }
-      pay(asking, answer: (count, wasBefore))
+      finish(asking, at: moment)
+    }
+  }
+
+  // MARK: Overdue due dates
+
+  private var overdueSection: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Label {
+        Text(verbatim: t("reminders.overdue.title"))
+      } icon: {
+        Image(systemName: "exclamationmark.circle")
+      }
+      .font(.subheadline.weight(.semibold))
+      Text(verbatim: t("reminders.overdue.explain"))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      ForEach(overdue) { due in
+        overdueRow(due)
+      }
+    }
+  }
+
+  private func overdueRow(_ due: OverdueDue) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(verbatim: overdueText(due))
+      Text(verbatim: overdueCaption(due))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      HStack(spacing: 8) {
+        Button(t("scheduled.markAsPaid")) { payOverdue(due) }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        if let count = due.countAfter {
+          Button(t("reminders.overdue.settled")) { settle(due) }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(
+              environment.format(
+                "reminders.overdue.settledHelp", table: "Planning",
+                environment.dates.dayAndMonth(environment.calendar.day(of: count))))
+        }
+      }
+      if let reason = failed[due.id] {
+        Text(verbatim: reason)
+          .font(.caption)
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityElement(children: .contain)
+  }
+
+  /// «Аренда — 5 сентября, 30,000.00 ₽», as the reminder of the due would say it.
+  private func overdueText(_ due: OverdueDue) -> String {
+    let day = environment.dates.dayAndMonth(due.due)
+    let amount = environment.money.exact(due.amount, currency: due.currency)
+    return environment.format(
+      due.isDebt ? "reminders.debtPayment" : "reminders.payment", table: "Planning", due.name, day,
+      amount)
+  }
+
+  /// «просрочено», and «и ещё 2 просроченных срока» when the same payment owes more.
+  private func overdueCaption(_ due: OverdueDue) -> String {
+    let overdue = t("reminders.urgency.overdue")
+    guard due.moreOverdue > 0 else { return overdue }
+    return overdue + " · "
+      + environment.language.format(
+        "reminders.overdue.more", table: "Planning", counts: due.moreOverdue)
+  }
+
+  /// «Провести» of an overdue row: a scheduled payment asks about a later count first, then
+  /// pays; a debt opens its payment form at the moment the answer gives, from the account it
+  /// is paid from.
+  private func payOverdue(_ due: OverdueDue) {
+    guard let dependencies else { return }
+    failed[due.id] = nil
+    switch due.subject {
+    case .scheduled(let id):
+      guard let payment = compute.snapshot?.dataset.planning.scheduled.first(where: { $0.id == id })
+      else { return }
+      ask(
+        Asking(
+          payment: payment, due: due.due, rowId: due.id, moment: paidAt(due.due)),
+        actions: PlanningActions(dependencies))
+    case .debt(let id):
+      guard let debt = compute.snapshot?.dataset.debts.first(where: { $0.id == id }) else { return }
+      ask(
+        Asking(debt: debt, due: due.due, rowId: due.id, moment: paidAt(due.due)),
+        actions: PlanningActions(dependencies))
+    }
+  }
+
+  /// «Уже списано до сверки».
+  private func settle(_ due: OverdueDue) {
+    guard let dependencies else { return }
+    let done: Bool
+    switch due.subject {
+    case .scheduled(let id):
+      guard let payment = compute.snapshot?.dataset.planning.scheduled.first(where: { $0.id == id })
+      else { return }
+      done = PlanningActions(dependencies).settle(payment: payment, due: due.due)
+    case .debt(let id):
+      guard let debt = compute.snapshot?.dataset.debts.first(where: { $0.id == id }) else { return }
+      done = DebtActions(dependencies).settle(debt: debt, due: due.due)
+    }
+    if !done { failed[due.id] = t("form.notSaved") }
+  }
+
+  /// Asks what «Провести» of `asking` has to ask, then pays: the dated question when the due
+  /// lies before a later count, the questions of the day otherwise — an answer remembered for
+  /// a count is used without asking (`step(for:isDebt:moment:)`).
+  private func ask(_ asking: Asking, actions: PlanningActions) {
+    let payer: PlanningActions.DuePayer
+    if let payment = asking.payment {
+      payer = .scheduled(
+        payment, amount: SubscriptionMath.price(of: payment, on: asking.due, prices: prices))
+    } else if let debt = asking.debt {
+      payer = .debt(debt)
+    } else {
+      return
+    }
+    let question = actions.countQuestion(paying: payer, due: asking.due, on: asking.moment)
+    switch Self.step(for: question, isDebt: asking.debt != nil, moment: asking.moment) {
+    case .pay(let moment):
+      finish(asking, at: moment)
+    case .askTheDay(let questions):
+      self.asking = asking
+      countQuestion = BeforeTheCountQuestion(
+        count: questions.count, reconciliation: questions.reconciliation, questions: questions)
+    case .askTheDue(let count, let due, let reconciliation):
+      self.asking = asking
+      dueQuestion = BeforeTheCountQuestion(
+        count: count, reconciliation: reconciliation, due: due,
+        name: asking.payment?.name ?? asking.debt?.name)
+    }
+  }
+
+  /// What «Провести» does before it pays.
+  enum PayStep {
+    /// Pays at `moment`: a scheduled payment is written at once; a debt's payment form opens
+    /// there — `nil`: now — and asks about the counts of that day itself when it is saved.
+    case pay(at: Date?)
+    /// «Это было до сверки в 14:05?» about every count of the operation's day, in turn.
+    case askTheDay(CountQuestions)
+    /// «Деньги за «X» ушли до сверки 10 сентября в 14:00?», with «Больше не спрашивать» for
+    /// the count's reconciliation.
+    case askTheDue(count: Date, due: DateOnly, reconciliation: UUID)
+  }
+
+  /// What «Провести» of a due dated `moment` does with the question `ask` names. A debt is
+  /// paid through its payment form, which asks «Это было до сверки в 14:05?» about the counts
+  /// of its day on «Сохранить» — asked here too, the owner would answer it twice —, so a
+  /// debt only ever gets the dated question here, and without a count the form starts now.
+  static func step(for ask: DueCountAsk, isDebt: Bool, moment: Date) -> PayStep {
+    switch ask {
+    case .none:
+      return .pay(at: isDebt ? nil : moment)
+    case .sameDay(let day):
+      if isDebt { return .pay(at: moment) }
+      switch day {
+      case .none: return .pay(at: moment)
+      case .answered(let stamp): return .pay(at: stamp)
+      case .ask(let questions): return .askTheDay(questions)
+      }
+    case .dueBefore(let count, let due, let reconciliation):
+      return .askTheDue(count: count, due: due, reconciliation: reconciliation)
+    case .dueAnswered(let stamp):
+      return .pay(at: stamp)
+    }
+  }
+
+  /// Pays what was asked about at `moment`: a scheduled payment at once, a debt through its
+  /// payment form — started at `moment` (`nil`: its own start) from the account of its last
+  /// payment.
+  private func finish(_ asking: Asking, at moment: Date?) {
+    self.asking = nil
+    if let debt = asking.debt {
+      guard let snapshot = compute.snapshot else { return }
+      let mainId = snapshot.dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id
+      let account = DebtAccount.lastPayment(
+        of: debt, ledger: snapshot.ledger, journal: snapshot.dataset.planning.debtEntries,
+        mainId: mainId)
+      debtReminder = asking.reminder
+      debtDue = asking.due
+      debtSheet = .payAt(debt, at: moment, account: account)
+      return
+    }
+    guard let dependencies, let payment = asking.payment else { return }
+    let actions = PlanningActions(dependencies)
+    let paidAt = moment ?? asking.moment
+    if actions.markAsPaid(
+      payment, due: asking.due,
+      amount: SubscriptionMath.price(of: payment, on: asking.due, prices: prices), on: paidAt,
+      account: payment.paymentMethodId, charged: nil, updatePrice: false)
+    {
+      if let reminder = asking.reminder { handled.insert(reminder.id) }
+    } else {
+      // Not in silence: the row says why (review of the app, 19.09).
+      let currency = payment.currency
+      failed[asking.rowId] = environment.format(
+        actions.failureKey(currency: currency, on: paidAt, at: .reminder), table: "Planning",
+        currency.code)
     }
   }
 
@@ -112,18 +368,13 @@ struct RemindersSheet: View {
       {
         Button(t("scheduled.markAsPaid")) {
           guard let dependencies else { return }
-          // Dated on the day of the latest count of the balance it moves and saved after that
-          // count, it asks first, as the entry line and the form do.
-          if let count = PlanningActions(dependencies).countToAsk(
-            paying: status.payment, due: due,
-            amount: SubscriptionMath.price(of: status.payment, on: due, prices: prices),
-            on: paidAt(due))
-          {
-            asking = reminder
-            countQuestion = BeforeTheCountQuestion(count: count)
-          } else {
-            pay(reminder, answer: nil)
-          }
+          // Dated before a later count of the balance it moves, or on the day of a count and
+          // saved after it, it asks first, as the entry line and the form do.
+          ask(
+            Asking(
+              payment: status.payment, due: due, rowId: reminder.id, reminder: reminder,
+              moment: paidAt(due)),
+            actions: PlanningActions(dependencies))
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -178,30 +429,6 @@ struct RemindersSheet: View {
     -> Bool
   {
     status.nextUnpaid == due && ScheduledRow.canPay(status, matches: matches)
-  }
-
-  /// «Провести» of a reminder: its own due date, on the payment's account — the main one when
-  /// it has none or it is archived — with «Списано со счёта» prefilled when that account does
-  /// not hold the payment's currency; dated by the answer about a count when one was asked.
-  private func pay(_ reminder: Reminder, answer: (count: Date, wasBefore: Bool)?) {
-    guard let dependencies, let status = status(reminder), let due = reminder.due else { return }
-    let actions = PlanningActions(dependencies)
-    let moment =
-      answer.map { FormAccounts.stamped(paidAt(due), $0, calendar: environment.calendar) }
-      ?? paidAt(due)
-    if actions.markAsPaid(
-      status.payment, due: due,
-      amount: SubscriptionMath.price(of: status.payment, on: due, prices: prices), on: moment,
-      account: status.payment.paymentMethodId, charged: nil, updatePrice: false)
-    {
-      handled.insert(reminder.id)
-    } else {
-      // Not in silence: the row says why (review of the app, 19.09).
-      let currency = status.payment.currency
-      failed[reminder.id] = environment.format(
-        actions.failureKey(currency: currency, on: moment, at: .reminder), table: "Planning",
-        currency.code)
-    }
   }
 
   /// The moment the payment of `due` is dated with (`PlanningActions.paidAt`).

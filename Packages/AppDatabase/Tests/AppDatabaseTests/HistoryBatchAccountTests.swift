@@ -142,6 +142,8 @@ struct HistoryBatchAccountTests {
     #expect(counts["reconciliation_balances"] == set.reconciledBalances.count)
     #expect(counts["reimbursement_links"] == set.links.count)
     #expect(counts["scheduled_payments"] == set.planning.scheduled.count)
+    #expect(counts["cards"] == set.cards.count)
+    #expect(counts["cashback_rules"] == set.cashbackRules.count)
     let settings = SettingsRepository(writer: stack.writer)
     #expect(try settings.string(AccountSettings.setupKey) == "done")
     #expect(try settings.defaultCurrency() == .rub)

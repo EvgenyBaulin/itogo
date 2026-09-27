@@ -61,9 +61,10 @@ struct AccountSetupPropertyTests {
   }
 
   /// The setup finished with the accounts as they are, a main account picked at random among
-  /// the live ones and counts drawn for some of their currencies: that account alone is main,
-  /// the counts are one opening reconciliation — starting points —, the currencies held are on,
-  /// and the history does not move.
+  /// the live ones and counts drawn for some of their currencies — below zero too —: that
+  /// account alone is main, the counts are one opening reconciliation of the setup — starting
+  /// points —, only the balances typed are written (an account left empty stays uncounted), the
+  /// currencies held are on, and the history does not move.
   @Test(arguments: Array(UInt64(621)...UInt64(640)))
   func finishingTheSetupMakesThePickedAccountMainAndCountsTheBalances(seed: UInt64) throws {
     let book = try RandomLegacyDatabase(seed: seed, accounts: 1...5)
@@ -102,9 +103,18 @@ struct AccountSetupPropertyTests {
     }
     let openings = dataset.planning.reconciliations.filter { $0.kind == .opening }
     #expect(openings.count == (opening.isEmpty ? 0 : 1), "seed \(seed)")
+    #expect(openings.allSatisfy { $0.origin == .setup }, "seed \(seed): not the setup's")
     let counted = Dictionary(
       uniqueKeysWithValues: dataset.planning.reconciledBalances.map { ($0.key, $0) })
     #expect(counted.count == opening.count, "seed \(seed)")
+    for account in live {
+      for currency in account.currencies {
+        let key = BalanceKey(accountId: account.id, currency: currency)
+        #expect(
+          (counted[key] != nil) == (opening[key] != nil),
+          "seed \(seed): \(key) counted though nothing was typed, or the other way")
+      }
+    }
     for (key, amount) in opening {
       let balance = try #require(counted[key], "seed \(seed): \(key) was not counted")
       #expect(balance.actualE4 == amount)

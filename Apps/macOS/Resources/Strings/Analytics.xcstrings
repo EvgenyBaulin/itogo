@@ -1,6 +1,210 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "analytics.accounts.account": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт"
+          }
+        }
+      }
+    },
+    "analytics.accounts.end": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "By %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На %@"
+          }
+        }
+      }
+    },
+    "analytics.accounts.excluded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · not in the summary"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · не в сводке"
+          }
+        }
+      }
+    },
+    "analytics.accounts.groupTotal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total ≈ %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Всего ≈ %@"
+          }
+        }
+      }
+    },
+    "analytics.accounts.negative": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "may go below zero"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "может уйти в минус"
+          }
+        }
+      }
+    },
+    "analytics.accounts.negativeList": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "May go below zero: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Может уйти в минус: %@"
+          }
+        }
+      }
+    },
+    "analytics.accounts.noRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no rate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "нет курса"
+          }
+        }
+      }
+    },
+    "analytics.accounts.now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Now"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сейчас"
+          }
+        }
+      }
+    },
+    "analytics.accounts.range": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Range"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Интервал"
+          }
+        }
+      }
+    },
+    "analytics.accounts.total": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total in the summary ≈ %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Всего в сводке ≈ %@"
+          }
+        }
+      }
+    },
+    "analytics.accounts.unanchored": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never reconciled, no forecast: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не сверены, прогноза нет: %@"
+          }
+        }
+      }
+    },
+    "analytics.accounts.withoutRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No rate, left out: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без курса, не учтено: %@"
+          }
+        }
+      }
+    },
     "analytics.anomaly.badSpendingRise": {
       "extractionState": "manual",
       "localizations": {
@@ -394,6 +598,23 @@
         }
       }
     },
+    "analytics.basis.accountBalances": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "balance now, planned income and payments, day-to-day spending by each account's share"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "остаток сейчас, поступления и платежи по плану, повседневные траты по доле счёта"
+          }
+        }
+      }
+    },
     "analytics.basis.anomalies": {
       "extractionState": "manual",
       "localizations": {
@@ -417,13 +638,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "average receipt: whole receipts of purchases ÷ their number"
+            "value": "average receipt: whole receipts of purchases less refunds ÷ their number"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "средний чек: чеки покупок целиком ÷ их число"
+            "value": "средний чек: чеки покупок целиком за вычетом возвратов ÷ их число"
           }
         }
       }
@@ -492,6 +713,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "по дате покупки"
+          }
+        }
+      }
+    },
+    "analytics.basis.cashbackMonths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "expected by the month of purchase, received by the month it is for; difference = received − expected"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ожидаемый — по месяцу покупки, полученный — по месяцу отнесения; разница = получено − ожидалось"
           }
         }
       }
@@ -638,13 +876,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "turnover: whole receipts minus refunds, by date; cashback by the month it is for"
+            "value": "turnover: whole receipts minus refunds, by the day of purchase; expected cashback by the cards’ rules, received by the month it is for"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "оборот: чеки целиком минус возвраты, по дате; кэшбэк — по месяцу отнесения"
+            "value": "оборот: чеки целиком минус возвраты, по дню покупки; ожидаемый кэшбэк — по правилам карт, полученный — по месяцу отнесения"
           }
         }
       }
@@ -700,6 +938,23 @@
         }
       }
     },
+    "analytics.block.accountBalances": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balances at the end of the month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остатки на конец месяца"
+          }
+        }
+      }
+    },
     "analytics.block.anomalies": {
       "extractionState": "manual",
       "localizations": {
@@ -730,6 +985,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Плохие по категориям"
+          }
+        }
+      }
+    },
+    "analytics.block.cashbackMonths": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback by month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк по месяцам"
           }
         }
       }
@@ -1159,6 +1431,57 @@
         }
       }
     },
+    "analytics.cashback.allHolders": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All accounts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все счета"
+          }
+        }
+      }
+    },
+    "analytics.cashback.holder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account or card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт или карта"
+          }
+        }
+      }
+    },
+    "analytics.cashback.noCard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без карты"
+          }
+        }
+      }
+    },
     "analytics.change.expenses": {
       "extractionState": "manual",
       "localizations": {
@@ -1301,13 +1624,47 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cashback"
+            "value": "Received cashback"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Кэшбэк"
+            "value": "Полученный кэшбэк"
+          }
+        }
+      }
+    },
+    "analytics.column.cashbackDifference": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Difference"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разница"
+          }
+        }
+      }
+    },
+    "analytics.column.cashbackExpected": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expected cashback"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидаемый кэшбэк"
           }
         }
       }
@@ -1427,6 +1784,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Счёт"
+          }
+        }
+      }
+    },
+    "analytics.column.month": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Месяц"
           }
         }
       }
@@ -2621,6 +2995,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "В этом периоде нет плохих трат"
+          }
+        }
+      }
+    },
+    "analytics.reason.noCashbackRules": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No cashback rules — set them on the account screen."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правил кэшбэка нет — задайте их на экране счёта."
+          }
+        }
+      }
+    },
+    "analytics.reason.noCountedBalance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No account reconciled yet — the balances are unknown"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ни один счёт ещё не сверен — остатки неизвестны"
           }
         }
       }

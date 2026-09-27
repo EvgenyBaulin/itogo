@@ -99,8 +99,11 @@ struct AnalyticsWindow: View {
     if section == .forecast, let remainder = compute.states.forecast.value,
       let snapshot = compute.snapshot
     {
-      // The same planned payments as the Overview card: scheduled ones included.
-      inputs = ForecastInputs(planned: snapshot.planning.planned.total, remainder: remainder)
+      // The same planned payments as the Overview card: scheduled ones included; and the plan
+      // of every account's balance through the end of the month.
+      inputs = ForecastInputs(
+        planned: snapshot.planning.planned.total, remainder: remainder,
+        accounts: snapshot.accountPlan)
     }
     return AnalyticsRequest(
       section: section,

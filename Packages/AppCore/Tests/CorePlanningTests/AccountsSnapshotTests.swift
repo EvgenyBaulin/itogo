@@ -356,4 +356,41 @@ struct AccountsSnapshotTests {
     #expect(planning.accounts.inSummaryTotalRub == B.money("118500"))
     #expect(PlanningSnapshot.empty.accounts == .empty)
   }
+
+  /// A credit card holds what is owed to the bank as a balance below zero, and it counts as
+  /// such: counted at −30,000 beside Сбер at 100,000, «Всего» and what can be spent now are
+  /// 70,000; a purchase of 2,000 on the card takes the card to −32,000 and both to 68,000. The
+  /// sign is in the figure, never in a colour.
+  @Test func aNegativeBalanceCountsNegativeInAllAndTheFreeSum() throws {
+    var book = AccountsBook()
+    book.accounts = [
+      PaymentMethod(id: B.tbank, name: "Credit", currency: .rub, isDefault: true),
+      PaymentMethod(id: B.sber, name: "Сбер", currency: .rub),
+    ]
+    book.groups = []
+    book.counts = [
+      AccountsBook.count(31, B.tbank, .rub, "-30000"),
+      AccountsBook.count(35, B.sber, .rub, "100000"),
+    ]
+    book.entries = []
+    book.transfers = []
+    func free(_ snapshot: AccountsSnapshot) -> AmountE4? {
+      FreeMoney(
+        accounts: snapshot, plan: CashPlan(), stillExpected: .zero, today: B.day("2026-09-19"),
+        until: B.day("2026-09-30")
+      ).main
+    }
+
+    let counted = book.snapshot()
+    #expect(counted.line(of: B.tbank)?.keys.first?.balance == B.money("-30000"))
+    #expect(counted.inSummaryTotalRub == B.money("70000"))
+    #expect(free(counted) == B.money("70000"))
+
+    book.entries = [AccountsBook.expense(41, "2026-09-12", "2000", account: B.tbank)]
+    let spent = book.snapshot()
+    #expect(spent.line(of: B.tbank)?.keys.first?.balance == B.money("-32000"))
+    #expect(spent.line(of: B.tbank)?.totalRub == B.money("-32000"))
+    #expect(spent.inSummaryTotalRub == B.money("68000"))
+    #expect(free(spent) == B.money("68000"))
+  }
 }

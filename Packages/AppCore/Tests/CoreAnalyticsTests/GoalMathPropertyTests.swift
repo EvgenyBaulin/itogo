@@ -113,15 +113,28 @@ struct GoalMathPropertyTests {
         random.entries.map { modelAmount($0, to: goal, perUnit: random.perUnit) })
       #expect(counted == model, "seed \(seed), \(goal.name)")
 
+      // What each month put into the goal, and the month of the first money: the plan counts
+      // from there, what went in above it is credit for the months after.
+      var byMonth: [MonthKey: AmountE4] = [:]
+      for entry in random.entries {
+        let amount = modelAmount(entry, to: goal, perUnit: random.perUnit)
+        guard !amount.isZero else { continue }
+        byMonth[
+          CalendarContext.utc.day(of: entry.transaction.occurredAt).monthKey, default: .zero] +=
+          amount
+      }
       for monthIndex in 0..<4 {
         let month = MonthKey(year: 2026, month: 1 + monthIndex)
-        let thisMonth = AmountE4.sum(
-          random.entries.filter {
-            CalendarContext.utc.day(of: $0.transaction.occurredAt).monthKey == month
-          }.map { modelAmount($0, to: goal, perUnit: random.perUnit) })
+        let thisMonth = byMonth[month] ?? .zero
         let plan = goal.monthlyPlanE4 ?? .zero
+        var credit = AmountE4.zero
+        if let first = byMonth.keys.min(), first < month {
+          for earlier in MonthKey.range(first, through: month.previous) {
+            credit = max(.zero, credit + (byMonth[earlier] ?? .zero) - plan)
+          }
+        }
         let expected = min(
-          max(.zero, plan - thisMonth), plan, max(.zero, goal.targetE4 - model))
+          max(.zero, plan - credit - thisMonth), plan, max(.zero, goal.targetE4 - model))
         let left = GoalMath.planLeft(
           goals: [goal], rows: ledger.rows, month: month, rates: random.rates)
         #expect(left[goal.id] ?? .zero == expected, "seed \(seed), \(goal.name), \(month)")

@@ -565,13 +565,15 @@ struct TransactionListing: Sendable {
 
   /// The transfers the filters of the window find, newest first. A transfer is neither income
   /// nor spending and has no category, quality, person, place or event: any of those chosen
-  /// leaves transfers out. The period takes the day it was made; the account finds a transfer
-  /// from it or to it; the search looks in its note, the names of its accounts and the amounts
-  /// sent and received, written as an operation's amount is for its search.
+  /// leaves transfers out, and so does a card: a transfer moves an account's money, no card
+  /// pays it. The period takes the day it was made; the account finds a transfer from it or to
+  /// it; the search looks in its note, the names of its accounts and the amounts sent and
+  /// received, written as an operation's amount is for its search.
   static func transfers(matching filter: EntryFilter, in ledger: Ledger) -> [Transfer] {
-    guard filter.kind == nil, filter.categoryId == nil, filter.subcategoryId == nil,
-      filter.quality == nil, filter.forWhom == nil, filter.personId == nil,
-      filter.placeId == nil, filter.eventId == nil, filter.reimbursementStatus == nil
+    guard filter.kind == nil, filter.cardId == nil, filter.categoryId == nil,
+      filter.subcategoryId == nil, filter.quality == nil, filter.forWhom == nil,
+      filter.personId == nil, filter.placeId == nil, filter.eventId == nil,
+      filter.reimbursementStatus == nil
     else { return [] }
     let words = filter.text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
     let names = Names(ledger.dataset).paymentMethods
@@ -649,7 +651,7 @@ struct TransactionListing: Sendable {
       category: category,
       forWhom: RowCell.of(cells.map(\.forWhom)),
       event: RowCell.of(cells.map(\.event)),
-      paymentMethod: transaction.paymentMethodId.flatMap { names.paymentMethods[$0] },
+      paymentMethod: names.account(of: transaction),
       quality: RowCell.of(cells.map(\.quality)),
       amount: transaction.amountE4, currency: transaction.currency,
       amountRub: transaction.amountRubE4, partCount: entry.parts.count,
@@ -713,6 +715,7 @@ struct TransactionListing: Sendable {
     let places: [UUID: String]
     let events: [UUID: String]
     let paymentMethods: [UUID: String]
+    let cards: [UUID: String]
 
     init(_ dataset: Dataset) {
       func index<T>(
@@ -727,6 +730,17 @@ struct TransactionListing: Sendable {
       places = index(dataset.places, \.id, \.name)
       events = index(dataset.events, \.id, \.name)
       paymentMethods = index(dataset.paymentMethods, \.id, \.name)
+      cards = index(dataset.cards, \.id, \.name)
+    }
+
+    /// The account column of an operation: «Т-Банк · Black» when it names a card, only «Сбер»
+    /// when its card is called like its account (`CardRules.displayName`).
+    func account(of transaction: Transaction) -> String? {
+      guard let id = transaction.paymentMethodId, let account = paymentMethods[id] else {
+        return nil
+      }
+      return CardRules.displayName(
+        account: account, card: transaction.cardId.flatMap { cards[$0] })
     }
   }
 }

@@ -47,6 +47,55 @@ struct RefundRulesTests {
       ])
   }
 
+  // MARK: Refunds following their purchase
+
+  /// A single purchase of 100 $ at 90 (9,000 ₽) with a refund of 90 $ (8,100 ₽): the owner
+  /// types 50 — the purchase 5,000 ₽, the refund 4,500 ₽ at the purchase's manual rate; the last
+  /// 10 $ refunded later complete the part with 500 ₽. At 200: 20,000 ₽, 18,000 ₽ and 2,000 ₽.
+  @Test func refundsFollowAPurchaseRepricedByHand() throws {
+    let when = moment("2026-03-02")
+    let bought = TransactionEntry(
+      transaction: Transaction(
+        id: id(1), kind: .expense, occurredAt: when, currency: .usd, amountE4: money(100),
+        rate: 90, rateDate: day("2026-03-02"), rateSource: .cbr, amountRubE4: money(9000)),
+      parts: [
+        TransactionPart(
+          id: id(11), transactionId: id(1), amountE4: money(100), amountRubE4: money(9000))
+      ])
+    let first = refund(2, amount: 90, rubles: 8100, on: "2026-03-10")
+    for (rate, refunded, last) in [(Decimal(50), 4500, 500), (Decimal(200), 18_000, 2000)] {
+      let repriced = try PurchaseRate.repriced(bought, rate: rate, day: day("2026-03-02"))
+      let followed = RefundRules.following(purchase: repriced, refunds: [first])
+      #expect(followed.count == 1)
+      #expect(followed.first?.transaction.amountRubE4 == money(refunded))
+      #expect(followed.first?.parts.first?.amountRubE4 == money(refunded))
+      #expect(followed.first?.transaction.rate == rate)
+      #expect(followed.first?.transaction.rateSource == .manual)
+      #expect(followed.first?.transaction.accountAmountE4 == first.transaction.accountAmountE4)
+      let rest = RefundRules.rubles(
+        refundAmount: money(10), part: repriced.parts[0],
+        refundedBefore: (money(90), money(refunded)))
+      #expect(rest == money(last))
+    }
+    // Nothing changed, nothing comes back.
+    let same = RefundRules.following(
+      purchase: bought, refunds: RefundRules.following(purchase: bought, refunds: [first]))
+    #expect(same.isEmpty)
+  }
+
+  /// Two refunds of one part share it oldest first; a deleted one is left out.
+  @Test func refundsFollowOldestFirstAndSkipDeletedOnes() {
+    let refunds = [
+      refund(2, amount: 30, rubles: 2000, on: "2026-03-10"),
+      refund(3, amount: 30, rubles: 2000, on: "2026-03-12", deleted: true),
+      refund(4, amount: 30, rubles: 2000, on: "2026-03-15"),
+    ]
+    let followed = RefundRules.following(purchase: purchase(), refunds: refunds)
+    #expect(followed.map(\.id) == [id(2), id(4)])
+    #expect(followed.map(\.transaction.amountRubE4) == [money(2700), money(2700)])
+    #expect(followed.allSatisfy { $0.transaction.rate == 90 })
+  }
+
   // MARK: The index
 
   @Test func aFullRefundTakesThePartToZeroWhateverItsOwnRublesSay() {

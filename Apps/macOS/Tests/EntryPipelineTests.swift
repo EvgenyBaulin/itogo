@@ -516,25 +516,24 @@ final class DetailsPanelKeyTests: XCTestCase {
   }
 }
 
-/// «Сохранение — Enter» (spec, «Панель ↓»): an operation filled in the ↓ panel alone, with the
-/// line empty, is saved by «Save» and by Return in a field of the panel, not only by Return in
-/// the empty line, which nothing on screen suggests.
+/// «Сохранение — Enter»: a line to read, or the ↓ panel open. While the panel is open «Save»
+/// and Return always answer — with the save, or with the reason there is none — whatever the
+/// draft holds: a Return that does nothing is what the owner reported.
 final class EntrySavingTests: XCTestCase {
-  func testTheOpenPanelAloneCanBeSaved() {
-    XCTAssertTrue(EntrySaving.isOffered(line: "", showsDetails: true, draftCanSave: true))
-    XCTAssertTrue(EntrySaving.isOffered(line: " \n", showsDetails: true, draftCanSave: true))
+  func testTheOpenPanelAlwaysAnswersReturn() {
+    XCTAssertTrue(EntrySaving.isOffered(line: "", showsDetails: true))
+    XCTAssertTrue(EntrySaving.isOffered(line: " \n", showsDetails: true))
   }
 
-  func testNothingToSaveIsNotOffered() {
-    XCTAssertFalse(EntrySaving.isOffered(line: "", showsDetails: false, draftCanSave: true))
-    XCTAssertFalse(EntrySaving.isOffered(line: " ", showsDetails: true, draftCanSave: false))
+  func testNothingToSaveWithThePanelClosed() {
+    XCTAssertFalse(EntrySaving.isOffered(line: "", showsDetails: false))
+    XCTAssertFalse(EntrySaving.isOffered(line: "  ", showsDetails: false))
   }
 
   /// A line is read on Enter and says itself what stops it.
   func testALineIsAlwaysOffered() {
-    XCTAssertTrue(
-      EntrySaving.isOffered(line: "coffee 250", showsDetails: false, draftCanSave: false))
-    XCTAssertTrue(EntrySaving.isOffered(line: "coffee", showsDetails: true, draftCanSave: false))
+    XCTAssertTrue(EntrySaving.isOffered(line: "coffee 250", showsDetails: false))
+    XCTAssertTrue(EntrySaving.isOffered(line: "coffee", showsDetails: true))
   }
 }
 
@@ -642,7 +641,12 @@ final class EntryBarFocusTests: XCTestCase {
     let editor = try XCTUnwrap(window.firstResponder as? NSTextView, "the field editor")
     editor.insertText("250", replacementRange: editor.selectedRange())
     settle(0.1)
+    // The panel alone says no category: the first Return asks for it, the next one saves.
     editor.insertNewline(nil)
+    settle()
+    XCTAssertEqual(try transactions.count(), 0, "the first Return asked for the category")
+    let still = try XCTUnwrap(window.firstResponder as? NSTextView, "the amount keeps the focus")
+    still.insertNewline(nil)
     settle()
 
     XCTAssertEqual(try transactions.count(), 1, "Return in the panel saved the operation")

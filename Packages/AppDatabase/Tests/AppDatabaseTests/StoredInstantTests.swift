@@ -122,18 +122,23 @@ struct StoredInstantTests {
     #expect(try #require(try models.feedback().first).at <= event)
   }
 
-  /// ⌘Z of a deletion stamps `updated_at` by the same rule.
-  @Test func aRestoreStampsItsMomentCutToTheMillisecond() throws {
+  /// A deletion stamps `updated_at` and `deleted_at` by the same rule; its ⌘Z gives back the
+  /// moment the operation had before, as it was stored.
+  @Test func aDeletionStampsItsMomentCutToTheMillisecondAndItsUndoGivesTheOldOneBack() throws {
     let stack = try TestSupport.makeStack()
     let fixture = try TestSupport.seedReferences(stack)
     var entry = try TestSupport.makeEntry()
     entry.transaction.paymentMethodId = fixture.paymentMethod.id
     let repository = TransactionRepository(writer: stack.writer)
     try repository.save(entry)
-    let effects = try repository.softDelete(id: entry.id, at: event.addingTimeInterval(-60))
-    try repository.restore(id: entry.id, at: event, effects: effects)
     let id = entry.id.uuidString
+    let saved = try text(stack, "SELECT updated_at FROM transactions WHERE id = '\(id)'")
+    let effects = try repository.softDelete(id: entry.id, at: event)
     #expect(try text(stack, "SELECT updated_at FROM transactions WHERE id = '\(id)'") == eventText)
+    #expect(try text(stack, "SELECT deleted_at FROM transactions WHERE id = '\(id)'") == eventText)
+    try repository.restore(id: entry.id, at: event.addingTimeInterval(60), effects: effects)
+    #expect(saved != nil)
+    #expect(try text(stack, "SELECT updated_at FROM transactions WHERE id = '\(id)'") == saved)
     #expect(try text(stack, "SELECT deleted_at FROM transactions WHERE id = '\(id)'") == nil)
   }
 

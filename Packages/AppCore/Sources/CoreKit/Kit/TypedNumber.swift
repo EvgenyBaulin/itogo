@@ -20,6 +20,11 @@ import Foundation
 /// only before the decimal part: «1 234,56» is 1 234.56, «1 5» is refused. Spaces around the
 /// number are trimmed. A leading sign is read; the formula around a number is the business of
 /// the expression evaluator, and so is the `k` of thousands.
+///
+/// One exception: in front of the `k` of thousands a lone comma is always the decimal one —
+/// «1,500к» is 1.5 thousand, 1 500, never a million and a half (`read(_:loneCommaIsDecimal:)`,
+/// which the expression evaluator asks for such a number). Two commas still group thousands
+/// there, and with both kinds the rightmost is decimal, as everywhere.
 public enum TypedNumber {
   /// What a typed number says, and how the app writes it back.
   public struct Reading: Hashable, Sendable {
@@ -54,8 +59,11 @@ public enum TypedNumber {
   /// A typed number taken apart, or nil for text that is not one number.
   /// Digits a `Decimal` does not hold — more than a few hundred of them — are not a number
   /// either (`isTooLarge` tells which of the two it is).
-  public static func read(_ text: String) -> Reading? {
-    guard let digits = taken(apart: text),
+  ///
+  /// `loneCommaIsDecimal`: the number stands in front of the `k` of thousands, where a single
+  /// comma is the decimal one whatever the digits around it — «1,500» of «1,500к» is 1.5.
+  public static func read(_ text: String, loneCommaIsDecimal: Bool = false) -> Reading? {
+    guard let digits = taken(apart: text, loneCommaIsDecimal: loneCommaIsDecimal),
       let magnitude = decimalValue(
         of: digits.integer + (digits.fraction.isEmpty ? "" : "." + digits.fraction))
     else { return nil }
@@ -67,7 +75,7 @@ public enum TypedNumber {
   /// The sign and the digits of a typed number, grouping and leading zeros dropped, or nil for
   /// text that is not one number.
   private static func taken(
-    apart text: String
+    apart text: String, loneCommaIsDecimal: Bool = false
   ) -> (
     isNegative: Bool, integer: String, fraction: String
   )? {
@@ -82,7 +90,7 @@ public enum TypedNumber {
       unspaced.contains(where: isASCIIDigit)
     else { return nil }
     let decimal: Int?
-    switch decimalSeparator(in: unspaced) {
+    switch decimalSeparator(in: unspaced, loneCommaIsDecimal: loneCommaIsDecimal) {
     case .noDecimal: decimal = nil
     case .at(let index): decimal = index
     case .refused: return nil
@@ -116,8 +124,10 @@ public enum TypedNumber {
   /// Whether the text is written as one number, but one with more whole digits than a
   /// `Decimal` holds — hundreds of nines. `read` refuses it; this tells it from a typo, so the
   /// entry line can say the amount is too large rather than that it does not read.
-  public static func isTooLarge(_ text: String) -> Bool {
-    guard let digits = taken(apart: text) else { return false }
+  public static func isTooLarge(_ text: String, loneCommaIsDecimal: Bool = false) -> Bool {
+    guard let digits = taken(apart: text, loneCommaIsDecimal: loneCommaIsDecimal) else {
+      return false
+    }
     return decimalValue(of: digits.integer) == nil
   }
 
@@ -177,13 +187,17 @@ public enum TypedNumber {
     case refused
   }
 
-  /// Which separator, if any, is the decimal one.
-  private static func decimalSeparator(in characters: [Character]) -> DecimalSeparator {
+  /// Which separator, if any, is the decimal one. `loneCommaIsDecimal`: a single comma is,
+  /// whatever the digits around it (a number in front of the `k` of thousands).
+  private static func decimalSeparator(
+    in characters: [Character], loneCommaIsDecimal: Bool = false
+  ) -> DecimalSeparator {
     let commas = characters.indices.filter { characters[$0] == "," }
     let dots = characters.indices.filter { characters[$0] == "." }
     if commas.isEmpty && dots.isEmpty { return .noDecimal }
     if dots.isEmpty {
       guard commas.count == 1 else { return .noDecimal }
+      if loneCommaIsDecimal { return .at(commas[0]) }
       return commaGroupsThousands(characters, at: commas[0]) ? .noDecimal : .at(commas[0])
     }
     if commas.isEmpty { return dots.count == 1 ? .at(dots[0]) : .noDecimal }

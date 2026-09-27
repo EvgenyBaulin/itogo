@@ -67,6 +67,23 @@ struct EventsBlock: View {
               .font(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
             }
+            let tied = Self.tiedDues(of: plan.event, snapshot)
+            if !tied.isEmpty {
+              Text(
+                verbatim: environment.format(
+                  "events.tiedPayments", table: "Planning",
+                  tied.map { due in
+                    let name =
+                      snapshot.dataset.planning.scheduled.first { $0.id == due.paymentId }?.name
+                      ?? "—"
+                    return "\(name) \(environment.dates.dayAndMonth(due.due)) — "
+                      + environment.money.exact(due.amount, currency: due.currency)
+                  }.joined(separator: "; "))
+              )
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+            }
             if !plan.isActive, let last = plan.lastTimeTotal {
               Text(
                 verbatim: environment.format(
@@ -100,95 +117,16 @@ struct EventsBlock: View {
       .filter { seen.insert($0.event.id).inserted }
   }
 
-  private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
-}
-
-/// The event a form edits, or none for a new one.
-struct EventFormItem: Identifiable {
-  let event: Event?
-  var id: String { event?.id.uuidString ?? "new" }
-}
-
-/// An event and its budget: its name, its days, and how much it may cost — an empty budget is
-/// none. «Save» writes one `PlanningChange`, one step of ⌘Z.
-struct EventForm: View {
-  @Dependency(\.environment) private var environment
-  @Dependency(\.compute) private var compute
-  @Environment(\.dependencies) private var dependencies
-  let original: Event?
-  @State private var name = ""
-  @State private var start = Date()
-  @State private var end = Date()
-  @State private var budget: AmountE4 = .zero
-  @State private var loaded = false
-
-  var body: some View {
-    let event = edited
-    let issue = PlanningActions.issue(
-      of: event, among: compute.snapshot?.dataset.events ?? [])
-    VStack(alignment: .leading) {
-      Text(verbatim: t(original == nil ? "events.form.new" : "events.form.edit"))
-        .font(.headline)
-      Form {
-        TextField(text: $name) { Text(verbatim: t("events.form.name")) }
-        DatePicker(selection: $start, displayedComponents: .date) {
-          Text(verbatim: t("events.form.start"))
-        }
-        DatePicker(selection: $end, in: start..., displayedComponents: .date) {
-          Text(verbatim: t("events.form.end"))
-        }
-        LabeledContent(t("events.form.budget")) {
-          HStack {
-            AmountField(amount: $budget)
-            Text(verbatim: "₽").foregroundStyle(.secondary)
-          }
-        }
-        Text(verbatim: t("events.form.budgetHint"))
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-        if let issue {
-          Text(verbatim: t("events.issue.\(issue.rawValue)"))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-      }
-      .formStyle(.grouped)
-      FormButtons(title: environment.language("action.save"), enabled: issue == nil) {
-        guard let dependencies else { return false }
-        return PlanningActions(dependencies).save(event)
-      }
-    }
-    .padding(20)
-    .frame(width: 460, height: 400)
-    .onAppear {
-      guard !loaded else { return }
-      loaded = true
-      let calendar = environment.calendar
-      if let original {
-        name = original.name
-        start = calendar.startOfDay(original.startDate)
-        end = calendar.startOfDay(original.endDate)
-        budget = original.budgetE4 ?? .zero
-      } else {
-        start = calendar.startOfDay(environment.today)
-        end = start
-      }
-    }
-  }
-
-  /// The event as the form has it: the name without spaces around it, the days in order, an
-  /// empty or zero budget as none.
-  private var edited: Event {
-    let calendar = environment.calendar
-    var event =
-      original
-      ?? Event(name: "", startDate: environment.today, endDate: environment.today)
-    event.name = PlanningActions.trimmed(name)
-    event.startDate = calendar.day(of: start)
-    event.endDate = max(event.startDate, calendar.day(of: end))
-    event.budgetE4 = budget > .zero ? budget : nil
-    return event
+  /// The unpaid due dates of the payments tied to `event`, through its last day: part of its
+  /// budget, so the free sum holds them inside it.
+  static func tiedDues(of event: Event, _ snapshot: DataSnapshot) -> [ScheduledDue] {
+    let tied = Set(snapshot.dataset.planning.scheduled.filter { $0.eventId == event.id }.map(\.id))
+    guard !tied.isEmpty, event.endDate >= snapshot.today else { return [] }
+    return CashPlan.scheduledDues(
+      ledger: snapshot.ledger, book: snapshot.dataset.planning,
+      accounts: snapshot.planning.accounts, today: snapshot.today, until: event.endDate,
+      matches: snapshot.planning.matches
+    ).filter { tied.contains($0.paymentId) }
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Planning") }

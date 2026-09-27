@@ -25,6 +25,14 @@ public struct DeletionEffects: Hashable, Sendable {
   /// Scheduled payments whose `next_date` went back to the due date a deleted operation
   /// had paid (`ScheduledRules.reopened`), as they were before.
   public var reopenedPayments: [ScheduledPayment]
+  /// The moment each operation the deletion stamped — the deleted ones, their companions and
+  /// the purchases whose parts wait again — was last written before it: ⌘Z gives it back, so
+  /// bringing an operation back is not a new write of it (the owner's latest rating of a
+  /// description is the one written last).
+  public var updatedAtBefore: [UUID: Date]
+  /// What the counts whose windows the deleted operations left wrote in the same write: `restore`
+  /// writes a difference the deletion purged at zero back as the owner left it.
+  public var counts: CountsSettled
 
   public static let none = DeletionEffects()
 
@@ -34,7 +42,9 @@ public struct DeletionEffects: Hashable, Sendable {
     reopenedPartIds: [UUID] = [],
     removedDebtEntries: [DebtEntry] = [],
     releasedExternalIds: [UUID: String] = [:],
-    reopenedPayments: [ScheduledPayment] = []
+    reopenedPayments: [ScheduledPayment] = [],
+    updatedAtBefore: [UUID: Date] = [:],
+    counts: CountsSettled = .none
   ) {
     self.deletedIds = deletedIds
     self.companionIds = companionIds
@@ -42,6 +52,22 @@ public struct DeletionEffects: Hashable, Sendable {
     self.removedDebtEntries = removedDebtEntries
     self.releasedExternalIds = releasedExternalIds
     self.reopenedPayments = reopenedPayments
+    self.updatedAtBefore = updatedAtBefore
+    self.counts = counts
+  }
+}
+
+/// A bulk change given transfers that settle an account in the archive, which no longer lands
+/// on the operations it was planned for: one it was to change is left as it is inside the
+/// write — changed or deleted elsewhere since —, or one it was to leave alone changes. The
+/// transfers count the money of the plan, so nothing of the change is written; the caller
+/// plans it again from the rows as they are now.
+public struct SettlingPlanOutdated: Error, Hashable, Sendable {
+  /// The operations the change would have landed on otherwise than planned, by id.
+  public var operationIds: [UUID]
+
+  public init(operationIds: [UUID]) {
+    self.operationIds = operationIds
   }
 }
 
@@ -53,6 +79,18 @@ public struct ModifiedEntry: Hashable, Sendable {
   public init(before: TransactionEntry, after: TransactionEntry) {
     self.before = before
     self.after = after
+  }
+}
+
+/// A bulk change as it landed: each operation before and after, and what the counts whose
+/// windows it moved wrote in the same write.
+public struct ModifiedBatch: Hashable, Sendable {
+  public var modified: [ModifiedEntry]
+  public var counts: CountsSettled
+
+  public init(modified: [ModifiedEntry], counts: CountsSettled = .none) {
+    self.modified = modified
+    self.counts = counts
   }
 }
 
@@ -87,17 +125,71 @@ extension TransactionRepository {
   /// (`AccountWriteError.chargeMissing`) — unless `checkingCharges` is off, which is for ⌘Z
   /// alone: it writes back what the rows were, and a row of the time before accounts moved in
   /// bulk had no charge on the account it goes back to.
+  ///
+  /// `settlingTransfers` are written in the same write, after the operations: the money the
+  /// change leaves on an account in the archive, or takes off it, moved to or from a live
+  /// account, so the archived one stays at zero. They were worked out for the change as it was
+  /// planned, so they go in only with that change:
+  ///
+  /// * a change that changes nothing inside the write — every row changed elsewhere since, or
+  ///   deleted — writes none of them and is no error;
+  /// * with `planned`, the operations the plan changes, the change must land on exactly those:
+  ///   when one of them is left as it is inside the write, or another one changes, nothing is
+  ///   written and `SettlingPlanOutdated` names them, so the caller plans again from the rows
+  ///   as they are now. Without transfers `planned` is not read;
+  /// * each transfer is held to the rules of a transfer, the accounts of the operations
+  ///   changed — before and after — being the archived sides it may name
+  ///   (`TransferRules.validate(_:accounts:allowingArchived:)`); one that may not be written
+  ///   refuses the whole change with `SettlingTransferRefusal`.
+  ///
+  /// `removingTransfers` are deleted in the same write: ⌘Z of such a change takes its
+  /// transfers away with it.
+  ///
+  /// The counts whose windows the operations and transfers left or entered follow the books in
+  /// the same write (`modifyReporting`).
   @discardableResult
   public func modify(
     ids: [UUID],
     at instant: Date = Date(),
     checkingCharges: Bool = true,
+    settlingTransfers: [Transfer] = [],
+    removingTransfers: [UUID] = [],
+    planned: Set<UUID>? = nil,
+    templates: [UUID: TransactionEntry?] = [:],
     transform: (TransactionEntry) throws -> TransactionEntry?
   ) throws -> [TransactionEntry] {
-    try writer.write { db in
-      try Self.modify(
-        ids: ids, at: instant, checkingCharges: checkingCharges, transform: transform, db: db
-      ).map(\.before)
+    try modifyReporting(
+      ids: ids, at: instant, checkingCharges: checkingCharges,
+      settlingTransfers: settlingTransfers, removingTransfers: removingTransfers,
+      planned: planned, templates: templates, transform: transform
+    ).before
+  }
+
+  /// `modify`, and what the counts it reached wrote in the same write. `templates` are the
+  /// operations of the counts as the change being taken back found them
+  /// (`CountsSettled.operationsBefore` of that change): a difference it purged at zero comes
+  /// back as the owner left it.
+  public func modifyReporting(
+    ids: [UUID],
+    at instant: Date = Date(),
+    checkingCharges: Bool = true,
+    settlingTransfers: [Transfer] = [],
+    removingTransfers: [UUID] = [],
+    planned: Set<UUID>? = nil,
+    templates: [UUID: TransactionEntry?] = [:],
+    transform: (TransactionEntry) throws -> TransactionEntry?
+  ) throws -> (before: [TransactionEntry], counts: CountsSettled) {
+    let context = liveCounts
+    return try writer.write { db in
+      let removed = try Self.transfers(ids: removingTransfers, db: db)
+      let modified = try Self.modify(
+        ids: ids, at: instant, checkingCharges: checkingCharges,
+        settlingTransfers: settlingTransfers, removingTransfers: removingTransfers,
+        planned: planned, transform: transform, db: db)
+      let counts = try Self.settle(
+        modified: modified, transfers: removed + (modified.isEmpty ? [] : settlingTransfers),
+        context: context, templates: templates, db: db)
+      return (modified.map(\.before), counts)
     }
   }
 
@@ -107,11 +199,41 @@ extension TransactionRepository {
     ids: [UUID],
     at instant: Date = Date(),
     checkingCharges: Bool = true,
+    settlingTransfers: [Transfer] = [],
+    removingTransfers: [UUID] = [],
+    planned: Set<UUID>? = nil,
+    templates: [UUID: TransactionEntry?] = [:],
     transform: @escaping @Sendable (TransactionEntry) throws -> TransactionEntry?
   ) async throws -> [ModifiedEntry] {
-    try await writer.write { db in
-      try Self.modify(
-        ids: ids, at: instant, checkingCharges: checkingCharges, transform: transform, db: db)
+    try await modifyReportingInBackground(
+      ids: ids, at: instant, checkingCharges: checkingCharges,
+      settlingTransfers: settlingTransfers, removingTransfers: removingTransfers,
+      planned: planned, templates: templates, transform: transform
+    ).modified
+  }
+
+  /// `modifyInBackground`, and what the counts it reached wrote in the same write.
+  public func modifyReportingInBackground(
+    ids: [UUID],
+    at instant: Date = Date(),
+    checkingCharges: Bool = true,
+    settlingTransfers: [Transfer] = [],
+    removingTransfers: [UUID] = [],
+    planned: Set<UUID>? = nil,
+    templates: [UUID: TransactionEntry?] = [:],
+    transform: @escaping @Sendable (TransactionEntry) throws -> TransactionEntry?
+  ) async throws -> ModifiedBatch {
+    let context = liveCounts
+    return try await writer.write { db in
+      let removed = try Self.transfers(ids: removingTransfers, db: db)
+      let modified = try Self.modify(
+        ids: ids, at: instant, checkingCharges: checkingCharges,
+        settlingTransfers: settlingTransfers, removingTransfers: removingTransfers,
+        planned: planned, transform: transform, db: db)
+      let counts = try Self.settle(
+        modified: modified, transfers: removed + (modified.isEmpty ? [] : settlingTransfers),
+        context: context, templates: templates, db: db)
+      return ModifiedBatch(modified: modified, counts: counts)
     }
   }
 
@@ -141,9 +263,10 @@ extension TransactionRepository {
     ids: [UUID], at instant: Date = Date(),
     choosing choose: (([TransactionEntry]) throws -> [UUID])? = nil
   ) throws -> DeletionEffects {
-    try writer.write { db in
+    let context = liveCounts
+    return try writer.write { db in
       let chosen = try choose.map { try $0(Self.entries(ids: ids, db: db)) } ?? ids
-      return try Self.softDelete(ids: chosen, at: instant, db: db)
+      return try Self.softDeleteSettling(ids: chosen, at: instant, context: context, db: db)
     }
   }
 
@@ -154,27 +277,86 @@ extension TransactionRepository {
     ids: [UUID], at instant: Date = Date(),
     choosing choose: (@Sendable ([TransactionEntry]) -> [UUID])? = nil
   ) async throws -> DeletionEffects {
-    try await writer.write { db in
+    let context = liveCounts
+    return try await writer.write { db in
       let chosen = try choose.map { try $0(Self.entries(ids: ids, db: db)) } ?? ids
-      return try Self.softDelete(ids: chosen, at: instant, db: db)
+      return try Self.softDeleteSettling(ids: chosen, at: instant, context: context, db: db)
     }
   }
 
   /// Brings deleted operations back together with everything their deletion took along:
   /// the companions return, the reopened parts are closed again — unless they were written
-  /// off or closed otherwise since — and the debt movements go back on their debts.
+  /// off or closed otherwise since — and the debt movements go back on their debts. Each comes
+  /// back with the moment it was last written before the deletion. The counts whose windows
+  /// they return to follow the books in the same write; what they wrote comes back.
+  @discardableResult
   public func restore(
     ids: [UUID], at instant: Date = Date(), effects: DeletionEffects = .none
-  ) throws {
-    try writer.write { db in try Self.restore(ids: ids, at: instant, effects: effects, db: db) }
+  ) throws -> CountsSettled {
+    let context = liveCounts
+    return try writer.write { db in
+      try Self.restoreSettling(ids: ids, at: instant, effects: effects, context: context, db: db)
+    }
   }
 
+  @discardableResult
   public func restoreInBackground(
     ids: [UUID], at instant: Date = Date(), effects: DeletionEffects = .none
-  ) async throws {
-    try await writer.write { db in
-      try Self.restore(ids: ids, at: instant, effects: effects, db: db)
+  ) async throws -> CountsSettled {
+    let context = liveCounts
+    return try await writer.write { db in
+      try Self.restoreSettling(ids: ids, at: instant, effects: effects, context: context, db: db)
     }
+  }
+
+  // MARK: The counts these writes reach
+
+  /// `softDelete` and the counts whose windows the deleted operations leave — or whose own
+  /// operation was deleted, whose mode follows it —, settled in the same write.
+  private static func softDeleteSettling(
+    ids: [UUID], at instant: Date, context: LiveCountsContext, db: Database
+  ) throws -> DeletionEffects {
+    let alive = try entries(ids: ids, db: db).filter { !$0.transaction.isDeleted }
+    var effects = try softDelete(ids: ids, at: instant, db: db)
+    let touch = try LiveCountsWriter.touch(
+      entries: alive.map { ($0, nil) }, calendar: context.calendar, lookups: WriteLookups(),
+      db: db)
+    effects.counts = try LiveCountsWriter.settle(touch, context: context, db: db)
+    return effects
+  }
+
+  /// `restore` and the counts whose windows the operations brought back enter again.
+  private static func restoreSettling(
+    ids: [UUID], at instant: Date, effects: DeletionEffects, context: LiveCountsContext,
+    db: Database
+  ) throws -> CountsSettled {
+    try restore(ids: ids, at: instant, effects: effects, db: db)
+    let back = try entries(ids: ids, db: db).filter { !$0.transaction.isDeleted }
+    let touch = try LiveCountsWriter.touch(
+      entries: back.map { (nil, $0) }, calendar: context.calendar, lookups: WriteLookups(),
+      db: db)
+    return try LiveCountsWriter.settle(
+      touch, context: context, templates: effects.counts.operationsBefore, db: db)
+  }
+
+  /// The counts whose windows a bulk change moved operations and transfers out of or into.
+  private static func settle(
+    modified: [ModifiedEntry], transfers: [Transfer], context: LiveCountsContext,
+    templates: [UUID: TransactionEntry?] = [:], db: Database
+  ) throws -> CountsSettled {
+    let touch = try LiveCountsWriter.touch(
+      entries: modified.map { ($0.before, $0.after) }, transfers: transfers,
+      calendar: context.calendar, lookups: WriteLookups(), db: db)
+    return try LiveCountsWriter.settle(touch, context: context, templates: templates, db: db)
+  }
+
+  /// Transfers by id, as they are before a write takes them away.
+  private static func transfers(ids: [UUID], db: Database) throws -> [Transfer] {
+    var found: [Transfer] = []
+    for chunk in distinct(ids).map(\.uuidString).chunked(by: chunkSize) {
+      found += try Transfer.fetchAll(db, keys: Array(chunk))
+    }
+    return found
   }
 
   // MARK: The bodies, inside a transaction the caller holds
@@ -191,6 +373,8 @@ extension TransactionRepository {
 
   static func modify(
     ids: [UUID], at instant: Date, checkingCharges: Bool = true,
+    settlingTransfers: [Transfer] = [], removingTransfers: [UUID] = [],
+    planned: Set<UUID>? = nil,
     transform: (TransactionEntry) throws -> TransactionEntry?, db: Database
   ) throws -> [ModifiedEntry] {
     var modified: [ModifiedEntry] = []
@@ -213,6 +397,23 @@ extension TransactionRepository {
         modified.append(ModifiedEntry(before: fresh, after: changed))
       }
     }
+    for chunk in distinct(removingTransfers).map(\.uuidString).chunked(by: chunkSize) {
+      _ = try Transfer.deleteAll(db, keys: Array(chunk))
+    }
+    // The transfers settle the change as it was planned: none for a change that landed on
+    // nothing, and none — nor the change — for one that landed on other operations.
+    guard !settlingTransfers.isEmpty, !modified.isEmpty else { return modified }
+    if let planned {
+      let moved = planned.symmetricDifference(modified.map(\.after.id))
+      guard moved.isEmpty else {
+        throw SettlingPlanOutdated(operationIds: moved.sorted { $0.uuidString < $1.uuidString })
+      }
+    }
+    _ = try writeSettling(
+      settlingTransfers,
+      editing: modified.flatMap {
+        [$0.before.transaction.paymentMethodId, $0.after.transaction.paymentMethodId]
+      }, db: db)
     return modified
   }
 
@@ -226,6 +427,7 @@ extension TransactionRepository {
     }
     try refuseDeletingRefundedPurchases(alive, db: db)
     var effects = DeletionEffects(deletedIds: alive.map(\.id))
+    for transaction in alive { effects.updatedAtBefore[transaction.id] = transaction.updatedAt }
     try mark(effects.deletedIds, deletedAt: instant, at: instant, db: db)
 
     // Everything asked for is marked first: a reimbursement deleted in the same batch no
@@ -240,6 +442,7 @@ extension TransactionRepository {
           """,
         arguments: prefixArguments(of: reimbursement.id)
       ).compactMap(UUID.init(uuidString:))
+      effects.updatedAtBefore.merge(try stamps(of: companions, db: db)) { first, _ in first }
       try mark(companions, deletedAt: instant, at: instant, db: db)
       effects.companionIds += companions
 
@@ -263,9 +466,15 @@ extension TransactionRepository {
       guard try isClosed(partId, db: db), try isShortOfItsMoney(partId, db: db) else { continue }
       reopened.append(partId)
     }
+    // The purchases whose parts wait again are stamped by the deletion; ⌘Z closes the parts
+    // again and gives the purchases back the moment they had.
+    effects.updatedAtBefore.merge(
+      try stamps(of: operations(ofParts: reopened, db: db), db: db)
+    ) { first, _ in first }
     try setStatus(.expected, of: reopened, onlyWhere: .returned, at: instant, db: db)
     effects.reopenedPartIds += reopened
     let written = try liveCompanions(ofParts: reopened, db: db)
+    effects.updatedAtBefore.merge(try stamps(of: written, db: db)) { first, _ in first }
     try mark(written, deletedAt: instant, at: instant, db: db)
     effects.companionIds += written
 
@@ -326,6 +535,14 @@ extension TransactionRepository {
     try mark(distinct(ids + effects.companionIds), deletedAt: nil, at: instant, db: db)
     try setStatus(
       .returned, of: effects.reopenedPartIds, onlyWhere: .expected, at: instant, db: db)
+    // Brought back as they were: the moment each was last written before the deletion — the
+    // operations brought back and the purchases whose parts close again.
+    let stamps = effects.updatedAtBefore.sorted { $0.key.uuidString < $1.key.uuidString }
+    for (id, moment) in stamps {
+      try db.execute(
+        sql: "UPDATE transactions SET updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        arguments: [StoredInstant.databaseValue(moment), id.uuidString])
+    }
     for entry in effects.removedDebtEntries {
       // A debt deleted in the meantime took its journal with it; there is nothing to put
       // the movement back on.
@@ -464,6 +681,34 @@ extension TransactionRepository {
   static func distinct(_ ids: [UUID]) -> [UUID] {
     var seen = Set<UUID>()
     return ids.filter { seen.insert($0).inserted }
+  }
+
+  /// The operations these parts belong to, each once.
+  private static func operations(ofParts partIds: [UUID], db: Database) throws -> [UUID] {
+    var found: [UUID] = []
+    for chunk in partIds.map(\.uuidString).chunked(by: chunkSize) {
+      found += try String.fetchAll(
+        db,
+        sql: """
+          SELECT transaction_id FROM transaction_parts
+          WHERE id IN (\(databaseQuestionMarks(count: chunk.count)))
+          ORDER BY rowid
+          """,
+        arguments: StatementArguments(Array(chunk))
+      ).compactMap(UUID.init(uuidString:))
+    }
+    return distinct(found)
+  }
+
+  /// The moment each of these operations was last written, as stored.
+  private static func stamps(of ids: [UUID], db: Database) throws -> [UUID: Date] {
+    var found: [UUID: Date] = [:]
+    for chunk in ids.map(\.uuidString).chunked(by: chunkSize) {
+      for transaction in try CoreKit.Transaction.fetchAll(db, keys: Array(chunk)) {
+        found[transaction.id] = transaction.updatedAt
+      }
+    }
+    return found
   }
 
   /// Sets or clears `deleted_at`; either way the row was updated at `instant`.

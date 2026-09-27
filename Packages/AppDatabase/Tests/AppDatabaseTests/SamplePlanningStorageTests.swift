@@ -221,6 +221,73 @@ struct SamplePlanningStorageTests {
     #expect(batch.budgets == planning.budgets)
   }
 
+  /// The sample with its accounts is written already following the books: the catch-up at
+  /// open finds no count to settle, no difference to write, none to take away — for several
+  /// histories of the accounts layer, as `make sample` and `make demo` draw them.
+  @Test(arguments: [UInt64(20_260_918), 7, 42, 2_026])
+  func theSampleIsAlreadySettled(seed: UInt64) throws {
+    let stack = try TestSupport.makeStack()
+    let set = TestSupport.sample().withAccounts(
+      seed: seed, calendar: TestSupport.sampleCalendar, language: "en")
+    #expect(set.reconciledBalances.contains { $0.expectedE4 != nil })
+    try TransactionRepository(writer: stack.writer).insert(HistoryBatch(sample: set))
+    let settled = try ReconciliationRepository(writer: stack.writer).settleAll(
+      context: LiveCountsContext(calendar: TestSupport.sampleCalendar, categoryName: "Sverka"))
+    let what =
+      "\(settled.countsChanged) counts, \(settled.created) created, "
+      + "\(settled.rewritten) rewritten, \(settled.purged) purged"
+    #expect(settled.isEmpty, "seed \(seed): \(what)")
+  }
+
+  /// The sample with every layer after its accounts — cards and cashback rules, the planning of
+  /// an event, a goal paid ahead, an archived place, a credit card below zero, a later count that
+  /// records its difference — lands whole, is already following the books, and reads back with
+  /// the money on every account the layers kept.
+  @Test(arguments: [
+    (UInt64(20_260_918), false), (UInt64(20_260_918), true), (7, false), (42, true),
+  ])
+  func theSampleWithEveryLayerIsAlreadySettled(seed: UInt64, demo: Bool) async throws {
+    let stack = try TestSupport.makeStack()
+    let set = TestSupport.sample().withEveryFeature(
+      seed: seed, calendar: TestSupport.sampleCalendar, language: "en", demo: demo)
+    #expect(!set.cards.isEmpty && !set.cashbackRules.isEmpty)
+    try TransactionRepository(writer: stack.writer).insert(HistoryBatch(sample: set))
+
+    let counts = try ExportRepository(writer: stack.writer).rowCounts()
+    #expect(counts["cards"] == set.cards.count)
+    #expect(counts["cashback_rules"] == set.cashbackRules.count)
+    #expect(counts["transactions"] == set.entries.count)
+    #expect(counts["reconciliation_balances"] == set.reconciledBalances.count)
+    #expect(counts["scheduled_payments"] == set.planning.scheduled.count)
+    #expect(counts["expected_income"] == set.planning.expected.count)
+
+    let settled = try ReconciliationRepository(writer: stack.writer).settleAll(
+      context: LiveCountsContext(calendar: TestSupport.sampleCalendar, categoryName: "Sverka"))
+    let what =
+      "\(settled.countsChanged) counts, \(settled.created) created, "
+      + "\(settled.rewritten) rewritten, \(settled.purged) purged"
+    #expect(settled.isEmpty, "seed \(seed): \(what)")
+
+    let dataset = try await DatasetRepository(writer: stack.writer).load(version: 1)
+    #expect(dataset.cards.count == set.cards.count)
+    let named = set.entries.filter { !$0.transaction.isDeleted && $0.transaction.cardId != nil }
+    #expect(dataset.entries.filter { $0.transaction.cardId != nil }.count == named.count)
+    #expect(dataset.entries.contains { $0.transaction.cashback != nil })
+    let calendar = TestSupport.sampleCalendar
+    let balances = AccountBalances.build(
+      entries: dataset.entries, transfers: dataset.transfers,
+      debtEntries: dataset.planning.debtEntries, debts: dataset.debtsById,
+      reconciliations: dataset.planning.reconciliations,
+      balances: dataset.planning.reconciledBalances, accounts: dataset.paymentMethods,
+      tree: CategoryTree(dataset.categories),
+      now: calendar.startOfDay(calendar.adding(days: 1, to: set.lastDay)), calendar: calendar)
+    #expect(Set(balances.keys) == Set(set.accountExpectations.keys))
+    for (key, amount) in set.accountExpectations {
+      #expect(balances[key]?.amountE4 == amount, "seed \(seed): \(key)")
+    }
+    #expect(set.accountExpectations.values.contains { $0.isNegative }, "a credit card below zero")
+  }
+
   /// Rows of a table the export leaves out.
   private static func count(_ table: String, in stack: DatabaseStack) throws -> Int {
     try stack.writer.read { db in

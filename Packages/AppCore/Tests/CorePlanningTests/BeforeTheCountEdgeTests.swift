@@ -106,4 +106,154 @@ struct BeforeTheCountEdgeTests {
     #expect(balance(fx, Self.mainRub) == Fx.money("900"))
     #expect(balance(fx, Self.cardRub) == Fx.money("500"))
   }
+
+  // MARK: Every count of the day, and the answers remembered
+
+  /// The setup counted Main at 09:00 (its first count) and a sheet at 21:00 found 300 missing.
+  /// A coffee of the morning typed at 22:00 is asked about 09:00 first: «Да» makes it history at
+  /// 08:59:59, and the 300 missing stay in the window of 21:00. With only the latest count
+  /// asked, «Да» would have put it at 20:59:59, inside that window.
+  @Test func twoCountsOfOneDayAskInTurn() {
+    var fx = Fx()
+    let setup = Fx.at("2026-09-19", 9)
+    let sheet = Fx.at("2026-09-19", 21)
+    fx.count([(Fx.main, .rub, "10000")], at: setup, kind: .opening)
+    let opening = fx.reconciliations[0].id
+    fx.count([(Fx.main, .rub, "9700")], at: sheet)
+    let later = fx.reconciliations[1].id
+    let typed = Fx.at("2026-09-19", 22)
+    let balances = ReconciliationPropertyTests.Scenario.balances(fx, now: typed)
+
+    let counts = AccountReconciliation.countsOfTheDay(
+      occurredAt: typed, savedAt: typed, keys: [Self.mainRub, Self.mainRub],
+      balances: balances, calendar: .utc)
+    #expect(counts.map(\.at) == [setup, sheet])
+    #expect(counts.map(\.reconciliation) == [opening, later])
+
+    guard
+      case .ask(let questions) = AccountReconciliation.countToAsk(
+        occurredAt: typed, savedAt: typed, keys: [Self.mainRub], balances: balances,
+        calendar: .utc, remembered: [:])
+    else {
+      Issue.record("the counts of the day are asked about")
+      return
+    }
+    #expect(questions.count == setup)
+    #expect(questions.reconciliation == opening)
+    guard case .stamp(let stamp) = questions.answer(wasBefore: true) else {
+      Issue.record("«Да» stamps")
+      return
+    }
+    #expect(stamp == Fx.at("2026-09-19", 8, 59).addingTimeInterval(59))
+    guard case .ask(let next) = questions.answer(wasBefore: false) else {
+      Issue.record("«Нет» asks about 21:00")
+      return
+    }
+    #expect(next.count == sheet)
+    #expect(next.reconciliation == later)
+  }
+
+  /// A count saved after the operation, a count of another day and a count of another key are
+  /// not asked about; nothing counted that day asks nothing.
+  @Test func onlyTheCountsOfTheDayMadeBeforeTheSaveAreAsked() {
+    var fx = Fx()
+    fx.count([(Fx.main, .rub, "10000")], at: Fx.at("2026-09-18", 9))
+    fx.count([(Fx.card, .rub, "500")], at: Fx.at("2026-09-19", 9))
+    fx.count([(Fx.main, .rub, "9000")], at: Fx.at("2026-09-19", 10))
+    fx.count([(Fx.main, .rub, "8000")], at: Fx.at("2026-09-19", 16))
+    let savedAt = Fx.at("2026-09-19", 15)
+    let balances = ReconciliationPropertyTests.Scenario.balances(fx, now: savedAt)
+    let counts = AccountReconciliation.countsOfTheDay(
+      occurredAt: Fx.at("2026-09-19", 12), savedAt: savedAt, keys: [Self.mainRub],
+      balances: balances, calendar: .utc)
+    #expect(counts.map(\.at) == [Fx.at("2026-09-19", 10)])
+    let none = AccountReconciliation.countToAsk(
+      occurredAt: Fx.at("2026-09-17", 12), savedAt: savedAt, keys: [Self.mainRub],
+      balances: balances, calendar: .utc, remembered: [:])
+    guard case .none = none else {
+      Issue.record("nothing was counted that day")
+      return
+    }
+  }
+
+  /// A sheet counts Main and Card at one moment: that is one count to ask about, not two.
+  @Test func oneMomentIsOneQuestion() {
+    var fx = Fx()
+    let count = Fx.at("2026-09-19", 10)
+    fx.count([(Fx.main, .rub, "10000"), (Fx.card, .rub, "500")], at: count)
+    let savedAt = Fx.at("2026-09-19", 15)
+    let counts = AccountReconciliation.countsOfTheDay(
+      occurredAt: savedAt, savedAt: savedAt, keys: [Self.mainRub, Self.cardRub],
+      balances: ReconciliationPropertyTests.Scenario.balances(fx, now: savedAt), calendar: .utc)
+    #expect(counts.map(\.at) == [count])
+    #expect(counts.map(\.reconciliation) == [fx.reconciliations[0].id])
+  }
+
+  /// «Больше не спрашивать для этой сверки» with «Нет, после» remembered for the count of 14:05:
+  /// the next operation of the day is dated after it without a question; «Да, до» remembered
+  /// dates it a second before.
+  @Test func countToAskUsesTheRememberedAnswer() {
+    var fx = Fx()
+    let count = Fx.at("2026-09-19", 14, 5)
+    fx.count([(Fx.main, .rub, "10000")], at: count)
+    let reconciliation = fx.reconciliations[0].id
+    let typed = Fx.at("2026-09-19", 16)
+    let balances = ReconciliationPropertyTests.Scenario.balances(fx, now: typed)
+    func ask(_ remembered: [UUID: Bool]) -> CountAsk {
+      AccountReconciliation.countToAsk(
+        occurredAt: typed, savedAt: typed, keys: [Self.mainRub], balances: balances,
+        calendar: .utc, remembered: remembered)
+    }
+    guard case .answered(let after) = ask([reconciliation: false]) else {
+      Issue.record("a remembered «после» is used silently")
+      return
+    }
+    #expect(after == typed)
+    guard case .answered(let before) = ask([reconciliation: true]) else {
+      Issue.record("a remembered «до» is used silently")
+      return
+    }
+    #expect(before == count.addingTimeInterval(-1))
+    guard case .ask(let questions) = ask([Fx.id(999): true]) else {
+      Issue.record("an answer of another reconciliation answers nothing here")
+      return
+    }
+    #expect(questions.count == count)
+    #expect(questions.reconciliation == reconciliation)
+  }
+
+  /// The answer remembered for 14:05 does not answer a newer count: a sheet at 18:00 the same
+  /// day is asked about, and an operation of the next day counted again is asked too.
+  @Test func aNewerCountAsksAgain() {
+    var fx = Fx()
+    fx.count([(Fx.main, .rub, "10000")], at: Fx.at("2026-09-19", 14, 5))
+    let remembered = [fx.reconciliations[0].id: false]
+    fx.count([(Fx.main, .rub, "9000")], at: Fx.at("2026-09-19", 18))
+    let newer = fx.reconciliations[1].id
+    let typed = Fx.at("2026-09-19", 19)
+    let balances = ReconciliationPropertyTests.Scenario.balances(fx, now: typed)
+    guard
+      case .ask(let questions) = AccountReconciliation.countToAsk(
+        occurredAt: typed, savedAt: typed, keys: [Self.mainRub], balances: balances,
+        calendar: .utc, remembered: remembered)
+    else {
+      Issue.record("the newer count is asked about")
+      return
+    }
+    #expect(questions.count == Fx.at("2026-09-19", 18))
+    #expect(questions.reconciliation == newer)
+
+    fx.count([(Fx.main, .rub, "8000")], at: Fx.at("2026-09-20", 9))
+    let nextDay = Fx.at("2026-09-20", 12)
+    guard
+      case .ask(let tomorrow) = AccountReconciliation.countToAsk(
+        occurredAt: nextDay, savedAt: nextDay, keys: [Self.mainRub],
+        balances: ReconciliationPropertyTests.Scenario.balances(fx, now: nextDay),
+        calendar: .utc, remembered: remembered.merging([newer: false]) { $1 })
+    else {
+      Issue.record("the count of the next day is asked about")
+      return
+    }
+    #expect(tomorrow.count == Fx.at("2026-09-20", 9))
+  }
 }

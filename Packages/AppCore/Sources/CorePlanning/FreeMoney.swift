@@ -28,14 +28,19 @@ public struct FreeToSpendLine: Hashable, Sendable {
 
 /// The free sum: the money there is now, and what of it is free until a day D.
 ///
-/// * **Main** — the money now: every balance of the accounts in the summary, its latest count
-///   plus every real movement after it, converted to rubles at today's rate
+/// * **Money now** — every balance of the accounts in the summary, its latest count plus every
+///   real movement after it, converted to rubles at today's rate
 ///   (`AccountsSnapshot.inSummaryTotalRub`). Right after a count it equals the count. Income
 ///   still expected is never added. With no count at all there is nothing to show but «Мало
 ///   данных: сделайте первую сверку» (`State.noReconciliation`); a balance never counted is
 ///   listed (`unanchored`), not guessed.
+/// * **Main** — «можно тратить сейчас»: the money now less what is saved in the live goals when
+///   that money lies on the accounts in the summary (the switch; `CashPlan.goalSavings`). Money
+///   put into a goal is not spendable; a contribution changes neither figure.
 /// * **Grey** — «Учитывая запланированные События и траты»: the main figure less what has to
 ///   leave by D (`CashPlan`), each part a line of its own so the lines add up to it.
+/// * **Overdue** — the part of the grey lines due before today and unpaid: counted as money not
+///   yet gone, and shown so the owner can close what the bank took already.
 /// * **Daily guide** — max(0, grey) ÷ the days of [today, D], today included.
 /// * **Info** — what the expectations still wait for until D: shown, never added.
 /// * The groups left out of the summary get no free sum; their totals are shown apart.
@@ -50,7 +55,6 @@ public struct FreeMoney: Hashable, Sendable {
   public enum Key {
     public static let scheduled = "planning.free.scheduled"
     public static let debts = "planning.free.debts"
-    public static let goalSavings = "planning.free.goalSavings"
     public static let goalPlans = "planning.free.goalReserve"
     public static let events = "planning.free.events"
     public static let stillExpected = "planning.free.expected"
@@ -78,7 +82,11 @@ public struct FreeMoney: Hashable, Sendable {
   public var until: DateOnly
   /// Days of [today, D], today included; at least 1.
   public var days: Int
-  /// The money now; `nil` with no count (`state`).
+  /// The money on the accounts in the summary now; `nil` with no count (`state`).
+  public var moneyNow: AmountE4?
+  /// What is saved in the live goals, taken off the money now (zero with the switch off).
+  public var goalSavings: AmountE4
+  /// «можно тратить сейчас»: the money now less `goalSavings`; `nil` with no count.
   public var main: AmountE4?
   /// The main figure less `lines`; `nil` with no count.
   public var grey: AmountE4?
@@ -86,6 +94,8 @@ public struct FreeMoney: Hashable, Sendable {
   public var dailyGuide: AmountE4
   /// What the grey line takes away, each a minus line, in the order the block shows them.
   public var lines: [FreeToSpendLine]
+  /// The part of the lines due before today and unpaid (`CashPlan.overdue`).
+  public var overdue: AmountE4
   /// Shown and never subtracted: what the expectations still wait for until D.
   public var info: [FreeToSpendLine]
   public var excluded: [ExcludedGroup]
@@ -109,24 +119,26 @@ public struct FreeMoney: Hashable, Sendable {
       FreeToSpendLine(key: Key.scheduled, sign: .minus, amount: plan.scheduled),
       FreeToSpendLine(key: Key.debts, sign: .minus, amount: plan.debts),
     ]
-    if plan.subtractsGoalSavings {
-      lines.append(FreeToSpendLine(key: Key.goalSavings, sign: .minus, amount: plan.goalSavings))
-    }
     if plan.reservesGoalPlans {
       lines.append(FreeToSpendLine(key: Key.goalPlans, sign: .minus, amount: plan.goalPlans))
     }
     lines.append(FreeToSpendLine(key: Key.events, sign: .minus, amount: plan.events))
 
-    let main = accounts.inSummaryTotalRub
+    let moneyNow = accounts.inSummaryTotalRub
+    let goalSavings = plan.subtractsGoalSavings ? plan.goalSavings : .zero
+    let main = moneyNow.map { $0 - goalSavings }
     let grey = main.map { $0 + AmountE4.sum(lines.map(\.signedAmount)) }
     let days = max(1, window.dayCount)
     self.today = today
     self.until = window.end
     self.days = days
+    self.moneyNow = moneyNow
+    self.goalSavings = goalSavings
     self.main = main
     self.grey = grey
     self.dailyGuide = grey.map { SavingsMath.divide(max(.zero, $0), by: days) } ?? .zero
     self.lines = lines
+    self.overdue = plan.overdue
     self.info = [FreeToSpendLine(key: Key.stillExpected, sign: .plus, amount: stillExpected)]
     self.excluded = accounts.excluded.compactMap { section in
       section.group.map {
@@ -139,6 +151,13 @@ public struct FreeMoney: Hashable, Sendable {
     self.unanchored = accounts.unanchored.filter { accounts.isInSummary($0.accountId) }
     self.plan = plan
     self.state = main == nil ? .noReconciliation : .ready
+  }
+
+  /// The goals hold more than the money on the accounts in the summary: goal money was spent
+  /// without «Забрать» — «Потратили деньги цели? Нажмите «Забрать»».
+  public var goalsExceedMoney: Bool {
+    guard plan.subtractsGoalSavings, goalSavings.raw > 0, let moneyNow else { return false }
+    return goalSavings > moneyNow
   }
 
   /// [today, D]: D no earlier than today and no later than 12 months ahead; the end of this

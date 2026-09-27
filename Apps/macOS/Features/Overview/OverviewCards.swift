@@ -401,6 +401,75 @@ enum OverviewText {
     return report.visible.filter { $0.day >= start || $0.rule == .slowReimbursement }
   }
 
+  /// An account in the archive that still holds money — the archive of 1.1 took accounts with
+  /// money, 1.2 no longer does —, with what it holds per currency.
+  struct ArchivedMoneyLine: Hashable, Sendable {
+    var account: PaymentMethod
+    var leftovers: [ArchivedLeftover]
+  }
+
+  /// Every account in the archive whose balance is not zero in some currency it was counted in
+  /// (`ArchivedMoney.balancesToMove`), in the order of the accounts. A currency never counted
+  /// has no balance to move.
+  static func archivedMoney(
+    accounts: [PaymentMethod], balances: AccountBalances
+  ) -> [ArchivedMoneyLine] {
+    accounts.filter(\.archived).compactMap { account in
+      let leftovers = ArchivedMoney.balancesToMove(of: account, balances: balances).leftovers
+      return leftovers.isEmpty ? nil : ArchivedMoneyLine(account: account, leftovers: leftovers)
+    }
+  }
+
+  /// What an archived account holds, currency by currency, to the ruble: «1,000 ₽, −50 $» —
+  /// what it holds now, or what money typed ahead leaves on it when it holds nothing now.
+  static func archivedAmounts(_ line: ArchivedMoneyLine, money: MoneyFormatter) -> String {
+    line.leftovers.map { money.rounded($0.shownAmount, currency: $0.key.currency) }
+      .joined(separator: ", ")
+  }
+
+  /// A line of «Стоит посмотреть».
+  enum AnomalyLine: Hashable, Identifiable {
+    /// «Потратили деньги цели?»: what the goals hold and the money of the summary.
+    case goalsExceed(goals: AmountE4, money: AmountE4)
+    /// «На «Наличные» в архиве 1,000 ₽ — перевести на другой счёт?»
+    case archivedMoney(ArchivedMoneyLine)
+    case anomaly(Anomaly)
+    /// «и ещё N».
+    case more(Int)
+    /// «За последний месяц ничего необычного».
+    case nothingUnusual
+
+    var id: String {
+      switch self {
+      case .goalsExceed: "goalsExceed"
+      case .archivedMoney(let line): "archivedMoney:\(line.account.id)"
+      case .anomaly(let anomaly): "anomaly:\(anomaly.id)"
+      case .more: "more"
+      case .nothingUnusual: "nothingUnusual"
+      }
+    }
+  }
+
+  /// The lines of «Стоит посмотреть», in order. First the goals holding more than the money
+  /// on the accounts of the summary — goal money was spent without «Забрать» —, then each
+  /// account in the archive that still holds money (`archived`), then at most `shown` anomalies
+  /// of the last month (`recentAnomalies`) and «и ещё N» for the rest. «Ничего необычного» only
+  /// when there is none of them: with such a line on the card, there is something worth a look.
+  static func anomalyLines(
+    _ report: AnomalyReport, today: DateOnly, free: FreeMoney?, shown: Int,
+    archived: [ArchivedMoneyLine] = []
+  ) -> [AnomalyLine] {
+    let all = recentAnomalies(report, today: today)
+    var lines: [AnomalyLine] = []
+    if let free, free.goalsExceedMoney {
+      lines.append(.goalsExceed(goals: free.goalSavings, money: free.moneyNow ?? .zero))
+    }
+    lines += archived.map { .archivedMoney($0) }
+    lines += all.prefix(shown).map { .anomaly($0) }
+    if all.count > shown { lines.append(.more(all.count - shown)) }
+    return lines.isEmpty ? [.nothingUnusual] : lines
+  }
+
   /// When the model of the forecast was computed: the time today, the day and time before.
   static func modelComputed(_ instant: Date, _ environment: AppEnvironment) -> String {
     if environment.calendar.day(of: instant) == environment.today {
@@ -412,6 +481,70 @@ enum OverviewText {
   }
 }
 
+/// «Потратили деньги цели? Нажмите «Забрать»»: the goals hold more than the money on the
+/// accounts of the summary, with both figures and the way to the goals.
+struct GoalsExceedRow: View {
+  @Dependency(\.environment) private var environment
+  let goals: AmountE4
+  let money: AmountE4
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Label {
+        Text(verbatim: environment.language("overview.goalsExceed", table: "Overview"))
+      } icon: {
+        Image(systemName: "exclamationmark.triangle")
+      }
+      .font(.callout)
+      Text(
+        verbatim: environment.format(
+          "overview.goalsExceedDetail", table: "Overview", environment.money.rounded(goals),
+          environment.money.rounded(money))
+      )
+      .font(.caption.monospacedDigit())
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      Button(environment.language("overview.openGoals", table: "Overview")) {
+        // The goals are on the Planning screen, the second section.
+        NotificationCenter.default.post(name: .selectSection, object: 2)
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+    }
+    .accessibilityElement(children: .contain)
+  }
+}
+
+/// «На «Наличные» в архиве 1,000 ₽ — перевести на другой счёт?»: an account the archive took
+/// with money before 1.2, and the way to move that money to live accounts in one step of ⌘Z
+/// (`ArchivedMoneySheet(leftoversOf:)`).
+struct ArchivedMoneyRow: View {
+  @Dependency(\.environment) private var environment
+  let line: OverviewText.ArchivedMoneyLine
+  let move: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Label {
+        Text(
+          verbatim: environment.format(
+            "overview.archivedMoney", table: "Overview", line.account.name,
+            OverviewText.archivedAmounts(line, money: environment.money))
+        )
+        .monospacedDigit()
+        .fixedSize(horizontal: false, vertical: true)
+      } icon: {
+        Image(systemName: "archivebox")
+      }
+      .font(.callout)
+      Button(environment.language("overview.archivedMoney.move", table: "Overview"), action: move)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+    .accessibilityElement(children: .contain)
+  }
+}
+
 /// «Аномалии» on Overview: the few most recent things worth a second look — those of the last
 /// month (`OverviewText.recentAnomalies`) — rule and day, read-only. The whole list with
 /// «Это нормально» is the «Аномалии» section of the Analytics window, opened from the toolbar
@@ -420,8 +553,18 @@ enum OverviewText {
 private struct AnomaliesCard: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
+  @Environment(\.dependencies) private var dependencies
+  /// The archived account whose money the sheet moves.
+  @State private var moving: PaymentMethod?
   /// How many fit on a card before «и ещё N».
   private static let shown = 3
+
+  /// The accounts in the archive that still hold money, from the data the card shows.
+  private var archived: [OverviewText.ArchivedMoneyLine] {
+    guard let snapshot = compute.snapshot else { return [] }
+    return OverviewText.archivedMoney(
+      accounts: snapshot.dataset.paymentMethods, balances: snapshot.planning.accounts.balances)
+  }
 
   var body: some View {
     ComputedBlock(
@@ -429,16 +572,17 @@ private struct AnomaliesCard: View {
       state: compute.states.anomalies, fillsHeight: true,
       retry: { compute.retry(ComputeStep.anomalies) }
     ) { report in
-      let all = OverviewText.recentAnomalies(
-        report, today: compute.snapshot?.today ?? environment.today)
-      let recent = Array(all.prefix(Self.shown))
+      let lines = OverviewText.anomalyLines(
+        report, today: compute.snapshot?.today ?? environment.today,
+        free: compute.snapshot?.planning.freeMoney, shown: Self.shown, archived: archived)
       VStack(alignment: .leading, spacing: 6) {
-        if recent.isEmpty {
-          Text(verbatim: environment.language("overview.anomaliesNone", table: "Overview"))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        } else {
-          ForEach(recent, id: \.id) { anomaly in
+        ForEach(lines) { line in
+          switch line {
+          case .goalsExceed(let goals, let money):
+            GoalsExceedRow(goals: goals, money: money)
+          case .archivedMoney(let archived):
+            ArchivedMoneyRow(line: archived) { moving = archived.account }
+          case .anomaly(let anomaly):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
               Text(
                 verbatim: environment.language(
@@ -449,17 +593,24 @@ private struct AnomaliesCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-          }
-          if all.count > recent.count {
+          case .more(let count):
             Text(
               verbatim: environment.language.format(
-                "overview.anomaliesMore", table: "Overview", counts: all.count - recent.count)
+                "overview.anomaliesMore", table: "Overview", counts: count)
             )
             .font(.caption)
             .foregroundStyle(.secondary)
+          case .nothingUnusual:
+            Text(verbatim: environment.language("overview.anomaliesNone", table: "Overview"))
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
           }
         }
       }
+    }
+    .sheet(item: $moving) { account in
+      ArchivedMoneySheet(leftoversOf: account) { _ in moving = nil }
+        .handingOver(dependencies)
     }
   }
 }

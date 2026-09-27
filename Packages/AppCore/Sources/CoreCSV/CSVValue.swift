@@ -89,6 +89,11 @@ public enum CSVValue {
   /// number instead of a boolean.
   public static func string(bool value: Bool) -> String { value ? "true" : "false" }
 
+  /// `true`, `false`, or the empty field when there is no value to say.
+  public static func string(bool value: Bool?) -> String {
+    value.map { string(bool: $0) } ?? empty
+  }
+
   // MARK: - Plain values
 
   public static func string(_ value: String?) -> String { value ?? empty }

@@ -50,6 +50,8 @@ struct CategoriesSettingsView: View {
   @State private var refused = false
   /// The limits as the database has them, read with the categories and after every write.
   @State private var budgets: [Budget] = []
+  /// «Сверка» and its income twin: no limit field on them or under them.
+  @State private var limitless: Set<UUID> = []
   /// Why the last amount typed into a limit's field was not written, and in which row.
   @State private var limitRefusal: LimitRefusal?
 
@@ -335,7 +337,7 @@ struct CategoriesSettingsView: View {
       }
       Spacer(minLength: 8)
       if kind == .expense {
-        if LimitRules.offersLimit(on: category.id, tree: tree) {
+        if LimitRules.offersLimit(on: category.id, tree: tree, limitless: limitless) {
           CategoryLimitField(
             stored: LimitRules.categoryLimit(of: category.id, in: budgets),
             commit: { commitLimit($0, for: category.id) },
@@ -387,6 +389,11 @@ struct CategoriesSettingsView: View {
       Text(verbatim: environment.language("categories.cashbackHint", table: "Settings"))
         .font(.caption)
         .foregroundStyle(.secondary)
+      // What the category above receives is set here; what to expect, by the cards' rules.
+      Text(verbatim: environment.language(Self.cashbackRulesHintKey, table: "Settings"))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
@@ -693,7 +700,11 @@ struct CategoriesSettingsView: View {
 
   private func reloadLimits() {
     budgets = LimitWrites.budgets(environment, compute.snapshot)
+    limitless = LimitWrites.limitless(environment, compute.snapshot)
   }
+
+  /// Under the cashback category: how much cashback to expect is set by the cards' rules.
+  static let cashbackRulesHintKey = "categories.cashbackRulesHint"
 
   /// Why the amount typed into a row was not written, and which row it was.
   struct LimitRefusal: Equatable {
@@ -708,7 +719,8 @@ struct CategoriesSettingsView: View {
     let tree = wholeTree()
     let key = Self.commitLimit(
       text, for: categoryId, budgets: LimitWrites.budgets(environment, compute.snapshot),
-      tree: tree, month: environment.today.monthKey, store: store)
+      tree: tree, month: environment.today.monthKey, store: store,
+      limitless: LimitWrites.limitless(environment, compute.snapshot))
     reloadLimits()
     limitRefusal = key.map {
       LimitRefusal(
@@ -729,14 +741,15 @@ struct CategoriesSettingsView: View {
   }
 
   /// The write behind a limit field: `budgets` as the database has them now, `tree` the whole
-  /// tree, archived categories included. Nil when the write landed or there was nothing to
-  /// write, else the key, in the Planning table, of why not.
+  /// tree, archived categories included; `limitless` the reconciliation categories. Nil when the
+  /// write landed or there was nothing to write, else the key, in the Planning table, of why not.
   static func commitLimit(
     _ text: String, for categoryId: UUID, budgets: [Budget], tree: CategoryTree,
-    month: MonthKey, store: TransactionsStore
+    month: MonthKey, store: TransactionsStore, limitless: Set<UUID> = []
   ) -> String? {
     LimitWrites.setCategoryLimit(
-      categoryId, typed: text, budgets: budgets, tree: tree, month: month, store: store)
+      categoryId, typed: text, budgets: budgets, tree: tree, month: month, store: store,
+      limitless: limitless)
   }
 
   /// Whether a new category of `kind` may be filed under `parent`: under nothing, or under

@@ -2,12 +2,12 @@ import AppCore
 import AppDatabase
 import SwiftUI
 
-/// Settings of planning and reconciliation («Сверка: напоминание раз в N
-/// дней (по умолчанию 14)», «Сбережения: целевая доля (по умолчанию 10%)», how many limits the
-/// lists of limits show). The values live in the `settings` table under `PlanningSettings`
-/// keys, so they travel with the archive and the pipeline reads them with the rest of the
-/// data: a change here reaches the numbers through the observation of the database, like any
-/// other write.
+/// Settings of planning and reconciliation («Сверка: напоминание раз в N дней (по умолчанию
+/// 14)», «Сбережения: целевая доля (по умолчанию 10%)», how the money of a foreign-currency
+/// goal counts in rubles, how many limits the lists of limits show). The values live in the
+/// `settings` table under `PlanningSettings` keys, so they travel with the archive and the
+/// pipeline reads them with the rest of the data: a change here reaches the numbers through
+/// the observation of the database, like any other write.
 struct PlanningSettingsView: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -52,9 +52,9 @@ struct PlanningSettingsView: View {
           Text(verbatim: t("settings.planning.reserve"))
           Text(verbatim: t("settings.planning.reserveHint"))
         }
-        // Where the money saved in goals is kept. On an account counted in the summary, the
-        // grey line of the free sum takes it off what can be spent; on an account outside the
-        // summary it is not in the balance, and taking it off would count it twice.
+        // Where the money saved in goals is kept. On an account counted in the summary, the free
+        // sum takes it off what can be spent now; on an account outside the summary it is not in
+        // the balance, and taking it off would count it twice.
         Toggle(
           isOn: Binding(
             get: { values.reconcileIncludesGoalSavings },
@@ -64,6 +64,22 @@ struct PlanningSettingsView: View {
           Text(verbatim: t("settings.planning.includesGoalsHint"))
         }
         .accessibilityIdentifier("settings.planning.goalMoney")
+        // How the money of a goal in another currency counts in rubles: at today's rate when it
+        // is kept in that currency, at what the contributions cost when it is kept in rubles.
+        Picker(
+          selection: Binding(
+            get: { values.goalSavingsValuation }, set: { save(\.goalSavingsValuation, $0) })
+        ) {
+          ForEach(GoalSavingsValuation.allCases, id: \.self) { valuation in
+            Text(verbatim: t("settings.planning.goalValuation.\(valuation.rawValue)"))
+              .tag(valuation)
+          }
+        } label: {
+          Text(verbatim: t("settings.planning.goalValuation"))
+          Text(verbatim: t("settings.planning.goalValuationHint"))
+        }
+        .pickerStyle(.menu)
+        .accessibilityIdentifier("settings.planning.goalValuation")
       } header: {
         Text(verbatim: t("settings.planning.savings"))
       }

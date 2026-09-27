@@ -431,4 +431,220 @@ struct AccountBalancesTests {
       AccountBalances.journalMovement(
         of: noMain, debt: owe, mainId: nil, openings: &openings, calendar: calendar) == nil)
   }
+
+  // MARK: Every count of a key, and what moved between two moments
+
+  /// Every count of a key, in the order of the book — an opening, a count, a later count listed
+  /// before an earlier one —, with its moment; a total of the time before accounts is none, a
+  /// key never counted has none.
+  @Test func anchorsAreInBookOrder() {
+    let late = count(92, on: "2026-03-20", [(key(id(1)), 3000), (key(id(2)), 50)])
+    let balances = build(
+      [operation(1, 100, on: "2026-03-10")],
+      counts: [
+        count(90, on: "2026-03-01", kind: .opening, [(key(id(1)), 1000)]),
+        count(93, on: "2026-03-05", kind: .total, [(key(id(1)), 9999)]),
+        late,
+        count(91, on: "2026-03-08", [(key(id(1)), 2000)]),
+      ])
+    let anchors = balances.anchors(key(id(1)))
+    #expect(anchors.map(\.balance.id) == [id(9000), id(9200), id(9100)])
+    #expect(
+      anchors.map(\.at) == [
+        at("2026-03-01", hour: 10), at("2026-03-20", hour: 10), at("2026-03-08", hour: 10),
+      ])
+    #expect(anchors.last?.balance.id == balances.latestAnchor(key(id(1)))?.balance.id)
+    #expect(balances.anchors(key(id(2))).map(\.balance.id) == [id(9201)])
+    #expect(balances.anchors(key(id(3), kzt)).isEmpty)
+    #expect(balances.anchors(key(id(9))).isEmpty)
+  }
+
+  /// What moved on a key after one moment and up to another: a movement at the first moment is
+  /// not in it, one at the second is; the other keys, a line with no date and a line dated only
+  /// by the day of the first moment are not either — that day says nothing of before or after.
+  @Test func movedIsWhatMovedBetweenTwoMoments() {
+    let owe = Debt(id: id(200), direction: .iOwe, type: .personal, name: "From a friend")
+    let start = at("2026-03-05", hour: 10)
+    let end = at("2026-03-09", hour: 18)
+    let balances = build(
+      [
+        operation(1, 100, on: "2026-03-05", hour: 10),
+        operation(2, 200, on: "2026-03-06"),
+        operation(3, 400, .income, on: "2026-03-09", hour: 18),
+        operation(4, 800, on: "2026-03-09", hour: 19),
+        operation(5, 1600, on: "2026-03-07", account: id(2)),
+      ],
+      transfers: [
+        Transfer(
+          id: id(70), occurredAt: at("2026-03-08"), fromAccountId: id(1), fromCurrency: .rub,
+          fromAmountE4: money(50), toAccountId: id(2), toCurrency: .rub, toAmountE4: money(50))
+      ],
+      journal: [
+        line(10, debt: owe.id, amount: 3000, date: "2026-03-05"),
+        line(11, debt: owe.id, amount: 6000, date: "2026-03-07"),
+        line(12, debt: owe.id, amount: 12000),
+      ],
+      debts: [owe])
+    #expect(
+      balances.moved(key(id(1)), after: start, through: end) == money(-200 + 400 - 50 + 6000))
+    #expect(balances.moved(key(id(2)), after: start, through: end) == money(-1600 + 50))
+    #expect(balances.moved(key(id(1)), after: end, through: start) == .zero)
+    #expect(balances.moved(key(id(1)), after: start, through: start) == .zero)
+    #expect(balances.moved(key(id(9)), after: start, through: end) == .zero)
+    // From a moment of the day before, the line of the 5th is in.
+    #expect(
+      balances.moved(key(id(1)), after: at("2026-03-04"), through: end)
+        == money(-100 - 200 + 400 - 50 + 3000 + 6000))
+  }
+
+  /// For every moment and the count `balance(_:at:)` takes then, the balance is that count plus
+  /// what moved after it up to the moment: `moved` is the same rule, on random histories with
+  /// counts listed out of order, lines dated by their day only and lines with no date.
+  @Test(arguments: Array(UInt64(1)...40))
+  func movedMatchesTheBalanceEngine(seed: UInt64) {
+    var dice = MoneyDice(seed: seed)
+    let owe = Debt(id: id(200), direction: .iOwe, type: .personal, name: "From a friend")
+    let lent = Debt(id: id(201), direction: .owedToMe, type: .personal, name: "To a friend")
+    let start = moment("2026-03-01")
+    func someMoment() -> Date {
+      start.addingTimeInterval(TimeInterval(dice.below(40 * 1440) * 60))
+    }
+    let accounts = [id(1), id(2)]
+    var entries: [TransactionEntry] = []
+    var transfers: [Transfer] = []
+    var journal: [DebtEntry] = []
+    var counts: [(Reconciliation, [ReconciledBalance])] = []
+    for number in 1...60 {
+      let when = someMoment()
+      let account = dice.pick(accounts)
+      let kind = dice.pick([TransactionKind.expense, .expense, .income, .refund])
+      let amount = dice.amount(upTo: 5_000)
+      entries.append(
+        TransactionEntry(
+          transaction: Transaction(
+            id: id(number), kind: kind, occurredAt: when, currency: .rub, amountE4: amount,
+            paymentMethodId: account, deletedAt: dice.chance(10) ? when : nil),
+          parts: [
+            TransactionPart(
+              id: id(number * 10), transactionId: id(number), amountE4: amount)
+          ]))
+    }
+    for number in 1...10 {
+      let sent = dice.amount(upTo: 2_000)
+      transfers.append(
+        Transfer(
+          id: id(1000 + number), occurredAt: someMoment(), fromAccountId: id(1),
+          fromCurrency: .rub, fromAmountE4: sent, toAccountId: id(2), toCurrency: .rub,
+          toAmountE4: sent))
+    }
+    for number in 1...12 {
+      let when = someMoment()
+      let dated = dice.below(3)
+      journal.append(
+        DebtEntry(
+          id: id(2000 + number), debtId: dice.chance(50) ? owe.id : lent.id,
+          date: dated == 0 ? CalendarContext.utc.day(of: when) : nil,
+          amountE4: dice.amount(upTo: 3_000), kind: .borrowed,
+          paymentMethodId: dice.pick(accounts), occurredAt: dated == 1 ? when : nil))
+    }
+    for number in 1...6 {
+      let when = someMoment()
+      let reconciliation = Reconciliation(
+        id: id(3000 + number), date: CalendarContext.utc.day(of: when), reconciledAt: when,
+        actualTotalRubE4: .zero,
+        kind: dice.pick([ReconciliationKind.accounts, .accounts, .opening, .total]))
+      let rows = accounts.enumerated().compactMap { index, account -> ReconciledBalance? in
+        guard dice.chance(70) else { return nil }
+        return ReconciledBalance(
+          id: id(4000 + number * 10 + index), reconciliationId: reconciliation.id,
+          accountId: account, currency: .rub, actualE4: dice.amount(upTo: 100_000))
+      }
+      counts.append((reconciliation, rows))
+    }
+    counts = dice.shuffled(counts)
+    let balances = build(
+      entries, transfers: transfers, journal: journal, debts: [owe, lent], counts: counts,
+      accounts: [card, cash], now: "2026-04-30")
+    var instants = entries.prefix(12).map(\.transaction.occurredAt)
+    instants += counts.compactMap(\.0.reconciledAt)
+    instants += journal.compactMap(\.occurredAt)
+    for _ in 0..<12 { instants.append(someMoment()) }
+    for account in accounts {
+      let pair = key(account)
+      let anchors = balances.anchors(pair)
+      let written = counts.filter { $0.0.kind != .total }.flatMap(\.1).filter { $0.key == pair }
+      #expect(anchors.map(\.balance.id) == written.map(\.id), "seed \(seed)")
+      for instant in instants {
+        guard let anchor = anchors.last(where: { $0.at <= instant }) else {
+          #expect(balances.balance(pair, at: instant) == nil, "seed \(seed)")
+          continue
+        }
+        #expect(
+          balances.balance(pair, at: instant)
+            == anchor.balance.actualE4 + balances.moved(pair, after: anchor.at, through: instant),
+          "seed \(seed), \(instant)")
+      }
+    }
+  }
+
+  // MARK: The window of a count
+
+  @Test func expectedForACountIsThePreviousCountPlusItsWindow() {
+    let balances = build(
+      [
+        operation(1, 300, on: "2026-03-02"),
+        operation(2, 5000, .income, on: "2026-03-04"),
+        operation(3, 700, on: "2026-03-06"),
+        operation(4, 200, on: "2026-03-09"),
+      ],
+      counts: [
+        count(90, on: "2026-03-03", [(key(id(1)), 10_000)]),
+        count(91, on: "2026-03-08", [(key(id(1)), 14_000)]),
+      ])
+    #expect(balances.expected(forCount: id(9000)) == nil)
+    // 10,000 counted on 03.03 plus +5,000 and −700 in the window up to 08.03.
+    #expect(balances.expected(forCount: id(9100)) == money(14_300))
+    #expect(balances.expected(forCount: id(4242)) == nil)
+  }
+
+  @Test func countHoldingFindsTheWindowWithTheDayRule() {
+    let owe = Debt(id: id(200), direction: .iOwe, type: .personal, name: "From a friend")
+    let first = count(90, on: "2026-03-03", [(key(id(1)), 10_000)])
+    let second = count(91, on: "2026-03-08", [(key(id(1)), 14_000)])
+    let sameDay = line(1, debt: owe.id, amount: 500, date: "2026-03-03")
+    let inside = line(2, debt: owe.id, amount: 500, date: "2026-03-05")
+    let onTheCountDay = line(3, debt: owe.id, amount: 500, date: "2026-03-08")
+    let undated = line(4, debt: owe.id, amount: 500)
+    let balances = build(
+      [operation(1, 300, on: "2026-03-05"), operation(2, 300, on: "2026-03-09")],
+      journal: [sameDay, inside, onTheCountDay, undated], debts: [owe],
+      counts: [first, second])
+    let moves = [
+      AccountMovement(
+        key: key(id(1)), at: at("2026-03-05"), amountE4: money(-300),
+        source: .operation(id(1))),
+      AccountMovement(
+        key: key(id(1)), at: moment("2026-03-03"), amountE4: money(500),
+        source: .journal(id(1)), timing: .day(day("2026-03-03"))),
+      AccountMovement(
+        key: key(id(1)), at: moment("2026-03-05"), amountE4: money(500),
+        source: .journal(id(2)), timing: .day(day("2026-03-05"))),
+      AccountMovement(
+        key: key(id(1)), at: moment("2026-03-08"), amountE4: money(500),
+        source: .journal(id(3)), timing: .day(day("2026-03-08"))),
+      AccountMovement(
+        key: key(id(1)), at: .distantPast, amountE4: money(500), source: .journal(id(4)),
+        timing: .undated),
+      AccountMovement(
+        key: key(id(1)), at: at("2026-03-09"), amountE4: money(-300),
+        source: .operation(id(2))),
+      AccountMovement(
+        key: key(id(1)), at: at("2026-03-01"), amountE4: money(-300),
+        source: .operation(id(3))),
+    ]
+    let holding = moves.map { balances.countHolding($0)?.id }
+    #expect(holding == [id(9100), nil, id(9100), id(9100), nil, nil, nil])
+    // The expected balance agrees: the window holds −300, +500 and +500.
+    #expect(balances.expected(forCount: id(9100)) == money(10_700))
+  }
 }

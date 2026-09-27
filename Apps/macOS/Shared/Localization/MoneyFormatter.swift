@@ -94,6 +94,13 @@ public struct MoneyFormatter: Sendable {
     percentText(Self.percent(of: basisPoints, fractionDigits: fractionDigits), fractionDigits)
   }
 
+  /// A cashback percent exactly as kept, up to its four decimals: «1.5 %», «10 %» in Russian,
+  /// «1.5%» in English.
+  public func percent(_ percent: CashbackPercent) -> String {
+    let number = NumberText.decimal(percent.decimal, fractionDigits: 0...4)
+    return isRussian ? "\(number)\u{00A0}%" : "\(number)%"
+  }
+
   /// A change in basis points with its sign: «+8.3 %», «−53.4 %», «0.0 %». As with money,
   /// the sign is that of the rounded figure.
   public func signedPercent(basisPoints: Int, fractionDigits: Int = 1) -> String {
@@ -236,6 +243,17 @@ public struct DateFormatting: Sendable {
     let names = symbols.standaloneMonthSymbols ?? []
     let name = month.month - 1 < names.count ? names[month.month - 1] : month.iso
     return "\(name.capitalizedFirst) \(month.year)"
+  }
+
+  /// The key of a month in the prepositional case in Common — `month.in.9`: «в сентябре»,
+  /// «in September». No formatter gives that case; the catalog does.
+  public static func monthInKey(_ month: MonthKey) -> String { "month.in.\(month.month)" }
+
+  /// A month as «только в сентябре» needs it: `words` are the words of `monthInKey` in the
+  /// language of the interface, and the year follows them when it is not `thisYear` — «в
+  /// сентябре 2027», «in September 2027».
+  public func monthIn(_ month: MonthKey, thisYear: Int, words: String) -> String {
+    month.year == thisYear ? words : "\(words) \(month.year)"
   }
 
   /// A month on an axis: «сент.», «Sep»; with its year when a chart spans two: «сент. 26».

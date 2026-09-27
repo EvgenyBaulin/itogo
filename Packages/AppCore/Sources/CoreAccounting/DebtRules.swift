@@ -379,6 +379,33 @@ public enum DebtRules {
       description: description, transactionId: transactionId)
   }
 
+  // MARK: - What is no payment, and a due the bank took before a count
+
+  /// The operations that point at a debt without paying it: the journal wrote them as an
+  /// `offset` («Offset») or as more `borrowed` (money taken or lent more through the entry
+  /// line). Every rule that asks whether a debt was paid leaves them out.
+  public static func notPayments(_ journal: some Sequence<DebtEntry>) -> Set<UUID> {
+    Set(
+      journal.lazy.filter { $0.kind == .offset || $0.kind == .borrowed }
+        .compactMap(\.transactionId))
+  }
+
+  /// «Уже списано до сверки» of a debt's due date: the bank took the monthly payment before a
+  /// count of the account, so the count already holds that money gone. A `payment` line of
+  /// min(monthly payment, balance) dated the due date, with no operation and no account: it
+  /// lowers the balance and closes the earliest unpaid due like any payment, and moves no money
+  /// on any account — only `borrowed` lines without an operation do. `nil` when nothing is left
+  /// on the debt or it has no monthly payment.
+  public static func settledByCount(
+    debt: Debt, due: DateOnly, balance: AmountE4, entryId: UUID = UUID()
+  ) -> DebtEntry? {
+    guard let monthly = debt.monthlyPaymentE4, monthly.raw > 0, balance.raw > 0 else {
+      return nil
+    }
+    return makeEntry(
+      id: entryId, debtId: debt.id, kind: .payment, amountE4: min(monthly, balance), date: due)
+  }
+
   // MARK: - Transfer
 
   /// A third party paid off one debt and the amount moved into another one. Two lines

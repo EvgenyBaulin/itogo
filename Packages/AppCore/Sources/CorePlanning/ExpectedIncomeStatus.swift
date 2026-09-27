@@ -161,6 +161,52 @@ public enum ExpectedIncomeRules {
     return candidates.first?.id
   }
 
+  // MARK: - Where the money comes and what an operation pays
+
+  /// The account the money of `income` is to come to: the one the owner chose for it; without
+  /// one, the account of the latest live income operation linked to it — the main one when
+  /// that operation named none —; with neither, `mainId`. A salary lands on one account every
+  /// month, so after one linked month the guess is right, and the choice says it from day one.
+  public static func account(
+    of income: ExpectedIncome, links: [ExpectedIncomeLink], ledger: Ledger, mainId: UUID?
+  ) -> UUID? {
+    if let chosen = income.paymentMethodId { return chosen }
+    let latest =
+      links
+      .filter { $0.expectedIncomeId == income.id }
+      .compactMap { ledger.entry($0.transactionId) }
+      .filter { $0.transaction.kind == .income && !$0.transaction.isDeleted }
+      .max { oldestFirst($0, $1) }
+    guard let latest else { return mainId }
+    return latest.transaction.paymentMethodId ?? mainId
+  }
+
+  /// The due date of `status` an income operation would be counted towards if it were
+  /// linked: the only one of a one-off expectation, else the one of the operation's month
+  /// (its year, its week — as the frequency says). `nil` when it belongs to no listed due date.
+  public static func occurrenceIndex(
+    of entry: TransactionEntry, in status: ExpectedIncomeStatus, ledger: Ledger
+  ) -> Int? {
+    guard !status.occurrences.isEmpty else { return nil }
+    switch status.income.kind {
+    case .oneOff:
+      return 0
+    case .recurring:
+      guard let row = firstRow(of: entry, ledger) else { return nil }
+      let freq = status.income.freq ?? .monthly
+      return status.occurrences.firstIndex { belongs(row, to: $0.due, freq: freq) }
+    }
+  }
+
+  /// An income operation in the currency of `income`, the way a link would count it: its own
+  /// amount in the same currency, else through rubles at `rubPerUnit`; `nil` without a rate.
+  public static func amount(
+    of transaction: Transaction, towards income: ExpectedIncome,
+    rubPerUnit: [CurrencyCode: Decimal]
+  ) -> AmountE4? {
+    amount(of: transaction, in: income.currency, rate: rate(of: income.currency, in: rubPerUnit))
+  }
+
   // MARK: - One expectation
 
   private static func status(

@@ -34,6 +34,17 @@ struct LegacyMigrationPropertyTests {
     "templates": ["archived": "0"],
   ]
 
+  /// The columns the update to 1.2 adds, empty on every older row: nothing an older row had is
+  /// a card, a cashback, an event of a payment, an account of an expectation, a deletion or an
+  /// origin. The plan of a goal is not here: a goal with a plan gets the month of the update.
+  private static let addedByTheCards: [String: [String]] = [
+    "transactions": ["card_id", "cashback_currency", "cashback_e4"],
+    "scheduled_payments": ["card_id", "event_id"],
+    "expected_income": ["payment_method_id"],
+    "debts": ["deleted_at"],
+    "reconciliations": ["origin"],
+  ]
+
   /// Forty databases of every shape of the main account's flags, with and without operations
   /// that have no account.
   static let seeds: [UInt64] = Array(1...40)
@@ -55,7 +66,7 @@ struct LegacyMigrationPropertyTests {
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
-    #expect(stack.applied.applied == 1, "seed \(seed)")
+    #expect(stack.applied.applied == 2, "seed \(seed)")
 
     try stack.writer.read { db in
       let after = try ExactTables.read(db, columns: before.mapValues(\.columns))
@@ -110,6 +121,13 @@ struct LegacyMigrationPropertyTests {
       }
 
       // What the update added holds its defaults in every older row.
+      for (table, columns) in Self.addedByTheCards {
+        for column in columns {
+          #expect(
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table) WHERE \(column) IS NOT NULL")
+              == 0, "seed \(seed): \(table).\(column)")
+        }
+      }
       for (table, columns) in Self.added {
         let values = try ExactTables.read(db, columns: [table: Array(columns.keys.sorted())])
         let contents = try #require(values[table])
@@ -136,6 +154,7 @@ struct LegacyMigrationPropertyTests {
     let expectedMain = MainAccountModel.main(
       accounts: book.accounts, operations: book.operationAccounts)
     let flaggedBefore = book.accounts.filter(\.isDefault).map(\.id)
+    let cards = try Self.cardsStep(of: book)
 
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
@@ -158,7 +177,34 @@ struct LegacyMigrationPropertyTests {
     case .none:
       break
     }
-    #expect(stack.applied.dataSteps == expected, "seed \(seed)")
+    #expect(TestSupport.accountsStep(stack.applied.dataSteps) == expected, "seed \(seed)")
+    #expect(TestSupport.cardsStep(stack.applied.dataSteps) == cards, "seed \(seed)")
+    #expect(stack.applied.dataSteps.count == 10, "seed \(seed)")
+  }
+
+  /// The counts the step of the cards gives a drawn file, read from it before the update: a card
+  /// for every live account of the kind «card» with a name, and a start for every goal plan. A
+  /// file of 1.0.0 has no sheet of accounts, so no count gets a mode.
+  private static func cardsStep(of book: RandomLegacyDatabase) throws -> [String: Int] {
+    try book.read { db in
+      var accounts: [MigratingCardAccount] = []
+      for row in try Row.fetchAll(
+        db, sql: "SELECT id, name, kind, archived FROM payment_methods ORDER BY rowid")
+      {
+        guard let text: String = row["id"], let id = UUID(uuidString: text) else { continue }
+        let kind: String? = row["kind"]
+        let archived: Int64? = row["archived"]
+        accounts.append(
+          MigratingCardAccount(
+            id: id, name: row["name"] ?? "", kind: kind.flatMap(PaymentMethodKind.init(rawValue:)),
+            archived: (archived ?? 0) != 0))
+      }
+      let plan = CardsMigration.plan(accounts: accounts)
+      let planned =
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM goals WHERE monthly_plan_e4 > 0") ?? 0
+      return TestSupport.cardsStep(
+        cardsCreated: plan.cards.count, cardsSkipped: plan.skipped, goalPlansStarted: planned)
+    }
   }
 
   /// Opened again, the updated file applies nothing and changes nothing — not even through the
@@ -311,7 +357,7 @@ struct LegacyMigrationPropertyTests {
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
-    #expect(try stack.appliedMigrations().count == 4)
+    #expect(try stack.appliedMigrations().count == 5)
     let after = try stack.writer.read { db in
       try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").count
     }
@@ -339,8 +385,9 @@ struct LegacyMigrationPropertyTests {
     let stack = try DatabaseStack(url: url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
     #expect(
-      stack.applied.dataSteps
+      TestSupport.accountsStep(stack.applied.dataSteps)
         == ["mainKept": 0, "mainChosen": 0, "mainCreated": 0, "defaultsCleared": 0, "assigned": 0])
+    #expect(TestSupport.cardsStep(stack.applied.dataSteps) == TestSupport.cardsStep())
     #expect(
       try ReferenceRepository(writer: stack.writer).paymentMethods(includeArchived: true).isEmpty)
     #expect(try AccountRepository(writer: stack.writer).ensureMainAccount() == nil)

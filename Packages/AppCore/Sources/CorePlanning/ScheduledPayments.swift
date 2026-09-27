@@ -237,12 +237,16 @@ public struct ScheduledStatus: Hashable, Sendable, Identifiable {
   /// through the end of the payment is paid, the last of them (its operation is in
   /// `matchedDues`). Given no value, `nextDue`.
   public var nextUnpaid: DateOnly
+  /// The payment names an account that is archived: it is paid from — and comes off — the main
+  /// account, and the list says «счёт в архиве — перенесите платёж на другой».
+  public var accountArchived: Bool
 
   public init(
     payment: ScheduledPayment, dueDates: [DateOnly], nextDue: DateOnly, isOverdue: Bool,
     amountNext: AmountE4, monthly: AmountE4, yearly: AmountE4, myShareRubNext: AmountE4?,
     expectedReturnRubNext: AmountE4?, lastCharge: ScheduledCharge?, chargedDifferently: Bool,
-    matchedDues: [DateOnly: UUID] = [:], nextUnpaid: DateOnly? = nil, isOneOff: Bool = false
+    matchedDues: [DateOnly: UUID] = [:], nextUnpaid: DateOnly? = nil, isOneOff: Bool = false,
+    accountArchived: Bool = false
   ) {
     self.payment = payment
     self.dueDates = dueDates
@@ -258,6 +262,7 @@ public struct ScheduledStatus: Hashable, Sendable, Identifiable {
     self.matchedDues = matchedDues
     self.nextUnpaid = nextUnpaid ?? nextDue
     self.isOneOff = isOneOff
+    self.accountArchived = accountArchived
   }
 
   /// How many due dates `dueDates` keeps at most.
@@ -323,6 +328,7 @@ public enum ScheduledRules {
   ) -> [ScheduledStatus] {
     let charges = lastCharges(ledger: ledger)
     let endOfMonth = today.monthKey.lastDay
+    let archived = Set(ledger.dataset.paymentMethods.filter(\.archived).map(\.id))
     var result: [ScheduledStatus] = []
     for payment in book.scheduled where payment.active {
       guard let nextDue = payment.nextDate, payment.endDate.map({ nextDue <= $0 }) ?? true
@@ -357,7 +363,8 @@ public enum ScheduledRules {
           lastCharge: charge,
           chargedDifferently: chargedDifferently,
           matchedDues: matches.matchedDues(of: payment.id), nextUnpaid: shown.due,
-          isOneOff: oneOff))
+          isOneOff: oneOff,
+          accountArchived: payment.paymentMethodId.map(archived.contains) ?? false))
     }
     return result.sorted { left, right in
       if left.nextUnpaid != right.nextUnpaid { return left.nextUnpaid < right.nextUnpaid }
@@ -436,11 +443,16 @@ public enum ScheduledRules {
   /// due date earlier than `next_date` (one paid or skipped already) leaves it where it is.
   /// With `updatePrice`, an amount other than the price on `due` becomes the price from
   /// `due` on.
+  ///
+  /// `eventId` — the event the due date belongs to (`event(of:due:events:)`) — goes onto every
+  /// part, so the payment counts in the event's «потрачено». The payment's card goes onto the
+  /// operation while it is a live card of `cards`; an archived or unknown one is left off.
   public static func markAsPaid(
     _ payment: ScheduledPayment, due: DateOnly, amount: AmountE4, occurredAt: Date,
     paidAt rate: Decimal? = nil, rubPerUnit: [CurrencyCode: Decimal] = [:],
     updatePrice: Bool = false, prices: [SubscriptionPrice] = [],
-    categories: CategoryTree = CategoryTree(), history: ManualQualityHistory = .empty
+    categories: CategoryTree = CategoryTree(), history: ManualQualityHistory = .empty,
+    eventId: UUID? = nil, cards: [PaymentCard] = []
   ) throws -> MarkAsPaidPlan {
     guard amount.raw > 0 else { throw ScheduledIssue.nonPositiveAmount }
     let rate = rate.flatMap { $0 > 0 ? $0 : nil }
@@ -454,7 +466,7 @@ public enum ScheduledRules {
         qualitySource: decision.source, amount: amount, forWhom: payment.forWhom,
         forPersonId: payment.forPersonId, reimbursable: reimbursable,
         debtorPersonId: reimbursable ? (payment.debtorPersonId ?? payment.forPersonId) : nil,
-        reimbursementStatus: reimbursable ? .expected : nil)
+        reimbursementStatus: reimbursable ? .expected : nil, eventId: eventId)
     }
 
     var parts: [PartDraft] = []
@@ -468,11 +480,12 @@ public enum ScheduledRules {
     }
 
     let foreign = payment.currency != .rub
-    let draft = TransactionDraft(
+    var draft = TransactionDraft(
       kind: .expense, occurredAt: occurredAt, currency: payment.currency, amount: amount,
       rate: foreign ? rate : nil, rateSource: foreign && rate != nil ? .manual : nil,
       rateProvisional: false, note: payment.name, paymentMethodId: payment.paymentMethodId,
       parts: parts)
+    draft.cardId = cards.first { $0.id == payment.cardId && !$0.archived }?.id
 
     var newPrice: SubscriptionPrice?
     if updatePrice, amount != SubscriptionMath.price(of: payment, on: due, prices: prices) {
@@ -488,6 +501,27 @@ public enum ScheduledRules {
   /// after a payment.
   public static func skip(_ payment: ScheduledPayment, due: DateOnly) -> ScheduledPayment {
     advanced(payment, past: due)
+  }
+
+  /// «Уже списано до сверки»: the bank took the money of `due` before a count, so the count
+  /// holds it gone and the due date closes without an operation — `next_date` moves past it
+  /// exactly as «Skip» moves it.
+  public static func settledByCount(
+    _ payment: ScheduledPayment, due: DateOnly
+  ) -> ScheduledPayment {
+    advanced(payment, past: due)
+  }
+
+  /// The event a due date of `payment` belongs to: the payment's event while it is among
+  /// `events` and `due` is on or before its last day; `nil` otherwise — a due after the
+  /// event's end is an ordinary payment.
+  public static func event(
+    of payment: ScheduledPayment, due: DateOnly, events: [Event]
+  ) -> UUID? {
+    guard let eventId = payment.eventId,
+      let event = events.first(where: { $0.id == eventId }), due <= event.endDate
+    else { return nil }
+    return event.id
   }
 
   /// The first thing wrong with a payment, or `nil` when it can be saved. An unknown

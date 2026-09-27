@@ -72,6 +72,10 @@ struct OverviewView: View {
 /// The way back to the setup of the accounts stands above the grid, the full width of it,
 /// and only while the setup is put off: it is no cell of the grid, so once the setup is done
 /// no empty row is left behind.
+///
+/// Above everything, «Последняя запись»: when the owner last wrote something down says whether
+/// the figures under it are up to date, so it comes before them — the bottom of the grid is
+/// often out of view.
 private struct OverviewHeader: View {
   @Dependency(\.environment) private var environment
   let actions: OperationActions
@@ -79,6 +83,7 @@ private struct OverviewHeader: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
+      LastRecordLine()
       if AccountsSetupCard.shows(setup: environment.accountSetup) {
         AccountsSetupCard()
       }

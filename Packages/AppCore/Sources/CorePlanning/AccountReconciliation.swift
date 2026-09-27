@@ -58,6 +58,18 @@ public struct AccountReconciliationRecord: Hashable, Sendable {
   }
 }
 
+/// What saving an operation or a transfer has to ask about the counts of its day
+/// (`AccountReconciliation.countToAsk`).
+public enum CountAsk: Sendable {
+  /// No count of its balances was made on its day before it was saved.
+  case none
+  /// The questions to walk, oldest count first; their answer is the moment to save it at.
+  case ask(CountQuestions)
+  /// Answers remembered for the reconciliations settle every count of the day: the moment to
+  /// save it at, without a question.
+  case answered(stamp: Date)
+}
+
 /// Reconciliation by account and currency: how much money is on each account, in each of its
 /// currencies, against what the books say.
 ///
@@ -125,13 +137,20 @@ public enum AccountReconciliation {
   ///   counted balance is anchored at `t0` and the money now equals the count exactly. Rows
   ///   left empty are not written; counts of keys that are not rows are ignored.
   /// * A row the books expected something for compares: `expected` and `difference = actual −
-  ///   expected`. A row never counted before is a starting point: both `nil`, nothing else.
-  /// * With `writeDifference`, every non-zero difference becomes an operation: an expense in
-  ///   «Сверка» when money is missing, an income in its twin when there is more; on that
-  ///   account, in that currency, at `t0`, at today's rate of the bank (`rubPerUnit`, rubles
-  ///   for one unit, marked provisional so the day's own rate settles it), keyed
-  ///   `reconcile:<reconciliation>:<balance>`. The balance points at its operation. A foreign
-  ///   difference without a rate is not written and is listed.
+  ///   expected`. A row never counted before is a starting point: both `nil`, nothing else. So
+  ///   is a row of `startingPoints`, whatever the books expected: the owner said its count is
+  ///   where its money starts.
+  /// * Every compared row says how it keeps its difference (`recordsDifference`): it records
+  ///   with `writeDifference`, and when no compared row differs — there was nothing to
+  ///   decline —; otherwise it only keeps the numbers. A starting point keeps nothing.
+  /// * With `writeDifference`, every non-zero difference becomes an operation
+  ///   (`LiveCounts.differenceOperation`): an expense in «Сверка» when money is missing, an
+  ///   income in its twin when there is more; on that account, in that currency, at `t0`, at
+  ///   today's rate of the bank (`rubPerUnit`, rubles for one unit, marked provisional so the
+  ///   day's own rate settles it), keyed `reconcile:<reconciliation>:<balance>`. The operation
+  ///   and its one part take the ids derived from the count (`ReconcileDifferenceIds`). The
+  ///   balance points at its operation. A foreign difference without a rate is not written and
+  ///   is listed. From then on the difference follows the books (`LiveCounts`).
   /// * The reconciliation of `kind`, dated the day of `t0`: its ruble columns are for display
   ///   only — the counts at today's rates, and the expected ones the same way when there are
   ///   any. A currency without a rate today is left out of both and listed
@@ -140,10 +159,18 @@ public enum AccountReconciliation {
     counted: [BalanceKey: AmountE4], rows: [ReconcileRow], writeDifference: Bool,
     kind: ReconciliationKind, at t0: Date, calendar: CalendarContext, tree: CategoryTree,
     categories: (expense: UUID, income: UUID), rubPerUnit: [CurrencyCode: Decimal],
-    makeId: () -> UUID
+    makeId: () -> UUID, startingPoints: Set<BalanceKey> = []
   ) -> AccountReconciliationRecord {
     let reconciliationId = makeId()
     let day = calendar.day(of: t0)
+    func expected(_ row: ReconcileRow) -> AmountE4? {
+      startingPoints.contains(row.key) ? nil : row.expected
+    }
+    let anyRowDiffers = rows.contains { row in
+      guard let actual = counted[row.key], let expected = expected(row) else { return false }
+      return actual != expected
+    }
+    let records = writeDifference || !anyRowDiffers
     var balances: [ReconciledBalance] = []
     var differences: [TransactionEntry] = []
     var withoutRate: [BalanceKey] = []
@@ -154,14 +181,16 @@ public enum AccountReconciliation {
 
     for row in rows {
       guard let actual = counted[row.key] else { continue }
+      let expected = expected(row)
       var balance = ReconciledBalance(
         id: makeId(), reconciliationId: reconciliationId, accountId: row.key.accountId,
-        currency: row.key.currency, actualE4: actual, expectedE4: row.expected,
-        differenceE4: row.expected.map { actual - $0 })
+        currency: row.key.currency, actualE4: actual, expectedE4: expected,
+        differenceE4: expected.map { actual - $0 },
+        recordsDifference: expected == nil ? nil : records)
       let rate = perUnit(row.key.currency, rubPerUnit)
       if let rate {
         actualRub += SubscriptionMath.rounded(actual.decimal * rate)
-        if let expected = row.expected {
+        if let expected {
           expectedRub += SubscriptionMath.rounded(expected.decimal * rate)
           anyExpected = true
         }
@@ -170,10 +199,13 @@ public enum AccountReconciliation {
       }
       if writeDifference, let difference = balance.differenceE4, !difference.isZero {
         if let rate {
-          let entry = differenceOperation(
-            difference, key: row.key, rate: rate, at: t0, day: day, tree: tree,
-            categories: categories, id: makeId(),
-            link: .reconciledBalance(reconciliation: reconciliationId, balance: balance.id))
+          let entry = LiveCounts.differenceOperation(
+            difference, key: row.key,
+            rate: CountRate(perUnit: rate, day: day, provisional: true), at: t0, tree: tree,
+            categories: ReconcileCategories(expense: categories.expense, income: categories.income),
+            countId: balance.id,
+            link: .reconciledBalance(reconciliation: reconciliationId, balance: balance.id),
+            now: t0)
           balance.transactionId = entry.id
           differences.append(entry)
         } else {
@@ -190,41 +222,6 @@ public enum AccountReconciliation {
       reconciliation: reconciliation, balances: balances, differences: differences,
       withoutRate: withoutRate,
       totalsWithoutRate: totalsWithoutRate.sorted { $0.code < $1.code })
-  }
-
-  /// The operation that records one difference: less money than expected is an expense of
-  /// the gap, more is an income. The app supplies the words; the category is its choice.
-  private static func differenceOperation(
-    _ difference: AmountE4, key: BalanceKey, rate: Decimal, at t0: Date, day: DateOnly,
-    tree: CategoryTree, categories: (expense: UUID, income: UUID), id: UUID,
-    link: OperationLink
-  ) -> TransactionEntry {
-    let missing = difference.isNegative
-    let amount = difference.magnitude
-    let foreign = key.currency != .rub
-    var draft = TransactionDraft(
-      kind: missing ? .expense : .income, occurredAt: t0, currency: key.currency,
-      amount: amount, rate: foreign ? rate : nil, rateDate: foreign ? day : nil,
-      rateSource: foreign ? .cbr : nil, rateProvisional: foreign,
-      paymentMethodId: key.accountId)
-    draft.normalizeSinglePart()
-    draft.parts[0].categoryId = missing ? categories.expense : categories.income
-    draft.parts[0].categorySource = .system
-    if missing {
-      let decision = QualityResolver.resolve(categoryId: categories.expense, categories: tree)
-      draft.parts[0].quality = decision.quality
-      draft.parts[0].qualitySource = decision.source
-    }
-    let rubles = foreign ? SubscriptionMath.rounded(amount.decimal * rate) : amount
-    let transaction = Transaction(
-      id: id, kind: draft.kind, occurredAt: t0, currency: key.currency, amountE4: amount,
-      rate: draft.rate, rateDate: draft.rateDate, rateSource: draft.rateSource,
-      rateProvisional: draft.rateProvisional, amountRubE4: rubles,
-      paymentMethodId: key.accountId, externalId: link.externalId, createdAt: t0,
-      updatedAt: t0)
-    return TransactionEntry(
-      transaction: transaction,
-      parts: draft.parts.map { $0.materialize(transactionId: id, amountRub: rubles) })
   }
 
   // MARK: - Before the count
@@ -249,6 +246,75 @@ public enum AccountReconciliation {
       earliest = min(earliest ?? anchor.at, anchor.at)
     }
     return earliest
+  }
+
+  /// Every count of `keys` made on the day of `occurredAt` before `savedAt`, oldest first, one
+  /// per moment, each with its reconciliation — not only the latest count of each key: once a
+  /// later count's difference follows the books, the window a movement lands in matters, and a
+  /// morning coffee typed at night belongs before the setup of 09:00, not inside the sheet of
+  /// 21:00. Two counts at one moment are one question, named by the first found — the keys in
+  /// the order given, the counts of each in the order of the book.
+  ///
+  /// Only the day of `occurredAt` counts, not its time: a line dated «вчера» carries noon,
+  /// which says nothing about before or after a count.
+  public static func countsOfTheDay(
+    occurredAt: Date, savedAt: Date, keys: [BalanceKey], balances: AccountBalances,
+    calendar: CalendarContext
+  ) -> [(at: Date, reconciliation: UUID)] {
+    let day = calendar.day(of: occurredAt)
+    var found: [Date: UUID] = [:]
+    var seen: Set<BalanceKey> = []
+    for key in keys where seen.insert(key).inserted {
+      for anchor in balances.anchors(key) where savedAt > anchor.at && found[anchor.at] == nil {
+        guard calendar.day(of: anchor.at) == day else { continue }
+        found[anchor.at] = anchor.balance.reconciliationId
+      }
+    }
+    return found.keys.sorted().compactMap { at in found[at].map { (at, $0) } }
+  }
+
+  /// What saving a movement of `keys` dated `occurredAt` at `savedAt` asks: nothing when no
+  /// count of its day came before the save (`countsOfTheDay`); otherwise the questions about
+  /// those counts, oldest first, with the answers `remembered` for their reconciliations
+  /// (reconciliation → «до») applied — and when those settle every count, the moment itself.
+  /// The questions know which of the counts an answer can be remembered for
+  /// (`CountQuestions.remembers`).
+  ///
+  /// An answer answers for a count only while that day is the latest counted day of every one
+  /// of `keys` the count counted: one sheet counts several accounts under one reconciliation,
+  /// and once one of them is counted again on a later day, the sheet's answer no longer dates
+  /// that account's movements — they are asked about it again, without the offer to remember.
+  public static func countToAsk(
+    occurredAt: Date, savedAt: Date, keys: [BalanceKey], balances: AccountBalances,
+    calendar: CalendarContext, remembered: [UUID: Bool]
+  ) -> CountAsk {
+    let counts = countsOfTheDay(
+      occurredAt: occurredAt, savedAt: savedAt, keys: keys, balances: balances,
+      calendar: calendar)
+    let day = calendar.day(of: occurredAt)
+    var countedAgain: Set<UUID> = []
+    for key in Set(keys) {
+      guard let latest = balances.latestAnchor(key), calendar.day(of: latest.at) != day
+      else { continue }
+      for anchor in balances.anchors(key) where calendar.day(of: anchor.at) == day {
+        countedAgain.insert(anchor.balance.reconciliationId)
+      }
+    }
+    switch CountQuestions.start(
+      counts: counts.map(\.at), reconciliations: counts.map(\.reconciliation),
+      occurredAt: occurredAt, calendar: calendar,
+      remembered: remembered.filter { !countedAgain.contains($0.key) })
+    {
+    case .none: return .none
+    case .ask(var questions):
+      // «Больше не спрашивать» is offered only where the answer would be kept and would answer
+      // for these balances: a count of an earlier day than its balances' latest is asked about
+      // again whatever is ticked.
+      questions.remembering = BeforeCountAnswers.keptReconciliations(balances: balances)
+        .subtracting(countedAgain)
+      return .ask(questions)
+    case .stamp(let stamp): return .answered(stamp: stamp)
+    }
   }
 
   /// The moment the answer stamps: «Да» — one second before the count, so its money is

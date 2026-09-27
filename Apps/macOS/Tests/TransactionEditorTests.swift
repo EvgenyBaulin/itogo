@@ -680,6 +680,40 @@ final class TransactionEditorTests: XCTestCase {
     XCTAssertEqual(try paymentLines(loan), [])
     XCTAssertEqual(try balance(loan), AmountE4(whole: 100_000))
   }
+
+  /// The difference of a count is never filed under a category of the app. An edit that tries
+  /// — the panel never offers one, another writer may — is refused in the words the panel shows
+  /// beside such an operation, in both languages, and never as the key itself.
+  func testARefusedEditOfADifferenceSaysWhy() throws {
+    try makeStore()
+    let unknown = CoreKit.Category(kind: .expense, name: "Unknown", systemRole: .unknown)
+    let groceries = CoreKit.Category(kind: .expense, name: "Groceries")
+    for category in [unknown, groceries] { try references.save(category) }
+    var draft = TransactionDraft(
+      occurredAt: evening, amount: AmountE4(whole: 8_000), note: "Missing")
+    draft.parts = [PartDraft(categoryId: groceries.id, amount: AmountE4(whole: 8_000))]
+    var difference = try draft.materialize()
+    difference.transaction.externalId =
+      OperationLink.reconciledBalance(reconciliation: UUID(), balance: UUID()).externalId
+    try repository.save(difference)
+    let editor = TransactionEditorModel(entry: difference, environment: environment)
+    editor.draft.draft.parts[0].categoryId = unknown.id
+
+    XCTAssertFalse(editor.save(store: store, environment: environment))
+    let key = try XCTUnwrap(editor.errorKey)
+    XCTAssertEqual(key, "editor.reconcileDifference.locked")
+    let language = AppLanguage()
+    // The choice is stored for the whole test host: it goes back to what it was.
+    let before = language.choice
+    defer { language.choice = before }
+    for choice in [AppLanguage.Choice.english, .russian] {
+      language.choice = choice
+      let table = TransactionEditorModel.table(ofErrorKey: key)
+      XCTAssertNotEqual(language(key, table: table), key, "\(choice)")
+    }
+    XCTAssertEqual(
+      try repository.entry(id: difference.id)?.parts.map(\.categoryId), [groceries.id])
+  }
 }
 
 /// The editor on accounts, refunds and counts: what an account is charged follows the edit,
@@ -1006,6 +1040,179 @@ final class TransactionEditorAccountsTests: XCTestCase {
       try repository.entry(id: back.id)?.transaction.occurredAt, moment(today, 14, 5, 1))
   }
 
+  // MARK: An archived account stays at zero
+
+  /// «Наличные» counted 5,000 at 06:00, a purchase of 5,000 at 07:00, then archived at
+  /// zero. The purchase edited to 4,000 would leave 1,000 on it: the save asks where it goes
+  /// and writes nothing; with the transfer picked, the edit and the transfer land in one write
+  /// and one ⌘Z takes both back. A comment is saved without asking.
+  func testAnEditLeavingMoneyOnAnArchivedAccountAsks() async throws {
+    var cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
+    try references.save(cash)
+    let count = Reconciliation(
+      date: yesterday, reconciledAt: moment(yesterday, 6), actualTotalRubE4: .zero,
+      kind: .accounts)
+    _ = try PlanningRepository(writer: stack.writer).apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [count],
+          reconciledBalances: [
+            ReconciledBalance(
+              reconciliationId: count.id, accountId: cash.id, currency: .rub,
+              actualE4: AmountE4(whole: 5_000)),
+            ReconciledBalance(
+              reconciliationId: count.id, accountId: card.id, currency: .rub,
+              actualE4: AmountE4(whole: 10_000)),
+          ])))
+    var draft = TransactionDraft(
+      occurredAt: moment(yesterday, 7), amount: AmountE4(whole: 5_000), note: "groceries",
+      paymentMethodId: cash.id)
+    draft.normalizeSinglePart()
+    let purchase = try repository.save(try draft.materialize(now: moment(yesterday, 7)))
+    cash.archived = true
+    try references.save(cash)
+    try await showEverything()
+
+    // A comment moves no money: saved at once.
+    let noted = editor(of: purchase)
+    noted.draft.draft.note = "groceries, market"
+    XCTAssertTrue(noted.save(store: store, environment: environment, balances: .empty))
+    XCTAssertNil(noted.archivedLeftovers)
+    try await showEverything()
+
+    let fresh = try XCTUnwrap(try repository.entry(id: purchase.id))
+    let editor = editor(of: fresh)
+    editor.draft.draft.amount = AmountE4(whole: 4_000)
+    editor.draft.draft.parts[0].amount = AmountE4(whole: 4_000)
+    XCTAssertFalse(editor.save(store: store, environment: environment, balances: .empty))
+    let check = try XCTUnwrap(editor.archivedLeftovers)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: 1_000)])
+    XCTAssertEqual(
+      try repository.entry(id: purchase.id)?.transaction.amountE4, AmountE4(whole: 5_000),
+      "nothing is written before the owner says where the money goes")
+
+    let form = ArchivedMoneyForm(
+      check: check, accounts: [card, kaspi, freedom, cash], locale: Locale(identifier: "en"))
+    XCTAssertEqual(form.rows.first?.chosen, card.id, "the main account is offered first")
+    let settling = form.transfers(now: Date(), note: "left over")
+    XCTAssertTrue(
+      editor.save(store: store, environment: environment, balances: .empty, settling: settling),
+      editor.errorKey ?? "")
+    XCTAssertEqual(
+      try repository.entry(id: purchase.id)?.transaction.amountE4, AmountE4(whole: 4_000))
+    var dataset = try await DatasetRepository(writer: stack.writer).load(version: 0)
+    XCTAssertEqual(dataset.transfers.map(\.id), settling.map(\.id))
+    let after = TransactionsStore.balances(of: dataset)
+    XCTAssertEqual(
+      after[BalanceKey(accountId: cash.id, currency: .rub)]?.amountE4, .zero,
+      "the archived account stays at zero")
+    XCTAssertEqual(
+      after[BalanceKey(accountId: card.id, currency: .rub)]?.amountE4,
+      AmountE4(whole: 11_000), "the live account holds the 1,000")
+
+    store.undo()
+    dataset = try await DatasetRepository(writer: stack.writer).load(version: 0)
+    XCTAssertTrue(dataset.transfers.isEmpty, "one ⌘Z takes the transfer back with the edit")
+    XCTAssertEqual(
+      try repository.entry(id: purchase.id)?.transaction.amountE4, AmountE4(whole: 5_000))
+  }
+
+  /// The lists read the whole database, archived accounts and counts included.
+  private func showEverything() async throws {
+    let dataset = try await DatasetRepository(writer: stack.writer).load(version: 0)
+    store.show(Ledger(dataset: dataset, calendar: .utc))
+  }
+
+  /// The card counted twice today, at 10:00 and at 14:05, in the app's own database. A taxi of
+  /// yesterday moved onto today asks about both counts in turn, the earlier first, and writes
+  /// nothing. «Нет» kept for 14:05 with «Больше не спрашивать для этой сверки» answers both: the
+  /// next save goes through without a question, dated after 14:05.
+  func testARememberedAnswerSavesWithoutAsking() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("itogo-editor-count-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let dataDirectoryBefore = ProcessInfo.processInfo.environment["ITOGO_DATA_DIR"]
+    setenv("ITOGO_DATA_DIR", directory.path, 1)
+    defer {
+      if let dataDirectoryBefore {
+        setenv("ITOGO_DATA_DIR", dataDirectoryBefore, 1)
+      } else {
+        unsetenv("ITOGO_DATA_DIR")
+      }
+      try? FileManager.default.removeItem(at: directory)
+    }
+    let app = AppEnvironment()
+    await app.start(preparing: {
+      try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    })
+    do {
+      try await rememberedAnswer(in: app)
+    } catch {
+      await app.close()
+      throw error
+    }
+    await app.close()
+  }
+
+  private func rememberedAnswer(in app: AppEnvironment) async throws {
+    let references = try XCTUnwrap(app.references)
+    let transactions = try XCTUnwrap(app.transactions)
+    let planning = try XCTUnwrap(app.planning)
+    let writer = try XCTUnwrap(app.stack).writer
+    let store = TransactionsStore()
+    store.attach(transactions, references: references, planning: planning)
+    let calendar = app.calendar
+    try references.save(card)
+    let early = calendar.moment(today, hour: 10, minute: 0)
+    let late = calendar.moment(today, hour: 14, minute: 5)
+    var reconciliations: [Reconciliation] = []
+    for (at, whole) in [(early, Int64(10_000)), (late, Int64(9_000))] {
+      let count = Reconciliation(
+        date: today, reconciledAt: at, actualTotalRubE4: .zero, kind: .accounts)
+      reconciliations.append(count)
+      _ = try planning.apply(
+        PlanningChange(
+          upsert: PlanningRows(
+            reconciliations: [count],
+            reconciledBalances: [
+              ReconciledBalance(
+                reconciliationId: count.id, accountId: card.id, currency: .rub,
+                actualE4: AmountE4(whole: whole))
+            ])))
+    }
+    var draft = TransactionDraft(
+      occurredAt: calendar.moment(yesterday, hour: 20, minute: 0), amount: AmountE4(whole: 500),
+      note: "taxi", paymentMethodId: card.id)
+    draft.normalizeSinglePart()
+    let taxi = try transactions.save(try draft.materialize(now: draft.occurredAt))
+    let balances = TransactionsStore.balances(
+      of: try await DatasetRepository(writer: writer).load(version: 0))
+    let saved = calendar.moment(today, hour: 17, minute: 0)
+    let panel = EntryDraftModel(
+      references: references, transactions: transactions, calendar: calendar,
+      editsSavedOperation: true)
+    let editor = TransactionEditorModel(entry: taxi, draft: panel)
+    editor.draft.setDate(calendar.moment(today, hour: 16, minute: 0), today: today)
+
+    XCTAssertFalse(editor.save(store: store, environment: app, balances: balances, now: saved))
+    XCTAssertEqual(editor.countQuestion?.count, early, "the earlier count is asked first")
+    XCTAssertEqual(editor.countQuestion?.questions?.counts, [early, late])
+    XCTAssertEqual(
+      try transactions.entry(id: taxi.id)?.transaction.occurredAt, taxi.transaction.occurredAt,
+      "nothing is written before the answer")
+
+    // The dialog dismissed, and «Нет» kept for the count of 14:05.
+    editor.countQuestion = nil
+    XCTAssertTrue(app.rememberCountAnswer(reconciliation: reconciliations[1].id, wasBefore: false))
+    XCTAssertTrue(
+      editor.save(store: store, environment: app, balances: balances, now: saved),
+      editor.errorKey ?? "")
+    XCTAssertNil(editor.countQuestion, "a kept answer asks nothing")
+    let stored = try XCTUnwrap(try transactions.entry(id: taxi.id)?.transaction.occurredAt)
+    XCTAssertGreaterThan(stored, late, "after both counts")
+    XCTAssertEqual(calendar.day(of: stored), today)
+  }
+
   func testAnEditThatMovesNoMoneyDoesNotAsk() throws {
     // Dated on the day of the count, after it; only the description changes.
     let taxi = try taxi(at: moment(today, 15))
@@ -1017,5 +1224,99 @@ final class TransactionEditorAccountsTests: XCTestCase {
         store: store, environment: environment, balances: countedAt1405(now: saved), now: saved))
     XCTAssertNil(editor.countQuestion)
     XCTAssertEqual(try repository.entry(id: taxi.id)?.transaction.note, "taxi home")
+  }
+}
+
+/// The editor keeps the card and the cashback to the kinds that have them: money back names no
+/// card and income has no cashback, so a purchase turned into either in the editor is saved
+/// without what the panel no longer shows — the owner could not see it, nor take it off.
+@MainActor
+final class TransactionEditorCardTests: XCTestCase {
+  private var book: CardEntryBook!
+
+  override func setUp() async throws {
+    book = try await CardEntryBook()
+  }
+
+  override func tearDown() async throws {
+    await book?.close()
+    book = nil
+  }
+
+  private func rub(_ whole: Int64) -> Money {
+    Money(amount: AmountE4(whole: whole), currency: .rub)
+  }
+
+  /// 1,500 ₽ on «Т-Банк · Black» with 50 ₽ of cashback typed, as saved and opened again.
+  private func coffeeOnBlack() throws -> TransactionEditorModel {
+    let model = book.model()
+    try book.enter("кофе 1500 black", into: model)
+    model.cashbackField.text = "50"
+    let saved = try book.save(model)
+    let stored = try XCTUnwrap(try book.stored(saved.id))
+    XCTAssertEqual(stored.transaction.cardId, book.black.id)
+    XCTAssertEqual(stored.transaction.cashback, rub(50))
+    return TransactionEditorModel(entry: stored, environment: book.environment)
+  }
+
+  /// The kind picked in the panel: its defaults follow, as the picker's do.
+  private func turn(_ editor: TransactionEditorModel, into kind: TransactionKind) {
+    editor.draft.draft.kind = kind
+    editor.draft.applyDefaults(today: book.today)
+  }
+
+  func testAnExpenseTurnedIntoMoneyBackDropsItsCardAndCashback() throws {
+    let editor = try coffeeOnBlack()
+    let anya = Person(name: "Аня")
+    try XCTUnwrap(book.environment.references).save(anya)
+    editor.draft.reload()
+    turn(editor, into: .reimbursement)
+    editor.draft.draft.parts[0].forPersonId = anya.id
+
+    XCTAssertTrue(
+      editor.save(store: book.store, environment: book.environment),
+      editor.errorKey ?? "not saved")
+    let stored = try XCTUnwrap(try book.stored(editor.id))
+    XCTAssertEqual(stored.transaction.kind, .reimbursement)
+    XCTAssertEqual(stored.transaction.paymentMethodId, book.tBank.id, "the account stays")
+    XCTAssertNil(stored.transaction.cardId, "money back names no card")
+    XCTAssertNil(stored.transaction.cashback, "money back has no cashback")
+  }
+
+  func testAnExpenseTurnedIntoIncomeKeepsItsCardAndDropsTheCashback() throws {
+    let editor = try coffeeOnBlack()
+    turn(editor, into: .income)
+
+    XCTAssertTrue(
+      editor.save(store: book.store, environment: book.environment),
+      editor.errorKey ?? "not saved")
+    let stored = try XCTUnwrap(try book.stored(editor.id))
+    XCTAssertEqual(stored.transaction.kind, .income)
+    XCTAssertEqual(stored.transaction.cardId, book.black.id, "income may name its card")
+    XCTAssertNil(stored.transaction.cashback, "only a purchase has a cashback")
+  }
+
+  /// A contribution to a goal is still a purchase, but it moves no money between accounts and
+  /// earns nothing: the 50 ₽ typed while it was coffee go, the card that paid stays.
+  func testAPurchaseTurnedIntoAContributionToAGoalDropsItsCashback() throws {
+    let editor = try coffeeOnBlack()
+    let references = try XCTUnwrap(book.environment.references)
+    if try !references.categories(includeArchived: true).contains(where: {
+      $0.systemRole == .goals
+    }) {
+      try references.save(CoreKit.Category(kind: .expense, name: "Цели", systemRole: .goals))
+    }
+    let goal = Goal(name: "Отпуск", targetE4: AmountE4(whole: 50_000))
+    try references.save(goal)
+    editor.draft.setGoal(goal.id, forPartAt: 0)
+    XCTAssertFalse(editor.draft.has(.cashback), "the panel shows no cashback")
+
+    XCTAssertTrue(
+      editor.save(store: book.store, environment: book.environment),
+      editor.errorKey ?? "not saved")
+    let stored = try XCTUnwrap(try book.stored(editor.id))
+    XCTAssertEqual(stored.parts.first?.goalId, goal.id)
+    XCTAssertEqual(stored.transaction.cardId, book.black.id, "the card that paid stays")
+    XCTAssertNil(stored.transaction.cashback, "a contribution earns no cashback")
   }
 }

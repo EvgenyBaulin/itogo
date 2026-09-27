@@ -107,6 +107,23 @@ struct TypedNumberTests {
     #expect(TypedNumber.mayBeTakenForThousands(text) == may)
   }
 
+  /// In front of the `k` of thousands a lone comma is decimal whatever the digits around it;
+  /// two commas still group, and with both kinds the rightmost is decimal. Without the flag the
+  /// rule of amounts stands.
+  @Test("A lone comma before k is decimal")
+  func loneCommaBeforeKIsDecimal() throws {
+    let beforeK = try #require(TypedNumber.read("1,500", loneCommaIsDecimal: true))
+    #expect(beforeK.value == Decimal(string: "1.5"))
+    #expect(beforeK.canonical == "1.500")
+    #expect(
+      TypedNumber.read("12,345", loneCommaIsDecimal: true)?.value == Decimal(string: "12.345"))
+    #expect(TypedNumber.read("1,500")?.value == 1500)
+    #expect(TypedNumber.read("1,500,000", loneCommaIsDecimal: true)?.value == 1_500_000)
+    #expect(
+      TypedNumber.read("1.234,5", loneCommaIsDecimal: true)?.value == Decimal(string: "1234.5"))
+    #expect(TypedNumber.read("2,5", loneCommaIsDecimal: true)?.value == Decimal(string: "2.5"))
+  }
+
   /// Rates, interest and shares, and everything the Bank of Russia sends, keep the rule
   /// where a lone separator is the decimal one.
   @Test("The rule of rates stays as it was")

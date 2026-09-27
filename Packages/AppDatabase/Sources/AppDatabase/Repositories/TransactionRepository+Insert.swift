@@ -39,6 +39,9 @@ public struct HistoryBatch: Sendable {
   /// Settings that point into the batch — the cashback category of Analytics — set in the
   /// same write, so a history never lands without them. Always written over.
   public var settings: [String: String]
+  /// The cards of the accounts, and the cashback rules on the cards and on the accounts.
+  public var cards: [PaymentCard]
+  public var cashbackRules: [CashbackRule]
 
   public init(
     categories: [CoreKit.Category] = [],
@@ -61,8 +64,12 @@ public struct HistoryBatch: Sendable {
     accountGroups: [AccountGroup] = [],
     transfers: [Transfer] = [],
     reconciliations: [Reconciliation] = [],
-    reconciledBalances: [ReconciledBalance] = []
+    reconciledBalances: [ReconciledBalance] = [],
+    cards: [PaymentCard] = [],
+    cashbackRules: [CashbackRule] = []
   ) {
+    self.cards = cards
+    self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
     self.transfers = transfers
     self.reconciliations = reconciliations
@@ -88,7 +95,8 @@ public struct HistoryBatch: Sendable {
 
   /// A generated sample whole: the history, every row it points at, the planning built on it
   /// (`SampleDataSet.planning`), its cashback category, and what its accounts add — groups,
-  /// transfers, counts and their settings — when it has them (`withAccounts`).
+  /// transfers, counts and their settings, cards and cashback rules — when it has them
+  /// (`withAccounts`).
   ///
   /// A history without its accounts is written the way accounts keep it
   /// (`SampleDataSet.assigningAccounts`): every operation on an account, and a charge wherever
@@ -107,7 +115,8 @@ public struct HistoryBatch: Sendable {
       expected: planning.expected, expectedLinks: planning.expectedLinks,
       budgets: planning.budgets, settings: settings, accountGroups: set.accountGroups,
       transfers: set.transfers, reconciliations: set.reconciliations,
-      reconciledBalances: set.reconciledBalances)
+      reconciledBalances: set.reconciledBalances, cards: set.cards,
+      cashbackRules: set.cashbackRules)
   }
 }
 
@@ -145,15 +154,17 @@ extension TransactionRepository {
   }
 
   /// Rows go in the order their foreign keys need: the groups of the accounts before the
-  /// accounts, the reference books (parents before their subcategories, since the table
-  /// refers to itself), debts after the people and categories they name, the planning after
-  /// the categories, people and cards it names, operations after everything they point at,
-  /// the journals and links after the operations they point at, then the transfers, the
-  /// reconciliations and the balances they counted, and the settings last.
+  /// accounts, the cards after their accounts, the reference books (parents before their
+  /// subcategories, since the table refers to itself), debts after the people and categories
+  /// they name, the planning after the categories, people, accounts and cards it names, the
+  /// cashback rules after the limits, operations after everything they point at, the journals
+  /// and links after the operations they point at, then the transfers, the reconciliations and
+  /// the balances they counted, and the settings last.
   ///
-  /// A limit is unique to its target (`idx_budgets_target`). Written over existing rows, a
-  /// limit whose target another limit already holds — one the owner set on bad spending,
-  /// say — is left out, and the owner's stays; written as new rows, it fails the write.
+  /// A limit is unique to its target (`idx_budgets_target`), and a cashback rule to its holder,
+  /// month and category (`idx_cashback_rules_key`). Written over existing rows, a limit or a
+  /// rule whose target another one already holds — one the owner set, say — is left out, and
+  /// the owner's stays; written as new rows, it fails the write.
   ///
   /// Every operation names its account, as every other write does: one without gets the live
   /// main account — the batch's own, written before the operations, or the database's — and one
@@ -174,6 +185,7 @@ extension TransactionRepository {
       for person in batch.people { try put(person) }
       for place in batch.places { try put(place) }
       for method in batch.paymentMethods { try put(method) }
+      for card in batch.cards { try put(card) }
       for event in batch.events { try put(event) }
       for template in batch.templates { try put(template) }
       for goal in batch.goals { try put(goal) }
@@ -184,6 +196,10 @@ extension TransactionRepository {
       for budget in batch.budgets {
         if overExistingRows, try Self.isTargetTaken(of: budget, db: db) { continue }
         try put(budget)
+      }
+      for rule in batch.cashbackRules {
+        if overExistingRows, try Self.isKeyTaken(of: rule, db: db) { continue }
+        try put(rule)
       }
       for given in batch.entries {
         let entry = try Self.assigningAccount(given, lookups: lookups, db: db)
@@ -221,6 +237,22 @@ extension TransactionRepository {
       try db.execute(sql: "DELETE FROM debt_entries WHERE transaction_id = ?", arguments: [holder])
       try db.execute(sql: "DELETE FROM transactions WHERE id = ?", arguments: [holder])
     }
+  }
+
+  /// Another rule holds the key of `rule`: the same account, card, month and category.
+  private static func isKeyTaken(of rule: CashbackRule, db: Database) throws -> Bool {
+    try Bool.fetchOne(
+      db,
+      sql: """
+        SELECT EXISTS (
+          SELECT 1 FROM cashback_rules
+          WHERE payment_method_id = ? AND COALESCE(card_id, '') = ?
+            AND COALESCE(month, '') = ? AND COALESCE(category_id, '') = ? AND id <> ?)
+        """,
+      arguments: [
+        rule.accountId.uuidString, rule.cardId?.uuidString ?? "", rule.month?.iso ?? "",
+        rule.categoryId?.uuidString ?? "", rule.id.uuidString,
+      ]) ?? false
   }
 
   /// Another limit holds the target of `budget`: the same scope, category and «for whom».

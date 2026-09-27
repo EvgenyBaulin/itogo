@@ -123,3 +123,56 @@ public struct VariableSpending: Hashable, Sendable {
     return .rate
   }
 }
+
+/// Variable spending grouped by the balance it moved: how the forecast of the month's spending
+/// is shared between the accounts, so each one's balance at the end of the month can be told.
+public struct SpendingByBalance: Hashable, Sendable {
+  /// Rubles of variable spending (`MonthForecast.isVariable`) of the days from
+  /// `MonthForecast.windowLength` days before today through today, by the pair it moved: the
+  /// operation's account — the main one when it names none — and the currency that moved on
+  /// it (`Transaction.movedMoney`). Only live accounts; never below zero.
+  public var weights: [BalanceKey: AmountE4]
+  /// Rubles of variable spending already written for the days after today through the end of
+  /// the forecast: the owner said it will be spent, so it is not forecast again.
+  public var ahead: AmountE4
+
+  public init(weights: [BalanceKey: AmountE4] = [:], ahead: AmountE4 = .zero) {
+    self.weights = weights
+    self.ahead = ahead
+  }
+
+  /// Every weight added up.
+  public var total: AmountE4 { AmountE4.sum(weights.values) }
+}
+
+extension VariableSpending {
+  /// Variable spending by the pair it moved, in one pass over the days from the window's
+  /// start through `through`. `scheduledOperations` are the ordinary operations that pay a due
+  /// date of a scheduled payment by matching it — planned payments, not the pace;
+  /// `liveAccounts` the accounts that will still spend: an archived one keeps no share. A part
+  /// that took money back (a refund on its own) counts as nothing rather than below zero.
+  public static func byBalance(
+    ledger: Ledger, today: DateOnly, through: DateOnly, scheduledOperations: Set<UUID>,
+    mainId: UUID?, liveAccounts: Set<UUID>
+  ) -> SpendingByBalance {
+    var weights: [BalanceKey: AmountE4] = [:]
+    var ahead = AmountE4.zero
+    let start = today.adding(days: -MonthForecast.windowLength)
+    let range = DayRange(start, max(today, through))
+    for row in ledger.rows(in: range)
+    where MonthForecast.isVariable(row, scheduledOperations: scheduledOperations) {
+      let amount = max(.zero, row.contribution)
+      guard !amount.isZero else { continue }
+      if row.day > today {
+        ahead += amount
+        continue
+      }
+      guard let accountId = row.paymentMethodId ?? mainId, liveAccounts.contains(accountId),
+        let transaction = ledger.entry(row.transactionId)?.transaction
+      else { continue }
+      let key = BalanceKey(accountId: accountId, currency: transaction.movedMoney.currency)
+      weights[key, default: .zero] += amount
+    }
+    return SpendingByBalance(weights: weights, ahead: ahead)
+  }
+}

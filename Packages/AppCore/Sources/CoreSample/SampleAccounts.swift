@@ -714,9 +714,11 @@ final class SampleAccountsWriter {
       opening[key] = Self.roundedUp(max(rule.nominal, rule.margin - lowest), step: rule.step)
     }
 
+    // The starting balances are the setup of the accounts, and the sheet records its
+    // difference: neither draws from the random stream, so the history stays the same.
     let openingCount = Reconciliation(
       id: openingId, date: base.firstDay, reconciledAt: openingAt, actualTotalRubE4: .zero,
-      kind: .opening)
+      kind: .opening, origin: .setup)
     set.reconciliations = [openingCount]
     set.reconciledBalances = zip(keys, openingBalanceIds).map { key, id in
       ReconciledBalance(
@@ -743,7 +745,8 @@ final class SampleAccountsWriter {
         ReconciledBalance(
           id: id, reconciliationId: sheetId, accountId: key.accountId, currency: key.currency,
           actualE4: short ? expected + Self.cashShort : expected, expectedE4: expected,
-          differenceE4: short ? Self.cashShort : .zero, transactionId: short ? differenceId : nil))
+          differenceE4: short ? Self.cashShort : .zero, transactionId: short ? differenceId : nil,
+          recordsDifference: true))
       guard short else { continue }
       // The difference, the way the reconciliation sheet records it: an expense in «Сверка»
       // on the account that was short, a line of the books that moves no money.

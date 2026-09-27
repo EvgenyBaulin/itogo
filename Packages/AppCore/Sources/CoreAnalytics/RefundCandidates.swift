@@ -35,7 +35,10 @@ public struct RefundQuery: Hashable, Sendable {
   public var words: String?
   public var placeId: UUID?
   public var amount: AmountE4?
-  /// The currency of `amount`: an amount only narrows purchases made in that currency.
+  /// The currency of `amount`: an amount only narrows purchases made in that currency. `nil`
+  /// unless the owner said one — typed its code or picked it —: a currency the screen or the
+  /// account only laid as a default says nothing, and the amount is then read in the currency
+  /// of each purchase («возврат 7000 кроссовки» on a tenge screen finds the 7,000 ₽ sneakers).
   public var currency: CurrencyCode?
   /// The day of the refund: nothing bought after it is offered — money cannot come back for a
   /// purchase before it was made. It is not a word of the line, and «Показать все покупки»

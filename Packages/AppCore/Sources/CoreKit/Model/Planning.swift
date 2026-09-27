@@ -32,6 +32,10 @@ public struct ScheduledPayment: Identifiable, Hashable, Sendable, Codable {
   public var cancelURL: String?
   public var remindDaysBefore: Int?
   public var active: Bool
+  /// The card it is paid with, a card of `paymentMethodId`; `nil` — the account itself.
+  public var cardId: UUID?
+  /// The event whose budget its due dates up to the event's end belong to; `nil` — none.
+  public var eventId: UUID?
 
   public init(
     id: UUID = UUID(), name: String, kind: ScheduledKind = .bill, amountE4: AmountE4,
@@ -41,7 +45,7 @@ public struct ScheduledPayment: Identifiable, Hashable, Sendable, Codable {
     reimbursementCurrency: CurrencyCode? = nil, freq: Frequency = .monthly, interval: Int = 1,
     day: Int? = nil, month: Int? = nil, nextDate: DateOnly? = nil, endDate: DateOnly? = nil,
     trialEnd: DateOnly? = nil, cancelURL: String? = nil, remindDaysBefore: Int? = nil,
-    active: Bool = true
+    active: Bool = true, cardId: UUID? = nil, eventId: UUID? = nil
   ) {
     self.id = id
     self.name = name
@@ -66,6 +70,8 @@ public struct ScheduledPayment: Identifiable, Hashable, Sendable, Codable {
     self.cancelURL = cancelURL
     self.remindDaysBefore = remindDaysBefore
     self.active = active
+    self.cardId = cardId
+    self.eventId = eventId
   }
 }
 
@@ -102,12 +108,15 @@ public struct ExpectedIncome: Identifiable, Hashable, Sendable, Codable {
   public var day: Int?
   public var partsExpected: Int
   public var closed: Bool
+  /// The account the money is to come to; `nil` — the account of the latest income received
+  /// for it, else the main account.
+  public var paymentMethodId: UUID?
 
   public init(
     id: UUID = UUID(), name: String, categoryId: UUID? = nil, personId: UUID? = nil,
     kind: ExpectedIncomeKind = .oneOff, totalE4: AmountE4, currency: CurrencyCode = .rub,
     dueDate: DateOnly? = nil, freq: Frequency? = nil, day: Int? = nil, partsExpected: Int = 1,
-    closed: Bool = false
+    closed: Bool = false, paymentMethodId: UUID? = nil
   ) {
     self.id = id
     self.name = name
@@ -121,6 +130,7 @@ public struct ExpectedIncome: Identifiable, Hashable, Sendable, Codable {
     self.day = day
     self.partsExpected = partsExpected
     self.closed = closed
+    self.paymentMethodId = paymentMethodId
   }
 }
 
@@ -191,6 +201,17 @@ public enum ReconciliationKind: String, Hashable, Sendable, Codable, CaseIterabl
   case opening
 }
 
+/// Where the starting balances of an `.opening` came from — for the words of the history only;
+/// nothing is computed from it. Openings written before it was kept have none.
+public enum ReconciliationOrigin: String, Hashable, Sendable, Codable, CaseIterable {
+  /// The setup of the accounts.
+  case setup
+  /// The balance given with a new account.
+  case account
+  /// A merge of two accounts.
+  case merge
+}
+
 /// «How much money do I have in total» at a moment (`reconciliations`). The first one is the
 /// starting point; each next one compares the actual total with the expected.
 ///
@@ -209,12 +230,15 @@ public struct Reconciliation: Identifiable, Hashable, Sendable, Codable {
   public var transactionId: UUID?
   public var breakdown: [ReconciliationAmount]
   public var kind: ReconciliationKind
+  /// Where the balances of an `.opening` came from; `nil` for every other kind, and for an
+  /// opening written before this was kept.
+  public var origin: ReconciliationOrigin?
 
   public init(
     id: UUID = UUID(), date: DateOnly, reconciledAt: Date? = nil, actualTotalRubE4: AmountE4,
     expectedTotalRubE4: AmountE4? = nil, differenceE4: AmountE4? = nil,
     transactionId: UUID? = nil, breakdown: [ReconciliationAmount] = [],
-    kind: ReconciliationKind = .total
+    kind: ReconciliationKind = .total, origin: ReconciliationOrigin? = nil
   ) {
     self.id = id
     self.date = date
@@ -225,6 +249,7 @@ public struct Reconciliation: Identifiable, Hashable, Sendable, Codable {
     self.transactionId = transactionId
     self.breakdown = breakdown
     self.kind = kind
+    self.origin = origin
   }
 }
 
@@ -242,11 +267,15 @@ public struct ReconciledBalance: Identifiable, Hashable, Sendable, Codable {
   public var differenceE4: AmountE4?
   /// The operation that recorded the difference, if one was written.
   public var transactionId: UUID?
+  /// How a later count keeps its difference: `true` — one operation equal to the difference,
+  /// none at zero, following the books; `false` — only the numbers follow, no operation.
+  /// `nil` on a starting point, which has no difference to keep, and on a count of an opening.
+  public var recordsDifference: Bool?
 
   public init(
     id: UUID = UUID(), reconciliationId: UUID, accountId: UUID, currency: CurrencyCode,
     actualE4: AmountE4, expectedE4: AmountE4? = nil, differenceE4: AmountE4? = nil,
-    transactionId: UUID? = nil
+    transactionId: UUID? = nil, recordsDifference: Bool? = nil
   ) {
     self.id = id
     self.reconciliationId = reconciliationId
@@ -256,6 +285,7 @@ public struct ReconciledBalance: Identifiable, Hashable, Sendable, Codable {
     self.expectedE4 = expectedE4
     self.differenceE4 = differenceE4
     self.transactionId = transactionId
+    self.recordsDifference = recordsDifference
   }
 
   public var key: BalanceKey { BalanceKey(accountId: accountId, currency: currency) }
@@ -276,6 +306,12 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
   public static let reconcileIncomeCategoryKey = "planning.reconcileIncomeCategory"
   public static let limitsTopNKey = "planning.limitsTopN"
   public static let scheduledMatchRejectionsKey = "planning.scheduledMatchRejections"
+  public static let goalSavingsValuationKey = "planning.goalSavingsValuation"
+  /// Counts the owner said are real differences, not first counts: one id per line.
+  public static let firstCountKeptKey = "reconcile.firstCountKept"
+  /// The answers to «Это было до сверки?» remembered per reconciliation
+  /// (`countAnswers(from:)`).
+  public static let beforeCountAnswersKey = "reconcile.beforeCountAnswers"
 
   /// Remind to reconcile when the last one is older than this (default 14).
   public var reconcileEveryDays: Int
@@ -292,11 +328,28 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
   /// Pairs of an ordinary operation and a due date of a scheduled payment the owner said are
   /// not the same thing, one `<operation>:<payment>:<YYYY-MM-DD>` each.
   public var scheduledMatchRejections: Set<String>
+  /// How the money put into a goal in another currency is valued (default today's rate).
+  public var goalSavingsValuation: GoalSavingsValuation
+  /// Counts of a sheet the owner said record a real difference, though every count of their
+  /// account and currency before them was a starting balance of zero written before such
+  /// balances were told apart from counts.
+  public var firstCountKept: Set<UUID>
+  /// Per reconciliation, the answer given with «Больше не спрашивать для этой сверки»: `true`
+  /// — what is entered happened before that count, `false` — after it.
+  public var beforeCountAnswers: [UUID: Bool]
+  /// The categories the difference of a reconciliation is written to — «Сверка» and its
+  /// income twin —, as the reconciliation remembers them (`reconcileExpenseCategoryKey`,
+  /// `reconcileIncomeCategoryKey`). Read with the settings, never written by them.
+  public var reconcileExpenseCategoryId: UUID?
+  public var reconcileIncomeCategoryId: UUID?
 
   public init(
     reconcileEveryDays: Int = 14, savingsTargetBp: Int = 1_000, reserveGoalPlan: Bool = true,
     reconcileIncludesGoalSavings: Bool = true, dismissedReminders: Set<String> = [],
-    limitsTopN: Int? = 5, scheduledMatchRejections: Set<String> = []
+    limitsTopN: Int? = 5, scheduledMatchRejections: Set<String> = [],
+    goalSavingsValuation: GoalSavingsValuation = .today, firstCountKept: Set<UUID> = [],
+    beforeCountAnswers: [UUID: Bool] = [:], reconcileExpenseCategoryId: UUID? = nil,
+    reconcileIncomeCategoryId: UUID? = nil
   ) {
     self.reconcileEveryDays = reconcileEveryDays
     self.savingsTargetBp = savingsTargetBp
@@ -305,7 +358,57 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
     self.dismissedReminders = dismissedReminders
     self.limitsTopN = limitsTopN
     self.scheduledMatchRejections = scheduledMatchRejections
+    self.goalSavingsValuation = goalSavingsValuation
+    self.firstCountKept = firstCountKept
+    self.beforeCountAnswers = beforeCountAnswers
+    self.reconcileExpenseCategoryId = reconcileExpenseCategoryId
+    self.reconcileIncomeCategoryId = reconcileIncomeCategoryId
   }
+
+  /// «Сверка» and its income twin: no limit is set on them, nor on anything under them — the
+  /// subcategories are found in the category tree.
+  public var limitlessCategoryIds: Set<UUID> {
+    Set([reconcileExpenseCategoryId, reconcileIncomeCategoryId].compactMap { $0 })
+  }
+
+  /// The answers kept under `beforeCountAnswersKey`: «<uuid> before» or «<uuid> after», one
+  /// per line. A line that does not read — no id, another word, more words — is skipped, and
+  /// of two lines about one reconciliation the later one counts.
+  public static func countAnswers(from text: String?) -> [UUID: Bool] {
+    guard let text else { return [:] }
+    var answers: [UUID: Bool] = [:]
+    for line in text.split(whereSeparator: \.isNewline) {
+      let words = line.split(whereSeparator: \.isWhitespace)
+      guard words.count == 2, let id = UUID(uuidString: String(words[0])) else { continue }
+      switch words[1] {
+      case beforeWord: answers[id] = true
+      case afterWord: answers[id] = false
+      default: continue
+      }
+    }
+    return answers
+  }
+
+  /// The text of `answers` for `beforeCountAnswersKey`, sorted by id so the same answers are
+  /// always the same text; `nil` when there is none, which deletes the key.
+  public static func countAnswersText(_ answers: [UUID: Bool]) -> String? {
+    guard !answers.isEmpty else { return nil }
+    return answers.map { (id: $0.key.uuidString, before: $0.value) }
+      .sorted { $0.id < $1.id }
+      .map { "\($0.id) \($0.before ? beforeWord : afterWord)" }
+      .joined(separator: "\n")
+  }
+
+  private static let beforeWord = "before"
+  private static let afterWord = "after"
+}
+
+/// How the money already put into a goal in another currency is counted in rubles.
+public enum GoalSavingsValuation: String, Hashable, Sendable, Codable, CaseIterable {
+  /// At today's rate: what the money would fetch now.
+  case today
+  /// At the rate of each contribution's own day: the rubles it cost.
+  case deposits
 }
 
 /// Everything of planning, reconciliation and debts the snapshot carries besides the

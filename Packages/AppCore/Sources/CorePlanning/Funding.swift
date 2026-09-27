@@ -43,11 +43,12 @@ public enum Funding {
   ///
   /// * Due — every due date of the month. The dates still ahead come from the schedule of
   ///   each active payment, from its `next_date`, at the price on that date. Each goes to the
-  ///   payment's account — the main one (`mainId`) when it names none — in the payment's
-  ///   currency when the account holds it; otherwise in the account's main currency, converted
-  ///   through rubles at today's rates (`rubPerUnit`, rubles for one unit), or, without a
-  ///   rate, left in its own currency on a line marked `withoutRate`. The dates already paid
-  ///   are settled where their money came from: the operation's account and what moved on it
+  ///   payment's account — the main one (`mainId`) when it names none or names an archived
+  ///   account, which the payment is paid from instead — in the payment's currency when the
+  ///   account holds it; otherwise in the account's main currency, converted through rubles
+  ///   at today's rates (`rubPerUnit`, rubles for one unit), or, without a rate, left in its
+  ///   own currency on a line marked `withoutRate`. The dates already paid are settled where
+  ///   their money came from: the operation's account and what moved on it
   ///   (`Transaction.movedMoney`), at its amount. A skipped date is in neither and needs no
   ///   money.
   /// * Paid — the operations that paid due dates of the month: those «Mark as paid» wrote
@@ -113,7 +114,9 @@ public enum Funding {
           continue
         }
         let price = SubscriptionMath.price(of: payment, on: date, prices: book.prices)
-        let method = payment.paymentMethodId ?? mainId
+        // A payment on an archived account is paid from the main one.
+        let own = payment.paymentMethodId.flatMap { accountsById[$0] }
+        let method = own?.archived == true ? mainId : (payment.paymentMethodId ?? mainId)
         guard let account = method.flatMap({ accountsById[$0] }), !account.holds(payment.currency)
         else {
           due[Key(method: method, currency: payment.currency), default: .zero] += price

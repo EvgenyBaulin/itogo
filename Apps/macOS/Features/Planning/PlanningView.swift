@@ -54,9 +54,11 @@ struct PlanningView: View {
 enum PlanningSheet: Identifiable {
   /// A payment to edit, or nil for an empty new one.
   case payment(ScheduledPayment?)
-  /// A new payment the form starts filled in — from a subscription candidate. It carries an
-  /// id but is not in the database: nothing is edited, no price of it has changed.
-  case newPayment(ScheduledPayment)
+  /// A new payment the form starts filled in — from a subscription candidate, or paid from the
+  /// account whose screen is open. It carries an id but is not in the database: nothing is
+  /// edited, no price of it has changed. `currencyChosen` is false when the currency only
+  /// follows the account: another account picked in the form then moves it.
+  case newPayment(ScheduledPayment, currencyChosen: Bool = true)
   case markAsPaid(ScheduledStatus)
   case budget(Budget?)
   case goal(Goal?)
@@ -85,15 +87,25 @@ enum PlanningSheet: Identifiable {
   var startingPayment: ScheduledPayment? {
     switch self {
     case .payment(let payment): payment
-    case .newPayment(let payment): payment
+    case .newPayment(let payment, _): payment
     default: nil
+    }
+  }
+
+  /// Whether the currency the form starts with is the owner's — a payment saved, a candidate's
+  /// purchases — and stays when an account is picked.
+  var startCurrencyChosen: Bool {
+    switch self {
+    case .payment(let payment): payment != nil
+    case .newPayment(_, let currencyChosen): currencyChosen
+    default: false
     }
   }
 
   var id: String {
     switch self {
     case .payment(let payment): "payment-\(payment?.id.uuidString ?? "new")"
-    case .newPayment(let payment): "payment-new-\(payment.id.uuidString)"
+    case .newPayment(let payment, _): "payment-new-\(payment.id.uuidString)"
     case .markAsPaid(let status): "paid-\(status.id)"
     case .budget(let budget): "budget-\(budget?.id.uuidString ?? "new")"
     case .goal(let goal): "goal-\(goal?.id.uuidString ?? "new")"

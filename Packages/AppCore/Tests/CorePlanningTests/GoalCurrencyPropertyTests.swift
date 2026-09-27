@@ -189,8 +189,10 @@ struct GoalCurrencyPropertyTests {
     let snapshot = fx.snapshot()
     #expect(snapshot.goals.first?.saved == Fx.money("18000"))
     #expect(snapshot.freeMoney.plan.goalSavings == Fx.money("18000"))
-    // Money taken out of a goal stays on the account, as money put in did.
-    #expect(snapshot.freeMoney.main == Fx.money("100000"))
+    // Money taken out of a goal stays on the account, as money put in did; what is still in
+    // the goal is not spendable.
+    #expect(snapshot.freeMoney.moneyNow == Fx.money("100000"))
+    #expect(snapshot.freeMoney.main == Fx.money("82000"))
   }
 
   /// The random books reach every case: rows in the goal's own currency and in others, rows

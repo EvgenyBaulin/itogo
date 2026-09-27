@@ -64,6 +64,56 @@ struct MergeForeignKeyPropertyTests {
     return tables
   }
 
+  /// The history with a card on every account, its rules, operations and a payment that name
+  /// it, a rule of each account's own on a month no other account has — so no two rules meet on
+  /// one key after a merge — and an income expected on an account: the rows that point at the
+  /// accounts and move with them.
+  static func stackWithCards() throws -> DatabaseStack {
+    let stack = try PlanningUndoPropertyTests.stack()
+    try stack.writer.write { db in
+      let accounts = try String.fetchAll(db, sql: "SELECT id FROM payment_methods ORDER BY rowid")
+      let category = try String.fetchOne(
+        db, sql: "SELECT id FROM categories WHERE kind = 'expense' ORDER BY rowid LIMIT 1")
+      for (index, account) in accounts.enumerated() {
+        let card = UUID().uuidString
+        try db.execute(
+          sql: "INSERT INTO cards (id, payment_method_id, name) VALUES (?, ?, ?)",
+          arguments: [card, account, "Card \(index)"])
+        let month = String(format: "%04d-%02d", 2026 + index / 12, index % 12 + 1)
+        try db.execute(
+          sql: """
+            INSERT INTO cashback_rules (id, payment_method_id, card_id, category_id, month,
+              percent_e4)
+            VALUES (?, ?, ?, ?, NULL, 50000), (?, ?, NULL, NULL, ?, 10000)
+            """,
+          arguments: [
+            UUID().uuidString, account, card, category, UUID().uuidString, account, month,
+          ])
+        try db.execute(
+          sql: """
+            UPDATE transactions SET card_id = ?
+            WHERE id IN (
+              SELECT id FROM transactions WHERE payment_method_id = ? ORDER BY rowid LIMIT 5)
+            """,
+          arguments: [card, account])
+        try db.execute(
+          sql: """
+            UPDATE scheduled_payments SET card_id = ?
+            WHERE id IN (
+              SELECT id FROM scheduled_payments WHERE payment_method_id = ? ORDER BY rowid
+              LIMIT 1)
+            """,
+          arguments: [card, account])
+      }
+      try db.execute(
+        sql: """
+          UPDATE expected_income SET payment_method_id = (
+            SELECT id FROM payment_methods ORDER BY rowid LIMIT 1)
+          """)
+    }
+    return stack
+  }
+
   private static func ids(_ table: String, _ stack: DatabaseStack) throws -> [UUID] {
     try stack.writer.read { db in
       try String.fetchAll(db, sql: "SELECT id FROM \(table) ORDER BY rowid").compactMap(
@@ -120,7 +170,7 @@ struct MergeForeignKeyPropertyTests {
     var random = SeededRandom(seed: 31)
     var merged = 0
     for round in 0..<10 {
-      let stack = try PlanningUndoPropertyTests.stack()
+      let stack = try Self.stackWithCards()
       let rows = try Self.ids("payment_methods", stack)
       let source = rows[random.int(in: 0..<rows.count)]
       var target = rows[random.int(in: 0..<rows.count)]
@@ -176,7 +226,7 @@ struct MergeForeignKeyPropertyTests {
   @Test(arguments: Array(UInt64(41)...UInt64(52)))
   func aMergeOfAccountsWithTheirBalancesKeepsEveryKey(seed: UInt64) throws {
     var random = SeededRandom(seed: seed)
-    let stack = try PlanningUndoPropertyTests.stack()
+    let stack = try Self.stackWithCards()
     let calendar = TestSupport.sampleCalendar
     let dataset = try stack.writer.read { db in try DatasetRepository.dataset(db, version: 1) }
     let accounts = dataset.paymentMethods

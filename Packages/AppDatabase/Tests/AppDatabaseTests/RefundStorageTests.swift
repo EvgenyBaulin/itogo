@@ -269,4 +269,51 @@ struct RefundStorageTests {
       try repository.entry(id: purchase.id)?.parts.map(\.amountE4)
         == [AmountE4(whole: 600), AmountE4(whole: 400)])
   }
+
+  /// 100 $ bought at 90 (9,000 ₽) with 90 $ refunded (8,100 ₽): the rate edited to 50 by hand
+  /// makes the purchase 5,000 ₽ and the refund 4,500 ₽ at the purchase's rate, in the same
+  /// write; its own charge on the account stays. Undo gives both back as they were.
+  @Test func editingThePurchaseRateRewritesItsRefundsAndUndoGivesThemBack() throws {
+    let stack = try TestSupport.makeStack()
+    let repository = TransactionRepository(writer: stack.writer)
+    var draft = TransactionDraft(
+      occurredAt: moment, currency: .usd, amount: AmountE4(whole: 100), rate: 90,
+      rateDate: CalendarContext.utc.day(of: moment), rateSource: .cbr, note: "jacket")
+    draft.normalizeSinglePart()
+    let purchase = try draft.materialize(rublesConverter: { _ in AmountE4(whole: 9_000) })
+    try repository.save(purchase)
+    let refund = try RefundRules.draft(
+      refunding: purchase.parts[0], of: purchase, amount: AmountE4(whole: 90),
+      occurredAt: moment.addingTimeInterval(86_400), accountId: nil,
+      index: RefundIndex(entries: [purchase], debts: [:]), tree: CategoryTree()
+    ).materialize(rublesConverter: { _ in AmountE4(whole: 8_100) })
+    try repository.save(refund)
+    let refundBefore = try #require(try repository.entry(id: refund.id))
+
+    let result = try repository.edit(id: purchase.id, at: moment, calendar: .utc) { fresh in
+      var edited = fresh
+      edited.transaction.rate = 50
+      edited.transaction.rateSource = .manual
+      edited.transaction.amountRubE4 = AmountE4(whole: 5_000)
+      edited.parts[0].amountRubE4 = AmountE4(whole: 5_000)
+      return edited
+    }
+    guard case .edited(let edit) = result else {
+      Issue.record("the purchase was not edited")
+      return
+    }
+    #expect(edit.refundsBefore == [refundBefore])
+    #expect(edit.reachesBeyondTheOperation)
+    let followed = try #require(try repository.entry(id: refund.id))
+    #expect(followed.transaction.amountRubE4 == AmountE4(whole: 4_500))
+    #expect(followed.parts[0].amountRubE4 == AmountE4(whole: 4_500))
+    #expect(followed.transaction.rate == 50)
+    #expect(followed.transaction.rateSource == .manual)
+    #expect(followed.transaction.accountAmountE4 == refundBefore.transaction.accountAmountE4)
+
+    try repository.revert(edit)
+    #expect(try repository.entry(id: refund.id) == refundBefore)
+    #expect(
+      try repository.entry(id: purchase.id)?.transaction.amountRubE4 == AmountE4(whole: 9_000))
+  }
 }

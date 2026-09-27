@@ -154,11 +154,48 @@ final class AccountsSettingsTests: XCTestCase {
     XCTAssertNil(
       after.balances.latestAnchor(BalanceKey(accountId: saved.id, currency: .rub)),
       "an empty field counts nothing")
+    XCTAssertEqual(
+      after.dataset.planning.reconciliations.map(\.origin), [.account],
+      "the history says the balance came with a new account")
 
     store.undo()
     XCTAssertFalse(try stored().contains { $0.name == "Freedom" }, "one step of ⌘Z")
     let undone = try await freshBooks()
     XCTAssertTrue(undone.dataset.planning.reconciledBalances.isEmpty, "the count went with it")
+  }
+
+  /// A zero typed for «Остаток сейчас» is a count of zero, not «не знаю»: Return writes it back
+  /// as «0», and the save counts the pair at 0. Only an empty field counts nothing.
+  func testATypedZeroSurvivesReturnAndIsCounted() async throws {
+    _ = try account("Сбер", main: true)
+    var draft = AccountDraft(newIn: .rub)
+    draft.name = "Кредитка"
+    for typed in ["0", "0.00", " 0 "] {
+      draft.openings[.rub] = typed
+      draft.settleOpening(.rub)
+      XCTAssertEqual(draft.typedOpenings(), .success([.rub: .zero]), "«\(typed)» after Return")
+    }
+    draft.openings[.rub] = "-30000"
+    draft.settleOpening(.rub)
+    XCTAssertEqual(
+      draft.typedOpenings(), .success([.rub: AmountE4(whole: -30_000)]), "a card owing the bank")
+    draft.openings[.rub] = ""
+    draft.settleOpening(.rub)
+    XCTAssertEqual(draft.typedOpenings(), .success([:]), "empty stays «не знаю»")
+
+    draft.openings[.rub] = "0"
+    draft.settleOpening(.rub)
+    let books = try await freshBooks()
+    XCTAssertEqual(
+      actions.save(
+        draft.account(over: nil), previous: nil, openings: try draft.typedOpenings().get(),
+        books: books),
+      .done)
+    let saved = try XCTUnwrap(try stored().first { $0.name == "Кредитка" })
+    let key = BalanceKey(accountId: saved.id, currency: .rub)
+    let after = try await freshBooks()
+    XCTAssertNotNil(after.balances.latestAnchor(key), "the zero typed is the starting point")
+    XCTAssertEqual(after.balances.balance(key, at: after.at), .zero)
   }
 
   /// A balance that does not read as an amount is refused by its currency, not taken for zero.
@@ -435,6 +472,172 @@ final class AccountsSettingsTests: XCTestCase {
       actions.archive(cash.id, books: books14), .refused(.lastLiveAccount))
     XCTAssertEqual(
       actions.delete([cash.id]), .refused(.noSuccessor), "the last live account is never deleted")
+  }
+
+  /// «В архив» on «Наличные» with 3,000 ₽ asks where the money goes (the main account is
+  /// offered first); the transfer and the archive are one step of ⌘Z, and the archived account
+  /// ends at zero while «Сбер» holds the money. An amount that changed since the question was
+  /// shown is refused and nothing is written.
+  func testArchivingWithMoneyRecordsTheTransferInOneStep() async throws {
+    let sber = try account("Сбер", main: true)
+    let cash = try account("Наличные", kind: .cash)
+    try count(sber.id, .rub, AmountE4(whole: 10_000))
+    try count(cash.id, .rub, AmountE4(whole: 3_000))
+    store.forgetUndoHistory()
+    let books = try await freshBooks()
+    XCTAssertEqual(actions.archiveRefusal(cash, books: books), .hasMoney)
+
+    let check = ArchivedMoney.balancesToMove(of: cash, balances: books.balances)
+    let form = ArchivedMoneyForm(
+      check: check, accounts: books.dataset.paymentMethods, locale: Locale(identifier: "en"))
+    XCTAssertEqual(form.rows.map(\.chosen), [sber.id])
+    let settling = form.transfers(now: environment.now(), note: "left over")
+    let cashKey = BalanceKey(accountId: cash.id, currency: .rub)
+    XCTAssertEqual(
+      actions.archive(
+        cash.id, books: books, settling: settling, expecting: [cashKey: AmountE4(whole: 2_000)]),
+      .refused(.balanceChanged(cashKey)))
+    XCTAssertEqual(try stored().first { $0.id == cash.id }?.archived, false)
+
+    XCTAssertEqual(
+      actions.archive(cash.id, books: books, settling: settling, expecting: form.shown), .done)
+    let after = try await freshBooks()
+    XCTAssertEqual(try stored().first { $0.id == cash.id }?.archived, true)
+    XCTAssertEqual(after.balances[cashKey]?.amountE4, .zero)
+    XCTAssertEqual(
+      after.balances[BalanceKey(accountId: sber.id, currency: .rub)]?.amountE4,
+      AmountE4(whole: 13_000))
+
+    store.undo()
+    let undone = try await freshBooks()
+    XCTAssertEqual(try stored().first { $0.id == cash.id }?.archived, false)
+    XCTAssertTrue(undone.dataset.transfers.isEmpty, "one ⌘Z: the archive and its transfer")
+    XCTAssertEqual(undone.balances[cashKey]?.amountE4, AmountE4(whole: 3_000))
+  }
+
+  /// Rent of 30,000 typed ahead on «Наличные», which holds 12,000 now: the question names the
+  /// 12,000 it holds, and the write agrees with both figures. The 12,000 go to «Сбер» now and
+  /// the rent comes back from «Сбер» on its day, so the archived account is at zero from now on
+  /// — no money sits on it, in no total, until the rent — and nothing is left to offer. One ⌘Z
+  /// takes the archive and both transfers back.
+  func testArchivingCountsMoneyTypedAhead() async throws {
+    let sber = try account("Сбер", main: true)
+    let cash = try account("Наличные", kind: .cash)
+    try count(sber.id, .rub, AmountE4(whole: 50_000))
+    try count(cash.id, .rub, AmountE4(whole: 12_000))
+    let paid = Date().addingTimeInterval(3 * 86_400)
+    var rent = TransactionDraft(
+      occurredAt: paid, amount: AmountE4(whole: 30_000), note: "rent", paymentMethodId: cash.id)
+    rent.normalizeSinglePart()
+    XCTAssertTrue(store.save(try rent.materialize()))
+    store.forgetUndoHistory()
+
+    let books = try await freshBooks()
+    let cashKey = BalanceKey(accountId: cash.id, currency: .rub)
+    let sberKey = BalanceKey(accountId: sber.id, currency: .rub)
+    XCTAssertEqual(books.balances[cashKey]?.amountE4, AmountE4(whole: 12_000))
+    let check = ArchivedMoney.balancesToMove(of: cash, balances: books.balances)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: -18_000)])
+    XCTAssertEqual(check.leftovers.map(\.shownAmount), [AmountE4(whole: 12_000)])
+    let form = ArchivedMoneyForm(
+      check: check, accounts: books.dataset.paymentMethods, locale: Locale(identifier: "en"))
+    let settling = form.transfers(now: environment.now(), note: "left over")
+    XCTAssertEqual(settling.count, 2, "what it holds now, and the rent")
+    XCTAssertEqual(
+      actions.archive(
+        cash.id, books: books, settling: settling, expecting: form.shown,
+        expectingNow: [cashKey: AmountE4(whole: 10_000)]),
+      .refused(.balanceChanged(cashKey)), "the money of now is checked too")
+    XCTAssertEqual(try stored().first { $0.id == cash.id }?.archived, false)
+    XCTAssertEqual(
+      actions.archive(
+        cash.id, books: books, settling: settling, expecting: form.shown,
+        expectingNow: form.shownNow), .done)
+
+    let after = try await freshBooks()
+    let archived = try XCTUnwrap(try stored().first { $0.id == cash.id })
+    XCTAssertTrue(archived.archived)
+    XCTAssertEqual(after.balances[cashKey]?.amountE4, .zero, "at zero before the rent")
+    XCTAssertEqual(after.balances[sberKey]?.amountE4, AmountE4(whole: 62_000))
+    let later = paid.addingTimeInterval(60)
+    XCTAssertEqual(after.balances.balance(cashKey, at: later), .zero)
+    XCTAssertEqual(after.balances.balance(sberKey, at: later), AmountE4(whole: 32_000))
+    XCTAssertTrue(
+      ArchivedMoney.balancesToMove(of: archived, balances: after.balances).leftovers.isEmpty,
+      "«Стоит посмотреть» offers nothing")
+
+    store.undo()
+    let undone = try await freshBooks()
+    XCTAssertEqual(try stored().first { $0.id == cash.id }?.archived, false)
+    XCTAssertTrue(undone.dataset.transfers.isEmpty, "one ⌘Z: the archive and both transfers")
+    XCTAssertEqual(undone.balances[cashKey]?.amountE4, AmountE4(whole: 12_000))
+  }
+
+  /// «Наличные» holds 30,000 now and rent of 30,000 is typed ahead: once the rent is paid it
+  /// holds nothing, but until then its 30,000 are real money. «В архив» asks where they go and
+  /// brings the rent back on its day, so no total misses them meanwhile.
+  func testArchivingMoneyTheRentTakesBackAsksToo() async throws {
+    let sber = try account("Сбер", main: true)
+    let cash = try account("Наличные", kind: .cash)
+    try count(sber.id, .rub, AmountE4(whole: 50_000))
+    try count(cash.id, .rub, AmountE4(whole: 30_000))
+    let paid = Date().addingTimeInterval(3 * 86_400)
+    var rent = TransactionDraft(
+      occurredAt: paid, amount: AmountE4(whole: 30_000), note: "rent", paymentMethodId: cash.id)
+    rent.normalizeSinglePart()
+    XCTAssertTrue(store.save(try rent.materialize()))
+    store.forgetUndoHistory()
+
+    let books = try await freshBooks()
+    XCTAssertEqual(actions.archive(cash.id, books: books), .refused(.hasMoney))
+    let check = ArchivedMoney.balancesToMove(of: cash, balances: books.balances)
+    XCTAssertEqual(check.leftovers.map(\.shownAmount), [AmountE4(whole: 30_000)])
+    let form = ArchivedMoneyForm(
+      check: check, accounts: books.dataset.paymentMethods, locale: Locale(identifier: "en"))
+    let settling = form.transfers(now: environment.now(), note: "left over")
+    XCTAssertEqual(
+      actions.archive(
+        cash.id, books: books, settling: settling, expecting: form.shown,
+        expectingNow: form.shownNow), .done)
+
+    let after = try await freshBooks()
+    let cashKey = BalanceKey(accountId: cash.id, currency: .rub)
+    let sberKey = BalanceKey(accountId: sber.id, currency: .rub)
+    XCTAssertEqual(after.balances[cashKey]?.amountE4, .zero)
+    XCTAssertEqual(after.balances[sberKey]?.amountE4, AmountE4(whole: 80_000))
+    let later = paid.addingTimeInterval(60)
+    XCTAssertEqual(after.balances.balance(cashKey, at: later), .zero)
+    XCTAssertEqual(after.balances.balance(sberKey, at: later), AmountE4(whole: 50_000))
+  }
+
+  /// An account the archive took with money before 1.2 asked: what it holds is moved to a live
+  /// account in one step of ⌘Z, and it is at zero after.
+  func testALeftoverOfAnArchivedAccountIsMovedInOneStep() async throws {
+    let sber = try account("Сбер", main: true)
+    var cash = try account("Наличные", kind: .cash)
+    try count(sber.id, .rub, AmountE4(whole: 10_000))
+    try count(cash.id, .rub, AmountE4(whole: 1_000))
+    cash.archived = true
+    try XCTUnwrap(environment.references).save(cash)
+    store.forgetUndoHistory()
+
+    let books = try await freshBooks()
+    let check = ArchivedMoney.balancesToMove(of: cash, balances: books.balances)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: 1_000)])
+    let form = ArchivedMoneyForm(
+      check: check, accounts: books.dataset.paymentMethods, locale: Locale(identifier: "en"))
+    let settling = form.transfers(now: environment.now(), note: "left over")
+    XCTAssertEqual(
+      actions.settleLeftovers(of: cash, books: books, settling: settling, expecting: form.shown),
+      .done)
+    let after = try await freshBooks()
+    XCTAssertEqual(after.balances[BalanceKey(accountId: cash.id, currency: .rub)]?.amountE4, .zero)
+    XCTAssertEqual(
+      after.balances[BalanceKey(accountId: sber.id, currency: .rub)]?.amountE4,
+      AmountE4(whole: 11_000))
+    store.undo()
+    let undone = try await freshBooks()
+    XCTAssertTrue(undone.dataset.transfers.isEmpty)
   }
 
   /// «Вернуть» switches the account's currencies on: every currency a live account holds is

@@ -22,7 +22,7 @@ extension AdviceRules {
   /// Over the last complete months, at most six, a category's spending of each month is what
   /// a limit on it would count (`LimitRules.counts`), by date. It is suggested when it has no
   /// limit of its own, takes a limit (not a system category, not an income one, not
-  /// archived) and had spending in at least three of those months; the suggestion is the
+  /// archived, not a reconciliation one) and had spending in at least three of those months; the suggestion is the
   /// median of all of them, empty months included, rounded up to 100 ₽. The three largest
   /// medians are named. Fewer than three complete months: «not enough data».
   static func limitSuggestions(_ context: AdviceContext, budgets: [Budget]) -> [Advice] {
@@ -32,11 +32,13 @@ extension AdviceRules {
     }
     let tree = context.ledger.tree
     let limited = Set(budgets.filter { $0.scope == .category }.compactMap(\.categoryId))
+    let limitless = context.ledger.dataset.planning.settings.limitlessCategoryIds
     let table = spendingByCategory(context.ledger, months: months)
     let candidates =
       table.compactMap { root, byMonth -> (root: UUID, values: [AmountE4], median: AmountE4)? in
         guard !limited.contains(root), let category = tree.category(root),
-          category.kind == .expense, !category.archived, tree.acceptsLimit(root)
+          category.kind == .expense, !category.archived, tree.acceptsLimit(root),
+          !LimitRules.isLimitless(root, tree: tree, limitless: limitless)
         else { return nil }
         let values = months.map { byMonth[$0] ?? .zero }
         guard values.filter({ $0.raw > 0 }).count >= minimumMonths,

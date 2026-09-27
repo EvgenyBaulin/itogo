@@ -102,6 +102,27 @@ struct AnomalyRulesTests {
     #expect(!refunded.all.contains { $0.rule == .possibleDuplicate })
   }
 
+  /// «Возможный дубль» compares the checks, not what refunds left of them: 1,000 ₽ with 400
+  /// taken back and 600 ₽ five minutes later are two different purchases; two checks of 1,000 ₽,
+  /// one of them 400 lighter after a refund, are the same charge made twice.
+  @Test func aDuplicateComparesTheChecksNotWhatRefundsLeft() {
+    let first = purchase(1, "2026-09-15", "1000", hour: 10)
+    var cheaper = purchase(2, "2026-09-15", "600", hour: 10)
+    cheaper.transaction.occurredAt = cheaper.transaction.occurredAt.addingTimeInterval(300)
+    let different = AnomalyRules.build(
+      ledger: ledger([first, cheaper, refund(3, "2026-09-16", "400", of: id(10))]), today: today)
+    #expect(!different.all.contains { $0.rule == .possibleDuplicate })
+
+    var twin = purchase(4, "2026-09-15", "1000", hour: 10)
+    twin.transaction.occurredAt = twin.transaction.occurredAt.addingTimeInterval(300)
+    let twice = AnomalyRules.build(
+      ledger: ledger([first, twin, refund(5, "2026-09-16", "400", of: id(10))]), today: today)
+    let found = twice.all.filter { $0.rule == .possibleDuplicate }
+    #expect(found.count == 1)
+    #expect(found.first?.amount == money("1000"))
+    #expect(found.first?.reference == money("1000"))
+  }
+
   /// A part of 1 500 that got 700 back waits with 800: the anomaly says 800.
   @Test func aSlowReimbursementShowsWhatIsLeft() {
     let dinner = purchase(1, "2026-07-01", "1500", reimbursable: true)

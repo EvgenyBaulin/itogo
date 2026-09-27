@@ -23,8 +23,12 @@ public enum TransferIssue: Hashable, Sendable {
 /// Where the fee of a transfer goes.
 public enum FeeCategoryChoice: Hashable, Sendable {
   case existing(UUID)
-  /// No such category yet: one is made, named by `nameKey` in the interface language, under
-  /// `parent` when there is one, rated `quality`.
+  /// The category is in the archive — itself, its parent, or both: it is written live again in
+  /// the change that writes the fee, the parent first, and the same ⌘Z puts both back.
+  /// `parent` is named only when the parent is in the archive.
+  case revive(UUID, parent: UUID?)
+  /// No such category, live or archived: one is made, named by `nameKey` in the interface
+  /// language, under `parent` when there is one, rated `quality`.
   case create(nameKey: String, parent: UUID?, quality: Quality)
 }
 
@@ -38,12 +42,21 @@ public enum TransferRules {
   public static let feeCategoryNameKey = "category.fees"
 
   /// The first thing wrong with the transfer, or `nil`.
-  public static func validate(_ transfer: Transfer, accounts: [PaymentMethod]) -> TransferIssue? {
+  ///
+  /// An account in the archive takes no transfer, except one named in `allowingArchived`: the
+  /// account whose past an edit changes, when the transfer moves the money that edit left on it
+  /// to a live account, or brings in what it took, so the archived account stays at zero.
+  public static func validate(
+    _ transfer: Transfer, accounts: [PaymentMethod], allowingArchived: Set<UUID> = []
+  ) -> TransferIssue? {
     guard transfer.fromAmountE4.raw > 0, transfer.toAmountE4.raw > 0 else { return .notPositive }
     guard transfer.from != transfer.to else { return .sameKey }
     let byId = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    func usable(_ account: PaymentMethod) -> Bool {
+      !account.archived || allowingArchived.contains(account.id)
+    }
     guard let from = byId[transfer.fromAccountId], let to = byId[transfer.toAccountId],
-      !from.archived, !to.archived
+      usable(from), usable(to)
     else { return .archivedAccount }
     guard from.holds(transfer.fromCurrency) else { return .currencyNotHeld(.from) }
     guard to.holds(transfer.toCurrency) else { return .currencyNotHeld(.to) }
@@ -76,33 +89,60 @@ public enum TransferRules {
 
   /// The category the fees go to, the first that applies:
   ///
-  /// 1. the one remembered (`transfers.feeCategory`), while it is a live expense category of
-  ///    the owner's;
-  /// 2. a live expense category named «Комиссии» or "Fees", in any case — one under «Прочее» /
-  ///    "Other" first;
-  /// 3. a new one, under «Прочее» / "Other" when there is such a category, rated bad.
+  /// 1. the one remembered (`transfers.feeCategory`), while it and its parent are live and it
+  ///    is an expense category of the owner's;
+  /// 2. a live expense category named «Комиссии» or "Fees", in any case, under a live parent —
+  ///    one under «Прочее» / "Other" first;
+  /// 3. the one remembered, when it or its parent is in the archive: both come back;
+  /// 4. a category of that name in the archive, or under a parent in the archive — one under a
+  ///    category named «Прочее» / "Other" first —: it comes back, with its parent;
+  /// 5. a new one, under a live «Прочее» / "Other" when there is one, rated bad.
   ///
-  /// The app remembers the id in the same change that writes the first fee.
+  /// Only an expense category the owner files things in comes back — never one belonging to
+  /// the app or filed under one of the app's. So there is never a second «Комиссии» while one
+  /// exists, live or archived. The app remembers the id in the same change that writes the fee.
   public static func feeCategory(
     categories: [CoreKit.Category], remembered: UUID?
   ) -> FeeCategoryChoice {
     let tree = CategoryTree(categories)
+    func isOwners(_ category: CoreKit.Category) -> Bool {
+      category.kind == .expense && tree.systemRole(of: category.id) == nil
+    }
     func isLive(_ category: CoreKit.Category) -> Bool {
-      !category.archived && !(tree.parent(of: category.id)?.archived ?? false)
-        && category.kind == .expense && tree.systemRole(of: category.id) == nil
+      isOwners(category) && !category.archived
+        && !(tree.parent(of: category.id)?.archived ?? false)
+    }
+    /// The choice that brings `category` back, with its parent when that is archived too.
+    func revival(_ category: CoreKit.Category) -> FeeCategoryChoice {
+      let parent = tree.parent(of: category.id)
+      return .revive(category.id, parent: parent?.archived == true ? parent?.id : nil)
     }
     if let remembered, let category = tree[remembered], isLive(category) {
       return .existing(remembered)
     }
-    let others = categories.filter { $0.parentId == nil && isLive($0) && named($0, otherNames) }
-      .sorted(by: byOrder)
-    let fees = categories.filter { isLive($0) && named($0, feeNames) }.sorted { left, right in
-      let leftUnderOther = others.contains { $0.id == left.parentId }
-      let rightUnderOther = others.contains { $0.id == right.parentId }
-      if leftUnderOther != rightUnderOther { return leftUnderOther }
-      return byOrder(left, right)
+    let roots = categories.filter { $0.parentId == nil && isOwners($0) && named($0, otherNames) }
+    let others = roots.filter(isLive).sorted(by: byOrder)
+    /// Categories under one of `parents` first, then in the order of the tree.
+    func underOtherFirst(
+      _ parents: [CoreKit.Category]
+    ) -> (CoreKit.Category, CoreKit.Category) -> Bool {
+      { left, right in
+        let leftUnderOther = parents.contains { $0.id == left.parentId }
+        let rightUnderOther = parents.contains { $0.id == right.parentId }
+        if leftUnderOther != rightUnderOther { return leftUnderOther }
+        return byOrder(left, right)
+      }
     }
-    if let found = fees.first { return .existing(found.id) }
+    let fees = categories.filter { isOwners($0) && named($0, feeNames) }
+    if let found = fees.filter(isLive).sorted(by: underOtherFirst(others)).first {
+      return .existing(found.id)
+    }
+    if let remembered, let category = tree[remembered], isOwners(category) {
+      return revival(category)
+    }
+    if let found = fees.sorted(by: underOtherFirst(roots)).first {
+      return revival(found)
+    }
     return .create(nameKey: feeCategoryNameKey, parent: others.first?.id, quality: .bad)
   }
 

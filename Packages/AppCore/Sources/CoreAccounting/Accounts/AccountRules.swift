@@ -354,6 +354,26 @@ public enum AccountRules {
     return issues
   }
 
+  /// The account whose name `name` would clash with, for the account `account` about to take
+  /// it: another account of `among` — archived ones too — named so, or holding it among its
+  /// other names, by the same folding `validate` uses. A clash by name wins over one by other
+  /// name; among several, the first in `among`. `byOtherName` says which it is, so the words
+  /// can name the account whose other name is in the way. `nil` when the name is free or empty.
+  public static func rival(
+    of name: String, account: UUID, among accounts: [PaymentMethod]
+  ) -> (account: PaymentMethod, byOtherName: Bool)? {
+    let folded = folded(name)
+    guard !folded.isEmpty else { return nil }
+    let others = accounts.filter { $0.id != account }
+    if let named = others.first(where: { Self.folded($0.name) == folded }) {
+      return (named, false)
+    }
+    if let aliased = others.first(where: { $0.aliases.map(Self.folded).contains(folded) }) {
+      return (aliased, true)
+    }
+    return nil
+  }
+
   /// What is wrong with `group` about to be saved: a group that holds the main account is never
   /// left out of the summary.
   public static func validate(
@@ -373,11 +393,13 @@ public enum AccountRules {
     return issues
   }
 
-  /// Money is on the key: a balance that is not zero, or movements on a key never counted — a
-  /// balance nobody knows is not taken for zero.
+  /// Money is on the key: a balance that is not zero now, or once everything written on it has
+  /// happened — an operation typed ahead of now counts (`AccountBalances.balanceAhead`) —, or
+  /// movements on a key never counted — a balance nobody knows is not taken for zero.
   static func hasMoney(_ key: BalanceKey, in balances: AccountBalances) -> Bool {
-    guard let balance = balances[key] else { return false }
-    if let amount = balance.amountE4 { return !amount.isZero }
+    if let amount = balances.balanceAhead(key) {
+      return !amount.isZero || !(balances.balance(key, at: balances.now) ?? .zero).isZero
+    }
     return balances.hasHistory(key)
   }
 

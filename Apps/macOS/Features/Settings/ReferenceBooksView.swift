@@ -482,17 +482,12 @@ struct ReferenceBooksView: View {
           } label: {
             label("references.kind")
           }
-          DatePicker(selection: dayBinding(index, \.startDate), displayedComponents: .date) {
-            label("references.start")
-          }
-          .environment(\.locale, environment.language.locale)
-          DatePicker(
-            selection: dayBinding(index, \.endDate),
-            in: environment.calendar.startOfDay(events[index].startDate)...,
-            displayedComponents: .date
-          ) {
-            label("references.end")
-          }
+          // The pickers are shared by every event picked here: the end one is made anew for
+          // each, or it kept showing the day of the event picked before.
+          EventDaysFields(
+            owner: event.id, start: $events[index].startDate, end: $events[index].endDate,
+            startLabel: t("references.start"), endLabel: t("references.end")
+          )
           .environment(\.locale, environment.language.locale)
           LabeledContent {
             AmountField(amount: budgetBinding(index), locale: environment.language.locale)
@@ -524,7 +519,9 @@ struct ReferenceBooksView: View {
   }
 
   /// Whether the row is in the archive, with «Вернуть», and what points at it — which says
-  /// why «Удалить» is or is not in its menu.
+  /// why «Удалить» is or is not in its menu. A live row says what the archive does to it — gone
+  /// from entry and the lists, kept by its operations, Analytics and Reports — and has its own
+  /// «В архив», used or not.
   private func status(of row: Row) -> some View {
     Section {
       if row.archived {
@@ -542,6 +539,25 @@ struct ReferenceBooksView: View {
         .font(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
+      if !row.archived {
+        HStack(alignment: .firstTextBaseline) {
+          Text(verbatim: t(Self.archiveHintKey(book)))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+          Spacer(minLength: 8)
+          Button(t("references.archive")) { archive(row.id) }
+        }
+      }
+    }
+  }
+
+  /// What the archive does to a row of the book, in words (table Settings).
+  static func archiveHintKey(_ book: Book) -> String {
+    switch book {
+    case .people: "references.archiveHint.people"
+    case .places: "references.archiveHint.places"
+    case .events: "references.archiveHint.events"
     }
   }
 
@@ -641,32 +657,6 @@ struct ReferenceBooksView: View {
     case .otherNameTaken(let name, let other):
       environment.format("references.refusal.otherNameTaken", table: "Settings", name, other)
     }
-  }
-
-  private func dayBinding(_ index: Int, _ key: WritableKeyPath<Event, DateOnly>) -> Binding<Date> {
-    Binding(
-      get: { environment.calendar.startOfDay(events[index][keyPath: key]) },
-      set: {
-        events[index] = Self.event(
-          events[index], setting: key, to: environment.calendar.day(of: $0))
-      })
-  }
-
-  /// An event ends on or after the day it starts, or it covers no day at all. A start moved
-  /// past the end takes the end along and the event keeps its length; an end is never set
-  /// before the start (its picker offers no such day either).
-  static func event(
-    _ event: Event, setting key: WritableKeyPath<Event, DateOnly>, to day: DateOnly
-  ) -> Event {
-    var event = event
-    if key == \Event.startDate {
-      let length = max(0, event.startDate.days(to: event.endDate))
-      event.startDate = day
-      if event.endDate < day { event.endDate = day.adding(days: length) }
-    } else {
-      event[keyPath: key] = max(day, event.startDate)
-    }
-    return event
   }
 
   private func budgetBinding(_ index: Int) -> Binding<AmountE4> {

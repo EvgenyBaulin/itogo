@@ -176,7 +176,9 @@ struct RateRefinementTests {
   }
 
   /// The parts' rubles add up to the operation's to the unit, split exactly as saving a draft
-  /// splits them; the link of a part that came back keeps its rubles.
+  /// splits them; the link of a part that came back keeps its rubles. The part came back whole
+  /// at the provisional 266.73 ₽ and costs 271.17 ₽ at the newer rate: 4.44 ₽ is more than the
+  /// drift of 2.71 ₽, and nothing came back over it, so the part waits for the rest again.
   @Test func thePartsAreSplitAgainAndTheLinksKeepTheirRubles() throws {
     let stack = try TestSupport.makeStack()
     let repository = TransactionRepository(writer: stack.writer)
@@ -208,7 +210,7 @@ struct RateRefinementTests {
       stored.parts.map(\.amountRubE4)
         == rubles.allocated(
           proportionallyTo: entry.parts.map(\.amountE4), outOf: entry.transaction.amountE4))
-    #expect(stored.parts[1].reimbursementStatus == .returned)
+    #expect(stored.parts[1].reimbursementStatus == .expected)
 
     let links = try stack.writer.read { db in try ReimbursementLink.fetchAll(db) }
     #expect(links == [link])
@@ -217,9 +219,10 @@ struct RateRefinementTests {
   /// Money back typed part by part can reach a part still on a provisional rate. The day's own
   /// rate turns out lower: 3.33 $ were 266.73 ₽ at the 15th's 80.10 and are 265.07 ₽ at the
   /// 17th's 79.60. A part 266 ₽ already came back for has nothing more to wait for — it is
-  /// settled, not left waiting for less than nothing, where nobody could close or write it off.
-  /// A part 200 ₽ came back for keeps waiting for the rest, 65.07 ₽. The links keep their
-  /// rubles: they are the money that came back.
+  /// settled, not left waiting for less than nothing, where nobody could close or write it off;
+  /// its link is the part's rubles now, and the 0.93 ₽ over it would be income in «Доплаты» —
+  /// this book has no such category, so it stays drift. A part 200 ₽ came back for keeps
+  /// waiting for the rest, 65.07 ₽, its link untouched.
   @Test func aPartTheDaysRateLeavesNothingToWaitForIsSettled() throws {
     let stack = try TestSupport.makeStack()
     let repository = TransactionRepository(writer: stack.writer)
@@ -259,16 +262,111 @@ struct RateRefinementTests {
     #expect(left == AmountE4(raw: 650_680))
     // Only the part that came back is touched: the others were never anybody's to return.
     #expect(settled.parts[0].reimbursementStatus == nil)
+    var expected = links
+    expected[0].amountE4 = AmountE4(raw: 2_650_680)
     #expect(
       try stack.writer.read { db in try ReimbursementLink.fetchAll(db) }.sorted {
         $0.id.uuidString < $1.id.uuidString
-      } == links.sorted { $0.id.uuidString < $1.id.uuidString })
+      } == expected.sorted { $0.id.uuidString < $1.id.uuidString })
 
     // The money back deleted, the part waits for all of its rubles again.
     let effects = try repository.softDelete(ids: [links[0].reimbursementTxId])
     #expect(effects.reopenedPartIds == [covered.parts[1].id])
     let reopened = try #require(try repository.entry(id: covered.id))
     #expect(reopened.parts[1].reimbursementStatus == .expected)
+  }
+
+  /// A book with the system «Доплаты».
+  private func seedSurcharges(_ stack: DatabaseStack) throws -> UUID {
+    let surcharges = CoreKit.Category(
+      kind: .income, name: "Surcharges", systemRole: .surcharges)
+    try ReferenceRepository(writer: stack.writer).seedCategoriesIfEmpty([surcharges])
+    return surcharges.id
+  }
+
+  /// 266 ₽ back for the 3.33 $ part while it was 266.73 ₽ at a provisional 80.10: it waits for
+  /// 0.73 ₽. The day's rate of 79.60 makes it 265.07 ₽ — the money covers it: the part closes,
+  /// the link is its rubles, and the 0.93 ₽ over it is income in «Доплаты» on the money back's
+  /// moment, with the note given.
+  @Test func refinementClosingAPartWritesTheOverToSurcharges() throws {
+    let stack = try TestSupport.makeStack()
+    let surcharges = try seedSurcharges(stack)
+    let repository = TransactionRepository(writer: stack.writer)
+    let entry = try dinner(reimbursable: 1)
+    try repository.save(entry)
+    var money = TransactionDraft(kind: .reimbursement, amount: AmountE4(whole: 266))
+    money.normalizeSinglePart()
+    let back = try money.materialize()
+    let link = ReimbursementLink(
+      reimbursementTxId: back.id, partId: entry.parts[1].id, amountE4: AmountE4(whole: 266))
+    try repository.apply(
+      ReimbursementOutcome(
+        reimbursementTxId: back.id, allocations: [], links: [link], closedPartIds: []),
+      reimbursement: back)
+
+    let usages = try repository.provisionalUsages(calendar: calendar)
+    let lower = RateTable(rates: [usd(15, "80.1000"), usd(17, "79.6000")])
+    var counts = SettlementCounts()
+    #expect(
+      try repository.applyRefinements(
+        RateTable.refinement(for: usages, with: lower), of: usages, calendar: calendar,
+        surplusNote: "Surplus", settled: { counts = $0 }) == 1)
+    #expect(counts == SettlementCounts(parts: 1, surpluses: 1))
+
+    let settled = try #require(try repository.entry(id: entry.id))
+    #expect(settled.parts[1].reimbursementStatus == .returned)
+    let links = try stack.writer.read { db in try ReimbursementLink.fetchAll(db) }
+    #expect(links.map(\.amountE4) == [AmountE4(raw: 2_650_680)])
+    let surplus = try stack.writer.read { db in
+      try String.fetchOne(
+        db, sql: "SELECT id FROM transactions WHERE external_id = ?",
+        arguments: [ReimbursementCompanions.surplusKey(of: back.id)])
+    }
+    let surplusId = try #require(surplus.flatMap(UUID.init(uuidString:)))
+    let income = try #require(try repository.entry(id: surplusId))
+    #expect(income.transaction.kind == .income)
+    #expect(income.transaction.amountE4 == AmountE4(raw: 9_320))
+    #expect(income.transaction.amountRubE4 == AmountE4(raw: 9_320))
+    #expect(income.transaction.note == "Surplus")
+    #expect(
+      income.transaction.occurredAt == (try repository.entry(id: back.id))?.transaction.occurredAt)
+    #expect(income.parts.first?.categoryId == surcharges)
+
+    // Deleting the money back takes its surplus along and opens the part again.
+    _ = try repository.softDelete(ids: [back.id])
+    #expect(try repository.entry(id: income.id)?.transaction.isDeleted == true)
+    #expect(try repository.entry(id: entry.id)?.parts[1].reimbursementStatus == .expected)
+  }
+
+  /// The day's rate of 79.95 makes the part 266.23 ₽: 0.23 ₽ short of it is within the
+  /// tolerance of the drift (2.66 ₽) — the part closes and nothing else is written.
+  @Test func refinementWithinTheToleranceClosesThePart() throws {
+    let stack = try TestSupport.makeStack()
+    _ = try seedSurcharges(stack)
+    let repository = TransactionRepository(writer: stack.writer)
+    let entry = try dinner(reimbursable: 1)
+    try repository.save(entry)
+    var money = TransactionDraft(kind: .reimbursement, amount: AmountE4(whole: 266))
+    money.normalizeSinglePart()
+    let back = try money.materialize()
+    let link = ReimbursementLink(
+      reimbursementTxId: back.id, partId: entry.parts[1].id, amountE4: AmountE4(whole: 266))
+    try repository.apply(
+      ReimbursementOutcome(
+        reimbursementTxId: back.id, allocations: [], links: [link], closedPartIds: []),
+      reimbursement: back)
+
+    #expect(
+      try refine(repository, with: RateTable(rates: [usd(15, "80.1000"), usd(17, "79.9500")]))
+        == 1)
+    let settled = try #require(try repository.entry(id: entry.id))
+    #expect(settled.parts[1].amountRubE4 == AmountE4(raw: 2_662_335))
+    #expect(settled.parts[1].reimbursementStatus == .returned)
+    #expect(try stack.writer.read { db in try ReimbursementLink.fetchAll(db) } == [link])
+    #expect(
+      try stack.writer.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM transactions WHERE kind = 'income'")
+      } == 0)
   }
 
   /// What was read is what gets compared. Between reading the usages and writing the

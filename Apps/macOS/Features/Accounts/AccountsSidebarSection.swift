@@ -408,6 +408,8 @@ final class AccountsSidebarModel {
     /// The main account leaves — into the archive, or deleted — and another takes over.
     case handOver(PaymentMethod, deletes: Bool, candidates: [PaymentMethod], preselected: UUID?)
     case transfer(TransferForm)
+    /// «В архив» on an account that still holds money: where each currency of it goes.
+    case archiveMoney(PaymentMethod, newMain: UUID?)
 
     var id: String {
       switch self {
@@ -416,6 +418,7 @@ final class AccountsSidebarModel {
       case .merge(let account): "merge.\(account.id.uuidString)"
       case .handOver(let account, _, _, _): "handOver.\(account.id.uuidString)"
       case .transfer(let form): "transfer.\(form.previous?.id.uuidString ?? "new")"
+      case .archiveMoney(let account, _): "archiveMoney.\(account.id.uuidString)"
       }
     }
   }
@@ -447,22 +450,28 @@ final class AccountsSidebarModel {
     return outcome == .done
   }
 
-  /// Into the archive; the main account first asks which one takes over. Money on it keeps it
-  /// out, and the refusal offers to transfer it or to count the account.
+  /// Into the archive; the main account first asks which one takes over. Money on it is asked
+  /// about — where each currency goes — and moved with the archive in one step; a balance
+  /// nobody knows keeps it out, and the refusal offers to count the account.
   func archive(_ account: PaymentMethod, newMain: UUID? = nil, actions: AccountActions) {
     Task {
       guard let books = await actions.books() else {
         failed = true
         return
       }
+      let reason = actions.archiveRefusal(account, books: books)
       if account.isDefault, newMain == nil {
-        if let reason = actions.archiveRefusal(account, books: books) {
+        if let reason, reason != .hasMoney {
           refusal = Refusal(reason: reason, account: account)
           return
         }
         let next = actions.successors(leaving: account.id, books: books)
         sheet = .handOver(
           account, deletes: false, candidates: next.all, preselected: next.preselected)
+        return
+      }
+      if reason == .hasMoney {
+        sheet = .archiveMoney(account, newMain: newMain)
         return
       }
       perform(actions.archive(account.id, newMain: newMain, books: books), about: account)
@@ -649,6 +658,8 @@ private struct AccountsSidebarPresentations: ViewModifier {
         cancel: { model.sheet = nil })
     case .transfer(let form):
       TransferSheet(form: form) { _ in model.sheet = nil }
+    case .archiveMoney(let account, let newMain):
+      ArchivedMoneySheet(archiving: account, newMain: newMain) { _ in model.sheet = nil }
     }
   }
 }

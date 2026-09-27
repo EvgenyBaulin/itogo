@@ -68,6 +68,32 @@ struct PerformanceTests {
     #expect(times.median < .milliseconds(500))
   }
 
+  /// Expected and received cashback of twelve months when every account prices its purchases
+  /// by rules — «everything else» always and one category in every month —, as Analytics and
+  /// «Оборот и кэшбэк» ask for it. The target is under 150 ms.
+  @Test func cashbackOfTwelveMonths() {
+    var dataset = Self.dataset
+    let today = Self.set.lastDay
+    let period = Period.twelveMonths(endingWith: today.monthKey)
+    let category = dataset.categories.first { $0.kind == .expense && $0.systemRole == nil }?.id
+    let one = CashbackPercent(e4: 10_000)!
+    let five = CashbackPercent(e4: 50_000)!
+    for account in dataset.paymentMethods {
+      dataset.cashbackRules.append(CashbackRule(accountId: account.id, percent: one))
+      for month in period.months {
+        dataset.cashbackRules.append(
+          CashbackRule(accountId: account.id, categoryId: category, month: month, percent: five))
+      }
+    }
+    let ledger = Ledger(dataset: dataset, calendar: Synthetic.calendar)
+    var cells = 0
+    let times = Bench.measure("cashback, 12 months, \(dataset.cashbackRules.count) rules") {
+      cells = CashbackReport(ledger: ledger, period: period).cells.count
+    }
+    #expect(cells > 0)
+    #expect(times.median < .milliseconds(150))
+  }
+
   /// The same after a change of data: the ledger is built anew, then every section. It
   /// fits in the same 500 ms.
   @Test func ledgerAndEveryAnalyticsSection() {

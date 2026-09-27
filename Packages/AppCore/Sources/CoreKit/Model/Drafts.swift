@@ -23,6 +23,10 @@ public struct TransactionDraft: Hashable, Sendable {
   public var debtId: UUID?
   public var creditDebtId: UUID?
   public var parts: [PartDraft]
+  /// The card that paid, a card of `paymentMethodId`; `nil` — the account itself.
+  public var cardId: UUID?
+  /// The cashback the owner typed, in the currency that moves on the account.
+  public var cashback: Money?
 
   public init(
     kind: TransactionKind = .expense,
@@ -42,7 +46,9 @@ public struct TransactionDraft: Hashable, Sendable {
     periodMonth: MonthKey? = nil,
     debtId: UUID? = nil,
     creditDebtId: UUID? = nil,
-    parts: [PartDraft] = []
+    parts: [PartDraft] = [],
+    cardId: UUID? = nil,
+    cashback: Money? = nil
   ) {
     self.kind = kind
     self.occurredAt = occurredAt
@@ -62,6 +68,8 @@ public struct TransactionDraft: Hashable, Sendable {
     self.debtId = debtId
     self.creditDebtId = creditDebtId
     self.parts = parts
+    self.cardId = cardId
+    self.cashback = cashback
   }
 
   /// Reopens a saved operation for editing: the panel edits drafts, never records.
@@ -85,7 +93,9 @@ public struct TransactionDraft: Hashable, Sendable {
       periodMonth: transaction.periodMonth,
       debtId: transaction.debtId,
       creditDebtId: transaction.creditDebtId,
-      parts: entry.parts.map(PartDraft.init(part:)))
+      parts: entry.parts.map(PartDraft.init(part:)),
+      cardId: transaction.cardId,
+      cashback: transaction.cashback)
   }
 
   /// Amount not yet distributed between parts. Saving is only allowed when it is zero.
@@ -156,7 +166,9 @@ public struct TransactionDraft: Hashable, Sendable {
       debtId: debtId,
       creditDebtId: creditDebtId,
       createdAt: now,
-      updatedAt: now)
+      updatedAt: now,
+      cardId: cardId,
+      cashback: cashback)
 
     // Ruble shares are split from the converted total so rounding never loses a unit.
     let shares = totalRub.allocated(proportionallyTo: parts.map(\.amount), outOf: amount)
@@ -203,8 +215,11 @@ extension TransactionEntry {
   ///   matched by id; one `current` has no status for — new, or paid for nobody before —
   ///   keeps what the draft gave it.
   ///
-  /// The account and what moved on it (`accountCurrency`, `accountAmountE4`), and the purchase
-  /// part a refund takes back from, are the panel's: they come from the edit.
+  /// The account and what moved on it (`accountCurrency`, `accountAmountE4`), the card that paid
+  /// and the cashback typed for the operation, and the purchase part a refund takes back from,
+  /// are the panel's: they come from the edit. An edit rebuilds the operation from the draft,
+  /// so a draft opened from an operation carries its card and cashback, or the edit would drop
+  /// them.
   public func rebased(onto current: TransactionEntry) -> TransactionEntry {
     var rebased = self
     rebased.transaction.createdAt = current.transaction.createdAt

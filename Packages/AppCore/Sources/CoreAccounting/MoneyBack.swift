@@ -79,13 +79,17 @@ public struct MoneyBackPlan: Hashable, Sendable {
 /// between, and leave nothing over.
 ///
 /// A small tolerance keeps the drift of rates from leaving crumbs: a part that falls short of
-/// its rubles by no more than that is closed, and money over by no more than that is no income.
-/// Rate drift is neither spending nor income.
+/// its rubles by no more than that is closed — rate drift is neither spending nor income. Money
+/// over is another matter: whatever comes back above every part is income, down to the kopeck
+/// (4,780 ₽ back for a part of 4,750 ₽ is 30 ₽ of income); only what is below a kopeck is the
+/// rounding of the shares and is not written.
 public enum MoneyBack {
   /// One ruble.
   static let toleranceFloor = AmountE4(whole: 1)
   /// Fifty rubles.
   static let toleranceCeiling = AmountE4(whole: 50)
+  /// One kopeck: money over by less is the rounding of the shares, never income.
+  public static let crumb = AmountE4(raw: 100)
 
   /// How far the rubles of a part may miss and still be settled: nothing when the part and the
   /// money are both in rubles, otherwise 1 % of the part's rubles, never below 1 ₽ and never
@@ -108,22 +112,25 @@ public enum MoneyBack {
   ///   left of its rubles. A part it covers only partly keeps waiting with the rest — unless
   ///   the rest is within the tolerance, which closes it.
   /// * What is left over is the surplus, and its rubles are the rubles received less the rubles
-  ///   the parts took at the money back's rate, so every ruble that came in is written once —
-  ///   but for the drift of the rate: within the tolerance of the last part it reached the
-  ///   surplus is drift and no income, and money that ends exactly on a part's need closes it
-  ///   with its own rubles, whatever the rubles received differ by. Money over while parts on a
-  ///   provisional rate are still owed is not income either: nothing is spread,
+  ///   the parts took at the money back's rate, so every ruble that came in is written once.
+  ///   Every surplus is income, however small, but for less than a kopeck (`crumb`): that is
+  ///   the rounding of the shares. Money that ends exactly on a part's need closes it with its
+  ///   own rubles, whatever the rubles received differ by — the drift of the rate. Money over
+  ///   while parts on a provisional rate are still owed is not income: nothing is spread,
   ///   `.provisionalPartsOwed`.
   /// * No part owed: `.owesOnDebt` when the person has an open «Мне должны» debt among
-  ///   `openDebts` — theirs, never another person's —, otherwise `.owesNothing`.
+  ///   `openDebts` — theirs, never another person's — with something still owed on it
+  ///   (`debtBalances`; a debt missing there counts as owing), otherwise `.owesNothing`: money
+  ///   from somebody whose debt is at zero is income.
   public static func plan(
     received: AmountE4, currency: CurrencyCode, receivedRub: AmountE4, rateProvisional: Bool,
-    person: UUID, owed: [OwedPart], openDebts: [Debt]
+    person: UUID, owed: [OwedPart], openDebts: [Debt], debtBalances: [UUID: AmountE4] = [:]
   ) -> MoneyBackPlan {
     let waiting = owed.filter { $0.remainingRubE4.raw > 0 }.sorted(by: MyExpensesRule.oldestFirst)
     guard !waiting.isEmpty else {
       let debt = openDebts.filter {
         !$0.closed && $0.direction == .owedToMe && $0.personId == person
+          && (debtBalances[$0.id].map { $0.raw > 0 } ?? true)
       }
       .min { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
       return MoneyBackPlan(
@@ -145,7 +152,6 @@ public enum MoneyBack {
       ? Decimal(1) : receivedRub.decimal / received.decimal
     var plan = MoneyBackPlan(currency: currency, skippedProvisional: skipped.map(\.partId))
     var left = max(received, .zero)
-    var lastTouched: OwedPart?
     // What the parts took, in rubles at the money back's own rate: the rubles of their links,
     // except for a part bought in the money back's currency, whose link is at the part's rate —
     // the difference is drift of the rate, neither income nor spending.
@@ -171,7 +177,6 @@ public enum MoneyBack {
       }
       plan.allocations.append(ReimbursementAllocation(partId: part.partId, amountE4: link))
       takenRub = takenRub + (part.currency == currency ? convert(take, rate: rate) : link)
-      lastTouched = part
       let rest = part.remainingRubE4 - link
       let foreign = part.currency != .rub || currency != .rub
       if take == need || rest <= tolerance(partRub: part.amountRubE4, foreignInvolved: foreign) {
@@ -186,9 +191,7 @@ public enum MoneyBack {
     // that missed by the rounding of every part's share (50 $ at 95 ₽ over a part of 4,500 ₽
     // came to 4,750.0020 ₽ for 4,750 ₽ received).
     let surplusRub = left.isZero ? .zero : max(receivedRub - takenRub, .zero)
-    if let last = lastTouched, left.raw > 0, last.currency != .rub || currency != .rub,
-      surplusRub <= tolerance(partRub: last.amountRubE4, foreignInvolved: true)
-    {
+    if left.raw > 0, surplusRub < crumb {
       left = .zero
     }
     if left.raw > 0, !skipped.isEmpty {
@@ -222,6 +225,40 @@ public enum MoneyBack {
     return ReimbursementOutcome(
       reimbursementTxId: reimbursementTxId, allocations: plan.allocations, links: links,
       closedPartIds: plan.closes, surplus: surplus, shortfalls: [])
+  }
+
+  /// The income a surplus is written as: in the system Surcharges category (`categoryId`), in
+  /// the currency the money came in, on the account it came onto, at the moment of its money
+  /// back, keyed `reimb:<money back>:surplus` so that deleting the money back takes it along.
+  /// One builder for the sheets, the entry line and the storage layer's re-balancing, so a
+  /// surplus is the same row whoever writes it.
+  ///
+  /// `rate` is the rate the money back itself came at, its rubles over its amount: the income
+  /// shows that one, while its rubles are exactly `surplus.amountRubE4`. Without it the rate is
+  /// the surplus's rubles over its amount.
+  public static func surplusEntry(
+    _ surplus: SurchargeIncome, of moneyBackId: UUID, on moment: Date, now: Date,
+    rate: Decimal? = nil, rateDate: DateOnly? = nil, categoryId: UUID, note: String?,
+    id: UUID = UUID()
+  ) throws -> TransactionEntry {
+    let foreign = surplus.currency != .rub && !surplus.amountE4.isZero
+    var draft = TransactionDraft(
+      kind: .income, occurredAt: moment, currency: surplus.currency, amount: surplus.amountE4,
+      rate: foreign
+        ? rate
+          ?? DecimalMath.round(surplus.amountRubE4.decimal / surplus.amountE4.decimal, scale: 6)
+        : nil,
+      rateDate: foreign ? rateDate : nil,
+      rateSource: foreign ? .manual : nil,
+      paymentMethodId: surplus.accountId)
+    draft.normalizeSinglePart()
+    draft.parts[0].categoryId = categoryId
+    draft.parts[0].categorySource = .system
+    draft.note = note
+    let rubles = surplus.amountRubE4
+    var entry = try draft.materialize(id: id, now: now, rublesConverter: { _ in rubles })
+    entry.transaction.externalId = ReimbursementCompanions.surplusKey(of: moneyBackId)
+    return entry
   }
 
   /// «Списать остаток»: what is left of a part some money already came back for becomes my

@@ -347,6 +347,29 @@ public enum GoalRules {
     return Int(quotient)
   }
 
+  // MARK: - The month a plan counts from
+
+  /// The goal as it is saved, with the month its monthly plan counts from: the month of
+  /// `today` when a plan appears — on a new goal, or on one that had none or a plan of zero —,
+  /// none once the plan is taken away, and otherwise the month stored before (`previous`): a
+  /// new amount, a new name or a new date moves nothing. Money put in before that month is
+  /// not counted as paid ahead of the plan.
+  public static func withPlanStart(_ goal: Goal, previous: Goal?, today: DateOnly) -> Goal {
+    func planned(_ goal: Goal?) -> Bool {
+      guard let plan = goal?.monthlyPlanE4 else { return false }
+      return plan > .zero
+    }
+    var saved = goal
+    if !planned(goal) {
+      saved.planStartMonth = nil
+    } else if !planned(previous) {
+      saved.planStartMonth = today.monthKey
+    } else {
+      saved.planStartMonth = previous?.planStartMonth
+    }
+    return saved
+  }
+
   // MARK: - Contribute and Withdraw
 
   /// «Contribute»: an expense of one part in the goal's subcategory, tied to the goal. The

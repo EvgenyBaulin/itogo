@@ -23,7 +23,52 @@ struct KindFieldsTests {
     #expect(!refund.contains(.credit))
     #expect(!refund.contains(.debt))
     #expect(refund.contains(.refundOf))
-    #expect(expense.subtracting([.credit, .debt, .debtor]).isSubset(of: refund))
+    #expect(expense.subtracting([.credit, .debt, .debtor, .cashback]).isSubset(of: refund))
+  }
+
+  /// Only a purchase has a cashback of its own: income, a refund and money back have none.
+  @Test func cashbackOnlyOnExpense() {
+    for kind in TransactionKind.allCases {
+      #expect(KindFields.fields(of: kind).contains(.cashback) == (kind == .expense), "\(kind)")
+    }
+  }
+
+  /// A contribution to a goal moves no card money: it earns nothing.
+  @Test func goalOnlyHasNoCashback() {
+    #expect(!KindFields.fields(of: .expense, goalOnly: true).contains(.cashback))
+    #expect(KindFields.fields(of: .expense, goalOnly: true).contains(.card))
+  }
+
+  /// A purchase, income and a refund name the card that paid or took the money; money back is
+  /// money from a person onto an account and names none.
+  @Test func cardWhereverTheAccountIs() {
+    #expect(KindFields.fields(of: .expense).contains(.card))
+    #expect(KindFields.fields(of: .income).contains(.card))
+    #expect(KindFields.fields(of: .refund).contains(.card))
+    #expect(!KindFields.fields(of: .reimbursement).contains(.card))
+  }
+
+  /// A draft that turns into income loses its cashback; its card stays. A draft that turns into
+  /// money back loses its card too.
+  @Test func strippedDropsCashbackOfIncome() {
+    let cashback = Money(amount: money(35), currency: .rub)
+    var draft = TransactionDraft(
+      kind: .income, amount: money(5000), paymentMethodId: id(1),
+      parts: [PartDraft(categoryId: categories.salary, amount: money(5000))], cardId: id(2),
+      cashback: cashback)
+    var stripped = KindFields.stripped(draft, tree: categories.tree).draft
+    #expect(stripped.cashback == nil)
+    #expect(stripped.cardId == id(2))
+    draft.kind = .reimbursement
+    stripped = KindFields.stripped(draft, tree: categories.tree).draft
+    #expect(stripped.cardId == nil)
+    draft.kind = .expense
+    draft.parts = [PartDraft(categoryId: categories.groceries, amount: money(5000))]
+    stripped = KindFields.stripped(draft, tree: categories.tree).draft
+    #expect(stripped.cashback == cashback)
+    draft.parts = [PartDraft(categoryId: categories.goalsTrip, amount: money(5000))]
+    stripped = KindFields.stripped(draft, tree: categories.tree).draft
+    #expect(stripped.cashback == nil)
   }
 
   @Test func moneyBackIsMoneyFromAPersonOntoAnAccount() {

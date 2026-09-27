@@ -870,14 +870,78 @@ private struct PaymentMethodsSection: View {
       ) { rows in
         MethodsTableView(rows: rows, names: names)
       }
+      AnalyticsCard(
+        block: AnalyticsBlock.cashbackMonths.rawValue, title: t("analytics.block.cashbackMonths"),
+        subtitle: t("analytics.basis.cashbackMonths"),
+        state: state.block { $0.paymentMethods?.cashbackMonths }, retry: retry
+      ) { model in
+        CashbackMonthsView(model: model, names: names)
+      }
     }
   }
 
   private func t(_ key: String) -> String { AnalyticsText.t(key, environment) }
 }
 
-/// Every payment method: my spending, the turnover cashback is paid on, the cashback and
-/// its actual share of the turnover — «—» when there was no turnover.
+/// «Кэшбэк по месяцам»: for all accounts, one account or one card, each month's expected
+/// cashback — by the month of the purchases — beside what came for it and the difference,
+/// received − expected, with its sign and no colour of good or bad.
+private struct CashbackMonthsView: View {
+  @Dependency(\.environment) private var environment
+  let model: CashbackMonthsModel
+  let names: AnalyticsNames
+  @State private var choice: CashbackMonthsModel.Choice = .all
+
+  var body: some View {
+    let shown = model.choices.contains(choice) ? choice : .all
+    VStack(alignment: .leading, spacing: 8) {
+      Picker(selection: $choice) {
+        ForEach(model.choices, id: \.self) { choice in
+          Text(verbatim: AnalyticsText.cashbackChoice(choice, model: model, names, environment))
+            .tag(choice)
+        }
+      } label: {
+        Text(verbatim: AnalyticsText.t("analytics.cashback.holder", environment))
+      }
+      .fixedSize()
+      Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
+        GridRow {
+          header("analytics.column.month")
+          header("analytics.column.cashbackExpected").gridColumnAlignment(.trailing)
+          header("analytics.column.cashback").gridColumnAlignment(.trailing)
+          header("analytics.column.cashbackDifference").gridColumnAlignment(.trailing)
+        }
+        Divider()
+        ForEach(model.months[shown] ?? [], id: \.month) { row in
+          // VoiceOver hears the month once, with every figure after its header: a modifier on
+          // the row would reach each cell on its own and leave the figures unnamed.
+          let line = AnalyticsText.cashbackMonthLine(row, environment)
+          GridRow {
+            Text(verbatim: line.first)
+              .accessibilityLabel(Text(verbatim: line.spoken))
+            ForEach(Array(line.figures.enumerated()), id: \.offset) { _, figure in
+              Text(verbatim: figure)
+                .monospacedDigit()
+                .accessibilityHidden(true)
+            }
+          }
+        }
+      }
+      .font(.callout)
+    }
+  }
+
+  private func header(_ key: String) -> some View {
+    Text(verbatim: AnalyticsText.t(key, environment))
+      .font(.caption)
+      .foregroundStyle(.secondary)
+  }
+}
+
+/// Every payment method: my spending, the turnover cashback is paid on, the cashback its cards'
+/// rules expect, the cashback received and its actual share of the turnover — «—» when there
+/// was no turnover. An account with more than one card has a line per card under it, the
+/// symbol of a card telling them from the accounts.
 private struct MethodsTableView: View {
   @Dependency(\.environment) private var environment
   let rows: [MethodRow]
@@ -889,33 +953,51 @@ private struct MethodsTableView: View {
         header("analytics.column.method")
         header("analytics.column.mySpending").gridColumnAlignment(.trailing)
         header("analytics.column.turnover").gridColumnAlignment(.trailing)
+        header("analytics.column.cashbackExpected").gridColumnAlignment(.trailing)
         header("analytics.column.cashback").gridColumnAlignment(.trailing)
         header("analytics.column.cashbackShare").gridColumnAlignment(.trailing)
       }
       Divider()
       ForEach(rows, id: \.key) { row in
+        // VoiceOver hears each line once, from its name, with every figure after its header: a
+        // modifier on the row would reach each cell on its own and leave the figures unnamed.
+        let line = AnalyticsText.methodLine(row, names, environment)
         GridRow {
-          Text(verbatim: AnalyticsText.name(of: row.key, names, environment))
+          Text(verbatim: line.first)
             .lineLimit(1)
-          money(row.mySpending)
-          money(row.turnover)
-          money(row.cashback)
-          Text(
-            verbatim: row.cashbackShare.map {
-              environment.money.percent(basisPoints: $0, fractionDigits: 1)
-            } ?? "—"
-          )
-          .monospacedDigit()
+            .accessibilityLabel(Text(verbatim: line.spoken))
+          figures(line)
         }
-        .accessibilityElement(children: .combine)
+        ForEach(row.cards, id: \.cardId) { card in
+          let cardLine = AnalyticsText.cardMethodLine(card, names, environment)
+          GridRow {
+            Label {
+              Text(verbatim: cardLine.first)
+                .lineLimit(1)
+            } icon: {
+              Image(systemName: "creditcard")
+            }
+            .padding(.leading, 16)
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: cardLine.spoken))
+            figures(cardLine)
+            Text(verbatim: "")
+              .accessibilityHidden(true)
+          }
+        }
       }
     }
     .font(.callout)
   }
 
-  private func money(_ value: Int64) -> some View {
-    Text(verbatim: environment.money.rubles(value))
-      .monospacedDigit()
+  /// The figures of a line, silent: its first cell says them.
+  private func figures(_ line: AnalyticsText.GridLine) -> some View {
+    ForEach(Array(line.figures.enumerated()), id: \.offset) { _, figure in
+      Text(verbatim: figure)
+        .monospacedDigit()
+        .accessibilityHidden(true)
+    }
   }
 
   private func header(_ key: String) -> some View {
@@ -933,16 +1015,249 @@ private struct ForecastSection: View {
   let retry: () -> Void
 
   var body: some View {
-    AnalyticsCard(
-      block: AnalyticsBlock.forecast.rawValue, title: t("analytics.block.forecast"),
-      subtitle: t("analytics.basis.forecast"), state: state.block { $0.forecast?.chart },
-      retry: retry
-    ) { plot in
-      ForecastView(plot: plot, month: state.value?.forecast?.month)
+    VStack(alignment: .leading, spacing: 16) {
+      AnalyticsCard(
+        block: AnalyticsBlock.forecast.rawValue, title: t("analytics.block.forecast"),
+        subtitle: t("analytics.basis.forecast"), state: state.block { $0.forecast?.chart },
+        retry: retry
+      ) { plot in
+        ForecastView(plot: plot, month: state.value?.forecast?.month)
+      }
+      AnalyticsCard(
+        block: AnalyticsBlock.accountBalances.rawValue,
+        title: t("analytics.block.accountBalances"), subtitle: t("analytics.basis.accountBalances"),
+        state: state.block { $0.forecast?.accounts }, retry: retry
+      ) { forecast in
+        AccountBalancesForecastView(forecast: forecast)
+      }
     }
   }
 
   private func t(_ key: String) -> String { AnalyticsText.t(key, environment) }
+}
+
+/// The balance of every account at the end of the month in a plain grid: the account (and its
+/// currency when it has several), the balance now, about how much at the end of the month and
+/// the interval, each in the account's own currency. The accounts in the summary end with
+/// their total in rubles; each group left out follows under its own name with its own total;
+/// then the currencies never counted, which have no forecast.
+struct AccountBalancesForecastView: View {
+  @Dependency(\.environment) private var environment
+  let forecast: AccountForecast
+
+  var body: some View {
+    let rows = AccountBalancesForecastText.rows(forecast, environment)
+    VStack(alignment: .leading, spacing: 8) {
+      Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
+        GridRow {
+          header("analytics.accounts.account")
+          header("analytics.accounts.now").gridColumnAlignment(.trailing)
+          Text(
+            verbatim: AnalyticsText.format(
+              "analytics.accounts.end", environment,
+              environment.dates.dayAndMonth(forecast.through))
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .gridColumnAlignment(.trailing)
+          header("analytics.accounts.range").gridColumnAlignment(.trailing)
+        }
+        Divider()
+        ForEach(rows, id: \.id) { row in
+          switch row.kind {
+          case .line(let line):
+            // VoiceOver hears the account once, as text: the name carries the whole line and
+            // the other cells are silent. A modifier on the row would reach every cell and
+            // repeat the line once per column.
+            GridRow {
+              Text(verbatim: line.name)
+                .lineLimit(1)
+                .accessibilityLabel(Text(verbatim: line.spoken))
+              Text(verbatim: line.now)
+                .monospacedDigit()
+                .accessibilityHidden(true)
+              HStack(spacing: 4) {
+                if line.negative {
+                  Image(systemName: "exclamationmark.triangle")
+                }
+                Text(verbatim: line.end)
+                  .monospacedDigit()
+              }
+              .accessibilityHidden(true)
+              Text(verbatim: line.range)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            }
+          case .title(let text):
+            Text(verbatim: text)
+              .font(.callout.weight(.semibold))
+              .padding(.top, 6)
+              .gridCellColumns(4)
+          case .total(let text):
+            Text(verbatim: text)
+              .monospacedDigit()
+              .gridCellColumns(4)
+          }
+        }
+      }
+      .font(.callout)
+      ForEach(AccountBalancesForecastText.notes(forecast, environment), id: \.text) { note in
+        Label {
+          Text(verbatim: note.text)
+        } icon: {
+          Image(systemName: note.symbol)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private func header(_ key: String) -> some View {
+    Text(verbatim: AnalyticsText.t(key, environment))
+      .font(.caption)
+      .foregroundStyle(.secondary)
+  }
+}
+
+/// The words of the balances grid, built without a view so they can be checked in both
+/// languages.
+@MainActor
+enum AccountBalancesForecastText {
+  struct Line: Hashable, Sendable {
+    var name: String
+    var now: String
+    var end: String
+    var range: String
+    var negative: Bool
+    var spoken: String
+  }
+
+  struct Row: Hashable, Sendable {
+    enum Kind: Hashable, Sendable {
+      case line(Line)
+      case title(String)
+      case total(String)
+    }
+
+    var id: String
+    var kind: Kind
+  }
+
+  struct Note: Hashable, Sendable {
+    var symbol: String
+    var text: String
+  }
+
+  /// The accounts in the summary, their total, then each group left out with its own.
+  static func rows(_ forecast: AccountForecast, _ environment: AppEnvironment) -> [Row] {
+    let money = environment.money
+    var rows: [Row] = []
+    func lines(of section: AccountForecast.Section) -> [Row] {
+      section.lines.filter { $0.status != .notCounted }.map { line in
+        Row(
+          id: "line.\(line.key.accountId.uuidString).\(line.key.currency.code)",
+          kind: .line(self.line(line, environment)))
+      }
+    }
+    let inSummary = forecast.sections.filter(\.inSummary)
+    rows += inSummary.flatMap(lines(of:))
+    if let total = forecast.inSummaryTotalRub {
+      rows.append(
+        Row(
+          id: "total",
+          kind: .total(
+            AnalyticsText.format(
+              "analytics.accounts.total", environment, money.rounded(total.middle)))))
+    }
+    for section in forecast.sections where !section.inSummary {
+      let own = lines(of: section)
+      guard !own.isEmpty else { continue }
+      let group = section.group?.name ?? ""
+      rows.append(
+        Row(
+          id: "group.\(section.group?.id.uuidString ?? "")",
+          kind: .title(AnalyticsText.format("analytics.accounts.excluded", environment, group))))
+      rows += own
+      if let total = section.totalRub {
+        rows.append(
+          Row(
+            id: "groupTotal.\(section.group?.id.uuidString ?? "")",
+            kind: .total(
+              AnalyticsText.format(
+                "analytics.accounts.groupTotal", environment, money.rounded(total.middle)))))
+      }
+    }
+    return rows
+  }
+
+  static func line(_ line: AccountForecast.Line, _ environment: AppEnvironment) -> Line {
+    let money = environment.money
+    let currency = line.key.currency
+    let account = line.flows.account
+    let name =
+      account.currencies.count > 1 || !line.flows.isHeld
+      ? "\(account.name) · \(currency.code)" : account.name
+    let now = line.flows.now.map { money.rounded($0, currency: currency) } ?? "—"
+    guard let balance = line.balance else {
+      let noRate = AnalyticsText.t("analytics.accounts.noRate", environment)
+      return Line(
+        name: name, now: now, end: noRate, range: "—", negative: false,
+        spoken: "\(name), \(now), \(noRate)")
+    }
+    let end = "≈\u{00A0}\(money.rounded(balance.middle, currency: currency))"
+    let range =
+      "\(money.rounded(balance.low, currency: currency)) – "
+      + money.rounded(balance.high, currency: currency)
+    var spoken = "\(name), \(now), \(end), \(range)"
+    if line.mayGoNegative {
+      spoken += ", " + AnalyticsText.t("analytics.accounts.negative", environment)
+    }
+    return Line(
+      name: name, now: now, end: end, range: range, negative: line.mayGoNegative,
+      spoken: spoken)
+  }
+
+  /// What the grid cannot show: the currencies never counted, the ones that could not be
+  /// converted, the accounts that may go below zero, a short history.
+  static func notes(_ forecast: AccountForecast, _ environment: AppEnvironment) -> [Note] {
+    var notes: [Note] = []
+    let all = forecast.sections.flatMap(\.lines)
+    let negative = all.filter(\.mayGoNegative).map { self.line($0, environment).name }
+    if !negative.isEmpty {
+      notes.append(
+        Note(
+          symbol: "exclamationmark.triangle",
+          text: AnalyticsText.format(
+            "analytics.accounts.negativeList", environment, negative.joined(separator: ", "))))
+    }
+    let unanchored = forecast.unanchored.compactMap { key -> String? in
+      guard let account = all.first(where: { $0.key == key })?.flows.account else { return nil }
+      return "\(account.name) (\(key.currency.code))"
+    }
+    if !unanchored.isEmpty {
+      notes.append(
+        Note(
+          symbol: "hourglass",
+          text: AnalyticsText.format(
+            "analytics.accounts.unanchored", environment, unanchored.joined(separator: ", "))))
+    }
+    let missing = Set(forecast.sections.flatMap(\.withoutRate)).sorted { $0.code < $1.code }
+    if !missing.isEmpty {
+      notes.append(
+        Note(
+          symbol: "exclamationmark.circle",
+          text: AnalyticsText.format(
+            "analytics.accounts.withoutRate", environment,
+            missing.map(\.code).joined(separator: ", "))))
+    }
+    if forecast.lowData {
+      notes.append(
+        Note(symbol: "hourglass", text: AnalyticsText.t("analytics.forecast.lowData", environment)))
+    }
+    return notes
+  }
 }
 
 private struct ForecastView: View {

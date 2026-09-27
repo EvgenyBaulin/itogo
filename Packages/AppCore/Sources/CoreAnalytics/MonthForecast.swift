@@ -23,14 +23,12 @@ public struct PlannedPayments: Hashable, Sendable {
   public var total: AmountE4 { debts + goals }
 
   /// * a debt counts when it is not closed, its payments are expenses, it has a monthly
-  ///   payment and a payment day later than today, and nothing this month paid it yet —
-  ///   neither an operation nor a journal `payment` line, which a payment recorded on the
-  ///   debt card alone writes (the rule of `DebtSchedule.isPaid` in CorePlanning);
-  ///   the payment day is the day it falls due, clipped to the length of the month — a debt
-  ///   paid «on the 31st» is due on 30 September, not after it (as `DebtSchedule` has it);
-  ///   a payment day before the debt began owed nothing, and a payment made in the month it
-  ///   began, when that month owed nothing, pays its first due (`DebtStart`, the rule the
-  ///   planning screens share);
+  ///   payment and a payment day, and this month's due falls after today and is still unpaid —
+  ///   each payment closes the earliest due still unpaid, counted from the start of the debt
+  ///   (`DebtDues`, the rule every planning screen shares), so a payment made last month «for
+  ///   this month» pays it, a payment day before the debt began owes nothing, and a debt with
+  ///   nothing left on it owes no due; the payment day is the day it falls due, clipped to the
+  ///   length of the month — a debt paid «on the 31st» is due on 30 September, not after it;
   ///   a debt in another currency is converted at the last rate the caller knows
   ///   (`rubPerUnit`);
   /// * a goal counts with what is left of its monthly plan: max(0, plan − contributions
@@ -44,42 +42,22 @@ public struct PlannedPayments: Hashable, Sendable {
     dayRates: DayRates = .empty
   ) {
     let month = today.monthKey
-    let thisMonth = ledger.rows(in: Period.month(month).range)
-    // An operation the journal wrote as an `offset` or as more `borrowed` points at the debt
-    // without paying it (the rule of `DebtSchedule.notPayments` in CorePlanning).
     let journal = ledger.dataset.planning.debtEntries
-    let notPayments = Set(
-      journal.lazy.filter { $0.kind == .offset || $0.kind == .borrowed }
-        .compactMap(\.transactionId))
-    func paid(in paidMonth: MonthKey, rows: ArraySlice<LedgerRow>) -> Set<UUID> {
-      Set(rows.lazy.filter { !notPayments.contains($0.transactionId) }.compactMap(\.debtId))
-        .union(
-          journal.lazy.filter { $0.kind == .payment && $0.date?.monthKey == paidMonth }
-            .map(\.debtId))
+    let planned = ledger.dataset.debts.filter { debt in
+      guard !debt.closed, DebtRules.paymentIsExpense(on: debt), debt.monthlyPaymentE4 != nil,
+        debt.paymentDay != nil
+      else { return false }
+      return true
     }
-    var paidDebts: [MonthKey: Set<UUID>] = [month: paid(in: month, rows: thisMonth)]
-    func isPaid(_ debtId: UUID, in paidMonth: MonthKey) -> Bool {
-      if paidDebts[paidMonth] == nil {
-        paidDebts[paidMonth] = paid(
-          in: paidMonth, rows: ledger.rows(in: Period.month(paidMonth).range))
-      }
-      return paidDebts[paidMonth]?.contains(debtId) == true
-    }
-    let starts = DebtStart.days(of: journal, calendar: ledger.calendar)
+    let states = DebtDues.states(debts: planned, ledger: ledger, journal: journal, today: today)
     var debts = AmountE4.zero
     var missing: [UUID] = []
-    for debt in ledger.dataset.debts {
-      guard !debt.closed, DebtRules.paymentIsExpense(on: debt),
-        let payment = debt.monthlyPaymentE4, let day = debt.paymentDay
+    for debt in planned {
+      guard let payment = debt.monthlyPaymentE4, let day = debt.paymentDay,
+        let state = states[debt.id]
       else { continue }
-      let due = DateOnly(
-        year: month.year, month: month.month, day: min(max(1, day), month.dayCount))
-      let start = starts[debt.id]
-      guard due > today, DebtStart.owes(due: due, startsOn: start),
-        !DebtStart.isPaid(
-          debt, for: month, startsOn: start, calendar: ledger.calendar,
-          paidIn: { isPaid(debt.id, in: $0) })
-      else { continue }
+      let due = DebtDueState.payday(day, in: month)
+      guard due > today, state.isUnpaid(due) else { continue }
       if debt.currency == .rub {
         debts += payment
       } else if let rate = rubPerUnit[debt.currency] {

@@ -193,8 +193,9 @@ struct AnomalyPropertyTests {
     }
   }
 
-  /// A payment and a duplicate are about a part that still costs me something, and they say
-  /// what it costs once its refunds are taken off; no refund is ever an anomaly of its own.
+  /// A payment and a duplicate are about a part that still costs me something; a payment says
+  /// what it costs once its refunds are taken off, a duplicate says its check — a charge made
+  /// twice is the same charge whatever came back of it; no refund is ever an anomaly of its own.
   @Test(arguments: seeds)
   func paymentRulesSpeakOfWhatThePurchaseStillCosts(_ seed: UInt64) {
     let book = Book(seed: seed)
@@ -207,7 +208,10 @@ struct AnomalyPropertyTests {
       }
       #expect(row.kind == .expense, "seed \(seed)")
       #expect(row.contribution.raw > 0, "seed \(seed)")
-      #expect(anomaly.amount == row.contribution, "seed \(seed)")
+      #expect(
+        anomaly.amount
+          == (anomaly.rule == .possibleDuplicate ? row.amountRubE4 : row.contribution),
+        "seed \(seed)")
       #expect(!row.reimbursable)
       #expect(!book.refundParts.contains(partId))
     }

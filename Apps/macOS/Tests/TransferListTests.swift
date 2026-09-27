@@ -367,18 +367,21 @@ final class TransferListTests: XCTestCase {
     }
   }
 
-  /// A transfer of an account in the archive stays when a list deletes it, as it does on the
-  /// screen of the account: taken away, it would move money on an account no total counts, and
-  /// «Всего» would grow out of nothing. Сбер 100 000 ₽ and cash 5 000 ₽, 1 000 ₽ to the cash and
-  /// 6 000 ₽ back, the empty cash archived: deleting the first transfer from a list made «Всего»
-  /// 106 000 ₽ while the money was 105 000 ₽. The coffee selected with it still goes, in one
-  /// step of ⌘Z; the question says which transfer stays and why, in both languages; the
-  /// transfer alone is nothing to delete. With the cash back, the transfer goes.
-  func testAListDeletionKeepsATransferOfAnArchivedAccountAndSaysWhy() async throws {
+  /// A transfer of an account in the archive goes when a list deletes it, and the money it
+  /// would take off the archived account is brought in from a live one in the same step. Сбер
+  /// 100 000 ₽ and cash 5 000 ₽, 1 000 ₽ to the cash and 6 000 ₽ back, the empty cash
+  /// archived: deleting the first transfer used to make «Всего» 106 000 ₽ while the money was
+  /// 105 000 ₽. Now the question names it with the coffee; the write without the transfer that
+  /// keeps the cash at zero is not made; with it, the coffee, the transfer and the new transfer
+  /// are one step of ⌘Z, and the cash stays at zero.
+  func testAListDeletionOfATransferOfAnArchivedAccountKeepsItAtZero() async throws {
     let (setup, _) = try setUpStore()
     let references = ReferenceRepository(writer: setup.stack.writer)
     var cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
     try references.save(cash)
+    let opening = Reconciliation(
+      date: today, reconciledAt: moment(today, hour: 7), actualTotalRubE4: .zero,
+      kind: .accounts)
     let toCash = Transfer(
       occurredAt: moment(today, hour: 9), fromAccountId: sber.id, fromCurrency: .rub,
       fromAmountE4: AmountE4(whole: 1_000), toAccountId: cash.id, toCurrency: .rub,
@@ -391,62 +394,52 @@ final class TransferListTests: XCTestCase {
       updatedAt: moment(today, hour: 10))
     let coffee = try expense(300, on: today, hour: 8)
     _ = try setup.planning.apply(
-      PlanningChange(created: [coffee], upsert: PlanningRows(transfers: [toCash, fromCash])))
+      PlanningChange(
+        created: [coffee],
+        upsert: PlanningRows(
+          reconciliations: [opening], transfers: [toCash, fromCash],
+          reconciledBalances: [
+            ReconciledBalance(
+              reconciliationId: opening.id, accountId: sber.id, currency: .rub,
+              actualE4: AmountE4(whole: 100_000)),
+            ReconciledBalance(
+              reconciliationId: opening.id, accountId: cash.id, currency: .rub,
+              actualE4: AmountE4(whole: 5_000)),
+          ])))
     cash.archived = true
     try references.save(cash)
     try await show(setup)
 
-    let environment = AppEnvironment()
-    // The choice is stored for the whole test host: it goes back to what it was.
-    let before = environment.language.choice
-    defer { environment.language.choice = before }
     let actions = OperationActions()
-    for choice in [AppLanguage.Choice.english, .russian] {
-      environment.language.choice = choice
-      let words = TransferText.message(.issue(.archivedAccount), environment)
-      // With the coffee: the coffee's question, and a line for the transfer that stays.
-      actions.requestDeletion(of: [toCash.id, coffee.id], store: setup.store)
-      let both = try XCTUnwrap(actions.confirmation)
-      guard case .delete(let ids, _, _, _) = both else { return XCTFail("a deletion expected") }
-      XCTAssertEqual(ids, [coffee.id], "the transfer of the archived cash is not asked about")
-      let message = BulkConfirmationText.message(both, environment: environment)
-      XCTAssertTrue(message.contains(words), message)
-      XCTAssertFalse(message.contains("transactions."), message)
-      // Alone: nothing to delete, and why.
-      actions.requestDeletion(of: [toCash.id], store: setup.store)
-      let alone = try XCTUnwrap(actions.confirmation, "the owner is told why nothing goes")
-      guard case .delete(let none, _, _, _) = alone else { return XCTFail("a deletion expected") }
-      XCTAssertEqual(none, [])
-      XCTAssertEqual(
-        BulkConfirmationText.title(alone, environment: environment),
-        environment.language("bulk.nothingToDelete", table: "Transactions"))
-      let reason = BulkConfirmationText.message(alone, environment: environment)
-      XCTAssertTrue(reason.contains(words), reason)
-    }
+    actions.requestDeletion(of: [toCash.id, coffee.id], store: setup.store)
+    let both = try XCTUnwrap(actions.confirmation)
+    guard case .delete(let ids, _, _, _) = both else { return XCTFail("a deletion expected") }
+    XCTAssertEqual(Set(ids), [coffee.id, toCash.id], "the transfer of the archived cash goes too")
 
-    // The write itself keeps it too, whatever it is handed: the coffee goes, both transfers
-    // stay, and one ⌘Z brings the coffee back.
-    XCTAssertTrue(setup.store.delete(ids: [toCash.id, coffee.id]))
+    // Without the transfer that keeps the cash at zero nothing is written.
+    let check = setup.store.archivedLeftovers(ofDeleting: [toCash.id, coffee.id])
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: -1_000)])
+    XCTAssertFalse(setup.store.delete(ids: [toCash.id, coffee.id]))
+    let unwritten = try await transfers(setup)
+    XCTAssertEqual(Set(unwritten), [toCash.id, fromCash.id])
+    XCTAssertFalse(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
+
+    let form = ArchivedMoneyForm(
+      check: check, accounts: [sber, cash], locale: Locale(identifier: "en"))
+    let settling = form.transfers(now: Date(), note: "left over")
+    XCTAssertTrue(setup.store.delete(ids: [toCash.id, coffee.id], settling: settling))
     let afterDelete = try await transfers(setup)
-    XCTAssertEqual(Set(afterDelete), [toCash.id, fromCash.id])
+    XCTAssertEqual(Set(afterDelete), [fromCash.id, settling[0].id])
     XCTAssertTrue(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
+    let dataset = try await DatasetRepository(writer: setup.stack.writer).load(version: 0)
+    let balances = TransactionsStore.balances(of: dataset)
+    XCTAssertEqual(balances[BalanceKey(accountId: cash.id, currency: .rub)]?.amountE4, .zero)
+
     setup.store.undo()
+    let undone = try await transfers(setup)
+    XCTAssertEqual(Set(undone), [toCash.id, fromCash.id])
     XCTAssertFalse(try XCTUnwrap(try setup.repository.entry(id: coffee.id)).transaction.isDeleted)
     XCTAssertFalse(setup.store.canUndo)
-    // The transfer alone: nothing is written.
-    XCTAssertFalse(setup.store.delete(ids: [toCash.id]))
-    let kept = try await transfers(setup)
-    XCTAssertEqual(Set(kept), [toCash.id, fromCash.id])
-    XCTAssertFalse(setup.store.canUndo)
-    XCTAssertNil(setup.store.failure)
-
-    // «Вернуть» the cash, and the transfer goes.
-    cash.archived = false
-    try references.save(cash)
-    try await show(setup)
-    XCTAssertTrue(setup.store.delete(ids: [toCash.id]))
-    let afterRestore = try await transfers(setup)
-    XCTAssertEqual(afterRestore, [fromCash.id])
   }
 
   /// A transfer whose fee a refund was recorded against stays when a list deletes it, as on the

@@ -39,7 +39,7 @@ struct MigrationDryRunPathTests {
   /// Every line the tool may print, each of its own shape.
   static var allowedLine: Regex<AnyRegexOutput> {
     try! Regex(
-      #"^(migration dry run on a copy; the original was not opened|schema: \d+ -> \d+ \(applied \d+\)|tables, rows before -> after:|  [a-z_]+ +(\d+|-) -> (\d+|-)(   differ)?|data step: (none|([a-zA-Z]+=\d+ ?)+)|accounts after: operations without an account \d+, live main \d+(   differ)?|sums:|  [a-z ]+: (equal|differ)|month totals by kind: (equal|differ) \(\d+ rows\)|foreign_key_check: \d+ before, \d+ after|operations on an account that is not there: \d+ before, \d+ after|loads: (ok|failed)|result: (equal|differ)|migration: failed, stopped at [0-9a-z_?]+ \((SQLite \d+|[A-Za-z]+)\))$"#
+      #"^(migration dry run on a copy; the original was not opened|schema: \d+ -> \d+ \(applied \d+\)|tables, rows before -> after:|  [a-z_]+ +(\d+|-) -> (\d+|-)(   differ)?|data step: (none|([a-zA-Z]+=\d+ ?)+)|accounts after: operations without an account \d+, live main \d+(   differ)?|sums:|  [a-z ]+: (equal|differ)|month totals by kind: (equal|differ) \(\d+ rows\)|foreign_key_check: \d+ before, \d+ after|operations on an account that is not there: \d+ before, \d+ after|loads: (ok|failed)|result: (equal|differ)|migration: failed, stopped at [0-9a-z_?]+ \((SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)\)|migration dry run: the (file could not be copied|copy could not be read): (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|after the update: the copy could not be read, (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|hint: (macOS privacy protection kept this program out of another app's data\. .+|the file's permissions do not let this user read it\.))$"#
     )
   }
 
@@ -141,7 +141,74 @@ struct MigrationDryRunPathTests {
     #expect(try DatabaseStack.sameData(fileAt: before, as: book.url))
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts"])
+        == ["0004_accounts", "0005_cards"])
+  }
+
+  /// A database of 1.1 tried on a copy: one migration applied, a card for every live card
+  /// account in a table that was not there, the counts of the step by name, and everything
+  /// else equal — in lines that name no value of the database.
+  @Test func aOnePointOneFileCountsItsCards() throws {
+    let book = try OnePointOneBook(named: "dry-run")
+    defer { book.remove() }
+    let bytes = try Data(contentsOf: book.url)
+    let step = book.cardsStep
+    let cards = try #require(step["cardsCreated"])
+    #expect(cards > 0)
+
+    let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
+
+    #expect(status == 0, "\(output)")
+    #expect(output.contains("schema: 4 -> 5 (applied 1)"), "\(output)")
+    let name = "cards".padding(toLength: 26, withPad: " ", startingAt: 0)
+    let lines = output.split(separator: "\n").map(String.init)
+    #expect(lines.contains("  \(name) - -> \(cards)"), "\(output)")
+    #expect(!output.contains("differ"), "\(output)")
+    let steps = step.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+    #expect(lines.contains("data step: " + steps.joined(separator: " ")), "\(output)")
+    #expect(step["cardsSkipped"] == 1)
+    #expect(step["countsKept"] == 3)
+    #expect(output.contains("result: equal"), "\(output)")
+    expectNothingLeaks(output, ["Visa", "Наличные", "Сбер", book.lowerCaseText], "a 1.1 file")
+    #expect(try Data(contentsOf: book.url) == bytes)
+  }
+
+  /// A file this user may not read — its permissions taken away — is not copied: the run says
+  /// so with the codes of the error and the likely cause, never its path; the status is 3 and
+  /// no folder of the run is left behind. (Root reads any file: skipped then.)
+  @Test(.enabled(if: getuid() != 0))
+  func anUnreadableFileSaysWhyAndLeavesNothing() throws {
+    let book = try RandomLegacyDatabase(seed: 335, operations: 5, accounts: 1...1)
+    let manager = FileManager.default
+    defer {
+      try? manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: book.url.path)
+      book.remove()
+    }
+    try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: book.url.path)
+    try #require(FileManager.default.fileExists(atPath: tool.path), "no tool at \(tool.path)")
+    let process = Process()
+    process.executableURL = tool
+    process.arguments = [book.url.path, TestSupport.schemaDirectory.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try process.run()
+    let pid = process.processIdentifier
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    let output = String(decoding: data, as: UTF8.self)
+
+    #expect(process.terminationStatus == 3, "\(output)")
+    #expect(
+      output.contains("migration dry run: the file could not be copied: NSCocoaErrorDomain "),
+      "\(output)")
+    #expect(output.contains("(NSPOSIXErrorDomain 13)"), "\(output)")
+    #expect(output.contains("hint: the file's permissions do not let this user read it."))
+    expectNothingLeaks(
+      output, [book.url.path, book.url.lastPathComponent, book.marker], "unreadable")
+    let temporary = FileManager.default.temporaryDirectory
+    let left = try FileManager.default.contentsOfDirectory(atPath: temporary.path)
+      .filter { $0.hasPrefix("\(Self.prefix)\(pid)-") }
+    #expect(left.isEmpty, "the run left \(left)")
   }
 
   /// A folder an earlier run left — killed before it could delete it — goes at the start of the

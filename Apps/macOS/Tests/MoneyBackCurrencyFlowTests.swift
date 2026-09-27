@@ -341,6 +341,332 @@ final class MoneyBackCurrencyFlowTests: XCTestCase {
       after[rubles]?.movedSinceAnchor ?? .zero, before[rubles]?.movedSinceAnchor ?? .zero)
   }
 
+  // MARK: The rate a purchase cost
+
+  /// The purchases the person's parts belong to, as the sheets read them.
+  private func purchases() throws -> [UUID: TransactionEntry] {
+    var purchases: [UUID: TransactionEntry] = [:]
+    for part in try transactions.owedParts() where part.currency != .rub {
+      purchases[part.transactionId] = try transactions.entry(id: part.transactionId)
+    }
+    return purchases
+  }
+
+  /// «Подписка» 20 $ for Anya bought at 90 (1,800 ₽): the row of the purchase offers the rate
+  /// the part cost, 90.0000, when rubles come back for it.
+  func testThePurchaseRateDefaultsToWhatThePartCost() throws {
+    let subscription = try dinner(
+      "подписка", owed: AmountE4(whole: 20), daysAgo: 5, currency: .usd, rate: 90)
+    let rows = MoneyBackRateRows.rows(
+      reaching: try transactions.owedParts(), money: .rub, purchases: try purchases(),
+      note: { $0.note ?? "—" })
+    XCTAssertEqual(rows.map(\.id), [subscription.id])
+    XCTAssertEqual(rows.first?.costRate, 90)
+    XCTAssertEqual(rows.first?.amount, AmountE4(whole: 20))
+    XCTAssertEqual(MoneyBackRateRows.shown(90), "90.0000")
+    // Dollars back for it need no row: they close it in dollars.
+    XCTAssertTrue(
+      MoneyBackRateRows.rows(
+        reaching: try transactions.owedParts(), money: .usd, purchases: try purchases(),
+        note: { $0.note ?? "—" }
+      ).isEmpty)
+  }
+
+  /// 2,000 ₽ back for it: at the rate it cost the part closes and 200 ₽ are income; the rate
+  /// typed as 88 makes the part 1,760 ₽ — the purchase is written at 88 — and 240 ₽ are income.
+  func testTypingThePurchaseRateMovesTheSurplus() throws {
+    let subscription = try dinner(
+      "подписка", owed: AmountE4(whole: 20), daysAgo: 5, currency: .usd, rate: 90)
+    var prefill = try enter("возврат денег 2000 от Ани")
+    prefill.draft.paymentMethodId = card.id
+    let owed = try transactions.owedParts()
+    func plan(_ rates: [UUID: Decimal]) throws -> MoneyBackConfirmation {
+      try MoneyBackConfirmation.make(
+        draft: prefill.draft,
+        owed: MoneyBackRateRows.owed(
+          owed, purchases: try purchases(), rates: rates, calendar: calendar),
+        debts: [], rates: RateTable(), calendar: calendar)
+    }
+    XCTAssertEqual(try plan([:]).plan.surplusRub, AmountE4(whole: 200))
+    let typed = [subscription.id: Decimal(88)]
+    let confirmation = try plan(typed)
+    XCTAssertEqual(confirmation.plan.surplusRub, AmountE4(whole: 240))
+    let written = try XCTUnwrap(try confirmation.recording(setting: setting))
+    try transactions.apply(
+      written.outcome, reimbursement: written.reimbursement, extra: written.extra,
+      repricing: typed, calendar: calendar)
+    let purchase = try XCTUnwrap(try transactions.entry(id: subscription.id))
+    XCTAssertEqual(purchase.transaction.rate, 88)
+    XCTAssertEqual(purchase.transaction.rateSource, .manual)
+    XCTAssertEqual(purchase.parts[1].amountRubE4, AmountE4(whole: 1_760))
+    XCTAssertEqual(purchase.parts[1].reimbursementStatus, .returned)
+    let surplus = try XCTUnwrap(try all().first { $0.transaction.kind == .income })
+    XCTAssertEqual(surplus.transaction.amountRubE4, AmountE4(whole: 240))
+  }
+
+  /// A part still on the bank's provisional rate is passed over; the rate typed from the
+  /// statement makes the purchase's rate manual, and the part closes now.
+  func testATypedRateLetsAProvisionalPartClose() throws {
+    let subscription = try dinner(
+      "подписка", owed: AmountE4(whole: 20), daysAgo: 5, currency: .usd, rate: 92,
+      provisional: true)
+    var prefill = try enter("возврат денег 1800 от Ани")
+    prefill.draft.paymentMethodId = card.id
+    let owed = try transactions.owedParts()
+    let before = try MoneyBackConfirmation.make(
+      draft: prefill.draft, owed: owed, debts: [], rates: RateTable(), calendar: calendar)
+    XCTAssertEqual(before.plan.refusal, .onlyProvisional)
+    let rows = MoneyBackRateRows.rows(
+      reaching: before.reachedParts, money: .rub, purchases: try purchases(),
+      note: { $0.note ?? "—" })
+    XCTAssertEqual(rows.first?.provisional, true)
+    let after = try MoneyBackConfirmation.make(
+      draft: prefill.draft,
+      owed: MoneyBackRateRows.owed(
+        owed, purchases: try purchases(), rates: [subscription.id: 90], calendar: calendar),
+      debts: [], rates: RateTable(), calendar: calendar)
+    XCTAssertNil(after.plan.refusal)
+    XCTAssertEqual(after.plan.closes, [subscription.parts[1].id])
+    XCTAssertEqual(after.plan.surplus, .zero)
+  }
+
+  /// The per-part sheet of Debts and Transactions, with 2,000 ₽ for the 20 $ part bought at 90:
+  /// the rate row says 90.0000 and 200 ₽ are over; typed 88, the purchase is 1,760 ₽ and 240 ₽
+  /// are over — in the same write as the money back.
+  func testTheDebtsScreenSheetAsksTheCurrencyAndThePurchaseRate() throws {
+    let subscription = try dinner(
+      "подписка", owed: AmountE4(whole: 20), daysAgo: 5, currency: .usd, rate: 90)
+    let owed = try transactions.owedParts()
+    let rows = MoneyBackRateRows.rows(
+      reaching: owed, money: .rub, purchases: try purchases(), note: { $0.note ?? "—" })
+    XCTAssertEqual(rows.first.map { MoneyBackRateRows.shown($0.costRate) }, "90.0000")
+    func recording(_ rates: [UUID: Decimal]) throws -> ReimbursementRecording {
+      let parts = MoneyBackRateRows.owed(
+        owed, purchases: try purchases(), rates: rates, calendar: calendar)
+      var distribution = ReimbursementDistribution()
+      distribution.spread(AmountE4(whole: 2_000), over: parts)
+      return try ReimbursementRecording.make(
+        id: UUID(), received: AmountE4(whole: 2_000), closing: parts,
+        distribution: distribution, personId: anya.id, occurredAt: noon(today),
+        accountId: card.id, setting: setting)
+    }
+    XCTAssertEqual(try recording([:]).outcome.surplus?.amountE4, AmountE4(whole: 200))
+    let typed = [subscription.id: Decimal(88)]
+    let written = try recording(typed)
+    XCTAssertEqual(written.outcome.surplus?.amountE4, AmountE4(whole: 240))
+    try transactions.apply(
+      written.outcome, reimbursement: written.reimbursement, extra: written.extra,
+      repricing: typed, calendar: calendar)
+    let purchase = try XCTUnwrap(try transactions.entry(id: subscription.id))
+    XCTAssertEqual(purchase.parts[1].amountRubE4, AmountE4(whole: 1_760))
+    XCTAssertEqual(purchase.parts[1].reimbursementStatus, .returned)
+  }
+
+  /// Dollars back through the per-part sheet: the money back is written in dollars with its
+  /// rubles, the parts share the rubles, and the money over is income in dollars.
+  func testThePerPartSheetTakesMoneyInAnotherCurrency() throws {
+    let part = try dinner("ужин", owed: AmountE4(whole: 1_000), daysAgo: 3)
+    let parts = try transactions.owedParts()
+    var distribution = ReimbursementDistribution()
+    distribution.spread(AmountE4(whole: 1_900), over: parts)
+    let written = try ReimbursementRecording.make(
+      id: UUID(), received: AmountE4(whole: 1_900), closing: parts, distribution: distribution,
+      personId: anya.id, occurredAt: noon(today), accountId: freedom.id,
+      money: Money(amount: AmountE4(whole: 20), currency: .usd), rate: 95,
+      rateDate: today, rateSource: .manual, setting: setting)
+    XCTAssertEqual(written.reimbursement.transaction.currency, .usd)
+    XCTAssertEqual(written.reimbursement.transaction.amountE4, AmountE4(whole: 20))
+    XCTAssertEqual(written.reimbursement.transaction.amountRubE4, AmountE4(whole: 1_900))
+    XCTAssertEqual(written.outcome.closedPartIds, [part.parts[1].id])
+    let surplus = try XCTUnwrap(written.extra.first)
+    XCTAssertEqual(surplus.transaction.currency, .usd)
+    XCTAssertEqual(surplus.transaction.amountRubE4, AmountE4(whole: 900))
+    XCTAssertEqual(
+      surplus.transaction.amountE4, try AmountE4(decimal: Decimal(string: "9.4737")!))
+  }
+
+  /// Anya owes 100 $ lent at 90 and gives 10,000 ₽ back to the ruble card: the line gets the
+  /// repayment in dollars — 111.1111 $ at 90, the card receiving 10,000 ₽.
+  func testAForeignDebtRepaymentIsConvertedAtTheDebtRate() throws {
+    let debt = Debt(
+      direction: .owedToMe, type: .personal, name: "Аня", personId: anya.id, currency: .usd,
+      paymentsAreExpenses: false)
+    var prefill = try enter("возврат денег 10000 от Ани")
+    prefill.draft.paymentMethodId = card.id
+    let money = try MoneyBackConfirmation.make(
+      draft: prefill.draft, owed: [], debts: [debt], rates: RateTable(), calendar: calendar)
+    XCTAssertEqual(money.plan.refusal, .owesOnDebt(debt.id))
+    let repayment = try XCTUnwrap(
+      MoneyBackConfirmation.debtRepayment(
+        of: prefill.draft, money: money.entry, debt: debt, debtRate: 90, account: card,
+        received: nil, calendar: calendar))
+    XCTAssertEqual(repayment.currency, .usd)
+    XCTAssertEqual(repayment.amount, try AmountE4(decimal: Decimal(string: "111.1111")!))
+    XCTAssertEqual(repayment.rate, 90)
+    XCTAssertEqual(repayment.rateSource, .manual)
+    XCTAssertEqual(repayment.accountCurrency, .rub)
+    XCTAssertEqual(repayment.accountAmount, AmountE4(whole: 10_000))
+    // The dollar account holds the debt's currency: the debt's own form asks instead.
+    XCTAssertNil(
+      MoneyBackConfirmation.debtRepayment(
+        of: prefill.draft, money: money.entry, debt: debt, debtRate: 90, account: freedom,
+        received: nil, calendar: calendar))
+  }
+
+  // MARK: The per-part sheet, money in another currency
+
+  /// 20 $ at 95 through the per-part sheet onto the ruble card, for a dinner of 1,000 ₽: the card
+  /// takes the money's rubles, 1,900 ₽ — the write asks for no figure.
+  func testThePerPartSheetPutsDollarsOnARubleCardAsRubles() throws {
+    try dinner("ужин", owed: AmountE4(whole: 1_000), daysAgo: 3)
+    let leg = ReimbursementSheet.leg(
+      for: .usd, rubles: AmountE4(whole: 1_900), account: card, figure: nil)
+    XCTAssertEqual(leg, MoneyLeg(currency: .rub, amount: AmountE4(whole: 1_900)))
+    // The dollar account holds dollars: nothing apart.
+    XCTAssertNil(
+      ReimbursementSheet.leg(
+        for: .usd, rubles: AmountE4(whole: 1_900), account: freedom, figure: nil))
+    // Rubles onto the dollar account: the dollars it was credited, once they are said.
+    XCTAssertNil(
+      ReimbursementSheet.leg(
+        for: .rub, rubles: AmountE4(whole: 1_000), account: freedom, figure: nil))
+    let credited = MoneyLeg(currency: .usd, amount: try AmountE4(decimal: Decimal(string: "10.5")!))
+    XCTAssertEqual(
+      ReimbursementSheet.leg(
+        for: .rub, rubles: AmountE4(whole: 1_000), account: freedom, figure: credited),
+      credited)
+
+    let parts = try transactions.owedParts()
+    var distribution = ReimbursementDistribution()
+    distribution.spread(AmountE4(whole: 1_900), over: parts)
+    let written = try ReimbursementRecording.make(
+      id: UUID(), received: AmountE4(whole: 1_900), closing: parts, distribution: distribution,
+      personId: anya.id, occurredAt: noon(today), accountId: card.id, leg: leg,
+      money: Money(amount: AmountE4(whole: 20), currency: .usd), rate: 95, rateDate: today,
+      rateSource: .cbr, setting: setting)
+    let rubles = BalanceKey(accountId: card.id, currency: .rub)
+    let before = try balances()[rubles]?.movedSinceAnchor ?? .zero
+    try transactions.apply(
+      written.outcome, reimbursement: written.reimbursement, extra: written.extra)
+    let after = try balances()[rubles]?.movedSinceAnchor ?? .zero
+    XCTAssertEqual(after - before, AmountE4(whole: 1_900))
+    XCTAssertTrue(try transactions.owedParts().isEmpty)
+  }
+
+  /// Anya's parts cost 1,000 ₽, and «Валюта» turns to dollars at 95: «Received» becomes what the
+  /// parts cost in dollars, 10.5263 $, never 1,000 $ — the rubles typed in the line likewise. A
+  /// figure the owner typed stays as typed; without a rate there is nothing to hold.
+  func testSwitchingTheCurrencyKeepsWhatCameBack() throws {
+    let thousand = AmountE4(whole: 1_000)
+    let dollars = try AmountE4(decimal: Decimal(string: "10.5263")!)
+    XCTAssertEqual(
+      ReimbursementSheet.received(
+        thousand, source: .parts, rate: 95, owedRubles: thousand, lineRubles: nil),
+      dollars)
+    XCTAssertEqual(
+      ReimbursementSheet.received(
+        thousand, source: .line, rate: 95, owedRubles: AmountE4(whole: 700),
+        lineRubles: thousand),
+      dollars)
+    XCTAssertEqual(
+      ReimbursementSheet.received(
+        dollars, source: .line, rate: 1, owedRubles: AmountE4(whole: 700), lineRubles: thousand),
+      thousand)
+    XCTAssertEqual(
+      ReimbursementSheet.received(
+        AmountE4(whole: 12), source: .owner, rate: 95, owedRubles: thousand, lineRubles: nil),
+      AmountE4(whole: 12))
+    XCTAssertEqual(
+      ReimbursementSheet.received(
+        thousand, source: .parts, rate: nil, owedRubles: thousand, lineRubles: nil),
+      .zero)
+  }
+
+  /// 10.5263 $ at 95 for a part of 1,000 ₽ are 999.9985 ₽, and 10.7527 $ at 93 are 1,000.0011 ₽:
+  /// either way the part closes at 1,000 ₽, and nothing is written for the crumb — no 0.0015 ₽
+  /// of my spending, no income of 0.0000 $. The money back keeps its own rubles.
+  func testDollarsForWhatThePartCostLeaveNoCrumbs() throws {
+    let part = try dinner("ужин", owed: AmountE4(whole: 1_000), daysAgo: 3)
+    for (dollars, rate) in [("10.5263", Decimal(95)), ("10.7527", Decimal(93))] {
+      let amount = try AmountE4(decimal: Decimal(string: dollars)!)
+      let rubles = try AmountE4(decimal: amount.decimal * rate)
+      let parts = try transactions.owedParts()
+      var distribution = ReimbursementDistribution()
+      distribution.spread(rubles, over: parts)
+      let written = try ReimbursementRecording.make(
+        id: UUID(), received: rubles, closing: parts, distribution: distribution,
+        personId: anya.id, occurredAt: noon(today), accountId: freedom.id,
+        money: Money(amount: amount, currency: .usd), rate: rate, rateDate: today,
+        rateSource: .cbr, setting: setting)
+      XCTAssertTrue(written.extra.isEmpty, dollars)
+      XCTAssertNil(written.outcome.surplus, dollars)
+      XCTAssertEqual(written.outcome.closedPartIds, [part.parts[1].id], dollars)
+      XCTAssertEqual(written.outcome.links.map(\.amountE4), [AmountE4(whole: 1_000)], dollars)
+      XCTAssertEqual(written.reimbursement.transaction.amountRubE4, rubles, dollars)
+    }
+  }
+
+  /// The bank has no rate of the money's day yet, and the nearest earlier one is only a guess:
+  /// the sheet does not write it as the bank's. A rate typed is manual, of the money's day; the
+  /// bank's own keeps its date and source.
+  func testAGuessedRateIsNotRecordedAsTheBanks() throws {
+    let yesterday = calendar.adding(days: -1, to: today)
+    let guessed = RateTable(rates: [Rate(date: yesterday, currency: .usd, rubPerUnit: 94)])
+    XCTAssertNil(
+      ReimbursementSheet.recordedRate(of: .usd, typed: nil, rates: guessed, day: today))
+    XCTAssertEqual(
+      ReimbursementSheet.recordedRate(of: .usd, typed: 95, rates: guessed, day: today),
+      ReimbursementSheet.RecordedRate(rate: 95, date: today, source: .manual))
+    let published = RateTable(rates: [Rate(date: today, currency: .usd, rubPerUnit: 95)])
+    let recorded = try XCTUnwrap(
+      ReimbursementSheet.recordedRate(of: .usd, typed: nil, rates: published, day: today))
+    XCTAssertEqual(recorded.rate, 95)
+    XCTAssertEqual(recorded.date, today)
+    XCTAssertNotEqual(recorded.source, .manual)
+  }
+
+  /// A rate typed for Anya's purchase goes with its row: once the row is gone — another person,
+  /// the money in the purchase's own currency, less money — nothing is repriced.
+  func testATypedPurchaseRateGoesWithItsRow() throws {
+    let subscription = try dinner(
+      "подписка", owed: AmountE4(whole: 20), daysAgo: 5, currency: .usd, rate: 90)
+    let texts = [subscription.id: "88"]
+    let rows = MoneyBackRateRows.rows(
+      reaching: try transactions.owedParts(), money: .rub, purchases: try purchases(),
+      note: { $0.note ?? "—" })
+    XCTAssertEqual(MoneyBackRateRows.keeping(texts, rows: rows.map(\.id)), texts)
+    let gone = MoneyBackRateRows.keeping(texts, rows: [])
+    XCTAssertTrue(gone.isEmpty)
+    XCTAssertTrue(MoneyBackRateRows.repricing(gone, among: rows).isEmpty)
+  }
+
+  /// Anya owes 2,000 ₽ and gives 20 $ back onto the dollar account, at 95: the repayment is
+  /// 1,900 ₽ of the ruble debt — rubles carry no rate, and a number typed as a «debt rate» is
+  /// not read.
+  func testARubleDebtRepaidInDollarsHasNoRateOfItsOwn() throws {
+    let debt = Debt(
+      direction: .owedToMe, type: .personal, name: "Аня", personId: anya.id, currency: .rub,
+      paymentsAreExpenses: false)
+    var prefill = try enter("возврат денег 20$ от Ани")
+    prefill.draft.paymentMethodId = freedom.id
+    let money = try MoneyBackConfirmation.make(
+      draft: prefill.draft, owed: [], debts: [debt],
+      rates: RateTable(rates: [Rate(date: today, currency: .usd, rubPerUnit: 95)]),
+      calendar: calendar)
+    XCTAssertEqual(money.plan.refusal, .owesOnDebt(debt.id))
+    let repayment = try XCTUnwrap(
+      MoneyBackConfirmation.debtRepayment(
+        of: prefill.draft, money: money.entry, debt: debt, debtRate: 90, account: freedom,
+        received: nil, calendar: calendar))
+    XCTAssertEqual(repayment.currency, .rub)
+    XCTAssertEqual(repayment.amount, AmountE4(whole: 1_900))
+    XCTAssertNil(repayment.rate)
+    XCTAssertNil(repayment.rateDate)
+    XCTAssertNil(repayment.rateSource)
+    XCTAssertEqual(repayment.accountCurrency, .usd)
+    XCTAssertEqual(repayment.accountAmount, AmountE4(whole: 20))
+  }
+
   private func balances() throws -> AccountBalances {
     AccountBalances.build(
       entries: try all(), transfers: [], debtEntries: [], debts: [:], reconciliations: [],

@@ -193,3 +193,133 @@ extension TransactionsStoreTests {
     XCTAssertFalse(store.canUndo)
   }
 }
+
+/// What the store hands on to the rules of money: a purchase on credit of a deleted debt goes
+/// like any other unless the debt was paid, and an edit that balances money back again writes a
+/// new surplus with the note of the interface's language.
+extension TransactionsStoreTests {
+  /// «Телефон» 60,000 ₽ on credit of a debt that is deleted since; `paid` lines of its journal.
+  private func phoneOnCredit(
+    _ planned: Planned, paid: Int
+  ) throws -> (purchase: TransactionEntry, debt: Debt) {
+    let references = ReferenceRepository(writer: planned.stack.writer)
+    let phone = Debt(
+      direction: .iOwe, type: .installment, name: "Phone", paymentsAreExpenses: false,
+      origin: .purchase, deletedAt: Self.at)
+    try references.save(phone)
+    var draft = TransactionDraft(
+      occurredAt: Self.at, amount: AmountE4(whole: 60_000), note: "Phone")
+    draft.normalizeSinglePart()
+    var purchase = try draft.materialize(now: Self.at)
+    purchase.transaction.creditDebtId = phone.id
+    try planned.repository.save(purchase)
+    let journal = (0..<paid).map { month in
+      DebtEntry(
+        debtId: phone.id, date: DateOnly(year: 2026, month: 10 + month, day: 1),
+        amountE4: AmountE4(whole: -5_000), kind: .payment)
+    }
+    planned.store.show(
+      Ledger(
+        dataset: Dataset(
+          entries: [try XCTUnwrap(try planned.repository.entry(id: purchase.id))],
+          planning: PlanningBook(debtEntries: journal), deletedDebts: [phone]),
+        calendar: .utc))
+    return (purchase, phone)
+  }
+
+  /// Its debt deleted and never paid, the purchase on credit goes with a deletion from the list.
+  func testACreditPurchaseOfADeletedDebtIsDeletable() throws {
+    let planned = try plannedStore()
+    let (purchase, _) = try phoneOnCredit(planned, paid: 0)
+    XCTAssertTrue(planned.store.planDeletion(ids: [purchase.id]).skipped.isEmpty)
+    XCTAssertTrue(planned.store.delete(ids: [purchase.id]))
+    XCTAssertEqual(try planned.repository.entry(id: purchase.id)?.transaction.isDeleted, true)
+  }
+
+  /// Three instalments of 5,000 ₽ paid on it: the purchase stays spending of 60,000 ₽, or the
+  /// 15,000 ₽ that left the card would be in no figure.
+  func testAPaidCreditPurchaseOfADeletedDebtStays() throws {
+    let planned = try plannedStore()
+    let (purchase, _) = try phoneOnCredit(planned, paid: 3)
+    XCTAssertEqual(
+      planned.store.planDeletion(ids: [purchase.id]).skipped.map(\.reason),
+      [.creditPurchasePaid])
+    XCTAssertFalse(planned.store.delete(ids: [purchase.id]))
+    XCTAssertEqual(try planned.repository.entry(id: purchase.id)?.transaction.isDeleted, false)
+  }
+
+  /// 20 $ paid for a friend at 92 (1,840 ₽ charged) and exactly 1,840 ₽ given back: the part is
+  /// closed, nothing over. The card was really charged 1,800 ₽: the edit of the purchase writes
+  /// 40 ₽ of income in «Доплаты», noted in the language of the interface, and its ⌘Z takes it
+  /// away.
+  func testAnEditAfterMoneyBackWritesTheSurplusWithItsNote() throws {
+    let planned = try plannedStore()
+    let references = ReferenceRepository(writer: planned.stack.writer)
+    let card = PaymentMethod(name: "Card", kind: .card, currency: .rub, isDefault: true)
+    try references.save(card)
+    let friend = Person(name: "Friend")
+    try references.save(friend)
+    if try references.category(systemRole: .surcharges, kind: .income) == nil {
+      try references.save(
+        CoreKit.Category(kind: .income, name: "Surcharges", systemRole: .surcharges))
+    }
+    let day = DateOnly(year: 2026, month: 9, day: 10)
+    var draft = TransactionDraft(
+      occurredAt: CalendarContext.utc.startOfDay(day).addingTimeInterval(9 * 3600),
+      currency: .usd, amount: AmountE4(whole: 20), rate: 92, rateDate: day, rateSource: .cbr,
+      note: "Subscription", paymentMethodId: card.id, accountCurrency: .rub,
+      accountAmount: AmountE4(whole: 1_840))
+    draft.parts = [
+      PartDraft(
+        amount: AmountE4(whole: 20), forWhom: .friends, reimbursable: true,
+        debtorPersonId: friend.id)
+    ]
+    let purchase = try planned.repository.save(
+      try draft.materialize(rublesConverter: { _ in AmountE4(whole: 1_840) }))
+    var backDraft = TransactionDraft(
+      kind: .reimbursement, occurredAt: Self.at, amount: AmountE4(whole: 1_840),
+      paymentMethodId: card.id)
+    backDraft.normalizeSinglePart()
+    let back = try backDraft.materialize(now: Self.at)
+    try planned.repository.apply(
+      ReimbursementOutcome(
+        reimbursementTxId: back.id, allocations: [],
+        links: [
+          ReimbursementLink(
+            reimbursementTxId: back.id, partId: purchase.parts[0].id,
+            amountE4: AmountE4(whole: 1_840))
+        ],
+        closedPartIds: [purchase.parts[0].id]),
+      reimbursement: back, at: Self.at)
+
+    var charged = try XCTUnwrap(try planned.repository.entry(id: purchase.id))
+    charged.transaction.accountAmountE4 = AmountE4(whole: 1_800)
+    charged.transaction.amountRubE4 = AmountE4(whole: 1_800)
+    charged.transaction.rate = 90
+    charged.transaction.rateSource = .manual
+    charged.parts[0].amountRubE4 = AmountE4(whole: 1_800)
+    XCTAssertEqual(planned.store.saveEdit(charged, calendar: .utc), .saved)
+
+    let surplus = try XCTUnwrap(
+      try planned.repository.entries(from: .distantPast, to: .distantFuture).first {
+        $0.transaction.externalId == ReimbursementCompanions.surplusKey(of: back.id)
+      })
+    XCTAssertEqual(surplus.transaction.amountE4, AmountE4(whole: 40))
+    XCTAssertEqual(surplus.transaction.note, TransactionsStore.surplusNote())
+    XCTAssertNotEqual(surplus.transaction.note, "reimbursement.surplus")
+    XCTAssertTrue(planned.writes.last?.planningChanged == true)
+
+    planned.store.undo()
+    XCTAssertEqual(try planned.repository.entry(id: surplus.id), nil)
+  }
+
+  /// The note is the one of the language chosen, read where the choice is kept.
+  func testTheSurplusNoteFollowsTheLanguageChosen() throws {
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: "surplus-note-\(UUID().uuidString)"))
+    defaults.set("ru", forKey: "app.language")
+    XCTAssertEqual(TransactionsStore.surplusNote(defaults), "Излишек возврата")
+    defaults.set("en", forKey: "app.language")
+    XCTAssertNotEqual(TransactionsStore.surplusNote(defaults), "Излишек возврата")
+    XCTAssertNotEqual(TransactionsStore.surplusNote(defaults), "reimbursement.surplus")
+  }
+}

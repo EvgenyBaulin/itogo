@@ -59,7 +59,34 @@ struct ExportPandasTests {
     rows[ExportTables.accountGroups] = set.accountGroups.map(ExportTables.row)
     rows[ExportTables.transfers] = set.transfers.map(ExportTables.row)
     rows[ExportTables.reconciliationBalances] = set.reconciledBalances.map(ExportTables.row)
+    let (cards, rules) = Self.cardsAndRules(of: set)
+    rows[ExportTables.cards] = cards.map(ExportTables.row)
+    rows[ExportTables.cashbackRules] = rules.map(ExportTables.row)
     return rows
+  }
+
+  /// The sample's cards and cashback rules, and one card more whatever the sample holds, so
+  /// that pandas reads the cells only these files have: `aliases` over two lines, a card of
+  /// its account, a percent of four decimals, and the empty `card_id`, `category_id` and
+  /// `month` of an account's own rule for everything else.
+  static func cardsAndRules(of set: SampleDataSet) -> ([PaymentCard], [CashbackRule]) {
+    let accounts = set.paymentMethods.filter { !$0.archived }
+    guard let first = accounts.first, let category = set.categories.first,
+      let third = CashbackPercent(decimal: Decimal(string: "33.3333")!),
+      let flat = CashbackPercent(decimal: 1)
+    else { return (set.cards, set.cashbackRules) }
+    let second = accounts.dropFirst().first ?? first
+    let card = PaymentCard(
+      id: UUID(uuidString: "0C0C0C0C-0000-4000-8000-000000000001")!, accountId: first.id,
+      name: "Visa 4242", aliases: ["visa", "четыре двойки"])
+    let onTheCard = CashbackRule(
+      id: UUID(uuidString: "0C0C0C0C-0000-4000-8000-000000000002")!, accountId: first.id,
+      cardId: card.id, categoryId: category.id, month: MonthKey(year: 2026, month: 9),
+      percent: third)
+    let ofTheAccount = CashbackRule(
+      id: UUID(uuidString: "0C0C0C0C-0000-4000-8000-000000000003")!, accountId: second.id,
+      percent: flat)
+    return (set.cards + [card], set.cashbackRules + [onTheCard, ofTheAccount])
   }
 
   @Test func everyFileReadsBackWithNoParameters() throws {
@@ -68,10 +95,11 @@ struct ExportPandasTests {
       months: 6, endingOn: Synthetic.endingOn, calendar: Synthetic.calendar, language: "ru"
     ).withAccounts(seed: 20_260_918, calendar: Synthetic.calendar, language: "ru")
     let rows = Self.rows(of: set)
-    #expect(ExportTables.all.count == 21)
+    #expect(ExportTables.all.count == 23)
     #expect(Set(rows.keys) == Set(ExportTables.all), "a file of Export has no rows here")
     for table in [
       ExportTables.accountGroups, ExportTables.transfers, ExportTables.reconciliationBalances,
+      ExportTables.cards, ExportTables.cashbackRules,
     ] {
       #expect(!(rows[table] ?? []).isEmpty, "\(table.fileName) is empty")
     }
@@ -98,12 +126,78 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: Reading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 21)
+    #expect(readings.count == 23)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")
       #expect(reading.columns == table.columns, "\(table.fileName): columns")
     }
+  }
+
+  static let cardsScript = """
+    import json, sys, pandas
+    cards = pandas.read_csv(sys.argv[2])
+    rules = pandas.read_csv(sys.argv[3])
+    def cell(value):
+        return None if pandas.isna(value) else str(value)
+    result = {
+        "aliases": [cell(v) for v in cards["aliases"]],
+        "percent": [repr(float(v)) for v in rules["percent"]],
+        "cardId": [cell(v) for v in rules["card_id"]],
+        "categoryId": [cell(v) for v in rules["category_id"]],
+        "month": [cell(v) for v in rules["month"]],
+    }
+    with open(sys.argv[1], "w", encoding="utf-8") as output:
+        json.dump(result, output, ensure_ascii=False)
+    """
+
+  struct CardsReading: Decodable {
+    let aliases: [String?]
+    let percent: [String]
+    let cardId: [String?]
+    let categoryId: [String?]
+    let month: [String?]
+  }
+
+  /// The cells of a card and its rules read by pandas with no parameters as they were
+  /// written: two aliases in one quoted cell over two lines, a percent of four decimals as a
+  /// number, and the empty card, category and month of an account's own rule as missing.
+  @Test func aCardAndItsRulesReadBackAsWritten() throws {
+    let python = try #require(Pandas.python)
+    let set = SampleDataGenerator(seed: 20_260_918).generate(
+      months: 6, endingOn: Synthetic.endingOn, calendar: Synthetic.calendar, language: "ru"
+    ).withAccounts(seed: 20_260_918, calendar: Synthetic.calendar, language: "ru")
+    let (cards, rules) = Self.cardsAndRules(of: set)
+    let card = try #require(cards.last)
+    let onTheCard = try #require(rules.dropLast().last)
+
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("itogo-export-cards-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    var paths: [String] = []
+    for (table, rows) in [
+      (ExportTables.cards, cards.map(ExportTables.row)),
+      (ExportTables.cashbackRules, rules.map(ExportTables.row)),
+    ] {
+      var writer = CSVWriter(columns: table.columns)
+      for row in rows { writer.append(row) }
+      let url = folder.appendingPathComponent(table.fileName)
+      try writer.data().write(to: url)
+      paths.append(url.path)
+    }
+
+    let output = folder.appendingPathComponent("cards.json")
+    let run = try Pandas.run(python, script: Self.cardsScript, arguments: [output.path] + paths)
+    try #require(run.status == 0, "pandas failed: \(run.output)")
+    let reading = try JSONDecoder().decode(CardsReading.self, from: Data(contentsOf: output))
+    #expect(reading.aliases.count == cards.count)
+    #expect(reading.aliases.last == "visa\nчетыре двойки")
+    #expect(reading.percent.count == rules.count)
+    #expect(Array(reading.percent.suffix(2)) == ["33.3333", "1.0"])
+    #expect(Array(reading.cardId.suffix(2)) == [card.id.uuidString, nil])
+    #expect(Array(reading.categoryId.suffix(2)) == [onTheCard.categoryId?.uuidString, nil])
+    #expect(Array(reading.month.suffix(2)) == ["2026-09", nil])
   }
 
   /// What an owner may type into a name or a note, each of it a way to break a hand-made CSV:
@@ -139,7 +233,7 @@ struct ExportPandasTests {
     let texts: [String: [String?]]
   }
 
-  /// The same 21 files with every name and note of every row replaced by an awkward string —
+  /// The same 23 files with every name and note of every row replaced by an awkward string —
   /// the accounts' groups, transfers and counts among them — read by pandas with no
   /// parameters: no row is lost or split, the columns stay, and every name and note reads
   /// back as written, except the words pandas takes for a missing value.
@@ -187,7 +281,7 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: TextReading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 21)
+    #expect(readings.count == 23)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")

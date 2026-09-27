@@ -108,6 +108,24 @@ final class CategoriesSettingsTests: XCTestCase {
       XCTAssertNotEqual(environment.language(key, table: "Settings"), key, "\(choice)")
     }
   }
+
+  /// Under the picker of the cashback category: how much cashback to expect is set by the
+  /// cards' rules — said in both languages, pointing at where the rules are.
+  func testTheCashbackRulesHint() {
+    let environment = AppEnvironment()
+    let before = environment.language.choice
+    defer { environment.language.choice = before }
+    let expected: [AppLanguage.Choice: String] = [
+      .english: "Settings → Accounts", .russian: "«Настройки → Счета»",
+    ]
+    for (choice, words) in expected {
+      environment.language.choice = choice
+      let key = CategoriesSettingsView.cashbackRulesHintKey
+      let text = environment.language(key, table: "Settings")
+      XCTAssertNotEqual(text, key, "\(choice)")
+      XCTAssertTrue(text.contains(words), "\(choice): \(text)")
+    }
+  }
 }
 
 /// The monthly limit typed into a category's row in Settings → Категории, an amount edited in
@@ -214,6 +232,55 @@ final class CategoryLimitsTests: XCTestCase {
         "100", for: goals.id, budgets: [], tree: tree, month: month, store: store),
       "limit.issue.systemCategory")
     XCTAssertEqual(try planning.budgets(), [])
+  }
+
+  /// «Сверка», as the reconciliation remembers it, takes no limit, nor does anything under it:
+  /// its row has no field and a write is refused with its own words; a limit 1.1 stored there
+  /// can be deleted, not changed. «Food» beside it is untouched.
+  func testTheReconciliationRowHasNoLimitField() throws {
+    let reconcile = CoreKit.Category(kind: .expense, name: "Сверка", quality: .neutral)
+    let small = CoreKit.Category(parentId: reconcile.id, kind: .expense, name: "Мелочи")
+    try references.save(reconcile)
+    try references.save(small)
+    let tree = CategoryTree([food, taxi, reconcile, small])
+    let limitless: Set<UUID> = [reconcile.id]
+    for category in [reconcile, small] {
+      XCTAssertFalse(
+        LimitRules.offersLimit(on: category.id, tree: tree, limitless: limitless), category.name)
+      XCTAssertEqual(
+        CategoriesSettingsView.commitLimit(
+          "5000", for: category.id, budgets: try planning.budgets(), tree: tree, month: month,
+          store: store, limitless: limitless),
+        "limit.issue.reconciliationCategory")
+    }
+    XCTAssertTrue(LimitRules.offersLimit(on: food.id, tree: tree, limitless: limitless))
+    XCTAssertEqual(try planning.budgets(), [])
+    XCTAssertFalse(store.canUndo)
+
+    let stored = Budget(
+      scope: .category, categoryId: reconcile.id, amountE4: AmountE4(whole: 5_000),
+      startMonth: month)
+    var rows = PlanningRows.empty
+    rows.budgets = [stored]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    XCTAssertEqual(
+      LimitWrites.changeAmount(
+        of: stored, typed: "6000", budgets: try planning.budgets(), tree: tree, month: month,
+        store: store, limitless: limitless),
+      "limit.issue.reconciliationCategory")
+    XCTAssertEqual(try planning.budgets(), [stored])
+    XCTAssertNil(
+      CategoriesSettingsView.commitLimit(
+        "", for: reconcile.id, budgets: try planning.budgets(), tree: tree, month: month,
+        store: store, limitless: limitless))
+    XCTAssertEqual(try planning.budgets(), [], "an empty field did not delete the stored limit")
+
+    let environment = AppEnvironment()
+    for choice in [AppLanguage.Choice.english, .russian] {
+      environment.language.choice = choice
+      let key = "limit.issue.reconciliationCategory"
+      XCTAssertNotEqual(environment.language(key, table: "Planning"), key, "\(choice)")
+    }
   }
 
   /// In place in Planning: Enter over a new amount is one step of ⌘Z; an empty field puts the

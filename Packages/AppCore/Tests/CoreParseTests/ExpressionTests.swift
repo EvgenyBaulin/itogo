@@ -101,6 +101,37 @@ struct ExpressionTests {
     }
   }
 
+  /// Перед `k`/`к` одинокая запятая всегда дробная — «1,500к» это 1 500, при любой
+  /// раскладке букв; две запятые по-прежнему разделяют тысячи, при двух видах разделителей
+  /// дробный — правый, а без `k` «1,500» — всё так же тысяча пятьсот.
+  @Test(
+    "Запятая перед k — дробная",
+    arguments: [
+      ValueCase("1,500\u{043A}", "1500"), ValueCase("1,500k", "1500"),
+      ValueCase("1,500K", "1500"), ValueCase("1,500\u{041A}", "1500"),
+      ValueCase("12,345\u{043A}", "12345"), ValueCase("100,200\u{041A}", "100200"),
+      ValueCase("2,5\u{043A}", "2500"), ValueCase("0,500\u{043A}", "500"),
+      ValueCase("1,500,000\u{043A}", "1500000000"), ValueCase("1.234,5\u{043A}", "1234500"),
+      ValueCase("1,234.5k", "1234500"), ValueCase("1,500", "1500"),
+      ValueCase("1,500\u{043A}+250", "1750"),
+    ])
+  func commaBeforeKIsDecimal(_ testCase: ValueCase) throws {
+    #expect(try ExpressionEvaluator.evaluate(testCase.text) == Decimal(string: testCase.expected))
+  }
+
+  /// Так приложение пишет такие числа: через точку, а целое число тысяч перед `k` — без
+  /// запятой, которая прочиталась бы как дробная.
+  @Test("Каноническая запись числа перед k")
+  func canonicalBeforeK() throws {
+    #expect(ExpressionEvaluator.canonical("1,500\u{043A}") == "1.500\u{043A}")
+    #expect(ExpressionEvaluator.canonical("12,345k") == "12.345k")
+    #expect(ExpressionEvaluator.canonical("1500\u{043A}") == "1500\u{043A}")
+    #expect(ExpressionEvaluator.canonical("1 234k") == "1234k")
+    #expect(ExpressionEvaluator.canonical("1234567k") == "1,234,567k")
+    #expect(ExpressionEvaluator.canonical("1234,5k") == "1,234.5k")
+    #expect(try ExpressionEvaluator.evaluate("1234k") == 1_234_000)
+  }
+
   @Test("Отличает выражение от простого числа")
   func tellsFormulaFromNumber() {
     #expect(ExpressionEvaluator.isFormula("120+80.5+45"))

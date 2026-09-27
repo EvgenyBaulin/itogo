@@ -594,15 +594,25 @@ struct TransactionFiltersForm: View {
         OptionalPicker(
           title: t("filters.person"), any: any, selection: $filters.personId,
           options: choices.people.map { ($0.id, $0.name) })
+        // An archived place stays in its operations, so the filter still finds them: after
+        // the live places, named «(архив)».
         OptionalPicker(
           title: entry("entry.place"), any: any, selection: $filters.placeId,
-          options: choices.places.map { ($0.id, $0.name) })
+          options: choices.places.map {
+            (
+              $0.id,
+              choices.archivedPlaceIds.contains($0.id)
+                ? environment.format("common.archivedName", $0.name) : $0.name
+            )
+          },
+          dividerBefore: choices.places.firstIndex { choices.archivedPlaceIds.contains($0.id) })
         OptionalPicker(
           title: entry("entry.event"), any: any, selection: $filters.eventId,
           options: choices.events.map { ($0.id, $0.name) })
+        // An account finds every operation of it and its cards; a card only what it paid.
         OptionalPicker(
-          title: entry("entry.paymentMethod"), any: any, selection: $filters.paymentMethodId,
-          options: choices.paymentMethods.map { ($0.id, $0.name) })
+          title: entry("entry.paymentMethod"), any: any, selection: accountOrCard,
+          options: choices.accountItems.map { ($0.id, $0.name) })
         OptionalPicker(
           title: t("filters.status"), any: any, selection: $filters.status,
           options: ReimbursementStatus.allCases.map {
@@ -628,6 +638,13 @@ struct TransactionFiltersForm: View {
       set: { filters.setKind($0, tree: choices.categories) })
   }
 
+  /// An account, or one of its cards.
+  private var accountOrCard: Binding<UUID?> {
+    Binding(
+      get: { filters.accountOrCard },
+      set: { filters.setAccountOrCard($0, cards: choices.cards) })
+  }
+
   /// Another category drops the subcategory.
   private var category: Binding<UUID?> {
     Binding(
@@ -649,17 +666,20 @@ struct TransactionFiltersForm: View {
   private func entry(_ key: String) -> String { environment.language(key, table: "Entry") }
 }
 
-/// A picker of one value or «Any».
+/// A picker of one value or «Any»; `dividerBefore` sets a line apart before that option (the
+/// archived ones after the live ones).
 private struct OptionalPicker<Value: Hashable>: View {
   let title: String
   let any: String
   @Binding var selection: Value?
   let options: [(Value, String)]
+  var dividerBefore: Int? = nil
 
   var body: some View {
     Picker(selection: $selection) {
       Text(verbatim: any).tag(Value?.none)
       ForEach(options.indices, id: \.self) { index in
+        if index == dividerBefore, index > 0 { Divider() }
         Text(verbatim: options[index].1).tag(Value?.some(options[index].0))
       }
     } label: {

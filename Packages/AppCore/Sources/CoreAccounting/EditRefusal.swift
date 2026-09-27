@@ -26,6 +26,18 @@ public enum EditRefusal: Error, Hashable, Sendable, CaseIterable {
   case closedPartChanged
 }
 
+/// Why the edit of the difference a count recorded is not written. Nothing of the edit lands.
+public enum DifferenceEditRefusal: Error, Hashable, Sendable, CaseIterable {
+  /// The operation is the difference of a count (`reconcile:<reconciliation>:<count>`), and the
+  /// edit changes what follows the count by itself — its amount, type, account, what the account
+  /// was charged, currency, moment, or the debt it pays — or files it under «Цели» or a category
+  /// the app keeps for itself: lost money would turn into a contribution to a goal, a payment of
+  /// a debt or money given back, and the next count's settle would write over an amount typed by
+  /// hand. Its category, comment, «на кого» and rating stay the owner's; deleting it stops the
+  /// count from recording.
+  case reconciliationDifference
+}
+
 /// Why the edit of one saved operation is not written because a refund or money back leans on
 /// what it changes. Nothing of the edit lands.
 public enum LinkedEditRefusal: Error, Hashable, Sendable, CaseIterable {
@@ -59,15 +71,21 @@ public struct EditFacts: Hashable, Sendable {
   /// For each purchase part a part of the operation takes back from: what is left of it to
   /// refund, the operation's own refunds not counted, and its currency.
   public var refundOf: [UUID: RefundableRemainder]
+  /// The categories that have a system role or hang under one (`CategoryTree.systemRole`):
+  /// «Цели» and its goals, «Кредиты», «Доплаты», «Не помню». A difference of a count may not
+  /// be filed there; read only when the operation is one.
+  public var systemCategories: Set<UUID>
 
   public init(
     settles: Bool = false, linkedRubByPart: [UUID: AmountE4] = [:],
-    refundedByPart: [UUID: AmountE4] = [:], refundOf: [UUID: RefundableRemainder] = [:]
+    refundedByPart: [UUID: AmountE4] = [:], refundOf: [UUID: RefundableRemainder] = [:],
+    systemCategories: Set<UUID> = []
   ) {
     self.settles = settles
     self.linkedRubByPart = linkedRubByPart
     self.refundedByPart = refundedByPart
     self.refundOf = refundOf
+    self.systemCategories = systemCategories
   }
 }
 
@@ -85,16 +103,59 @@ public struct RefundableRemainder: Hashable, Sendable {
 /// What the edit of one saved operation may not do. The storage layer asks it inside the
 /// write, of the row as it is then, with the facts only the database knows.
 public enum OperationEditRule {
-  /// Why `before` may not become `after`, or `nil` when it may: the refusals of
-  /// `refusal(editing:into:settles:)`, then those of refunds and of money back that covered
-  /// only some of a part (`LinkedEditRefusal`).
+  /// Why `before` may not become `after`, or `nil` when it may: the refusal of a count's
+  /// difference (`differenceRefusal`), the refusals of `refusal(editing:into:settles:)`, then
+  /// those of refunds and of money back that covered only some of a part (`LinkedEditRefusal`).
   public static func refusal(
     editing before: TransactionEntry, into after: TransactionEntry, facts: EditFacts
   ) -> (any Error & Sendable)? {
+    if let refusal = differenceRefusal(
+      editing: before, into: after, systemCategories: facts.systemCategories)
+    {
+      return refusal
+    }
     if let refusal = refusal(editing: before, into: after, settles: facts.settles) {
       return refusal
     }
     return linkedRefusal(editing: before, into: after, facts: facts)
+  }
+
+  /// Whether the operation is the difference a count recorded: its money follows the count.
+  public static func isReconcileDifference(_ transaction: Transaction) -> Bool {
+    if case .reconciledBalance = OperationLink(externalId: transaction.externalId) { return true }
+    return false
+  }
+
+  /// Why the difference of a count may not become `after`, or `nil` when it may — and always
+  /// `nil` for any other operation. Its money is the count's: the amount, the type, the account
+  /// and what it was charged, the currency, the moment and the debt stay as they are, and a
+  /// part moved into a category among `systemCategories` or given a goal is refused. A part
+  /// already there — a difference of 1.1 filed under «Не помню» — may stay.
+  public static func differenceRefusal(
+    editing before: TransactionEntry, into after: TransactionEntry, systemCategories: Set<UUID>
+  ) -> DifferenceEditRefusal? {
+    guard isReconcileDifference(before.transaction) else { return nil }
+    let old = before.transaction
+    let new = after.transaction
+    if old.kind != new.kind || old.amountE4 != new.amountE4 || old.currency != new.currency
+      || old.paymentMethodId != new.paymentMethodId || old.accountCurrency != new.accountCurrency
+      || old.accountAmountE4 != new.accountAmountE4 || old.occurredAt != new.occurredAt
+      || old.debtId != new.debtId || old.creditDebtId != new.creditDebtId
+    {
+      return .reconciliationDifference
+    }
+    let was = Dictionary(
+      before.parts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    for part in after.parts {
+      let earlier = was[part.id]
+      if part.goalId != nil, part.goalId != earlier?.goalId { return .reconciliationDifference }
+      if let category = part.categoryId, category != earlier?.categoryId,
+        systemCategories.contains(category)
+      {
+        return .reconciliationDifference
+      }
+    }
+    return nil
   }
 
   /// The refusals that protect refunds and money back that covered only some of a part.
@@ -131,9 +192,10 @@ public enum OperationEditRule {
       }
       for part in partlyReturned {
         guard let now = edited[part.id] else { return .partlyReturnedPartChanged }
-        if now.amountE4 != part.amountE4 || now.reimbursable != part.reimbursable
-          || now.amountRubE4 <= (facts.linkedRubByPart[part.id] ?? .zero)
-        {
+        // The rubles may change — a rate or a charge corrected by hand: the money that came
+        // back is balanced again in the same write (`MoneyBackSettlement`), and a part it now
+        // covers closes, the money over it income.
+        if now.amountE4 != part.amountE4 || now.reimbursable != part.reimbursable {
           return .partlyReturnedPartChanged
         }
       }

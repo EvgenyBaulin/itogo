@@ -71,6 +71,32 @@ public struct OverviewSummary: Hashable, Sendable {
     owedCount = owed.count
   }
 
+  /// The moment the owner last wrote something down: the latest `createdAt` of the live
+  /// operations and of the transfers. It is the moment of writing — a purchase of last week
+  /// typed now is written now, and an edit or ⌘Z of an old one moves nothing, since
+  /// `createdAt` outlives both. The lines the app writes to keep the books right (a surplus,
+  /// a shortfall, a reconciliation difference, a written-off remainder) are not the owner's
+  /// writing and do not count.
+  ///
+  /// A function of the data rather than a figure of the summary: the summary compares equal
+  /// for the same money whenever it was written, and the moment of writing is no money.
+  public static func lastRecordedAt(_ dataset: Dataset) -> Date? {
+    var latest: Date?
+    func consider(_ moment: Date) {
+      if latest.map({ moment > $0 }) ?? true { latest = moment }
+    }
+    for entry in dataset.entries where !entry.transaction.isDeleted {
+      if OperationLink(externalId: entry.transaction.externalId)?.isBookkeeping == true {
+        continue
+      }
+      consider(entry.transaction.createdAt)
+    }
+    for transfer in dataset.transfers {
+      consider(transfer.createdAt)
+    }
+    return latest
+  }
+
   /// Good → neutral → bad, zero lines included so the bar keeps its order.
   static func qualities(of rows: some Sequence<LedgerRow>) -> [BreakdownNode] {
     var sums: [Quality: AmountE4] = [:]

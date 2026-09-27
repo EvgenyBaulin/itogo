@@ -35,10 +35,12 @@ public struct SamplePlanning: Hashable, Sendable {
 
 extension SampleDataSet {
   /// The planning of this history, built from it on every call (`SamplePlanning(for:)`),
-  /// with the payments due once that the accounts add after its own.
+  /// with the payments due once and the income expected that the layers over it add after its
+  /// own.
   public var planning: SamplePlanning {
     var planning = SamplePlanning(for: self)
     planning.scheduled += oneOffPayments
+    planning.expected += addedExpectedIncome
     return planning
   }
 

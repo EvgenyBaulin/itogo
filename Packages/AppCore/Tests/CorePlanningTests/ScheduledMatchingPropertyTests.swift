@@ -75,7 +75,7 @@ struct ScheduledMatchingPropertyTests {
     /// The rule, plainly: a live expense without a key, in the payment's category or under
     /// it — or, with no category, with the payment's name in its note —, in its currency
     /// within max(1 unit, 10 %) of the price, at most 5 days from the due date, not after
-    /// today, and not dismissed.
+    /// today, and not dismissed for this payment.
     func canPay(_ entry: TransactionEntry, _ payment: ScheduledPayment, _ due: DateOnly) -> Bool {
       let transaction = entry.transaction
       guard !transaction.isDeleted, transaction.kind == .expense, transaction.externalId == nil,
@@ -95,8 +95,11 @@ struct ScheduledMatchingPropertyTests {
           note.range(of: payment.name, options: .caseInsensitive) != nil
         else { return false }
       }
-      return !rejections.contains(
-        ScheduledMatching.rejectionKey(operation: entry.id, payment: payment.id, due: due))
+      // «Это другое» about any due date of the payment dismisses the operation for all of them.
+      return !rejections.contains { key in
+        key.lowercased().hasPrefix(
+          "\(entry.id.uuidString.lowercased()):\(payment.id.uuidString.lowercased()):")
+      }
     }
 
     /// The due dates the matching looks at: from `next_date` through today + 5.

@@ -18,12 +18,17 @@ enum BulkConfirmation {
   /// `refunds` are the refunds of the whole ledger (`Ledger.refundIndex`): a purchase a live
   /// refund takes money back from stays, as the deletion itself leaves it, and what the rest
   /// comes to counts a refund in its purchase — the numbers of the day it is deleted from.
+  ///
+  /// `deletedDebts` and `paidDebts` are the store's (`TransactionsStore.deletionDebts()`): a
+  /// purchase on credit of a deleted debt goes like any other, unless something ever paid that
+  /// debt — the question offers what the store will delete.
   static func deletion(
     of entries: [TransactionEntry], transfers: [UUID] = [],
     transferSummary: TransferDeletion = .none, refunds: RefundIndex = .empty,
-    debts: [UUID: Debt]
+    debts: [UUID: Debt], deletedDebts: Set<UUID> = [], paidDebts: Set<UUID> = []
   ) -> BulkConfirmation? {
-    let plan = BulkEditRule.deletion(of: entries, refunds: refunds)
+    let plan = BulkEditRule.deletion(
+      of: entries, refunds: refunds, deletedDebts: deletedDebts, paidDebts: paidDebts)
     // A transfer the rules keep is said too: the owner hears why it stays.
     guard
       !plan.changed.isEmpty || !plan.skipped.isEmpty || !transfers.isEmpty
@@ -197,22 +202,31 @@ final class OperationActions {
     let rates = BulkRates.now(for: edit, environment)
     let plan = store.plan(edit, ids: ids, rates: rates, calendar: environment.calendar)
     guard !plan.changed.isEmpty || !plan.skipped.isEmpty else { return }
-    if plan.touchesSplit || !plan.skipped.isEmpty {
+    // A change that moves money on an account in the archive is confirmed first: the
+    // confirmation then asks where that money goes (`BulkConfirmationDialog`).
+    let movesArchivedMoney =
+      !store.archivedLeftovers(
+        of: edit, ids: ids, rates: rates, calendar: environment.calendar
+      ).leftovers.isEmpty
+    if plan.touchesSplit || !plan.skipped.isEmpty || movesArchivedMoney {
       confirmation = .edit(edit, ids: Array(ids), plan: plan)
     } else {
       store.apply(edit, to: Array(ids), rates: rates, calendar: environment.calendar)
     }
   }
 
-  /// Transfers among `ids` go with the operations, but for those the rules keep — of an account
-  /// in the archive, or with a fee something came back for; a purchase a live refund takes
-  /// money back from stays, unless the refund goes too.
+  /// Transfers among `ids` go with the operations, but for those the rules keep — with a fee
+  /// something came back for; a purchase a live refund takes money back from stays, unless the
+  /// refund goes too. Money the deletion would leave on an account in the archive is asked
+  /// about once it is confirmed.
   func requestDeletion(of ids: Set<UUID>, store: TransactionsStore) {
     guard !store.isWritingInBackground else { return }
+    let owed = store.deletionDebts()
     confirmation = BulkConfirmation.deletion(
       of: store.entries(ids: ids), transfers: store.transferIds(in: ids),
       transferSummary: store.transferDeletion(in: ids),
-      refunds: store.listing?.refundIndex ?? .empty, debts: store.debts)
+      refunds: store.listing?.refundIndex ?? .empty, debts: store.debts,
+      deletedDebts: owed.deleted, paidDebts: owed.paid)
   }
 }
 
@@ -590,13 +604,90 @@ private struct OperationPresentations: ViewModifier {
   }
 }
 
+/// A confirmed change or deletion that would leave money on an account in the archive, waiting
+/// for where that money goes.
+struct ArchivedSettling: Identifiable {
+  enum Write {
+    /// `planned` are the operations the change was to change — or the deletion to take — when
+    /// the money was worked out: the transfers the owner picks count theirs, and are written
+    /// only with a write that still lands on exactly those.
+    case edit(BulkEdit, ids: [UUID], rates: DayRates, planned: Set<UUID>? = nil)
+    case delete([UUID], planned: Set<UUID>? = nil)
+  }
+
+  let check: ArchivedMoneyCheck
+  let write: Write
+  let id = UUID()
+}
+
 private struct BulkConfirmationDialog: ViewModifier {
   @Dependency(\.environment) private var environment
   @Dependency(\.store) private var store
+  @Environment(\.dependencies) private var dependencies
   @Binding var confirmation: BulkConfirmation?
   let finished: ((Bool) -> Void)?
+  /// The money a confirmed write would leave on an archived account: asked about in a sheet,
+  /// and the write made with the transfers the owner picks, in one step of ⌘Z.
+  @State private var settling: ArchivedSettling?
 
   func body(content: Content) -> some View {
+    dialog(content)
+      .sheet(item: $settling) { asked in
+        ArchivedMoneySheet(
+          check: asked.check,
+          confirm: { transfers in
+            settling = nil
+            write(asked.write, settling: transfers)
+          },
+          cancel: {
+            settling = nil
+            if case .delete = asked.write { finished?(false) }
+          }
+        )
+        .handingOver(dependencies)
+      }
+  }
+
+  /// The write once confirmed: asked about first when it would leave money on an archived
+  /// account.
+  private func confirmed(_ write: ArchivedSettling.Write) {
+    let check: ArchivedMoneyCheck
+    var write = write
+    switch write {
+    case .edit(let edit, let ids, let rates, _):
+      let calendar = environment.calendar
+      check = store.archivedLeftovers(of: edit, ids: Set(ids), rates: rates, calendar: calendar)
+      let planned = store.plan(edit, ids: Set(ids), rates: rates, calendar: calendar).changed
+      write = .edit(edit, ids: ids, rates: rates, planned: Set(planned.map(\.id)))
+    case .delete(let ids, _):
+      check = store.archivedLeftovers(ofDeleting: ids)
+      write = .delete(ids, planned: store.deletionPlanned(of: ids))
+    }
+    guard !check.leftovers.isEmpty else {
+      self.write(write, settling: [])
+      return
+    }
+    // The sheet waits for the dialog to go: presented at once, it would go with it.
+    let asked = ArchivedSettling(check: check, write: write)
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(300))
+      settling = asked
+    }
+  }
+
+  private func write(_ write: ArchivedSettling.Write, settling: [Transfer]) {
+    switch write {
+    case .edit(let edit, let ids, let rates, let planned):
+      store.apply(
+        edit, to: ids, rates: rates, calendar: environment.calendar, settling: settling,
+        planned: planned)
+    case .delete(let ids, let planned):
+      let landed = store.delete(ids: ids, settling: settling, planned: planned)
+      finished?(landed)
+    }
+  }
+
+  private func dialog(_ content: Content) -> some View {
     content.confirmationDialog(
       title, isPresented: isPresented, titleVisibility: .visible, presenting: confirmation
     ) { confirmation in
@@ -604,9 +695,7 @@ private struct BulkConfirmationDialog: ViewModifier {
       case .edit(let edit, let ids, let plan):
         if !plan.changed.isEmpty {
           Button(t("bulk.apply")) {
-            store.apply(
-              edit, to: ids, rates: BulkRates.now(for: edit, environment),
-              calendar: environment.calendar)
+            confirmed(.edit(edit, ids: ids, rates: BulkRates.now(for: edit, environment)))
           }
           Button(environment.language("action.cancel"), role: .cancel) {}
         } else {
@@ -615,8 +704,7 @@ private struct BulkConfirmationDialog: ViewModifier {
       case .delete(let ids, _, _, _):
         if !ids.isEmpty {
           Button(environment.language("action.delete"), role: .destructive) {
-            let landed = store.delete(ids: ids)
-            finished?(landed)
+            confirmed(.delete(ids))
           }
           Button(environment.language("action.cancel"), role: .cancel) {}
         } else {
@@ -659,6 +747,7 @@ enum StoreFailureText {
     switch (failure.action, failure.cause) {
     case (.undo, .tiedToOtherRows): language("store.failure.undoTied", table: table)
     case (.undo, .other): language("store.failure.undoOther", table: table)
+    case (_, .planOutdated): language("store.failure.planOutdated", table: table)
     default: language("store.failure.other", table: table)
     }
   }

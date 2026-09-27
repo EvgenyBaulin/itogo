@@ -12,6 +12,16 @@ import Observation
 public final class EntryDraftModel {
   public var draft = TransactionDraft() {
     didSet {
+      // The editor opened another saved operation: what it is is read once, and the cashback
+      // kept with it is written into the field, so a save of any other change keeps it. A part
+      // the draft already had becoming its first — the first part removed — opens nothing.
+      if editsSavedOperation, let first = draft.parts.first?.id,
+        !oldValue.parts.contains(where: { $0.id == first })
+      {
+        cashbackField = CashbackFieldState(kept: draft.cashback, on: draft)
+        noteWhatWasOpened()
+      }
+      followTheCashbackField()
       guard draft.creditDebtId != oldValue.creditDebtId else { return }
       kindWithTheCredit = draft.creditDebtId == nil ? nil : draft.kind
     }
@@ -26,6 +36,9 @@ public final class EntryDraftModel {
   /// поступлению»). Saved with the operation in one write.
   public var expectedIncomeId: UUID?
   public var places: [Place] = []
+  /// The places archived since, read with the live ones: a saved operation at one of them shows
+  /// it in the menu (`placeChoices`); nothing new is ever offered one.
+  private var archivedPlaces: [Place] = []
   /// The live accounts, the ones the account picker offers.
   public var paymentMethods: [PaymentMethod] = []
   /// Every account, archived ones too: a saved operation may sit on one retired since, and
@@ -34,6 +47,14 @@ public final class EntryDraftModel {
   public var events: [Event] = []
   public var goals: [Goal] = []
   public var debts: [Debt] = []
+  /// Every debt, the closed and the deleted ones too: a saved payment of one of them keeps it in
+  /// the menu (`debtChoices`).
+  private var allDebts: [Debt] = []
+  /// Every card, archived ones too: the account picker offers the live cards of the live
+  /// accounts, and a saved operation keeps the card it names whatever became of it.
+  public private(set) var cards: [PaymentCard] = []
+  /// Every cashback rule, for what the ↓ panel expects an operation to earn.
+  public private(set) var cashbackRules: [CashbackRule] = []
 
   /// Buying on credit or in instalments: which debt the purchase joins, or a new one, and
   /// how it will be repaid. The expense itself is recorded once, now, in its own category;
@@ -51,7 +72,10 @@ public final class EntryDraftModel {
     }
   }
 
-  public var creditPlan: CreditPlan?
+  public var creditPlan: CreditPlan? {
+    // A purchase on credit earns no cashback: the lender paid.
+    didSet { followTheCashbackField() }
+  }
 
   /// Up to three categories offered next to the picker, taken from history.
   public private(set) var categorySuggestions: [CoreKit.Category] = []
@@ -90,6 +114,14 @@ public final class EntryDraftModel {
   /// («комментарий, дата» are fields of the panel).
   private var noteFromTheLine: String?
   private var dateFromTheLine: Date?
+  /// The amount and the formula the line last wrote, by the same rule: while the draft still
+  /// holds them the next line writes its own, and an amount the panel changed stays until a line
+  /// says another one. A line without an amount leaves the amount as it is.
+  private var amountFromTheLine: LineAmount?
+  private struct LineAmount: Equatable {
+    var amount: AmountE4
+    var expression: String?
+  }
   /// The date nobody chose: the one the draft was made with, or «now» the line wrote for a
   /// line that names no day. While the draft still holds it, the operation is dated the moment
   /// it is saved — the draft is made when the line appears or right after the last save, and
@@ -190,6 +222,9 @@ public final class EntryDraftModel {
   /// The cache of the bank's rates, which «Списано со счёта» is prefilled from. The app hands
   /// it over in `init(environment:)`; without it nothing in another currency is prefilled.
   var rateTable: (() -> RateTable)?
+  /// Where the cards and the cashback rules are read from: the database of the app, handed over
+  /// in `init(environment:)`. Without it the panel knows no card and expects no cashback.
+  var readsCards: (() -> (cards: [PaymentCard], rules: [CashbackRule]))?
 
   /// The panel as the application makes it — for the entry line and for the editor of a
   /// saved operation alike: the repositories, the calendar, the owner's setting for events,
@@ -209,6 +244,13 @@ public final class EntryDraftModel {
       openAccountScreen = { [weak environment] in environment?.focusedAccountId }
     }
     rateTable = { [weak environment] in (try? environment?.rates?.table()) ?? RateTable() }
+    readsCards = { [weak environment] in
+      guard let writer = environment?.stack?.writer else { return ([], []) }
+      let repository = CardRepository(writer: writer)
+      return (
+        (try? repository.cards(includeArchived: true)) ?? [], (try? repository.rules()) ?? []
+      )
+    }
     predictor = environment.categoryModel
     // The rate is read from the cache only: asking the bank is the save's business, not a
     // keystroke's.
@@ -229,14 +271,234 @@ public final class EntryDraftModel {
   public func reload() {
     reloadQualityRules()
     cachedRates = nil
+    if let read = readsCards?() {
+      cards = read.cards
+      cashbackRules = read.rules
+    }
     guard let references else { return }
     people = (try? references.people()) ?? []
-    places = (try? references.places()) ?? []
+    let everyPlace = (try? references.places(includeArchived: true)) ?? []
+    places = everyPlace.filter { !$0.archived }
+    archivedPlaces = everyPlace.filter(\.archived)
     allAccounts = (try? references.paymentMethods(includeArchived: true)) ?? []
     paymentMethods = allAccounts.filter { !$0.archived }
     events = (try? references.events()) ?? []
     goals = (try? references.goals()) ?? []
     debts = (try? references.debts()) ?? []
+    allDebts = (try? references.debts(includeClosed: true, includeDeleted: true)) ?? debts
+  }
+
+  // MARK: Places and debts of a saved operation
+
+  /// A place of the menu: an archived one is shown only for an operation already at it, and says
+  /// so.
+  public struct PlaceChoice: Hashable, Sendable {
+    public let id: UUID
+    public let name: String
+    public let archived: Bool
+  }
+
+  /// What the place menu offers: the live places, and the one the operation is at when it has
+  /// gone to the archive since — the operation keeps it, and the menu shows it instead of
+  /// nothing.
+  public var placeChoices: [PlaceChoice] {
+    var choices = places.map { PlaceChoice(id: $0.id, name: $0.name, archived: false) }
+    if let current = draft.placeId, !places.contains(where: { $0.id == current }),
+      let archived = archivedPlaces.first(where: { $0.id == current })
+    {
+      choices.append(PlaceChoice(id: archived.id, name: archived.name, archived: true))
+    }
+    return choices
+  }
+
+  /// What became of a debt the menu shows for an operation that pays it.
+  public enum DebtState: Hashable, Sendable {
+    case open
+    case closed
+    case deleted
+  }
+
+  /// A debt of the menu.
+  public struct DebtChoice: Hashable, Sendable {
+    public let id: UUID
+    public let name: String
+    public let state: DebtState
+  }
+
+  /// What the debt menu offers: the open debts, and the debt the operation pays when it has been
+  /// closed or deleted since — the payment keeps it unless another one is picked.
+  public var debtChoices: [DebtChoice] {
+    var choices = debts.map { DebtChoice(id: $0.id, name: $0.name, state: .open) }
+    if let current = draft.debtId, !debts.contains(where: { $0.id == current }),
+      let gone = allDebts.first(where: { $0.id == current })
+    {
+      choices.append(
+        DebtChoice(id: gone.id, name: gone.name, state: gone.isDeleted ? .deleted : .closed))
+    }
+    return choices
+  }
+
+  // MARK: Cards and cashback
+
+  /// The live cards, the only ones anything new may name.
+  private var liveCards: [PaymentCard] { cards.filter { !$0.archived } }
+
+  /// A choice of the account picker: an account, or a card under it.
+  public struct AccountChoice: Hashable, Sendable {
+    public let id: UUID
+    /// «Т-Банк», «Т-Банк · Black».
+    public let name: String
+    public let isCard: Bool
+    /// A card gone to the archive, shown only for the operation that names it.
+    public let archived: Bool
+  }
+
+  /// What the account picker offers: each account as `accountChoices` gives it, followed by its
+  /// live cards as «Т-Банк · Black». The card the operation names when it has gone to the
+  /// archive since stays under its account, and says so. A kind that names no card — money
+  /// back — is offered the accounts alone.
+  public func accountCardChoices(locale: Locale) -> [AccountChoice] {
+    let accounts = accountChoices(locale: locale)
+    let offered = has(.card) ? cards : []
+    var items = AccountCardChoices.items(accounts: accounts, cards: offered, locale: locale).map {
+      AccountChoice(id: $0.id, name: $0.name, isCard: $0.isCard, archived: false)
+    }
+    if has(.card), let cardId = draft.cardId,
+      !items.contains(where: { $0.id == cardId && $0.isCard }),
+      let card = cards.first(where: { $0.id == cardId }),
+      let index = items.firstIndex(where: { $0.id == card.accountId && !$0.isCard })
+    {
+      let name = items[index].name + " · " + card.name
+      items.insert(
+        AccountChoice(id: card.id, name: name, isCard: true, archived: true), at: index + 1)
+    }
+    return items
+  }
+
+  /// What the account picker shows: the card the operation names, else its account — the
+  /// account alone for a kind that names no card, whatever card the draft kept from before.
+  public var accountOrCardSelection: UUID? {
+    let account = selectedAccount?.id
+    guard has(.card), let cardId = draft.cardId,
+      cards.contains(where: { $0.id == cardId && $0.accountId == account })
+    else { return account }
+    return cardId
+  }
+
+  /// A choice of the account picker: a card brings its account, an account names no card. Either
+  /// is the owner's, as an account picked is. A kind that names no card takes the account alone.
+  public func setAccountOrCard(_ id: UUID?) {
+    let resolved = CardRules.resolve(selection: id, cards: cards)
+    setPaymentMethod(resolved.accountId)
+    draft.cardId = has(.card) ? resolved.cardId : nil
+  }
+
+  /// What the owner typed in «Кэшбэк»: an amount, a percent, or nothing. The operation keeps
+  /// what it says (`draft.cashback`) as the draft changes — a percent follows the amount.
+  var cashbackField = CashbackFieldState() {
+    didSet { followTheCashbackField() }
+  }
+
+  /// The figure of the field written into the draft: the save — of the line and of the editor
+  /// alike — writes what the field says. An empty or unreadable field keeps no figure: the rules
+  /// then say what to expect, and the operation is saved all the same.
+  private func followTheCashbackField() {
+    let value = isOnCredit ? nil : cashbackField.value(on: draft)
+    if draft.cashback != value { draft.cashback = value }
+  }
+
+  /// Whether the panel shows «Кэшбэк»: a purchase that moves money on its account. Not one on
+  /// credit — the lender paid —, and not the difference of a count.
+  public var showsCashback: Bool {
+    has(.cashback) && !isOnCredit && !isReconcileDifference
+  }
+
+  private var mainAccountId: UUID? { paymentMethods.first(where: \.isDefault)?.id }
+
+  /// Whose rules price the operation: the card it names, else the only live card of its
+  /// account, else the account.
+  public var cashbackHolder: CashbackHolder? {
+    CashbackHolders.holder(
+      accountId: draft.paymentMethodId, cardId: draft.cardId, cards: cards,
+      mainAccountId: mainAccountId)
+  }
+
+  /// What the field needs to know of the operation to say where a figure comes from.
+  var cashbackContext: CashbackFieldContext {
+    let holder = cashbackHolder
+    let accountId = holder.flatMap { CashbackHolders.account(of: $0, cards: cards) }
+    var severalCards = false
+    if case .account(let id) = holder {
+      severalCards = liveCards.filter { $0.accountId == id }.count > 1
+    }
+    let filed = Set(draft.parts.map(\.categoryId))
+    let named = (filed.count == 1 ? filed.first : nil) ?? nil
+    var names: [UUID: String] = [:]
+    for category in categories + archivedCategories { names[category.id] = category.name }
+    return CashbackFieldContext(
+      holder: holder,
+      holderName: holder.map {
+        CardText.holderName($0, cards: cards, accounts: allAccounts)
+      },
+      severalCards: severalCards, month: calendar.day(of: draft.occurredAt).monthKey,
+      categoryId: named, accountId: accountId,
+      movedCurrency: CashbackMath.movedMoney(of: draft).currency,
+      mixedCategories: filed.count > 1,
+      rules: holder.map { CashbackRuleBook(rules: cashbackRules, tree: categoryTree).rules(of: $0) }
+        ?? [],
+      categoryNames: names)
+  }
+
+  /// What the operation is expected to earn: the figure typed for it, else what the rules of
+  /// its holder give; `nil` when it earns nothing.
+  public var cashbackExpectation: CashbackExpectation? {
+    let tree = categoryTree
+    return CashbackMath.expected(
+      draftForSaving, holder: cashbackHolder,
+      book: CashbackRuleBook(rules: cashbackRules, tree: tree), tree: tree, calendar: calendar)
+  }
+
+  /// «Запомнить»: the typed percent becomes a rule of the card, written by `write` as a step of
+  /// ⌘Z of its own; once it is, the field is emptied — the rule says it now.
+  @discardableResult
+  func rememberCashback(
+    _ rule: CashbackRule, writing write: (CashbackRule) -> CardActionOutcome
+  ) -> CardActionOutcome {
+    let outcome = write(rule)
+    guard outcome == .done else { return outcome }
+    if let read = readsCards?() {
+      cards = read.cards
+      cashbackRules = read.rules
+    }
+    cashbackField = CashbackFieldState()
+    return outcome
+  }
+
+  // MARK: A difference of a count
+
+  /// The saved operation is the difference a count of an account records («Сверка»): its money
+  /// follows the books by itself, so the panel locks its amount, kind, account, currency, rate
+  /// and date, and offers it no category under Goals or of the app.
+  public private(set) var isReconcileDifference = false
+
+  /// Reads what the saved operation just opened is: the one whose first part the draft holds,
+  /// found among the operations of its day. Parts made in the panel — a split — are no saved
+  /// operation, and leave what was read as it was.
+  private func noteWhatWasOpened() {
+    guard let transactions, let partId = draft.parts.first?.id else { return }
+    let day = calendar.day(of: draft.occurredAt)
+    let from = calendar.startOfDay(day)
+    let to = calendar.startOfDay(day.adding(days: 1))
+    let entries = (try? transactions.entries(from: from, to: to)) ?? []
+    guard let opened = entries.first(where: { $0.parts.contains { $0.id == partId } }) else {
+      return
+    }
+    isReconcileDifference = Self.isReconcileDifference(opened.transaction)
+  }
+
+  /// A difference of a count carries the key `reconcile:<reconciliation>:<count>`.
+  static func isReconcileDifference(_ transaction: CoreKit.Transaction) -> Bool {
+    transaction.externalId?.hasPrefix("reconcile:") == true
   }
 
   /// What a quality is decided by: my manual ratings and the categories. Both change behind
@@ -256,10 +518,16 @@ public final class EntryDraftModel {
   // MARK: Parsed line
 
   /// Fills the draft from a parsed entry line, keeping whatever the panel already set: its
-  /// kind, place, payment method, people, event, goal — and its note and date, which the line
-  /// takes over only while the panel has left them as the line wrote them. A date the line
-  /// names always wins.
-  public func apply(_ parsed: ParsedInput, amount: AmountE4, today: DateOnly) {
+  /// kind, place, payment method, people, event, goal — and its amount, note and date, which the
+  /// line takes over only while the panel has left them as the line wrote them. A date the line
+  /// names always wins, and so does an amount other than the one the line said before. A line
+  /// without an amount (`parsed.amount` nil) leaves the amount alone, whatever `amount` says.
+  ///
+  /// `text` is the line as typed: Enter's stop for a category is remembered by it
+  /// (`gapToAsk`), since the same text parses anew once «Добавить…» made a name in it known.
+  public func apply(
+    _ parsed: ParsedInput, amount: AmountE4, today: DateOnly, text: String? = nil
+  ) {
     // A purchase picked for a refund — or «Без покупки» — belongs to the line it was picked
     // for: Enter on that line again keeps it, any other line starts without it, so a refund
     // of headphones is never saved against the sneakers picked for the line before.
@@ -268,19 +536,16 @@ public final class EntryDraftModel {
       forgetTheRefundedPurchase()
       refundWithoutPurchase = false
     }
-    defer { lastLine = parsed }
+    defer {
+      lastLine = parsed
+      lastLineText = text
+    }
     // A kind chosen in the panel is not overwritten by a line that says nothing about it:
     // the parser reports `.expense` both when it read nothing and when it read "расход".
     if parsed.kind != .expense || draft.kind == .expense {
       draft.kind = parsed.kind
     }
-    draft.amount = amount
-    zeroWasTyped = amount.isZero
-    followTheAmountInTheCreditPlan()
-    // Kept with its numbers written the way the app writes them: «1500,5+2» is «1,500.5+2».
-    draft.amountExpression = parsed.amountExpression.map {
-      ExpressionEvaluator.canonical($0) ?? $0
-    }
+    if parsed.amount != nil { takeTheAmount(amount, of: parsed) }
     // A currency the line names is the owner's: it beats the account's and the default one.
     if let typed = parsed.currency {
       draft.currency = typed
@@ -296,6 +561,10 @@ public final class EntryDraftModel {
       draft.paymentMethodId = named
       paymentMethodFromDefaults = nil
       accountFromTheScreen = false
+      // A card named in the line brings its account; the account named alone keeps only a card
+      // of its own the panel had chosen.
+      draft.cardId =
+        parsed.cardId ?? CardRules.cardAfterAccountChange(draft.cardId, to: named, cards: liveCards)
     }
     draft.debtId = parsed.debtId ?? draft.debtId
     if parsed.date != nil || draft.occurredAt == dateFromTheLine {
@@ -334,6 +603,25 @@ public final class EntryDraftModel {
       if !missing.isEmpty { draft.note = ([note] + missing).joined(separator: " ") }
     }
     applyDefaults(today: today)
+  }
+
+  /// The amount of the line, kept with its formula — its numbers written the way the app writes
+  /// them: «1500,5+2» is «1,500.5+2» — unless the panel changed the one the line wrote before
+  /// and the line still says that one: then the panel's is the owner's, and stays.
+  private func takeTheAmount(_ amount: AmountE4, of parsed: ParsedInput) {
+    let said = LineAmount(
+      amount: amount,
+      expression: parsed.amountExpression.map { ExpressionEvaluator.canonical($0) ?? $0 })
+    let changedInThePanel =
+      amountFromTheLine.map {
+        draft.amount != $0.amount || draft.amountExpression != $0.expression
+      } ?? false
+    guard said != amountFromTheLine || !changedInThePanel else { return }
+    draft.amount = amount
+    zeroWasTyped = amount.isZero
+    followTheAmountInTheCreditPlan()
+    draft.amountExpression = said.expression
+    amountFromTheLine = said
   }
 
   // MARK: Fields of the kind
@@ -417,10 +705,21 @@ public final class EntryDraftModel {
     if draft.paymentMethodId == nil || draft.paymentMethodId == paymentMethodFromDefaults {
       // A place the kind has no field for — chosen before the kind became income — is hidden,
       // and chooses nothing.
-      let (chosen, screen) = accountByDefault(at: has(.place) ? draft.placeId : nil, in: history)
+      let place = has(.place) ? draft.placeId : nil
+      let (chosen, screen) = accountByDefault(at: place, in: history)
       draft.paymentMethodId = chosen
       paymentMethodFromDefaults = chosen
       accountFromTheScreen = screen != nil && chosen == screen
+      // The card that paid at the place last time, while it is of the account laid now. It is
+      // what paid, not a choice of the owner's: the currency stays the one the defaults lay.
+      let lastAtPlace = place.flatMap { place in
+        history.first { $0.transaction.placeId == place }
+      }.map { (accountId: $0.transaction.paymentMethodId, cardId: $0.transaction.cardId) }
+      draft.cardId =
+        has(.card)
+        ? CardRules.cardForNewOperation(
+          chosenAccount: chosen, lastAtPlace: lastAtPlace, cards: cards)
+        : nil
     }
     layTheCurrency()
 
@@ -446,14 +745,17 @@ public final class EntryDraftModel {
       draft.parts[0].categorySource = .system
     }
 
+    // The model may file the first part now, when it is sure and nothing else did.
+    refreshSuggestions()
+
     // Every part has a quality of its own: the second part of a split in Fees is bad
-    // even when the first is ordinary groceries.
+    // even when the first is ordinary groceries. Worked out after the model filed the part:
+    // before, a part the model filed kept the quality of no category.
     let tree = categoryTree
     for index in draft.parts.indices {
       resolveQuality(ofPartAt: index, in: tree)
     }
 
-    refreshSuggestions()
     // Last: whether the operation moves money at all depends on the categories just laid.
     refreshCharge()
   }
@@ -556,6 +858,11 @@ public final class EntryDraftModel {
   /// archived since — the saved operation shows its category, not an empty picker.
   public func categoryOptions(forPartAt index: Int) -> [CoreKit.Category] {
     var options = topLevelCategories(for: draft.kind)
+    // A difference of a count stays a difference: never a contribution to a goal, never a
+    // category of the app.
+    if isReconcileDifference {
+      options.removeAll { categoryTree.systemRole(of: $0.id) != nil }
+    }
     if let current = categoryOfPart(part(at: index)),
       !options.contains(where: { $0.id == current }),
       let retired = archivedCategories.first(where: { $0.id == current })
@@ -939,6 +1246,8 @@ public final class EntryDraftModel {
   public func setPaymentMethod(_ id: UUID?) {
     noteTheOpenedDraft()
     draft.paymentMethodId = id
+    // A card stays only with its own account.
+    draft.cardId = CardRules.cardAfterAccountChange(draft.cardId, to: id, cards: cards)
     paymentMethodFromDefaults = nil
     accountFromTheScreen = false
     layTheCurrency()
@@ -1305,6 +1614,35 @@ public final class EntryDraftModel {
     return count
   }
 
+  /// The questions about the counts of the day the save has to ask, oldest first: every count of
+  /// a balance the operation moves made on its day before it was saved
+  /// (`AccountReconciliation.countToAsk`). The answers `remembered` for their reconciliations —
+  /// «Больше не спрашивать для этой сверки» — answer without a question; when they settle every
+  /// count, the moment itself. Nothing once the answers were given for the moment the draft
+  /// holds (`stampCount`).
+  public func countAsk(
+    savedAt: Date, balances: AccountBalances, remembered: [UUID: Bool]
+  ) -> CountAsk {
+    guard draft.occurredAt != stampedAt, let entry = try? draftForSaving.materialize(now: savedAt)
+    else { return .none }
+    let keys = AccountReconciliation.movedKeys(
+      of: entry, mainId: paymentMethods.first(where: \.isDefault)?.id, tree: categoryTree)
+    return AccountReconciliation.countToAsk(
+      occurredAt: draft.occurredAt, savedAt: savedAt, keys: keys, balances: balances,
+      calendar: calendar, remembered: remembered)
+  }
+
+  /// The moment the answers about the counts gave: the operation is saved at it, and the save
+  /// that goes on does not ask again. A date changed after it asks anew.
+  public func stampCount(_ moment: Date) {
+    draft.occurredAt = moment
+    dateFollowsTheClock = false
+    stampedAt = moment
+  }
+
+  /// The moment `stampCount` gave the draft.
+  private var stampedAt: Date?
+
   /// The answer: «Да» dates the operation a second before the count, so its money is inside
   /// what was counted — unless it is dated before the count already, a time set in the panel,
   /// which is kept; «Нет» dates it after the count. Either way the date is the owner's now, and
@@ -1482,10 +1820,13 @@ public final class EntryDraftModel {
   }
 
   /// Adds a payment method of `kind` and returns its id. The first one in the book becomes the
-  /// default, as it does in Settings.
+  /// default, as it does in Settings. A card or a bank account comes with a card named like it,
+  /// in the same write (`CardRules.startingCard`).
   public func createPaymentMethod(named name: String, kind: PaymentMethodKind) -> UUID? {
     guard let references else { return nil }
-    return createPaymentMethod(named: name, kind: kind, saving: references.save)
+    return createPaymentMethod(named: name, kind: kind) { method in
+      try references.save(method, startingCard: CardRules.startingCard(for: method))
+    }
   }
 
   func createPaymentMethod(
@@ -1659,6 +2000,74 @@ public final class EntryDraftModel {
     }
   }
 
+  // MARK: What the line did not say
+
+  /// The gap Enter stopped for, and the line it stopped for — its parse and, from the entry
+  /// bar, its text (nil: the panel alone).
+  private struct GapStop: Equatable {
+    let gap: EntryGap
+    let line: ParsedInput?
+    var text: String? = nil
+  }
+  private var gapStop: GapStop?
+
+  /// What the panel is asked to put the keyboard focus on: the control a stop asks for.
+  var focusRequest: PanelFocusRequest?
+
+  /// The field Enter asks for before a new operation is saved (`EntryCompleteness`): the
+  /// category the line did not say, or the subcategory the model left open. Asked once per
+  /// line: the same line again, or Return in the panel, saves the draft as it stands — an
+  /// operation may stay uncategorised. Nil for a saved operation.
+  public func gapToAsk() -> EntryGap? {
+    guard !editsSavedOperation,
+      let gap = EntryCompleteness.gap(of: draftForSaving, tree: categoryTree)
+    else { return nil }
+    if let gapStop, isTheLine(of: gapStop) { return nil }
+    gapStop = GapStop(gap: gap, line: lastLine, text: lastLineText)
+    return gap
+  }
+
+  /// Whether the line applied last is the one `stop` was made for: the same text — though
+  /// «Добавить…» of a name in it has made the same text parse anew — or the same parse.
+  private func isTheLine(of stop: GapStop) -> Bool {
+    if let text = stop.text, text == lastLineText { return true }
+    return stop.line == lastLine
+  }
+
+  /// ↓ and ↑ in the line while Enter's stop for that line stands: the next or the previous choice
+  /// of the menu the stop asked for — «—», then the menu's own items in its order — as a choice
+  /// made in the menu. Where macOS keeps the focus off menus («Навигация с клавиатуры» off), this
+  /// is how the keyboard chooses. False when no stop stands: the arrows keep their meaning.
+  public func stepTheAskedMenu(by step: Int, today: DateOnly) -> Bool {
+    guard let gapStop, isTheLine(of: gapStop), !isSplit else { return false }
+    let current: UUID?
+    let choices: [UUID?]
+    switch gapStop.gap {
+    case .category:
+      current = categoryOfPart(part(at: 0))
+      choices = [nil] + categoryOptions(forPartAt: 0).map(\.id)
+    case .subcategory:
+      current = subcategoryOfPart(part(at: 0))
+      choices = [nil] + subcategoryOptions(forPartAt: 0).map(\.id)
+    }
+    let at = choices.firstIndex(of: current) ?? 0
+    let next = min(max(at + step, 0), choices.count - 1)
+    guard next != at else { return true }
+    switch gapStop.gap {
+    case .category: setCategory(choices[next], forPartAt: 0)
+    case .subcategory: setSubcategory(choices[next], forPartAt: 0)
+    }
+    applyDefaults(today: today)
+    return true
+  }
+
+  /// The gap the panel marks: the one asked, while it is still missing.
+  public var markedGap: EntryGap? {
+    guard let gapStop, EntryCompleteness.gap(of: draftForSaving, tree: categoryTree) == gapStop.gap
+    else { return nil }
+    return gapStop.gap
+  }
+
   /// Saving is only allowed when nothing stops it.
   public var canSave: Bool { saveRefusalKey == nil }
 
@@ -1723,9 +2132,9 @@ public final class EntryDraftModel {
   /// panel and keeps its draft, and `apply` keeps what the panel chose — a kind, a place, a
   /// split, a note or a date — as well as a place or a debt a refused line left behind. The ↓
   /// button of the capsule shows it, so none of that goes into the next operation unseen.
-  /// What the line writes over — the amount, a note and a date it wrote itself — and a
+  /// What the line writes over — an amount, a note and a date it wrote itself — and a
   /// payment method or a «for whom» the defaults laid, which the next line's defaults lay
-  /// again, are not counted.
+  /// again, are not counted; an amount the panel changed after the line wrote it is.
   public var carriesChoices: Bool {
     let first = draft.parts.first ?? PartDraft()
     let byTheDraft =
@@ -1735,12 +2144,14 @@ public final class EntryDraftModel {
       || (draft.paymentMethodId != nil && draft.paymentMethodId != paymentMethodFromDefaults)
       || (draft.note != nil && draft.note != noteFromTheLine)
       || draft.occurredAt != dateFromTheLine
+      || (amountFromTheLine.map { draft.amount != $0.amount } ?? false)
     let forWhom = ForWhomChoice(of: first)
     let byThePart =
       first.categoryId != nil || first.qualitySource == .manual
       || (forWhom != .me && forWhom != forWhomFromDefaults) || first.eventId != nil
       || first.goalId != nil || first.reimbursable
     return byTheDraft || byThePart || creditPlan != nil || expectedIncomeId != nil
+      || !cashbackField.text.trimmingCharacters(in: .whitespaces).isEmpty
   }
 
   /// Money back from a person is not written by Enter: it closes the parts the person owed
@@ -1776,6 +2187,10 @@ public final class EntryDraftModel {
     draft.rateSource = sheet.rateSource
     draft.rateProvisional = sheet.rateProvisional
     draft.paymentMethodId = sheet.paymentMethodId
+    // A card the draft kept stays only with its own account: income on another account the
+    // sheet chose would name a card of the first one, and its save would be refused.
+    draft.cardId = CardRules.cardAfterAccountChange(
+      draft.cardId, to: sheet.paymentMethodId, cards: liveCards)
     draft.parts = [PartDraft(amount: sheet.amount, forPersonId: person)]
     // What the sheet held is the owner's: no default laid later replaces it.
     currencyFromDefaults = nil
@@ -1799,6 +2214,10 @@ public final class EntryDraftModel {
     }
     // What the account received, typed or prefilled in the sheet, stays as it was there.
     if let received = sheet.accountAmount, !received.isZero { setCharge(received) }
+    // The owner has just confirmed a form: Enter does not stop to ask for a category of it.
+    if let gap = EntryCompleteness.gap(of: draftForSaving, tree: categoryTree) {
+      gapStop = GapStop(gap: gap, line: lastLine, text: lastLineText)
+    }
   }
 
   /// The debt the written operation pays or grows, if any: the one the operation as written
@@ -1955,6 +2374,8 @@ public final class EntryDraftModel {
   }
 
   public func reset() {
+    // First: the figure typed for the operation just saved is not the next one's.
+    cashbackField = CashbackFieldState()
     draft = TransactionDraft(currency: defaultCurrency)
     draft.normalizeSinglePart()
     currencyFromDefaults = defaultCurrency
@@ -1973,6 +2394,7 @@ public final class EntryDraftModel {
     unmatchedPlacePhrase = nil
     noteFromTheLine = nil
     dateFromTheLine = draft.occurredAt
+    amountFromTheLine = nil
     dateFollowsTheClock = true
     paymentMethodFromDefaults = nil
     forWhomFromDefaults = .me
@@ -1991,7 +2413,11 @@ public final class EntryDraftModel {
     pickBase = nil
     lineOfThePick = nil
     lastLine = nil
+    lastLineText = nil
     personPhraseFromTheLine = nil
+    gapStop = nil
+    focusRequest = nil
+    stampedAt = nil
   }
 
   // MARK: Refund of a purchase
@@ -2039,6 +2465,8 @@ public final class EntryDraftModel {
   /// The line the purchase was picked for, and the line applied last.
   private var lineOfThePick: ParsedInput?
   private var lastLine: ParsedInput?
+  /// The text of the line applied last, as the entry bar handed it over.
+  private var lastLineText: String?
   /// Whom the line named and in its own words — «от Ани» —, for the note of money back
   /// recorded as income instead.
   private var personPhraseFromTheLine: (id: UUID, text: String)?
@@ -2055,11 +2483,16 @@ public final class EntryDraftModel {
   }
 
   /// What the picker narrows the purchases by: the words, the place and the amount of the line.
+  /// The currency only when the owner said one — typed in the line or picked in the panel: one
+  /// the defaults laid (the default currency, the currency of the account whose screen is open)
+  /// says nothing about the purchase, and an amount without a code is in the purchase's own.
   public var refundQuery: RefundQuery {
     let base = pickBase?.draft ?? draft
+    let laid = pickBase?.currencyFromDefaults ?? currencyFromDefaults
     return RefundQuery(
       words: noteFromTheLine ?? base.note, placeId: base.placeId,
-      amount: base.amount.raw > 0 ? base.amount : nil, currency: base.currency,
+      amount: base.amount.raw > 0 ? base.amount : nil,
+      currency: (laid != nil && base.currency == laid) ? nil : base.currency,
       latestDay: calendar.day(of: draft.occurredAt))
   }
 
@@ -2094,6 +2527,17 @@ public final class EntryDraftModel {
       accountByDefault = self.accountByDefault(at: refund.placeId, in: otherOperations()).chosen
       refund.paymentMethodId = accountByDefault
     }
+    // The card the owner named with the account takes the money back; else the card that paid
+    // for the purchase, while it is live and of the account the refund comes onto.
+    let namedCard =
+      accountChosen
+      ? CardRules.cardAfterAccountChange(
+        base.draft.cardId, to: refund.paymentMethodId, cards: liveCards)
+      : nil
+    refund.cardId =
+      namedCard
+      ?? CardRules.cardAfterAccountChange(
+        candidate.purchase.transaction.cardId, to: refund.paymentMethodId, cards: liveCards)
     draft = refund
     pickBase = base
     lineOfThePick = lastLine
@@ -2132,11 +2576,16 @@ public final class EntryDraftModel {
   public var takesBackFromAPurchase: Bool { RefundRules.takesBack(draft) }
 
   /// «Разделить»: a kind that is split, and not a refund of a purchase, which takes back one
-  /// amount of one part.
-  public var canSplit: Bool { has(.split) && !takesBackFromAPurchase }
+  /// amount of one part — nor the difference of a count, whose money follows the books.
+  public var canSplit: Bool {
+    has(.split) && !takesBackFromAPurchase && !isReconcileDifference
+  }
 
-  /// «За другого»: a kind that has it, and not a refund of a purchase.
-  public var canMarkPaidForSomeone: Bool { has(.reimbursable) && !takesBackFromAPurchase }
+  /// «За другого»: a kind that has it, and not a refund of a purchase or a difference of a
+  /// count.
+  public var canMarkPaidForSomeone: Bool {
+    has(.reimbursable) && !takesBackFromAPurchase && !isReconcileDifference
+  }
 
   /// The rate can be typed — not on a refund of a purchase, which is at the purchase's rate.
   public var canTypeRate: Bool { !takesBackFromAPurchase }

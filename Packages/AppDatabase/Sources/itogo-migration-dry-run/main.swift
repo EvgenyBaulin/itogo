@@ -12,8 +12,11 @@ import GRDB
 // back the way the app reads it. What is printed is the shape of the data only: table names,
 // row counts, how many rows the data step changed, «equal» or «differ» for the sums of money
 // and the totals of every month, and what the update has to give — no operation without an
-// account, one live main account, the tables it adds empty. No amount, name, note or error
-// message is ever printed — an error message of SQLite can quote a row.
+// account, one live main account, the tables it adds empty but for the cards the data step
+// gives the card accounts. No amount, name, note or error message is ever printed — an error
+// message of SQLite can quote a row, one of the file system a path: an error is said by its
+// domain and codes (`DryRunText`), with a line of advice when the codes say why — the privacy
+// protection of macOS keeping a terminal out of another app's data, or the file's permissions.
 //
 // The folder is deleted at the end, and on Ctrl-C or a termination too. A run that could not
 // delete it — killed outright, or crashed — leaves it to the next run, which deletes it first:
@@ -158,15 +161,14 @@ func complain(_ line: String) {
   FileHandle.standardError.write(Data((line + "\n").utf8))
 }
 
-/// The type of an error and, for SQLite, its code: never its message.
+/// The domain and codes of an error, for SQLite its code: never its message.
 func describe(_ error: any Error) -> String {
-  if let failure = error as? DatabaseStack.MigrationFailure {
-    return "stopped at \(failure.migration ?? "?") (\(describe(failure.underlying)))"
-  }
-  if let sqlite = error as? GRDB.DatabaseError {
-    return "SQLite \(sqlite.extendedResultCode.rawValue)"
-  }
-  return String(describing: type(of: error))
+  DryRunText.describe(error)
+}
+
+/// A line of advice after the line of an error, when the codes of the error say why.
+func hint(_ error: any Error, _ write: (String) -> Void) {
+  if let hint = DryRunText.hint(for: error) { write("hint: \(hint)") }
 }
 
 func run() async -> Int32 {
@@ -198,6 +200,7 @@ func run() async -> Int32 {
   let before: Measures
   let countsBefore: [String: Int]
   let schemaBefore: Int
+  // Copying and reading are told apart: macOS may let the file be seen and not copied.
   do {
     try manager.createDirectory(at: folder, withIntermediateDirectories: true)
     for part in ["", "-wal", "-shm"] where manager.fileExists(atPath: original.path + part) {
@@ -205,12 +208,19 @@ func run() async -> Int32 {
         at: URL(fileURLWithPath: original.path + part),
         to: URL(fileURLWithPath: copy.path + part))
     }
+  } catch {
+    complain("migration dry run: the file could not be copied: \(describe(error))")
+    hint(error, complain)
+    return 3
+  }
+  do {
     let pending = try DatabaseStack.pendingMigrations(fileAt: copy, schema: schema)
     schemaBefore = try schema.migrations().count - pending.count
     countsBefore = try DatabaseStack.rowCounts(fileAt: copy)
     before = try measure(copy)
   } catch {
     complain("migration dry run: the copy could not be read: \(describe(error))")
+    hint(error, complain)
     return 3
   }
 
@@ -229,6 +239,7 @@ func run() async -> Int32 {
     try stack.close()
   } catch {
     say("migration: failed, \(describe(error))")
+    hint(error, say)
     return 3
   }
 
@@ -241,6 +252,7 @@ func run() async -> Int32 {
     accounts = try accountsAfter(copy)
   } catch {
     say("after the update: the copy could not be read, \(describe(error))")
+    hint(error, say)
     return 3
   }
 
@@ -248,12 +260,16 @@ func run() async -> Int32 {
   say("tables, rows before -> after:")
   var equal = true
   let created = applied.dataSteps["mainCreated"] ?? 0
+  let cardsCreated = applied.dataSteps["cardsCreated"] ?? 0
   for table in Set(countsBefore.keys).union(countsAfter.keys).sorted() {
     let old = countsBefore[table]
     let new = countsAfter[table]
     // Every table keeps its rows — the accounts gain the one the data step made, if it made
-    // one — and a table the update adds starts empty: it only adds, and fills nothing new.
-    let expected = old.map { table == "payment_methods" ? $0 + created : $0 } ?? 0
+    // one — and a table the update adds starts empty: it only adds, and fills nothing new,
+    // except the cards, which hold the one card the data step gives every live card account.
+    let expected =
+      old.map { table == "payment_methods" ? $0 + created : $0 }
+      ?? (table == "cards" ? cardsCreated : 0)
     let mark = new == expected ? "" : "   differ"
     if !mark.isEmpty { equal = false }
     let name = table.padding(toLength: 26, withPad: " ", startingAt: 0)

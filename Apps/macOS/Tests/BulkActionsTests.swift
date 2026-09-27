@@ -12,6 +12,8 @@ final class BulkActionsTests: XCTestCase {
   private var references: ReferenceRepository!
   private var store: TransactionsStore!
   private var written: [[UUID]] = []
+  /// The database of a test that needs the whole of it — counts and accounts included.
+  private var stack: DatabaseStack?
 
   /// Built inside each test, on the main actor: the store and its callback belong there.
   private func makeStore() throws {
@@ -524,6 +526,61 @@ final class BulkActionsTests: XCTestCase {
     XCTAssertEqual(plan.skipped.map(\.reason), [.creditPurchase])
   }
 
+  /// «Телефон» 60,000 ₽ bought on credit, its debt deleted since. Never paid, the purchase is
+  /// offered for deletion like any other — from the list and from the editor alike. Three
+  /// instalments of 5,000 ₽ paid on it, it stays, and the dialog says the debt was paid: the
+  /// 15,000 ₽ that left the card would otherwise be in no figure.
+  func testACreditPurchaseOfADeletedDebtIsOfferedForDeletion() throws {
+    try makeStore()
+    let phone = Debt(
+      direction: .iOwe, type: .installment, name: "Phone", paymentsAreExpenses: false,
+      origin: .purchase, deletedAt: Date(timeIntervalSince1970: 1_789_128_000))
+    try references.save(phone)
+    var draft = TransactionDraft(
+      occurredAt: CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 18)),
+      amount: AmountE4(whole: 60_000), note: "Phone")
+    draft.normalizeSinglePart()
+    var purchase = try draft.materialize()
+    purchase.transaction.creditDebtId = phone.id
+    try repository.save(purchase)
+    let environment = AppEnvironment()
+
+    // The question of the list and the question of the editor, `paid` instalments paid.
+    func questions(paid: Int) throws -> [BulkConfirmation?] {
+      let journal = (0..<paid).map { month in
+        DebtEntry(
+          debtId: phone.id, date: DateOnly(year: 2026, month: 10 + month, day: 1),
+          amountE4: AmountE4(whole: -5_000), kind: .payment)
+      }
+      store.show(
+        Ledger(
+          dataset: Dataset(
+            entries: try repository.entries(from: .distantPast, to: .distantFuture),
+            planning: PlanningBook(debtEntries: journal), deletedDebts: [phone]),
+          calendar: .utc))
+      let actions = OperationActions()
+      actions.requestDeletion(of: [purchase.id], store: store)
+      let editor = TransactionEditorModel(entry: purchase, environment: environment)
+      editor.requestDeletion(store: store)
+      return [actions.confirmation, editor.confirmation]
+    }
+
+    for question in try questions(paid: 0) {
+      guard case .delete(let ids, let plan, _, _) = try XCTUnwrap(question) else {
+        return XCTFail("a deletion was expected")
+      }
+      XCTAssertEqual(ids, [purchase.id])
+      XCTAssertTrue(plan.skipped.isEmpty, "\(plan.skipped.map(\.reason))")
+    }
+    for question in try questions(paid: 3) {
+      guard case .delete(let ids, let plan, _, _) = try XCTUnwrap(question) else {
+        return XCTFail("a deletion was expected")
+      }
+      XCTAssertEqual(ids, [])
+      XCTAssertEqual(plan.skipped.map(\.reason), [.creditPurchasePaid])
+    }
+  }
+
   /// Money a person gives back on a debt they owe me is a reimbursement too (DebtRules), but
   /// it closes no part and has no surplus or shortfall: its deletion moves the debt, and that
   /// is the only line the confirmation says about it. Money given back for a purchase says
@@ -696,5 +753,349 @@ final class BulkActionsTests: XCTestCase {
     ] {
       XCTAssertFalse(BulkRates.needed(for: edit), "\(edit)")
     }
+  }
+
+  // MARK: An account in the archive stays at zero
+
+  /// The card (main) counted 10,000 ₽ and the cash counted the sum of `purchases` at 06:00 of
+  /// 18 September, each purchase paid in cash after it, and the cash then archived at zero —
+  /// the lists showing the whole database. Returns the ids of the purchases.
+  private func purchasesOnArchivedCash(
+    _ purchases: [Int64]
+  ) async throws -> (card: PaymentMethod, cash: PaymentMethod, ids: [UUID]) {
+    let stack = try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    self.stack = stack
+    repository = TransactionRepository(writer: stack.writer)
+    references = ReferenceRepository(writer: stack.writer)
+    store = TransactionsStore()
+    store.attach(
+      repository, references: references, planning: PlanningRepository(writer: stack.writer))
+    written = []
+    store.didWrite = { [weak self] write in self?.written.append(write.touchedIds) }
+    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
+    var cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
+    for account in [card, cash] { try references.save(account) }
+    let morning = CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 18))
+      .addingTimeInterval(6 * 3_600)
+    let count = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 18), reconciledAt: morning,
+      actualTotalRubE4: .zero, kind: .accounts)
+    _ = try PlanningRepository(writer: stack.writer).apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [count],
+          reconciledBalances: [
+            ReconciledBalance(
+              reconciliationId: count.id, accountId: card.id, currency: .rub,
+              actualE4: AmountE4(whole: 10_000)),
+            ReconciledBalance(
+              reconciliationId: count.id, accountId: cash.id, currency: .rub,
+              actualE4: AmountE4(whole: purchases.reduce(0, +))),
+          ])))
+    let entries = try purchases.enumerated().map { index, whole in
+      var draft = TransactionDraft(
+        occurredAt: morning.addingTimeInterval(3_600 + TimeInterval(index)),
+        amount: AmountE4(whole: whole), note: "market \(index)", paymentMethodId: cash.id)
+      draft.normalizeSinglePart()
+      return try draft.materialize(now: morning)
+    }
+    try repository.insert(entries)
+    cash.archived = true
+    try references.save(cash)
+    try await showEverything()
+    return (card, cash, entries.map(\.id))
+  }
+
+  /// The lists over the whole database: accounts, counts and transfers included.
+  private func showEverything() async throws {
+    let stack = try XCTUnwrap(stack)
+    let dataset = try await DatasetRepository(writer: stack.writer).load(version: 0)
+    store.show(Ledger(dataset: dataset, calendar: .utc))
+  }
+
+  /// The balances of the card and the cash, and the transfers, as the database has them now.
+  private func money(
+    _ card: PaymentMethod, _ cash: PaymentMethod
+  ) async throws -> (card: AmountE4?, cash: AmountE4?, transfers: [UUID]) {
+    let stack = try XCTUnwrap(stack)
+    let dataset = try await DatasetRepository(writer: stack.writer).load(version: 0)
+    let balances = TransactionsStore.balances(of: dataset)
+    return (
+      balances[BalanceKey(accountId: card.id, currency: .rub)]?.amountE4,
+      balances[BalanceKey(accountId: cash.id, currency: .rub)]?.amountE4,
+      dataset.transfers.map(\.id)
+    )
+  }
+
+  /// Two purchases paid in cash moved to the card after the cash went to the archive at zero:
+  /// the 5,000 ₽ would come back onto the cash. The change is confirmed first though it splits
+  /// nothing and leaves nothing alone, the confirmation asks where the money goes, and the
+  /// change and the transfer to the card are one write — the cash at zero, the card holding the
+  /// money — that one ⌘Z takes back whole.
+  func testABulkChangeLeavingMoneyOnAnArchivedAccountSettlesInOneStep() async throws {
+    let (card, cash, ids) = try await purchasesOnArchivedCash([2_000, 3_000])
+    let actions = OperationActions()
+    actions.request(
+      .paymentMethod(card.id), on: Set(ids), store: store, environment: AppEnvironment())
+    guard case .edit(let edit, let asked, let plan) = actions.confirmation else {
+      return XCTFail("a change that moves archived money is confirmed first")
+    }
+    XCTAssertFalse(plan.touchesSplit)
+    XCTAssertEqual(plan.skipped, [])
+    XCTAssertEqual(
+      try repository.entries(ids: ids).map(\.transaction.paymentMethodId), [cash.id, cash.id],
+      "nothing is written before the confirmation")
+
+    let check = store.archivedLeftovers(of: edit, ids: Set(asked), calendar: .utc)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: 5_000)])
+    let settling = ArchivedMoneyForm(
+      check: check, accounts: [card, cash], locale: Locale(identifier: "en")
+    ).transfers(now: Date(), note: "left over")
+    XCTAssertEqual(settling.first?.toAccountId, card.id)
+    XCTAssertTrue(store.apply(edit, to: asked, calendar: .utc, settling: settling))
+    XCTAssertEqual(written.count, 1, "one write")
+    let after = try await money(card, cash)
+    XCTAssertEqual(after.cash, .zero, "the archived cash stays at zero")
+    XCTAssertEqual(after.card, AmountE4(whole: 10_000), "the card paid and got the money back")
+    XCTAssertEqual(after.transfers, settling.map(\.id))
+
+    store.undo()
+    let undone = try await money(card, cash)
+    XCTAssertEqual(undone.transfers, [], "one ⌘Z takes the transfer back with the change")
+    XCTAssertEqual(undone.cash, .zero)
+    XCTAssertEqual(undone.card, AmountE4(whole: 10_000))
+    XCTAssertTrue(
+      try repository.entries(ids: ids).allSatisfy { $0.transaction.paymentMethodId == cash.id })
+    XCTAssertFalse(store.canUndo, "the change and its transfer were one step")
+  }
+
+  /// The same with more operations than are written on the main thread: the change and its
+  /// transfer land in the background as one write, and its undo — in the background too —
+  /// takes the transfer back.
+  func testALargeBulkChangeLeavingMoneyOnAnArchivedAccountSettlesInOneStep() async throws {
+    let (card, cash, ids) = try await purchasesOnArchivedCash(
+      Array(repeating: 1, count: TransactionsStore.backgroundThreshold + 1))
+    let edit = BulkEdit.paymentMethod(card.id)
+    let check = store.archivedLeftovers(of: edit, ids: Set(ids), calendar: .utc)
+    XCTAssertEqual(
+      check.leftovers.map(\.amount),
+      [AmountE4(whole: Int64(TransactionsStore.backgroundThreshold + 1))])
+    let settling = ArchivedMoneyForm(
+      check: check, accounts: [card, cash], locale: Locale(identifier: "en")
+    ).transfers(now: Date(), note: "left over")
+
+    XCTAssertTrue(store.apply(edit, to: ids, calendar: .utc, settling: settling))
+    XCTAssertTrue(store.isWritingInBackground)
+    let landed = try await backgroundWriteLands()
+    XCTAssertTrue(landed)
+    XCTAssertEqual(written.count, 1)
+    let after = try await money(card, cash)
+    XCTAssertEqual(after.cash, .zero)
+    XCTAssertEqual(after.card, AmountE4(whole: 10_000))
+    XCTAssertEqual(after.transfers, settling.map(\.id))
+
+    store.undo()
+    XCTAssertTrue(store.isWritingInBackground, "a step that large is undone off the main thread")
+    let undone = try await backgroundWriteLands()
+    XCTAssertTrue(undone)
+    XCTAssertEqual(written.count, 2)
+    let back = try await money(card, cash)
+    XCTAssertEqual(back.transfers, [], "one ⌘Z takes the transfer back with the change")
+    XCTAssertEqual(back.cash, .zero)
+    XCTAssertEqual(back.card, AmountE4(whole: 10_000))
+    XCTAssertFalse(store.canUndo)
+  }
+
+  /// The two cash purchases are asked about and the owner is choosing where their 5,000 ₽ go
+  /// when the first one, 2,000 ₽, is moved to the card elsewhere with its own transfer. Returns
+  /// the purchases in their order, the change as it was confirmed, the 5,000 ₽ transfer worked
+  /// out for it, and the operations it planned to change.
+  private func aBulkMoveOvertaken() async throws -> (
+    card: PaymentMethod, cash: PaymentMethod, ids: [UUID], edit: BulkEdit, settling: [Transfer],
+    planned: Set<UUID>, meanwhile: [Transfer]
+  ) {
+    let (card, cash, ids) = try await purchasesOnArchivedCash([2_000, 3_000])
+    let actions = OperationActions()
+    actions.request(
+      .paymentMethod(card.id), on: Set(ids), store: store, environment: AppEnvironment())
+    guard case .edit(let edit, let asked, let plan) = actions.confirmation else {
+      XCTFail("a change that moves archived money is confirmed first")
+      throw CancellationError()
+    }
+    let check = store.archivedLeftovers(of: edit, ids: Set(asked), calendar: .utc)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: 5_000)])
+    let settling = ArchivedMoneyForm(
+      check: check, accounts: [card, cash], locale: Locale(identifier: "en")
+    ).transfers(now: Date(), note: "left over")
+
+    let first = ids[0]
+    let alone = store.archivedLeftovers(of: edit, ids: [first], calendar: .utc)
+    XCTAssertEqual(alone.leftovers.map(\.amount), [AmountE4(whole: 2_000)])
+    let meanwhile = ArchivedMoneyForm(
+      check: alone, accounts: [card, cash], locale: Locale(identifier: "en")
+    ).transfers(now: Date(), note: "moved elsewhere")
+    try repository.modify(ids: [first], settlingTransfers: meanwhile) { fresh in
+      var moved = fresh
+      moved.transaction.paymentMethodId = card.id
+      return moved
+    }
+    let between = try await money(card, cash)
+    XCTAssertEqual(between.cash, .zero, "the move elsewhere settled its own 2,000 ₽")
+    XCTAssertEqual(Set(asked), Set(ids))
+    return (card, cash, ids, edit, settling, Set(plan.changed.map(\.id)), meanwhile)
+  }
+
+  /// The confirmed change lands on the second purchase alone now, but its transfer counts
+  /// 5,000 ₽ of both: written, it would take the archived cash to −2,000 ₽ and the card 2,000 ₽
+  /// too high. Nothing is written, and the screen says the operations changed meanwhile.
+  func testABulkMoveWhosePlanChangedMeanwhileWritesNothing() async throws {
+    let setup = try await aBulkMoveOvertaken()
+    XCTAssertFalse(
+      store.apply(setup.edit, to: setup.ids, calendar: .utc, settling: setup.settling))
+    let after = try await money(setup.card, setup.cash)
+    XCTAssertEqual(after.cash, .zero, "the archived cash stays at zero")
+    XCTAssertEqual(after.card, AmountE4(whole: 10_000))
+    XCTAssertEqual(after.transfers, setup.meanwhile.map(\.id), "no 5,000 ₽ transfer")
+    XCTAssertEqual(
+      try repository.entry(id: setup.ids[1])?.transaction.paymentMethodId, setup.cash.id,
+      "the second purchase stays on the cash")
+    XCTAssertEqual(written, [])
+    XCTAssertFalse(store.canUndo, "nothing to undo")
+    let failure = try XCTUnwrap(store.failure, "the screen is told")
+    XCTAssertEqual(failure, StoreFailure(action: .change, cause: .planOutdated))
+    let language = AppLanguage()
+    // The choice is stored for the whole test host: it goes back to what it was.
+    let before = language.choice
+    defer { language.choice = before }
+    for choice in [AppLanguage.Choice.english, .russian] {
+      language.choice = choice
+      let message = StoreFailureText.message(failure, language: language)
+      XCTAssertFalse(message.hasPrefix("store.failure"), "\(message) in \(choice.rawValue)")
+      XCTAssertNotEqual(
+        message, language("store.failure.other", table: "Transactions"), "\(choice.rawValue)")
+    }
+  }
+
+  /// The same once the lists show the move made elsewhere: planned again from them, the change
+  /// would land on the second purchase alone and look right. The confirmation hands over the
+  /// operations it planned on, so the 5,000 ₽ transfer is still refused.
+  func testABulkMoveWhosePlanChangedMeanwhileWritesNothingOnceTheListsFollow() async throws {
+    let setup = try await aBulkMoveOvertaken()
+    try await showEverything()
+    XCTAssertFalse(
+      store.apply(
+        setup.edit, to: setup.ids, calendar: .utc, settling: setup.settling,
+        planned: setup.planned))
+    let after = try await money(setup.card, setup.cash)
+    XCTAssertEqual(after.cash, .zero, "the archived cash stays at zero")
+    XCTAssertEqual(after.card, AmountE4(whole: 10_000))
+    XCTAssertEqual(after.transfers, setup.meanwhile.map(\.id), "no 5,000 ₽ transfer")
+    XCTAssertEqual(
+      try repository.entry(id: setup.ids[1])?.transaction.paymentMethodId, setup.cash.id)
+    XCTAssertEqual(store.failure?.cause, .planOutdated)
+  }
+
+  /// The two cash purchases are asked about for deletion and the owner is choosing where their
+  /// 5,000 ₽ go when the first one, 2,000 ₽, is deleted elsewhere with its own transfer. Returns
+  /// the purchases in their order, the 5,000 ₽ transfer worked out for the deletion, the
+  /// operations it planned to take, the transfer made elsewhere, and the card's balance after
+  /// it.
+  private func aBulkDeletionOvertaken() async throws -> (
+    card: PaymentMethod, cash: PaymentMethod, ids: [UUID], settling: [Transfer],
+    planned: Set<UUID>, meanwhile: [Transfer], cardBetween: AmountE4?
+  ) {
+    let (card, cash, ids) = try await purchasesOnArchivedCash([2_000, 3_000])
+    let actions = OperationActions()
+    actions.requestDeletion(of: Set(ids), store: store)
+    guard case .delete(let asked, _, _, _) = actions.confirmation else {
+      XCTFail("a deletion is confirmed first")
+      throw CancellationError()
+    }
+    XCTAssertEqual(Set(asked), Set(ids))
+    let check = store.archivedLeftovers(ofDeleting: ids)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: 5_000)])
+    let planned = store.deletionPlanned(of: ids)
+    XCTAssertEqual(planned, Set(ids))
+    let settling = ArchivedMoneyForm(
+      check: check, accounts: [card, cash], locale: Locale(identifier: "en")
+    ).transfers(now: Date(), note: "left over")
+
+    let first = ids[0]
+    let alone = store.archivedLeftovers(ofDeleting: [first])
+    XCTAssertEqual(alone.leftovers.map(\.amount), [AmountE4(whole: 2_000)])
+    let meanwhile = ArchivedMoneyForm(
+      check: alone, accounts: [card, cash], locale: Locale(identifier: "en")
+    ).transfers(now: Date(), note: "deleted elsewhere")
+    _ = try PlanningRepository(writer: try XCTUnwrap(stack).writer).apply(
+      PlanningChange(
+        upsert: PlanningRows(transfers: meanwhile), softDeleted: [first], at: Date()))
+    let between = try await money(card, cash)
+    XCTAssertEqual(between.cash, .zero, "the deletion elsewhere settled its own 2,000 ₽")
+    XCTAssertEqual(between.card, AmountE4(whole: 12_000))
+    return (card, cash, ids, settling, planned, meanwhile, between.card)
+  }
+
+  /// The confirmed deletion takes the second purchase alone now — the first is gone already —,
+  /// but its transfer counts 5,000 ₽ of both: written, it would take the archived cash to
+  /// −2,000 ₽ and the card 2,000 ₽ too high. Nothing is written, and the screen says the
+  /// operations changed meanwhile.
+  func testABulkDeletionWhosePlanChangedMeanwhileWritesNothing() async throws {
+    let setup = try await aBulkDeletionOvertaken()
+    XCTAssertFalse(store.delete(ids: setup.ids, settling: setup.settling))
+    let after = try await money(setup.card, setup.cash)
+    XCTAssertEqual(after.cash, .zero, "the archived cash stays at zero")
+    XCTAssertEqual(
+      after.card, setup.cardBetween, "the card is where the deletion elsewhere left it")
+    XCTAssertEqual(after.transfers, setup.meanwhile.map(\.id), "no 5,000 ₽ transfer")
+    XCTAssertEqual(
+      try repository.entry(id: setup.ids[1])?.transaction.isDeleted, false,
+      "the second purchase stays")
+    XCTAssertEqual(written, [])
+    XCTAssertFalse(store.canUndo, "nothing to undo")
+    XCTAssertEqual(store.failure, StoreFailure(action: .delete, cause: .planOutdated))
+  }
+
+  /// The same once the lists show the deletion made elsewhere: planned again from them, the
+  /// deletion would take the second purchase alone and look right. The confirmation hands over
+  /// the operations it planned on, so the 5,000 ₽ transfer is still refused.
+  func testABulkDeletionWhosePlanChangedMeanwhileWritesNothingOnceTheListsFollow() async throws {
+    let setup = try await aBulkDeletionOvertaken()
+    try await showEverything()
+    XCTAssertEqual(store.deletionPlanned(of: setup.ids), [setup.ids[1]])
+    XCTAssertFalse(
+      store.delete(ids: setup.ids, settling: setup.settling, planned: setup.planned))
+    let after = try await money(setup.card, setup.cash)
+    XCTAssertEqual(after.cash, .zero, "the archived cash stays at zero")
+    XCTAssertEqual(after.card, setup.cardBetween)
+    XCTAssertEqual(after.transfers, setup.meanwhile.map(\.id), "no 5,000 ₽ transfer")
+    XCTAssertEqual(try repository.entry(id: setup.ids[1])?.transaction.isDeleted, false)
+    XCTAssertFalse(store.canUndo)
+    XCTAssertEqual(store.failure, StoreFailure(action: .delete, cause: .planOutdated))
+  }
+
+  /// Nothing changed meanwhile: the deletion confirmed with its plan takes both purchases and
+  /// the 5,000 ₽ transfer in one write, and one ⌘Z brings all of it back.
+  func testABulkDeletionWithItsPlanSettlesInOneStep() async throws {
+    let (card, cash, ids) = try await purchasesOnArchivedCash([2_000, 3_000])
+    let check = store.archivedLeftovers(ofDeleting: ids)
+    let planned = store.deletionPlanned(of: ids)
+    let settling = ArchivedMoneyForm(
+      check: check, accounts: [card, cash], locale: Locale(identifier: "en")
+    ).transfers(now: Date(), note: "left over")
+    XCTAssertTrue(store.delete(ids: ids, settling: settling, planned: planned))
+    XCTAssertEqual(written.count, 1, "one write")
+    let after = try await money(card, cash)
+    XCTAssertEqual(after.cash, .zero, "the archived cash stays at zero")
+    XCTAssertEqual(after.card, AmountE4(whole: 15_000))
+    XCTAssertEqual(after.transfers, settling.map(\.id))
+    XCTAssertNil(store.failure)
+
+    store.undo()
+    let undone = try await money(card, cash)
+    XCTAssertEqual(undone.transfers, [], "one ⌘Z takes the transfer back with the deletion")
+    XCTAssertEqual(undone.cash, .zero)
+    XCTAssertEqual(undone.card, AmountE4(whole: 10_000))
+    XCTAssertTrue(try repository.entries(ids: ids).allSatisfy { !$0.transaction.isDeleted })
+    XCTAssertFalse(store.canUndo)
   }
 }

@@ -14,9 +14,13 @@ import Testing
 /// rowid (the settings, read by their key, by value; the parts of an operation in the order of
 /// its split). A change the repository refuses leaves the database as it was too.
 ///
-/// The one value allowed to differ is `updated_at` of the operations a change deleted and ⌘Z
-/// brought back, and of those whose parts it reopened: bringing a row back is an update of it,
-/// stamped at the moment of the undo.
+/// Bringing an operation back gives it the moment it was last written before the change, and
+/// so does closing again the parts of a purchase its deletion reopened: nothing of the deleted
+/// operations, their companions or those purchases is allowed to differ. The operations that
+/// record the difference of a count follow the books — a change settles them and its undo
+/// settles them back —, so they are compared by value, with neither the moment they were last
+/// written nor their rowid: one the change purged at zero is written again by the undo, as it
+/// was and under the same id.
 @Suite("A planning change and its undo are exact inverses")
 struct PlanningUndoPropertyTests {
   /// A stack with half a year of history and its accounts layer: groups, accounts in several
@@ -26,80 +30,37 @@ struct PlanningUndoPropertyTests {
     let set = TestSupport.sample(months: 4).withAccounts(
       seed: 20_260_918, calendar: TestSupport.sampleCalendar, language: "en")
     try TransactionRepository(writer: stack.writer).insert(HistoryBatch(sample: set))
+    try ReconciliationRepository(writer: stack.writer).settleAll(
+      context: LiveCountsContext(calendar: TestSupport.sampleCalendar, categoryName: "Sverka"))
     return stack
   }
 
   /// Every table value for value and rowid for rowid — but `settings`, a table read by its
-  /// key, whose rows compare by their values alone, and the parts, whose order counts inside
-  /// their operation: the order of its split.
+  /// key, whose rows compare by their values alone, the parts, whose order counts inside
+  /// their operation: the order of its split, and the operations of the differences of the
+  /// counts, compared by value without the moment they were last written.
   static func contents(_ stack: DatabaseStack) throws -> [String: ExactTable] {
     var tables = try stack.writer.read { db in try ExactTables.read(db) }
     tables["settings"] = tables["settings"]?.byValue
     tables["transaction_parts"] = tables["transaction_parts"]?.inOrderWithin("transaction_id")
-    return tables
-  }
-
-  /// The contents with `updated_at` of these operations masked.
-  static func masking(
-    _ tables: [String: ExactTable], updatedAtOf ids: Set<String>
-  ) -> [String: ExactTable] {
-    guard var operations = tables["transactions"],
-      let idIndex = operations.columns.firstIndex(of: "id"),
-      let stampIndex = operations.columns.firstIndex(of: "updated_at")
-    else { return tables }
-    operations.rows = operations.rows.map { row in
-      var row = row
-      if ids.contains(row[idIndex + 1]) { row[stampIndex + 1] = "masked" }
-      return row
-    }
-    var result = tables
-    result["transactions"] = operations
-    return result
-  }
-
-  /// `quote()` of the ids an undo may stamp: the deleted operations, their companions and the
-  /// operations of the parts their deletion reopened.
-  static func stamped(by undo: PlanningUndo, db: Database) throws -> Set<String> {
-    var ids = Set(
-      (undo.deletion.deletedIds + undo.deletion.companionIds).map {
-        "'\($0.uuidString)'"
-      })
-    for part in undo.deletion.reopenedPartIds {
-      if let operation = try String.fetchOne(
-        db, sql: "SELECT transaction_id FROM transaction_parts WHERE id = ?",
-        arguments: [part.uuidString])
-      {
-        ids.insert("'\(operation)'")
+    if var operations = tables["transactions"],
+      let key = operations.columns.firstIndex(of: "external_id"),
+      let stamp = operations.columns.firstIndex(of: "updated_at")
+    {
+      func isDifference(_ row: [String]) -> Bool {
+        row[key + 1].hasPrefix("'reconcile:") && row[key + 1].filter { $0 == ":" }.count == 2
       }
+      let differences = operations.rows.filter(isDifference).map { row in
+        var row = row
+        row[stamp + 1] = "settled"
+        return row
+      }
+      operations.rows.removeAll(where: isDifference)
+      tables["transactions"] = operations
+      tables["transactions of differences"] =
+        ExactTable(columns: operations.columns, rows: differences).byValue
     }
-    return ids
-  }
-
-  /// `quote()` of the ids of the operations a write changed — their row, or a row of one of
-  /// their parts —, found by comparing the tables before and after it: an independent bound on
-  /// what an undo may stamp. An undo that reported more would widen the mask without a word.
-  static func operationsChanged(
-    from before: [String: ExactTable], to after: [String: ExactTable]
-  ) -> Set<String> {
-    func rows(_ table: ExactTable?, key: String) -> [String: [String]] {
-      guard let table, let index = table.columns.firstIndex(of: key) else { return [:] }
-      return Dictionary(
-        table.rows.map { ($0[index + 1], $0) }, uniquingKeysWith: { first, _ in first })
-    }
-    var changed: Set<String> = []
-    let operationsBefore = rows(before["transactions"], key: "id")
-    let operationsAfter = rows(after["transactions"], key: "id")
-    for id in Set(operationsBefore.keys).union(operationsAfter.keys)
-    where operationsBefore[id] != operationsAfter[id] {
-      changed.insert(id)
-    }
-    let partsBefore = rows(before["transaction_parts"], key: "id")
-    let partsAfter = rows(after["transaction_parts"], key: "id")
-    let owner = before["transaction_parts"]?.columns.firstIndex(of: "transaction_id")
-    for id in Set(partsBefore.keys).union(partsAfter.keys) where partsBefore[id] != partsAfter[id] {
-      if let owner, let row = partsBefore[id] ?? partsAfter[id] { changed.insert(row[owner + 1]) }
-    }
-    return changed
+    return tables
   }
 
   /// Names the tables that differ and the first row that does, for a readable failure.
@@ -127,7 +88,6 @@ struct PlanningUndoPropertyTests {
     let change = try drawer.change(in: stack, actions: 1...5)
     let planning = PlanningRepository(writer: stack.writer)
 
-    let rawBefore = try stack.writer.read { db in try ExactTables.read(db) }
     let undo: PlanningUndo
     do {
       undo = try planning.apply(change)
@@ -135,18 +95,9 @@ struct PlanningUndoPropertyTests {
       #expect(try Self.contents(stack) == before, "seed \(seed): a refused change wrote something")
       return
     }
-    let stamped = try stack.writer.read { db in try Self.stamped(by: undo, db: db) }
-    let changed = Self.operationsChanged(
-      from: rawBefore, to: try stack.writer.read { db in try ExactTables.read(db) })
-    #expect(
-      stamped.isSubset(of: changed),
-      "seed \(seed): the undo stamps operations the change never touched: \(stamped.subtracting(changed))"
-    )
     try planning.revert(undo, at: Date(timeIntervalSince1970: 1_790_000_000))
     let after = try Self.contents(stack)
-    let expected = Self.masking(before, updatedAtOf: stamped)
-    let got = Self.masking(after, updatedAtOf: stamped)
-    #expect(got == expected, "seed \(seed): \(drawer.log)\n\(Self.difference(expected, got))")
+    #expect(after == before, "seed \(seed): \(drawer.log)\n\(Self.difference(before, after))")
   }
 
   /// Several changes in a row, taken back one by one from the last, as ⌘Z does: the database
@@ -158,26 +109,18 @@ struct PlanningUndoPropertyTests {
     let before = try Self.contents(stack)
     let planning = PlanningRepository(writer: stack.writer)
     var undos: [PlanningUndo] = []
-    var stamped: Set<String> = []
     for _ in 0..<6 {
       let change = try drawer.change(in: stack, actions: 1...3)
-      let rawBefore = try stack.writer.read { db in try ExactTables.read(db) }
       guard let undo = try? planning.apply(change) else { continue }
-      let these = try stack.writer.read { db in try Self.stamped(by: undo, db: db) }
-      let changed = Self.operationsChanged(
-        from: rawBefore, to: try stack.writer.read { db in try ExactTables.read(db) })
-      #expect(these.isSubset(of: changed), "seed \(seed): \(these.subtracting(changed))")
-      stamped.formUnion(these)
       undos.append(undo)
     }
     for undo in undos.reversed() {
       try planning.revert(undo, at: Date(timeIntervalSince1970: 1_790_000_000))
     }
-    let expected = Self.masking(before, updatedAtOf: stamped)
-    let got = Self.masking(try Self.contents(stack), updatedAtOf: stamped)
+    let after = try Self.contents(stack)
     #expect(
-      got == expected,
-      "seed \(seed), \(undos.count) changes: \(drawer.log)\n\(Self.difference(expected, got))")
+      after == before,
+      "seed \(seed), \(undos.count) changes: \(drawer.log)\n\(Self.difference(before, after))")
   }
 
   /// A history whose unused categories have everything a category deletion reaches: a limit,
@@ -362,7 +305,12 @@ struct ChangeDrawer {
         categories: try CoreKit.Category.order(Column.rowID).fetchAll(db),
         live: try TransactionRepository.entries(
           where: "deleted_at IS NULL", arguments: [], order: "rowid", db: db),
-        settings: try String.fetchAll(db, sql: "SELECT key FROM settings ORDER BY key"),
+        // The categories of the differences are the app's to keep: no action of the planning
+        // writes or deletes their keys, and a settle that needs them makes them again.
+        settings: try String.fetchAll(db, sql: "SELECT key FROM settings ORDER BY key").filter {
+          $0 != PlanningSettings.reconcileExpenseCategoryKey
+            && $0 != PlanningSettings.reconcileIncomeCategoryKey
+        },
         heldCategories: Set(
           try String.fetchAll(
             db,

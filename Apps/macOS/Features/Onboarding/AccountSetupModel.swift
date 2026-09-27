@@ -8,9 +8,11 @@ import Foundation
 /// Every account of the database is listed (they already are accounts); banks, cash and other
 /// accounts are added next to them. The balances typed here are the first count of each
 /// account and currency: from then on the balance is that count plus what moved after it. A
-/// key counted before — after «Позже», by a reconciliation or the editor of an account — is no
-/// starting point: what the books expected for it is shown next to it, and the difference
-/// follows.
+/// field left empty is «не знаю»: nothing is written for it, the account stays uncounted, and
+/// its first count becomes its starting point; a 0 typed is a count of zero. A balance may be
+/// below zero — a credit card. A key counted before — after «Позже», by a reconciliation or the
+/// editor of an account — keeps its count while its field is left empty; typed, it is compared
+/// with what the books expected, and the difference is shown.
 struct AccountSetupModel: Equatable {
   struct Account: Identifiable, Equatable {
     var id: UUID
@@ -46,8 +48,14 @@ struct AccountSetupModel: Equatable {
     case noAccount
     case emptyName(UUID)
     case nameTaken(UUID)
+    /// The name is another name of the live account `rival`: the words name that account, so
+    /// the owner knows where to change it.
+    case nameIsOtherNameOf(UUID, rival: String)
     /// An archived account has the name: it is brought back from the archive, not made twice.
     case nameArchived(UUID)
+    /// A live card of another account is called so: the entry line would read the name as that
+    /// card. The words name the card.
+    case nameTakenByCard(UUID, card: String)
     case emptyGroupName(UUID)
     case groupNameTaken(UUID)
     /// An archived group has the name: it is brought back in Settings, not made twice.
@@ -64,7 +72,9 @@ struct AccountSetupModel: Equatable {
       case .noAccount: "onboarding.issue.noAccount"
       case .emptyName: "onboarding.issue.emptyName"
       case .nameTaken: "onboarding.issue.nameTaken"
+      case .nameIsOtherNameOf: "onboarding.issue.nameIsOtherName"
       case .nameArchived: "onboarding.issue.nameArchived"
+      case .nameTakenByCard: "onboarding.issue.nameTakenByCard"
       case .emptyGroupName: "onboarding.issue.emptyGroupName"
       case .groupNameTaken: "onboarding.issue.groupNameTaken"
       case .groupNameArchived: "onboarding.issue.groupNameArchived"
@@ -85,6 +95,19 @@ struct AccountSetupModel: Equatable {
     return issue.messageKey
   }
 
+  /// The words the sheet shows for `issue`, in `language`: a clash with another name of an
+  /// account names that account, a clash with a card names the card.
+  @MainActor
+  func message(for issue: Issue, language: AppLanguage) -> String {
+    if case .nameIsOtherNameOf(_, let rival) = issue {
+      return language.format(messageKey(for: issue), table: "Onboarding", rival)
+    }
+    if case .nameTakenByCard(_, let card) = issue {
+      return language.format(messageKey(for: issue), table: "Onboarding", card)
+    }
+    return language(messageKey(for: issue), table: "Onboarding")
+  }
+
   var accounts: [Account]
   var groups: [Group]
   var mainId: UUID?
@@ -97,6 +120,9 @@ struct AccountSetupModel: Equatable {
   /// other names of the accounts — from being taken.
   private(set) var archivedAccounts: [PaymentMethod] = []
   private(set) var archivedGroups: [AccountGroup] = []
+  /// The cards of every account, archived ones included: a live card keeps its name from being
+  /// taken by another account.
+  private(set) var cards: [PaymentCard] = []
   /// What the books expect now for every key that has been counted before.
   private(set) var expected: [BalanceKey: AmountE4] = [:]
   /// Whether `expected` has been read. Until it has, a key counted before would look like a
@@ -112,10 +138,10 @@ struct AccountSetupModel: Equatable {
 
   /// `accounts` and `groups` as the database has them, archived ones included: the live ones
   /// are listed, the archived ones only keep their names from being taken. `locale` orders
-  /// the names.
+  /// the names. `cards` are the cards of the accounts, whose live names are taken too.
   init(
     accounts: [PaymentMethod], groups: [AccountGroup], defaultCurrency: CurrencyCode,
-    enabled: [CurrencyCode], locale: Locale = Locale(identifier: "en")
+    enabled: [CurrencyCode], locale: Locale = Locale(identifier: "en"), cards: [PaymentCard] = []
   ) {
     // The order of every list of accounts: the main one first, then the owner's order.
     let live = AccountRules.ordered(accounts, locale: locale)
@@ -140,6 +166,7 @@ struct AccountSetupModel: Equatable {
     self.enabled = enabled
     self.archivedAccounts = accounts.filter(\.archived)
     self.archivedGroups = groups.filter(\.archived)
+    self.cards = cards
     self.highestSort = accounts.map(\.sort).max() ?? 0
     self.highestGroupSort = groups.map(\.sort).max() ?? 0
   }
@@ -158,27 +185,32 @@ struct AccountSetupModel: Equatable {
     hasExpected = true
   }
 
-  /// The balance of the key as the plan will write it: what was typed; for a key counted
-  /// before and left alone, what the books expect — the owner confirms it; zero otherwise.
-  func balance(_ key: BalanceKey) -> AmountE4 {
-    let account = accounts.first { $0.id == key.accountId }
-    return account?.typed[key.currency] ?? expected[key] ?? .zero
+  /// The balance of the key as the plan will write it: what was typed — zero and below zero
+  /// included —; `nil` for a field left empty, «не знаю», which writes nothing.
+  func balance(_ key: BalanceKey) -> AmountE4? {
+    accounts.first { $0.id == key.accountId }?.typed[key.currency]
   }
 
-  /// What the owner typed. The field of a balance writes back whatever it shows as soon as it
-  /// shows it; for a field left alone that is the balance it was given — no count of the
-  /// owner's — and it is not kept, so what moves while the sheet is open still reaches the
-  /// balance of a key counted before.
-  mutating func setBalance(_ amount: AmountE4, for key: BalanceKey) {
+  /// What the owner typed; `nil` — the field emptied — is «не знаю» again.
+  mutating func setBalance(_ amount: AmountE4?, for key: BalanceKey) {
     guard let index = index(of: key.accountId) else { return }
-    if accounts[index].typed[key.currency] == nil, amount == balance(key) { return }
     accounts[index].typed[key.currency] = amount
   }
 
-  /// The count against what the books expected, for a key counted before; `nil` for a
-  /// starting point.
+  /// The count typed against what the books expected, for a key counted before; `nil` for a
+  /// starting point and for a field left empty.
   func difference(_ key: BalanceKey) -> AmountE4? {
-    expected[key].map { balance(key) - $0 }
+    guard let expected = expected[key], let balance = balance(key) else { return nil }
+    return balance - expected
+  }
+
+  /// Some field of an account never counted is left empty: that account stays uncounted.
+  var leavesAccountsUncounted: Bool {
+    accounts.contains { account in
+      account.currencies.contains { currency in
+        account.typed[currency] == nil && expected[account.key(currency)] == nil
+      }
+    }
   }
 
   // MARK: Accounts
@@ -325,7 +357,7 @@ struct AccountSetupModel: Equatable {
 
   /// What stops «Готово», by the rules Settings saves accounts and groups by
   /// (`AccountRules`): a name no other account has, live or archived, among its names or its
-  /// other names; the main account in the summary.
+  /// other names, nor a live card of another account; the main account in the summary.
   var issues: [Issue] {
     var result: [Issue] = []
     if accounts.isEmpty { result.append(.noAccount) }
@@ -340,10 +372,18 @@ struct AccountSetupModel: Equatable {
       if found.contains(.emptyName) {
         result.append(.emptyName(account.id))
       } else if found.contains(.nameTaken) {
-        let liveRival = AccountRules.validate(
-          row, previous: nil, balances: .empty, enabled: switchedOn, others: rows
-        ).contains(.nameTaken)
-        result.append(liveRival ? .nameTaken(account.id) : .nameArchived(account.id))
+        // A live account in the way is named when the clash is with one of its other names:
+        // the owner changes that name in Settings.
+        if let rival = AccountRules.rival(of: row.name, account: row.id, among: rows) {
+          result.append(
+            rival.byOtherName
+              ? .nameIsOtherNameOf(account.id, rival: rival.account.name)
+              : .nameTaken(account.id))
+        } else {
+          result.append(.nameArchived(account.id))
+        }
+      } else if let card = cardTaking(account, row: row) {
+        result.append(.nameTakenByCard(account.id, card: card.name))
       }
       if found.contains(.mainInExcludedGroup), !result.contains(.mainInExcludedGroup) {
         result.append(.mainInExcludedGroup)
@@ -373,12 +413,15 @@ struct AccountSetupModel: Equatable {
   }
 
   /// What «Готово» writes, or `nil` while an issue is open or the balances expected are not
-  /// read. Every account gets a count for every currency it holds — zero for a field left
-  /// empty: the setup says how much is where.
+  /// read. A count for every balance typed, and only for those: a field left empty writes
+  /// nothing — an account never counted stays uncounted, one counted before keeps its count.
+  /// A key counted before and typed compares with what the books expected. Each new account of
+  /// the kind card or account comes with its card.
   func plan(at instant: Date) -> AccountSetupPlan? {
     guard hasExpected, issues.isEmpty, let mainId else { return nil }
     var nextSort = highestSort
     var methods: [PaymentMethod] = []
+    var cards: [PaymentCard] = []
     var openings: [BalanceKey: AmountE4] = [:]
     for account in accounts {
       var method = row(account)
@@ -387,9 +430,18 @@ struct AccountSetupModel: Equatable {
         method.sort = nextSort
       }
       methods.append(method)
+      // A new card or bank account starts with a card named like it; one already stored keeps
+      // the cards it has. The card's id is the account's own, masked: the plan is the same
+      // every time it is asked for.
+      if account.isNew,
+        let card = CardRules.startingCard(
+          for: method, id: CardsMigration.cardId(forAccount: method.id))
+      {
+        cards.append(card)
+      }
       for currency in account.currencies {
         let key = account.key(currency)
-        openings[key] = balance(key)
+        if let typed = balance(key) { openings[key] = typed }
       }
     }
     var nextGroupSort = highestGroupSort
@@ -404,7 +456,17 @@ struct AccountSetupModel: Equatable {
     return AccountSetupPlan(
       accounts: methods, groups: groups, mainAccountId: mainId, openingBalances: openings,
       expected: expected.filter { openings[$0.key] != nil }, defaultCurrency: defaultCurrency,
-      at: instant)
+      at: instant, cards: cards)
+  }
+
+  /// The live card of another account that the name of an account added or renamed here is
+  /// already. Only the name is checked: the other names of a stored account are not edited
+  /// here, and Settings checked them when they were written.
+  private func cardTaking(_ account: Account, row: PaymentMethod) -> PaymentCard? {
+    if let stored = account.stored, Self.nameKey(stored.name) == Self.nameKey(row.name) {
+      return nil
+    }
+    return CardRules.cardTaking(row.name, except: row.id, cards: cards)
   }
 
   /// The account as «Готово» would write it: the row the database has, with what the sheet
@@ -437,9 +499,11 @@ struct AccountSetupModel: Equatable {
   /// merged or deleted since leaves the list — written back live, merged money would count
   /// twice — and one made since joins it. Returns whether the list changed that way: the
   /// owner sees it before anything is written.
+  /// `cards`, when given, replace the cards read before.
   @discardableResult
   mutating func rebase(
-    accounts fresh: [PaymentMethod], groups freshGroups: [AccountGroup]
+    accounts fresh: [PaymentMethod], groups freshGroups: [AccountGroup],
+    cards freshCards: [PaymentCard]? = nil
   ) -> Bool {
     var changed = false
     let liveGroups = freshGroups.filter { !$0.archived }
@@ -509,6 +573,7 @@ struct AccountSetupModel: Equatable {
     storedMainId = freshMain
     archivedAccounts = fresh.filter(\.archived)
     archivedGroups = freshGroups.filter(\.archived)
+    if let freshCards { cards = freshCards }
     highestSort = fresh.map(\.sort).max() ?? 0
     highestGroupSort = freshGroups.map(\.sort).max() ?? 0
     return changed
@@ -535,29 +600,33 @@ extension AccountSetupModel {
   /// cannot be read — an empty list would offer to make them again.
   @MainActor
   static func load(from environment: AppEnvironment) -> AccountSetupModel? {
-    guard let (accounts, groups) = readAccounts(environment) else { return nil }
+    guard let (accounts, groups, cards) = readAccounts(environment) else { return nil }
     let enabled = (try? environment.settings?.enabledCurrencies()) ?? CurrencyCode.defaultEnabled
     return AccountSetupModel(
       accounts: accounts, groups: groups, defaultCurrency: environment.defaultCurrency,
-      enabled: enabled, locale: environment.language.locale)
+      enabled: enabled, locale: environment.language.locale, cards: cards)
   }
 
   /// `rebase` on what the database has now; `nil` when it cannot be read.
   @MainActor
   mutating func rebase(on environment: AppEnvironment) -> Bool? {
-    guard let (accounts, groups) = Self.readAccounts(environment) else { return nil }
-    return rebase(accounts: accounts, groups: groups)
+    guard let (accounts, groups, cards) = Self.readAccounts(environment) else { return nil }
+    return rebase(accounts: accounts, groups: groups, cards: cards)
   }
 
+  /// The accounts, the groups and the cards, archived ones included.
   @MainActor
   private static func readAccounts(
     _ environment: AppEnvironment
-  ) -> (accounts: [PaymentMethod], groups: [AccountGroup])? {
-    guard let repository = environment.accounts else { return nil }
+  ) -> (accounts: [PaymentMethod], groups: [AccountGroup], cards: [PaymentCard])? {
+    guard let repository = environment.accounts, let stack = environment.stack else {
+      return nil
+    }
     do {
       return (
         try repository.accounts(includeArchived: true),
-        try repository.groups(includeArchived: true)
+        try repository.groups(includeArchived: true),
+        try CardRepository(writer: stack.writer).cards(includeArchived: true)
       )
     } catch {
       AppLog.error(

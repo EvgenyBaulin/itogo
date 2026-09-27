@@ -139,11 +139,17 @@ public struct ReferenceRepository: Sendable {
     }
   }
 
-  public func debts(includeClosed: Bool = false) throws -> [Debt] {
+  /// The debts by name: the open ones, the closed ones with `includeClosed`. A debt the owner
+  /// deleted is left out unless `includeDeleted` asks for it, so it leaves every picker and the
+  /// vocabulary of the entry line.
+  public func debts(includeClosed: Bool = false, includeDeleted: Bool = false) throws -> [Debt] {
     try writer.read { db in
       var request = Debt.all()
       if !includeClosed {
         request = request.filter(Column("closed") == false)
+      }
+      if !includeDeleted {
+        request = request.filter(Column("deleted_at") == nil)
       }
       return try request.order(Column("name")).fetchAll(db)
     }
@@ -155,6 +161,18 @@ public struct ReferenceRepository: Sendable {
   /// the same write: there is never a moment with two main accounts, nor one with none.
   public func save(_ method: PaymentMethod) throws {
     try writer.write { db in try Self.save(method, db: db) }
+  }
+
+  /// Saves a new account together with the card it starts with (`CardRules.startingCard`), in
+  /// one write: both land, or neither. `nil`: the account alone, as `save(_:)`.
+  public func save(_ method: PaymentMethod, startingCard: PaymentCard?) throws {
+    try writer.write { db in
+      try Self.save(method, db: db)
+      if var card = startingCard {
+        card.accountId = method.id
+        try card.save(db)
+      }
+    }
   }
 
   static func save(_ method: PaymentMethod, db: Database) throws {
@@ -240,10 +258,16 @@ public struct ReferenceRepository: Sendable {
 
   /// Every column that points at a row of a dictionary that can be merged, by the table it
   /// points at. Operations are not the only thing that does: a scheduled payment names the
-  /// person it is for and the card it is paid with, and the charge it writes next month
+  /// person it is for and the account it is paid from, and the charge it writes next month
   /// takes them from there — a merge that left it behind would undo itself one payment at a
   /// time. `MergeTests` holds this list, with `keptOnMerge`, against the foreign keys of the
   /// schema, so a column a later migration adds cannot be forgotten here.
+  ///
+  /// The columns move in the order given. The cards of an account move first: a row that names
+  /// a card must name the card's own account (the schema's `card_of_account_*` triggers), so the
+  /// card is on the target before any operation or payment naming it is. The cashback rules
+  /// and the accounts expected income is to come to move too. An event a scheduled payment
+  /// belongs to is used by it: it is archived or merged, not deleted, in the reference books.
   static let mergedColumns: [String: [(table: String, column: String)]] = [
     "people": [
       ("transaction_parts", "for_person_id"), ("transaction_parts", "debtor_person_id"),
@@ -253,11 +277,16 @@ public struct ReferenceRepository: Sendable {
     ],
     "places": [("transactions", "place_id")],
     "payment_methods": [
+      ("cards", "payment_method_id"),
       ("transactions", "payment_method_id"), ("scheduled_payments", "payment_method_id"),
       ("transfers", "from_payment_method_id"), ("transfers", "to_payment_method_id"),
-      ("debt_entries", "payment_method_id"),
+      ("debt_entries", "payment_method_id"), ("cashback_rules", "payment_method_id"),
+      ("expected_income", "payment_method_id"),
     ],
-    "events": [("transaction_parts", "event_id"), ("import_mappings", "target_event_id")],
+    "events": [
+      ("transaction_parts", "event_id"), ("import_mappings", "target_event_id"),
+      ("scheduled_payments", "event_id"),
+    ],
   ]
 
   /// Columns that point at a row being merged and are left where they are, as its history:
@@ -297,6 +326,7 @@ public struct ReferenceRepository: Sendable {
   public func mergePaymentMethod(_ source: UUID, into target: UUID) throws {
     guard source != target else { return }
     try writer.write { db in
+      try AccountRepository.dropCollidingRules(of: source, into: target, db: db)
       try Self.repoint("payment_methods", from: source, to: target, db: db)
       try Self.mergeAliases(PaymentMethod.self, source: source, into: target, db: db)
       let wasMain =
@@ -493,7 +523,7 @@ public struct ReferenceRepository: Sendable {
   /// A name as the entry line compares names: the case, «ё» against «е» and the spaces around
   /// it do not count.
   public static func nameKey(_ name: String) -> String {
-    String(name.trimmingCharacters(in: .whitespaces).lowercased().map { $0 == "ё" ? "е" : $0 })
+    NameKey.fold(name)
   }
 
   /// A row of a dictionary as far as its names and its days go.
@@ -586,7 +616,8 @@ public struct ReferenceRepository: Sendable {
       arguments: [RowMapping.join(merged), target.uuidString])
   }
 
-  /// Everything the entry-line parser needs to recognise names and aliases.
+  /// Everything the entry-line parser needs to recognise names and aliases — the cards too,
+  /// each with the account it puts the operation on.
   public func vocabulary(enabledCurrencies: [CurrencyCode]) throws -> ParserVocabulary {
     ParserVocabulary(
       people: try people().map {
@@ -601,7 +632,27 @@ public struct ReferenceRepository: Sendable {
       events: try events().map { ParserVocabulary.Entry(id: $0.id, name: $0.name) },
       goals: try goals().map { ParserVocabulary.Entry(id: $0.id, name: $0.name) },
       debts: try debts().map { ParserVocabulary.Entry(id: $0.id, name: $0.name) },
-      enabledCurrencies: enabledCurrencies)
+      enabledCurrencies: enabledCurrencies,
+      cards: try liveCards().map {
+        ParserVocabulary.CardEntry(
+          entry: ParserVocabulary.Entry(id: $0.id, name: $0.name, aliases: $0.aliases),
+          accountId: $0.accountId)
+      })
+  }
+
+  /// The live cards of live accounts, in the owner's order: the cards the entry line reads. A
+  /// card in the archive, or of an account in the archive, is read by nobody.
+  private func liveCards() throws -> [PaymentCard] {
+    try writer.read { db in
+      try PaymentCard.fetchAll(
+        db,
+        sql: """
+          SELECT cards.* FROM cards
+          JOIN payment_methods ON payment_methods.id = cards.payment_method_id
+          WHERE cards.archived = 0 AND payment_methods.archived = 0
+          ORDER BY cards.sort, cards.name, cards.rowid
+          """)
+    }
   }
 
   private func fetchAll<T: FetchableRecord & TableRecord>(

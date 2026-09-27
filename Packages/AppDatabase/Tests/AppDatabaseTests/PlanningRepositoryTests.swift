@@ -600,7 +600,7 @@ struct PlanningUndoTests {
     let listed = Set(CoreKit.Category.dependents.map { "\($0.table).\($0.column)" })
     #expect(listed == Set(pointing.keys))
     let keptWhole: Set<String> = [
-      "goals", "debts", "scheduled_payments", "expected_income", "budgets",
+      "goals", "debts", "scheduled_payments", "expected_income", "budgets", "cashback_rules",
     ]
     for (column, onDelete) in pointing
     where !keptWhole.contains(String(column.prefix { $0 != "." })) {
@@ -1373,8 +1373,10 @@ struct PlanningOperationsTests {
 @Suite("A merge of accounts starts the merged-away account from zero")
 struct AccountMergeStorageTests {
   /// Merged into the card, the wallet's operations, transfers and journal lines follow it, a
-  /// transfer between the two in one currency goes, and the wallet is counted at zero from
-  /// the moment of the merge — so bringing it back from the archive counts nothing twice.
+  /// transfer between the two in one currency goes, and the wallet is counted at zero right
+  /// after its own latest count — so bringing it back from the archive counts nothing twice. A
+  /// merge is no count: one opening per moment of the plan, each saying it came from a merge,
+  /// every row a starting point.
   @Test func theMergedAwayAccountIsCountedAtZero() throws {
     let stack = try TestSupport.makeStack()
     _ = try TestSupport.seedReferences(stack)
@@ -1419,7 +1421,8 @@ struct AccountMergeStorageTests {
       AccountMergePlan(
         sourceId: wallet.id, target: target, deletedTransferIds: [within.id],
         opening: [rub: AmountE4(whole: 1_380), usd: AmountE4(whole: 5)], at: at,
-        sourceZero: [walletRub, walletUsd], hadAnchor: [walletRub]),
+        sourceZero: [walletRub, walletUsd],
+        moments: [rub: PlanningTests.instant(hour: 7), walletRub: PlanningTests.instant(hour: 7)]),
       calendar: .utc)
 
     let accounts = try AccountRepository(writer: stack.writer).accounts(includeArchived: true)
@@ -1435,19 +1438,19 @@ struct AccountMergeStorageTests {
     #expect(transfers.first?.fromAccountId == card.id)
 
     let book = try repository.book()
-    let opening = try #require(book.reconciliations.last)
-    #expect(opening.kind == .opening)
-    #expect(opening.reconciledAt == at)
-    #expect(opening.date == DateOnly(year: 2026, month: 9, day: 17))
-    let counts = book.reconciledBalances.filter { $0.reconciliationId == opening.id }
-    #expect(counts.map(\.key) == [rub, usd, walletRub, walletUsd])
-    let byKey = Dictionary(uniqueKeysWithValues: counts.map { ($0.key, $0) })
+    let openings = book.reconciliations.filter { $0.id != firstCount.id }
+    #expect(openings.map(\.kind) == [.opening, .opening])
+    #expect(openings.map(\.origin) == [.merge, .merge])
+    #expect(openings.map(\.reconciledAt) == [PlanningTests.instant(hour: 7), at])
+    #expect(openings.last?.date == DateOnly(year: 2026, month: 9, day: 17))
+    let early = book.reconciledBalances.filter { $0.reconciliationId == openings[0].id }
+    let late = book.reconciledBalances.filter { $0.reconciliationId == openings[1].id }
+    #expect(early.map(\.key) == [rub, walletRub])
+    #expect(late.map(\.key) == [usd, walletUsd])
+    let byKey = Dictionary(uniqueKeysWithValues: (early + late).map { ($0.key, $0) })
     #expect(byKey[rub]?.actualE4 == AmountE4(whole: 1_380))
-    #expect(byKey[rub]?.isStartingPoint == true)
     #expect(byKey[walletRub]?.actualE4 == .zero)
-    #expect(byKey[walletRub]?.expectedE4 == .zero)
-    #expect(byKey[walletRub]?.differenceE4 == .zero)
-    #expect(byKey[walletUsd]?.isStartingPoint == true)
+    #expect((early + late).allSatisfy { $0.isStartingPoint && $0.recordsDifference == nil })
     // The wallet's own history stays its own.
     #expect(book.reconciledBalances.contains(walletCount))
   }

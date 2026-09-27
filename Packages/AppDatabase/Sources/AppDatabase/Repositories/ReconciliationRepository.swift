@@ -38,6 +38,31 @@ public struct ReconciliationRepository: Sendable {
     try writer.read { db in try Self.balances(db) }
   }
 
+  /// Every live count follows the books once, and every difference whose count is gone goes
+  /// (`LiveCountsWriter.settleAll`): the catch-up at open, for counts whose windows got entries
+  /// dated back while nothing settled them — the first open of a book of 1.1 — and for anything a
+  /// missed path left behind. One write; writes nothing when everything already follows. Not a
+  /// step of ⌘Z: the difference is derived by definition.
+  @discardableResult
+  public func settleAll(
+    context: LiveCountsContext = .standard, at instant: Date = Date()
+  ) throws -> CountsSettled {
+    try writer.write { db in
+      try LiveCountsWriter.settleAll(context: context, now: instant, db: db)
+    }
+  }
+
+  /// `settleAll` off the calling thread, awaited: the catch-up at open runs beside the launch
+  /// rather than in its way.
+  @discardableResult
+  public func settleAllInBackground(
+    context: LiveCountsContext = .standard, at instant: Date = Date()
+  ) async throws -> CountsSettled {
+    try await writer.write { db in
+      try LiveCountsWriter.settleAll(context: context, now: instant, db: db)
+    }
+  }
+
   static func balances(_ db: Database) throws -> [ReconciledBalance] {
     try ReconciledBalance.fetchAll(
       db,

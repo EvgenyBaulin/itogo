@@ -137,6 +137,388 @@
         }
       }
     },
+    "debts.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить…"
+          }
+        }
+      }
+    },
+    "debts.delete.action": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить"
+          }
+        }
+      }
+    },
+    "debts.delete.cash": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Money that changed hands through the journal stays in the account balances."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги, которые по журналу переходили из рук в руки, остаются в остатках счетов."
+          }
+        }
+      }
+    },
+    "debts.delete.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The subcategory «%@» under Loans goes to the archive."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подкатегория «%@» в «Кредитах» уйдёт в архив."
+          }
+        }
+      }
+    },
+    "debts.delete.journal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "The debt and its journal (%lld entry) leave Debts, reminders and the free sum."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "The debt and its journal (%lld entries) leave Debts, reminders and the free sum."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Долг и его журнал (%lld записи) пропадут из «Долгов», напоминаний и свободной суммы."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Долг и его журнал (%lld записей) пропадут из «Долгов», напоминаний и свободной суммы."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Долг и его журнал (%lld запись) пропадут из «Долгов», напоминаний и свободной суммы."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Долг и его журнал (%lld записи) пропадут из «Долгов», напоминаний и свободной суммы."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "debts.delete.left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The %@ left on it will not be shown anywhere."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток %@ больше нигде не будет виден."
+          }
+        }
+      }
+    },
+    "debts.delete.ops.loans": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operation that paid it stays in Transactions as spending in Loans."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operations that paid it stay in Transactions as spending in Loans."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции, которыми его платили, останутся в «Операциях» расходами в «Кредитах»."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операций, которыми его платили, останутся в «Операциях» расходами в «Кредитах»."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операция, которой его платили, останется в «Операциях» расходом в «Кредитах»."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции, которыми его платили, останутся в «Операциях» расходами в «Кредитах»."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "debts.delete.ops.moneyBack": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operation of it stays in Transactions and in the balances; it becomes neither income nor spending."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld operations of it stay in Transactions and in the balances; they become neither income nor spending."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции по нему останутся в «Операциях» и в остатках счетов; доходом или тратой они не станут."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операций по нему останутся в «Операциях» и в остатках счетов; доходом или тратой они не станут."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операция по нему останется в «Операциях» и в остатках счетов; доходом или тратой она не станет."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld операции по нему останутся в «Операциях» и в остатках счетов; доходом или тратой они не станут."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "debts.delete.ops.notSpending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld payment stays in Transactions and in the balances; it does not become spending — the purchase was."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld payments stay in Transactions and in the balances; they do not become spending — the purchase was."
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld платежа останутся в «Операциях» и в остатках счетов; тратами они не станут — тратой была сама покупка."
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld платежей останутся в «Операциях» и в остатках счетов; тратами они не станут — тратой была сама покупка."
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld платёж останется в «Операциях» и в остатках счетов; тратой он не станет — тратой была сама покупка."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld платежа останутся в «Операциях» и в остатках счетов; тратами они не станут — тратой была сама покупка."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "debts.delete.owedLater": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "If «%@» pays this back later, it will be recorded as income."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если «%@» потом вернёт эти деньги, они запишутся доходом."
+          }
+        }
+      }
+    },
+    "debts.delete.purchase": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The purchase «%@» stays spending on the day it was made."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Покупка «%@» остаётся тратой в день покупки."
+          }
+        }
+      }
+    },
+    "debts.delete.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete «%@»?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить «%@»?"
+          }
+        }
+      }
+    },
+    "debts.delete.undo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘Z brings it back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отменить можно через ⌘Z."
+          }
+        }
+      }
+    },
+    "debts.deleteFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The debt could not be deleted."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось удалить долг."
+          }
+        }
+      }
+    },
     "debts.groupTotal": {
       "extractionState": "manual",
       "localizations": {
@@ -422,6 +804,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Оплатил за кредитора…"
+          }
+        }
+      }
+    },
+    "debts.overdue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "overdue"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "просрочен"
           }
         }
       }
@@ -1325,6 +1724,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Это на %2$@ больше остатка (%1$@). Закрытый долг спишет лишнее, открытый покажет остаток −%2$@."
+          }
+        }
+      }
+    },
+    "form.pay.overSurplus": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That is %2$@ more than is left (%1$@). The debt closes with what is left, and %2$@ goes to income in Surcharges."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это на %2$@ больше остатка (%1$@). Долг закроется остатком, а %2$@ станут доходом в «Доплатах»."
           }
         }
       }

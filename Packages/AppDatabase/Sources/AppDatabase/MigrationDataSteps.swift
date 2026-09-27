@@ -10,8 +10,8 @@ import GRDB
 /// through the record types: a record grows with every later schema, and the step of an older
 /// migration must do tomorrow exactly what it does today.
 enum MigrationDataSteps {
-  /// Thrown after the SQL of `0004_accounts` ran, when the context asks for it: the proof that a
-  /// migration stopped halfway leaves nothing behind.
+  /// Thrown after the SQL of a migration with a step ran, when the context asks for it: the
+  /// proof that a migration stopped halfway leaves nothing behind.
   struct StoppedOnPurpose: Error {}
 
   /// Runs the step of the migration `name`, if it has one, and says what it did — counts only.
@@ -20,8 +20,14 @@ enum MigrationDataSteps {
   ) throws -> [String: Int] {
     switch name {
     case "0004_accounts": try accounts(db: db, context: context)
+    case "0005_cards": try cardsAndCounts(db: db, context: context)
     default: [:]
     }
+  }
+
+  /// Whether the context asks the step of `name` to stop once its SQL has run.
+  private static func stops(_ name: String, context: MigrationContext) -> Bool {
+    context.failAfterSQL || context.failAfterSQLOf == name
   }
 
   /// One live main account, and an account for every operation (`AccountsMigration`). These
@@ -109,7 +115,118 @@ enum MigrationDataSteps {
         counts["assigned"] = db.changesCount
       }
     }
-    if context.failAfterSQL { throw StoppedOnPurpose() }
+    if stops("0004_accounts", context: context) { throw StoppedOnPurpose() }
     return counts
+  }
+
+  /// A card for every live account of the kind «card» (`CardsMigration`), the mode of every
+  /// compared count of a sheet (`CountsMigration`), and the month the plan of every goal with a
+  /// plan counts from. The only values the update fills: rows of the new table `cards`,
+  /// `records_difference` of those counts and `plan_start_month` of those goals — all new.
+  /// Nothing an older build wrote changes, and no difference is computed again: a count keeps
+  /// its expected balance, its difference and its operation.
+  ///
+  /// A key is compared as the text it is stored as, so the ids are written back as they were
+  /// read: an id a hand edit left in lower case is matched in lower case. For the same reason
+  /// one UUID a hand edit stored in two cases is two rows — two accounts, two counts, two
+  /// sheets — and the step keeps them apart: the card points at the row the plan chose, and
+  /// every compared count gets the mode of its own row and its own sheet.
+  ///
+  /// The counts: `cardsCreated`; `cardsSkipped` — live card accounts whose name is blank, which
+  /// the table refuses; `countsRecorded`, `countsKept` — compared counts given 1 and 0;
+  /// `goalPlansStarted` — goals whose plan now counts from the month of the update.
+  private static func cardsAndCounts(
+    db: Database, context: MigrationContext
+  ) throws -> [String: Int] {
+    // 1. The accounts, in the order they were written. An id that is not a UUID gets no card,
+    // and neither does an account whose archive flag does not read: no card is made on a guess.
+    // A UUID read twice gets one card, for its first live card account (`CardsMigration.plan`),
+    // so the text kept for it is that account's — never a row of another kind or in the archive.
+    var accountIds: [UUID: String] = [:]
+    var accounts: [MigratingCardAccount] = []
+    for row in try Row.fetchAll(
+      db, sql: "SELECT rowid, id, name, kind, archived FROM payment_methods ORDER BY rowid")
+    {
+      guard let text: String = row["id"], let id = UUID(uuidString: text) else { continue }
+      let storedKind: String? = row["kind"]
+      let kind = storedKind.flatMap(PaymentMethodKind.init(rawValue:))
+      let archived = (try? RowMapping.flag(row, "archived", fallback: false)) ?? true
+      if kind == .card && !archived && accountIds[id] == nil { accountIds[id] = text }
+      accounts.append(
+        MigratingCardAccount(id: id, name: row["name"] ?? "", kind: kind, archived: archived))
+    }
+
+    // 2. Their cards.
+    let plan = CardsMigration.plan(accounts: accounts)
+    for card in plan.cards {
+      guard let account = accountIds[card.accountId] else { continue }
+      try db.execute(
+        sql: """
+          INSERT INTO cards (id, payment_method_id, name, aliases, sort, archived)
+          VALUES (?, ?, ?, '', 0, 0)
+          """,
+        arguments: [card.id.uuidString, account, card.name])
+    }
+
+    // 3. The mode of every compared count of a sheet. Openings, totals and starting points are
+    // not read, and keep no mode. A count or a sheet whose id is not a UUID is not read either.
+    // The rule is given a key of its own for every stored text, never stored itself: one UUID
+    // in two cases is two counts, or two sheets, and each keeps its own mode.
+    var countTexts: [UUID: String] = [:]
+    var sheetKeys: [String: UUID] = [:]
+    var counts: [MigratingCount] = []
+    for row in try Row.fetchAll(
+      db,
+      sql: """
+        SELECT b.id, b.reconciliation_id, b.difference_e4, t.id AS operation, t.deleted_at
+        FROM reconciliation_balances b
+        JOIN reconciliations r ON r.id = b.reconciliation_id
+        LEFT JOIN transactions t ON t.id = b.transaction_id
+        WHERE r.kind = 'accounts' AND b.expected_e4 IS NOT NULL
+        ORDER BY b.rowid
+        """)
+    {
+      guard let text: String = row["id"], UUID(uuidString: text) != nil,
+        let sheetText: String = row["reconciliation_id"], UUID(uuidString: sheetText) != nil
+      else { continue }
+      let key = UUID()
+      countTexts[key] = text
+      let sheet = sheetKeys[sheetText] ?? UUID()
+      sheetKeys[sheetText] = sheet
+      let difference: DatabaseValue = row["difference_e4"]
+      let operation: DatabaseValue = row["operation"]
+      let binned: DatabaseValue = row["deleted_at"]
+      counts.append(
+        MigratingCount(
+          id: key, reconciliationId: sheet,
+          differenceE4: Int64.fromDatabaseValue(difference).map(AmountE4.init(raw:)),
+          operation: operation.isNull ? .none : binned.isNull ? .live : .binned))
+    }
+    var recorded = 0
+    var kept = 0
+    for (key, records) in CountsMigration.recordsDifference(counts) {
+      guard let text = countTexts[key] else { continue }
+      try db.execute(
+        sql: "UPDATE reconciliation_balances SET records_difference = ? WHERE id = ?",
+        arguments: [records ? 1 : 0, text])
+      if records { recorded += 1 } else { kept += 1 }
+    }
+
+    // 4. The plan of a goal that has one counts from the month of the update: money put in
+    // before the plan was known is not paid ahead of it. Archived goals too — one brought back
+    // keeps the rule.
+    try db.execute(
+      sql: """
+        UPDATE goals SET plan_start_month = ?
+        WHERE plan_start_month IS NULL AND monthly_plan_e4 > 0
+        """,
+      arguments: [context.updateMonth])
+    let plansStarted = db.changesCount
+
+    if stops("0005_cards", context: context) { throw StoppedOnPurpose() }
+    return [
+      "cardsCreated": plan.cards.count, "cardsSkipped": plan.skipped,
+      "countsRecorded": recorded, "countsKept": kept, "goalPlansStarted": plansStarted,
+    ]
   }
 }

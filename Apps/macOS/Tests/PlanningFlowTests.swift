@@ -784,7 +784,12 @@ final class EventBudgetFlowTests: XCTestCase {
       "events.add", "events.edit", "events.form.new", "events.form.edit", "events.form.budget",
       "events.form.budgetHint", "events.issue.emptyName", "events.issue.sameNameAndDays",
       "free.noReconciliation", "free.grey", "free.perDay", "free.stillExpected",
-      "free.excludedTitle", "planning.free.goalSavings", "planning.free.events",
+      "free.excludedTitle", "planning.free.events", "free.mainSpendable", "free.moneyAndGoals",
+      "free.overdue", "free.overdueReview", "reminders.overdue.title", "reminders.overdue.explain",
+      "reminders.overdue.settled", "reminders.overdue.settledHelp", "scheduled.accountArchived",
+      "scheduled.event", "form.event", "form.event.none", "form.event.hint", "form.accountArchived",
+      "events.tiedPayments", "goals.ahead", "planning.dueBeforeCount.title",
+      "planning.dueBeforeCount.message",
       "scheduled.paidByOperation", "scheduled.bind", "scheduled.notThis", "funding.withoutRate",
     ]
     for choice in [AppLanguage.Choice.english, .russian] {
@@ -849,19 +854,34 @@ final class FreeMoneyBlockTests: XCTestCase {
     XCTAssertFalse(parts.contains("firstCount"))
   }
 
-  /// «из них отложено на цели» explains the main figure only while the grey line takes the
-  /// goals' money away, and only when there is some.
-  func testTheGoalsMoneyInsideIsShownOnlyWhileTheGreyLineTakesItAway() {
+  /// Goal money is not spendable: with 10,000 in goals the main figure is «можно тратить
+  /// сейчас», and a line says what is on the accounts and what the goals hold. Without goal
+  /// money taken off, the main figure is the money on the accounts, and the line is not there.
+  func testCanSpendNowWithGoalMoneyApart() {
     var free = ready()
-    free.plan.subtractsGoalSavings = true
-    free.plan.goalSavings = AmountE4(whole: 10_000)
+    free.moneyNow = AmountE4(whole: 110_000)
+    free.goalSavings = AmountE4(whole: 10_000)
+    let parts = FreeMoneyBlock.parts(of: free)
+    XCTAssertEqual(parts.first, .main(AmountE4(whole: 100_000), spendable: true))
     XCTAssertTrue(
-      FreeMoneyBlock.parts(of: free).contains(.goalSavingsInside(AmountE4(whole: 10_000))))
-    free.plan.subtractsGoalSavings = false
-    XCTAssertFalse(FreeMoneyBlock.parts(of: free).map(\.name).contains("goalSavingsInside"))
-    free.plan.subtractsGoalSavings = true
-    free.plan.goalSavings = .zero
-    XCTAssertFalse(FreeMoneyBlock.parts(of: free).map(\.name).contains("goalSavingsInside"))
+      parts.contains(.moneyAndGoals(AmountE4(whole: 110_000), AmountE4(whole: 10_000))))
+    free.goalSavings = .zero
+    let without = FreeMoneyBlock.parts(of: free)
+    XCTAssertEqual(without.first, .main(AmountE4(whole: 100_000), spendable: false))
+    XCTAssertFalse(without.map(\.name).contains("moneyAndGoals"))
+  }
+
+  /// Due dates passed and unpaid inside the grey line are said right after its formula, with
+  /// the way to sort them out; none — nothing.
+  func testOverdueCaptionAppears() {
+    var free = ready()
+    XCTAssertFalse(FreeMoneyBlock.parts(of: free).map(\.name).contains("overdue"))
+    free.overdue = AmountE4(whole: 38_000)
+    let parts = FreeMoneyBlock.parts(of: free)
+    let grey = parts.firstIndex { $0.name == "grey" }
+    let overdue = parts.firstIndex(of: .overdue(AmountE4(whole: 38_000)))
+    XCTAssertNotNil(overdue)
+    XCTAssertEqual(overdue, grey.map { $0 + 1 })
   }
 
   /// The groups left out of the summary are shown apart, with their own totals, whether or
@@ -874,5 +894,377 @@ final class FreeMoneyBlockTests: XCTestCase {
     XCTAssertEqual(FreeMoneyBlock.parts(of: free).last, .excluded([business]))
     free.state = .noReconciliation
     XCTAssertEqual(FreeMoneyBlock.parts(of: free), [.firstCount, .excluded([business])])
+  }
+}
+
+/// Due dates passed and unpaid: «Уже списано до сверки», the dated question of «Провести», a
+/// payment tied to an event, a debt's due — each one write and one step of ⌘Z.
+@MainActor
+final class DueDatesFlowTests: XCTestCase {
+  private var store: TransactionsStore!
+  private var transactions: TransactionRepository!
+  private var references: ReferenceRepository!
+  private var planning: PlanningRepository!
+  private var compute: ComputeStore!
+  private var environment: AppEnvironment!
+  private let today = DateOnly(year: 2026, month: 9, day: 19)
+  private let main = PaymentMethod(name: "Main", currency: .rub, isDefault: true)
+
+  override func setUp() async throws {
+    let stack = try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    transactions = TransactionRepository(writer: stack.writer)
+    references = ReferenceRepository(writer: stack.writer)
+    planning = PlanningRepository(writer: stack.writer)
+    store = TransactionsStore()
+    store.attach(transactions, references: references, planning: planning)
+    compute = ComputeStore(calendar: .utc, rebuildsInline: true)
+    environment = AppEnvironment()
+    try references.save(main)
+  }
+
+  override func tearDown() async throws {
+    if let environment { await environment.close() }
+  }
+
+  private var deps: AppDependencies {
+    AppDependencies(environment: environment, store: store, compute: compute)
+  }
+
+  private func day(_ iso: String) -> DateOnly { DateOnly(iso: iso) ?? today }
+
+  private func at(_ iso: String, _ hour: Int) -> Date {
+    CalendarContext.utc.startOfDay(day(iso)).addingTimeInterval(TimeInterval(hour * 3600))
+  }
+
+  /// Main counted on 10 September at 14:00 at 100,000 — a reconciliation of the book.
+  private func counted() -> PlanningBook {
+    let reconciliation = Reconciliation(
+      date: day("2026-09-10"), reconciledAt: at("2026-09-10", 14), actualTotalRubE4: .zero,
+      kind: .accounts)
+    var book = PlanningBook()
+    book.reconciliations = [reconciliation]
+    book.reconciledBalances = [
+      ReconciledBalance(
+        reconciliationId: reconciliation.id, accountId: main.id, currency: .rub,
+        actualE4: AmountE4(whole: 100_000))
+    ]
+    return book
+  }
+
+  /// What the database holds now, with `book` over its planning, shown as the pipeline would.
+  @discardableResult
+  private func show(book extra: PlanningBook? = nil) throws -> DataSnapshot {
+    var book = try planning.book()
+    if let extra {
+      book.reconciliations = extra.reconciliations
+      book.reconciledBalances = extra.reconciledBalances
+    }
+    let snapshot = DataSnapshot.build(
+      dataset: Dataset(
+        entries: try transactions.entries(from: .distantPast, to: .distantFuture),
+        categories: try references.categories(), events: try references.events(),
+        paymentMethods: try references.paymentMethods(),
+        debts: try references.debts(), planning: book),
+      calendar: .utc, today: today, context: SnapshotContext(), version: DataVersion(load: 1))
+    compute.applyLight(snapshot)
+    return snapshot
+  }
+
+  private func rent() throws -> ScheduledPayment {
+    let payment = ScheduledPayment(
+      name: "Rent", amountE4: AmountE4(whole: 30_000), paymentMethodId: main.id, day: 5,
+      nextDate: day("2026-09-05"))
+    var rows = PlanningRows.empty
+    rows.scheduled = [payment]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    return payment
+  }
+
+  /// «Уже списано до сверки» on the rent of 5 September moves it to 5 October without an
+  /// operation; one ⌘Z brings the due back.
+  func testSettledBeforeTheCountClosesAScheduledDueInOneUndoStep() throws {
+    let payment = try rent()
+    try show(book: counted())
+    XCTAssertTrue(PlanningActions(deps).settle(payment: payment, due: day("2026-09-05")))
+    XCTAssertEqual(try planning.scheduled().first?.nextDate, day("2026-10-05"))
+    XCTAssertEqual(try transactions.entries(from: .distantPast, to: .distantFuture), [])
+    store.undo()
+    XCTAssertEqual(try planning.scheduled().first?.nextDate, day("2026-09-05"))
+  }
+
+  /// The balance of Main as the pipeline shows it with `book` over the database.
+  private func mainBalance(_ book: PlanningBook) throws -> AmountE4? {
+    try show(book: book).planning.accounts.balances[
+      BalanceKey(accountId: main.id, currency: .rub)]?.amountE4
+  }
+
+  /// The moment «Нет» of the dated question stands for: now, after the count.
+  private var now: Date { at("2026-09-19", 15) }
+
+  /// «Провести» of the rent of 5 September, dated that day at noon, after Main was counted on
+  /// the 10th: it asks whether the money left before the count, naming the count's
+  /// reconciliation for «Больше не спрашивать». «Да» keeps the due day — the operation lands
+  /// inside the count, where its money already is, and Main stays 100,000.
+  func testMarkAsPaidOfADueBeforeALaterCountAsksAndYesKeepsTheBalance() throws {
+    let payment = try rent()
+    let book = counted()
+    try show(book: book)
+    let actions = PlanningActions(deps)
+    let moment = PlanningActions.paidAt(
+      due: day("2026-09-05"), today: today, calendar: .utc)
+    XCTAssertEqual(moment, at("2026-09-05", 12))
+    let question = actions.countQuestion(
+      paying: .scheduled(payment, amount: payment.amountE4), due: day("2026-09-05"), on: moment)
+    guard
+      case .askTheDue(let count, let due, let reconciliation) = RemindersSheet.step(
+        for: question, isDebt: false, moment: moment)
+    else { return XCTFail("the dated question") }
+    XCTAssertEqual(count, at("2026-09-10", 14))
+    XCTAssertEqual(due, day("2026-09-05"))
+    XCTAssertEqual(reconciliation, book.reconciliations.first?.id)
+    let yes = AccountReconciliation.dueAnswer(
+      count: count, occurredAt: moment, wasBefore: true, now: now)
+    XCTAssertEqual(yes, moment)
+    XCTAssertTrue(
+      actions.markAsPaid(
+        payment, due: due, amount: payment.amountE4, on: yes, account: main.id, charged: nil,
+        updatePrice: false))
+    let written = try XCTUnwrap(
+      try transactions.entries(from: .distantPast, to: .distantFuture).first)
+    XCTAssertLessThan(written.transaction.occurredAt, count, "inside the count")
+    XCTAssertEqual(try mainBalance(book), AmountE4(whole: 100_000))
+  }
+
+  /// «Нет, после»: the payment is dated now, after the count, and moves the balance — Main
+  /// 70,000.
+  func testMarkAsPaidOfADueBeforeALaterCountAsksAndNoDatesItNow() throws {
+    let payment = try rent()
+    let book = counted()
+    try show(book: book)
+    let actions = PlanningActions(deps)
+    let moment = PlanningActions.paidAt(due: day("2026-09-05"), today: today, calendar: .utc)
+    guard
+      case .dueBefore(let count, let due, _) = actions.countQuestion(
+        paying: .scheduled(payment, amount: payment.amountE4), due: day("2026-09-05"),
+        on: moment)
+    else { return XCTFail("the dated question") }
+    let no = AccountReconciliation.dueAnswer(
+      count: count, occurredAt: moment, wasBefore: false, now: now)
+    XCTAssertEqual(no, now)
+    XCTAssertTrue(
+      actions.markAsPaid(
+        payment, due: due, amount: payment.amountE4, on: no, account: main.id, charged: nil,
+        updatePrice: false))
+    let written = try XCTUnwrap(
+      try transactions.entries(from: .distantPast, to: .distantFuture).first)
+    XCTAssertEqual(written.transaction.occurredAt, now)
+    XCTAssertGreaterThan(written.transaction.occurredAt, count)
+    XCTAssertEqual(try mainBalance(book), AmountE4(whole: 70_000))
+  }
+
+  /// What «Провести» does without a question on screen: with no count, a scheduled payment is
+  /// written at its moment and a debt's form opens now; an answer kept with «Больше не
+  /// спрашивать» for the later count pays at the moment it gives, either kind; one kept for the
+  /// counts of the day stamps a scheduled payment, while a debt's form, which asks about that
+  /// day itself, starts at the due's own moment.
+  func testTheSheetPaysAtTheMomentTheAnswersGive() {
+    let moment = at("2026-09-05", 12)
+    let stamp = at("2026-09-05", 8)
+    func paid(_ ask: DueCountAsk, isDebt: Bool) -> Date?? {
+      guard case .pay(let at) = RemindersSheet.step(for: ask, isDebt: isDebt, moment: moment)
+      else { return nil }
+      return .some(at)
+    }
+    XCTAssertEqual(paid(.none, isDebt: false), .some(moment))
+    XCTAssertEqual(paid(.none, isDebt: true), .some(nil))
+    XCTAssertEqual(paid(.dueAnswered(stamp: stamp), isDebt: false), .some(stamp))
+    XCTAssertEqual(paid(.dueAnswered(stamp: stamp), isDebt: true), .some(stamp))
+    XCTAssertEqual(paid(.sameDay(.answered(stamp: stamp)), isDebt: false), .some(stamp))
+    XCTAssertEqual(paid(.sameDay(.answered(stamp: stamp)), isDebt: true), .some(moment))
+  }
+
+  /// The hotel of a trip typed by hand, paid by matching: «Привязать» keys it and puts the
+  /// trip on its part, so it counts in the trip's «потрачено».
+  func testBindWritesTheEventOfATiedPayment() throws {
+    let trip = Event(
+      name: "Trip", startDate: day("2026-09-15"), endDate: day("2026-09-25"),
+      budgetE4: AmountE4(whole: 50_000))
+    let housing = CoreKit.Category(kind: .expense, name: "Housing", quality: .neutral)
+    try references.save(housing)
+    var rows = PlanningRows.empty
+    rows.events = [trip]
+    let hotel = ScheduledPayment(
+      name: "Hotel", amountE4: AmountE4(whole: 20_000), categoryId: housing.id,
+      paymentMethodId: main.id, day: 16, nextDate: day("2026-09-16"),
+      endDate: day("2026-09-16"), eventId: trip.id)
+    rows.scheduled = [hotel]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    var draft = TransactionDraft(
+      occurredAt: at("2026-09-16", 10), amount: AmountE4(whole: 20_000), note: "hotel",
+      paymentMethodId: main.id)
+    draft.parts = [PartDraft(categoryId: housing.id, amount: AmountE4(whole: 20_000))]
+    let operation = try draft.materialize()
+    try transactions.save(operation)
+    let snapshot = try show()
+    XCTAssertEqual(
+      snapshot.planning.matches.operation(for: hotel.id, day("2026-09-16")), operation.id)
+
+    XCTAssertTrue(PlanningActions(deps).bind(operation.id, to: hotel, due: day("2026-09-16")))
+    let bound = try XCTUnwrap(try transactions.entry(id: operation.id))
+    XCTAssertEqual(bound.parts.map(\.eventId), [trip.id])
+    store.undo()
+    XCTAssertEqual(try transactions.entry(id: operation.id)?.parts.map(\.eventId), [nil])
+  }
+
+  /// The payment form saves the event its payment belongs to, and a new date keeps it.
+  func testScheduledFormSavesTheEvent() throws {
+    let trip = Event(
+      name: "Trip", startDate: day("2026-09-25"), endDate: day("2026-09-29"),
+      budgetE4: AmountE4(whole: 50_000))
+    var rows = PlanningRows.empty
+    rows.events = [trip]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    var draft = ScheduledPaymentDraft(
+      opening: ScheduledPayment(
+        name: "Hotel", amountE4: AmountE4(whole: 20_000), paymentMethodId: main.id,
+        nextDate: day("2026-09-25")))
+    draft.payment.eventId = trip.id
+    draft.choose(.once, today: today)
+    XCTAssertTrue(
+      PlanningActions(deps).save(draft.saved(original: nil, today: today), previous: nil))
+    XCTAssertEqual(try planning.scheduled().first?.eventId, trip.id)
+  }
+
+  /// A loan of 8,000 due on 5 September, taken on 20 August: «Уже списано до сверки» writes a
+  /// journal payment of 8,000 on the due day, with no operation and no account; one ⌘Z takes
+  /// it away.
+  func testSettledBeforeTheCountWritesAJournalPaymentAndUndoRemovesIt() throws {
+    let loan = Debt(
+      direction: .iOwe, type: .loan, name: "Loan", monthlyPaymentE4: AmountE4(whole: 8_000),
+      paymentDay: 5)
+    var rows = PlanningRows.empty
+    rows.debts = [loan]
+    rows.debtEntries = [
+      DebtEntry(
+        debtId: loan.id, date: day("2026-08-20"), amountE4: AmountE4(whole: 80_000),
+        kind: .borrowed)
+    ]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    try show(book: counted())
+    XCTAssertTrue(DebtActions(deps).settle(debt: loan, due: day("2026-09-05")))
+    let journal = try references.debtEntries(debtId: loan.id)
+    let line = try XCTUnwrap(journal.first { $0.kind == .payment })
+    XCTAssertEqual(line.amountE4, AmountE4(whole: -8_000))
+    XCTAssertEqual(line.date, day("2026-09-05"))
+    XCTAssertNil(line.transactionId)
+    XCTAssertNil(line.paymentMethodId)
+    XCTAssertEqual(DebtRules.balance(entries: journal), AmountE4(whole: 72_000))
+    XCTAssertEqual(try show().planning.debts.iOwe.first?.nextPayment, day("2026-10-05"))
+    store.undo()
+    XCTAssertFalse(try references.debtEntries(debtId: loan.id).contains { $0.kind == .payment })
+  }
+
+  /// A loan of 8,000 a month, due on the 5th, taken on 20 August — nothing paid.
+  private func loan(paymentDay: Int = 5) throws -> Debt {
+    try references.save(
+      CoreKit.Category(kind: .expense, name: "Loans", systemRole: .loans))
+    let loan = Debt(
+      direction: .iOwe, type: .loan, name: "Loan", monthlyPaymentE4: AmountE4(whole: 8_000),
+      paymentDay: paymentDay)
+    var rows = PlanningRows.empty
+    rows.debts = [loan]
+    rows.debtEntries = [
+      DebtEntry(
+        debtId: loan.id, date: day("2026-08-20"), amountE4: AmountE4(whole: 80_000),
+        kind: .adjustment)
+    ]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    return loan
+  }
+
+  /// «Провести» of the loan's overdue due before the count of the 10th asks about that count
+  /// on the account of its last payment — Main —; «Да» opens the payment form at the due day at
+  /// noon, and the payment lands inside the count: Main stays 100,000. «Нет» pays now, after
+  /// it: Main 92,000.
+  func testPayingAnOverdueDueBeforeALaterCountAsksAndYesKeepsTheBalance() throws {
+    let loan = try loan()
+    let book = counted()
+    let snapshot = try show(book: book)
+    XCTAssertEqual(snapshot.planning.overdue.map(\.due), [day("2026-09-05")])
+    let moment = PlanningActions.paidAt(due: day("2026-09-05"), today: today, calendar: .utc)
+    let question = PlanningActions(deps).countQuestion(
+      paying: .debt(loan), due: day("2026-09-05"), on: moment)
+    guard
+      case .askTheDue(let count, _, let reconciliation) = RemindersSheet.step(
+        for: question, isDebt: true, moment: moment)
+    else { return XCTFail("the dated question") }
+    XCTAssertEqual(count, at("2026-09-10", 14))
+    XCTAssertEqual(reconciliation, book.reconciliations.first?.id)
+    XCTAssertEqual(try mainBalance(book), AmountE4(whole: 100_000))
+
+    // «Да»: the form starts at the due day, before the count, and pays there.
+    let yes = AccountReconciliation.dueAnswer(
+      count: count, occurredAt: moment, wasBefore: true, now: now)
+    XCTAssertEqual(yes, moment)
+    XCTAssertEqual(
+      DebtSheetView.payStart(
+        of: .payAt(loan, at: yes, account: nil), payDue: day("2026-09-05"), today: today,
+        calendar: .utc, methods: [main]
+      )?.date, yes)
+    XCTAssertTrue(
+      DebtActions(deps).pay(
+        loan, amount: AmountE4(whole: 8_000), on: yes, paymentMethodId: main.id))
+    XCTAssertEqual(try mainBalance(book), AmountE4(whole: 100_000), "paid inside the count")
+    store.undo()
+    XCTAssertEqual(try mainBalance(book), AmountE4(whole: 100_000))
+
+    // «Нет»: now, after the count.
+    let no = AccountReconciliation.dueAnswer(
+      count: count, occurredAt: moment, wasBefore: false, now: now)
+    XCTAssertEqual(no, now)
+    XCTAssertTrue(
+      DebtActions(deps).pay(
+        loan, amount: AmountE4(whole: 8_000), on: no, paymentMethodId: main.id))
+    XCTAssertEqual(try mainBalance(book), AmountE4(whole: 92_000))
+  }
+
+  /// A loan due on 16 September, Main set up that morning at 09:00, paid from the overdue row
+  /// on the 19th: the due is on the count's own day, so the sheet asks nothing and opens the
+  /// payment form at the due day — the form asks «Это было до сверки в 09:00?» once, on
+  /// «Сохранить». A scheduled payment, written by the sheet itself, is asked by the sheet.
+  func testAnOverdueDebtOnTheDayOfACountIsAskedOnlyByThePaymentForm() throws {
+    let loan = try loan(paymentDay: 16)
+    let reconciliation = Reconciliation(
+      date: day("2026-09-16"), reconciledAt: at("2026-09-16", 9), actualTotalRubE4: .zero,
+      kind: .accounts)
+    var book = PlanningBook()
+    book.reconciliations = [reconciliation]
+    book.reconciledBalances = [
+      ReconciledBalance(
+        reconciliationId: reconciliation.id, accountId: main.id, currency: .rub,
+        actualE4: AmountE4(whole: 100_000))
+    ]
+    let snapshot = try show(book: book)
+    XCTAssertEqual(snapshot.planning.overdue.map(\.due), [day("2026-09-16")])
+    let moment = PlanningActions.paidAt(due: day("2026-09-16"), today: today, calendar: .utc)
+    let question = PlanningActions(deps).countQuestion(
+      paying: .debt(loan), due: day("2026-09-16"), on: moment)
+    guard case .sameDay(.ask) = question else { return XCTFail("the question of the day") }
+    guard case .pay(let start) = RemindersSheet.step(for: question, isDebt: true, moment: moment)
+    else { return XCTFail("the sheet asked the question of the day itself") }
+    XCTAssertEqual(start, moment)
+    // The form, started there, asks the question of the day when it saves.
+    let entry = try DebtActions(deps).paymentOperation(
+      loan, amount: AmountE4(whole: 8_000), on: try XCTUnwrap(start), account: main.id,
+      charged: nil)
+    guard
+      case .ask(let questions) = FormAccounts.countAsk(
+        about: entry, savedAt: Date(), snapshot: compute.snapshot, calendar: environment.calendar,
+        remembered: [:])
+    else { return XCTFail("the form asks") }
+    XCTAssertEqual(questions.count, at("2026-09-16", 9))
+    // The same question for a scheduled payment is asked by the sheet, which writes it.
+    guard case .askTheDay = RemindersSheet.step(for: question, isDebt: false, moment: moment)
+    else { return XCTFail("the sheet asks for a scheduled payment") }
   }
 }

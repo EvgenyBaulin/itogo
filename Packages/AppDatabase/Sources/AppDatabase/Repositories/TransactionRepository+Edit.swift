@@ -26,11 +26,28 @@ public struct EditedEntry: Hashable, Sendable {
   /// undo gives the part back and ties them to it again, so undoing their deletion later brings
   /// them back to their purchase.
   public var releasedRefunds: [UUID: UUID]
+  /// The transfers written with the edit to keep an account in the archive at zero: undo
+  /// deletes them.
+  public var settlingTransfers: [UUID]
+  /// The money that had come back for the parts whose rubles the edit changed, balanced again
+  /// (`MoneyBackSettlement`): undo puts it back.
+  public var settlement: SettlementWrite
+  /// The refunds of the purchase that followed its new rate or rubles, as they were and as
+  /// written (`RefundRules.following`).
+  public var refundsBefore: [TransactionEntry]
+  public var refundsWritten: [TransactionEntry]
+  /// What the counts whose windows the edit reached wrote in the same write — the operations of
+  /// their differences as written and as they were —: the lists lay them over what they show,
+  /// and undo writes a difference the edit took to zero back as the owner left it.
+  public var counts: CountsSettled
 
   public init(
     before: TransactionEntry, after: TransactionEntry, journalBefore: [DebtEntry] = [],
     journalAdded: [UUID] = [], journalRowIDs: [UUID: Int64] = [:],
-    removedLinks: [ReimbursementLink] = [], releasedRefunds: [UUID: UUID] = [:]
+    removedLinks: [ReimbursementLink] = [], releasedRefunds: [UUID: UUID] = [:],
+    settlingTransfers: [UUID] = [], settlement: SettlementWrite = .empty,
+    refundsBefore: [TransactionEntry] = [], refundsWritten: [TransactionEntry] = [],
+    counts: CountsSettled = .none
   ) {
     self.before = before
     self.after = after
@@ -39,14 +56,35 @@ public struct EditedEntry: Hashable, Sendable {
     self.journalRowIDs = journalRowIDs
     self.removedLinks = removedLinks
     self.releasedRefunds = releasedRefunds
+    self.settlingTransfers = settlingTransfers
+    self.settlement = settlement
+    self.refundsBefore = refundsBefore
+    self.refundsWritten = refundsWritten
+    self.counts = counts
   }
 
   /// Whether the edit moved a debt.
   public var movedDebts: Bool { !journalBefore.isEmpty || !journalAdded.isEmpty }
 
-  /// Whether the edit, or its undo, wrote more than the operation — journal lines, links —
-  /// so the data the app shows has to be read again rather than laid over.
-  public var reachesBeyondTheOperation: Bool { movedDebts || !removedLinks.isEmpty }
+  /// Whether the edit, or its undo, wrote more than the operation — journal lines, links,
+  /// transfers, money back balanced again, refunds that followed —, so the data the app shows
+  /// has to be read again rather than laid over.
+  public var reachesBeyondTheOperation: Bool {
+    movedDebts || !removedLinks.isEmpty || !settlingTransfers.isEmpty || !settlement.isEmpty
+      || !refundsBefore.isEmpty
+  }
+}
+
+/// A transfer given to an edit to keep an account in the archive at zero that may not be
+/// written as it is (`TransferRules.validate`). Nothing of the edit is written then.
+public struct SettlingTransferRefusal: Error, Hashable, Sendable {
+  public var transferId: UUID
+  public var issue: TransferIssue
+
+  public init(transferId: UUID, issue: TransferIssue) {
+    self.transferId = transferId
+    self.issue = issue
+  }
 }
 
 /// What became of `TransactionRepository.edit`.
@@ -77,27 +115,70 @@ extension TransactionRepository {
   /// must say what it was charged (`AccountWriteError.chargeMissing`). A part taken away lets
   /// go of the refunds in the bin that took back from it, and undo ties them back.
   ///
+  /// A purchase whose rate or rubles the edit changed takes its refunds along
+  /// (`RefundRules.following`: their stored rubles and rate), and the money that already came
+  /// back for its parts is balanced again (`MoneyBackSettlement`: links, surplus, shortfall —
+  /// `settlement` gives the words of a surplus written anew), both in the same write and the
+  /// same undo.
+  ///
+  /// `settlingTransfers` are written in the same write, after the edit and under all its
+  /// rules: the money an edit of the past of an account in the archive leaves on it, or takes
+  /// off it, moved to or from a live account, so the archived one stays at zero. The account of
+  /// the operation, before and after the edit, is the one archived side they may name
+  /// (`TransferRules.validate(_:accounts:allowingArchived:)`); undo deletes them with the edit.
+  /// An edit that changes nothing writes none of them.
+  ///
+  /// The counts whose windows the operation left or entered — or its refunds, the money back
+  /// balanced again, its journal lines and those transfers — follow the books in the same write
+  /// (`EditedEntry.counts`): an edit that moves a purchase to another day changes the
+  /// differences of the counts on both sides, and one ⌘Z takes all of it back.
+  ///
   /// Throws what `transform` throws, `EditRefusal`, `LinkedEditRefusal` or `RefundError` when
-  /// the edit may not be written, and `DatabaseError.unbalancedParts` when the parts do not add
-  /// up; nothing is written then.
+  /// the edit may not be written, `SettlingTransferRefusal` when one of the transfers may not,
+  /// and `DatabaseError.unbalancedParts` when the parts do not add up; nothing is written then.
   public func edit(
     id: UUID, at instant: Date = Date(), calendar: CalendarContext,
+    settlingTransfers: [Transfer] = [],
+    settlement: SettlementSetting = SettlementSetting(surplusNote: nil),
     transform: (TransactionEntry) throws -> TransactionEntry?
   ) throws -> EditResult {
-    try writer.write { db in
-      try Self.edit(id: id, at: instant, calendar: calendar, transform: transform, db: db)
+    let context = liveCounts
+    return try writer.write { db in
+      try Self.edit(
+        id: id, at: instant, calendar: calendar, settlingTransfers: settlingTransfers,
+        settlement: settlement, transform: transform, context: context, db: db)
     }
   }
 
   /// Takes an edit back in one write: the operation as it was, its journal lines as they
-  /// were — the lines the edit added go, the ones it changed or took away come back — and the
-  /// links of the parts it took away, and the refunds in the bin that let go of them. A line
-  /// whose debt is gone since, or a link whose reimbursement is, has nothing to come back to.
-  public func revert(_ edit: EditedEntry) throws {
+  /// were — the lines the edit added go, the ones it changed or took away come back —, the
+  /// links of the parts it took away, the refunds in the bin that let go of them, no
+  /// transfer the edit wrote with it, its refunds as they were and the money back of its parts
+  /// as it was. A line whose debt is gone since, or a link whose reimbursement is, has nothing
+  /// to come back to.
+  ///
+  /// The counts whose windows it all moves in or out of follow the books in the same write, and
+  /// a difference the edit took to zero comes back as the owner left it
+  /// (`EditedEntry.counts.operationsBefore`). A difference of a count given back while another
+  /// operation holds its key — the one made again under the id derived from the count after
+  /// this one went at zero — takes the place of that other one, which goes for good: a count
+  /// has one operation.
+  @discardableResult
+  public func revert(_ edit: EditedEntry) throws -> CountsSettled {
     guard edit.before.isBalanced else { throw DatabaseError.unbalancedParts }
-    try writer.write { db in
+    let context = liveCounts
+    return try writer.write { db in
+      // What stands now, for the counts: everything the undo is about to write over or take.
+      let standing = try Self.standing(of: edit, db: db)
+      try Self.clearTwin(of: edit.before, db: db)
+      _ = try Transfer.deleteAll(db, keys: edit.settlingTransfers.map(\.uuidString))
       try edit.before.transaction.save(db)
       try Self.replaceParts(of: edit.before, db: db)
+      for refund in edit.refundsBefore {
+        guard let current = try Self.entry(id: refund.id, db: db) else { continue }
+        try Self.write(refund, over: current, db: db)
+      }
+      try Self.revert(edit.settlement, db: db)
       try Self.relink(edit.releasedRefunds, db: db)
       _ = try DebtEntry.deleteAll(db, keys: edit.journalAdded.map(\.uuidString))
       for line in edit.journalBefore {
@@ -115,12 +196,56 @@ extension TransactionRepository {
         else { continue }
         try link.save(db)
       }
+      let written = try Self.entries(ids: standing.ids, db: db)
+      let lines = try DebtEntry.filter(Column("transaction_id") == edit.before.id.uuidString)
+        .fetchAll(db)
+      let touch = try LiveCountsWriter.touch(
+        entries: standing.operations.map { ($0, nil) } + written.map { (nil, $0) },
+        transfers: standing.transfers, lines: standing.lines + lines,
+        calendar: context.calendar, lookups: WriteLookups(), db: db)
+      return try LiveCountsWriter.settle(
+        touch, context: context, templates: edit.counts.operationsBefore, db: db)
     }
   }
 
+  /// What an edit's undo is about to write over or take away, as it stands: the operation, its
+  /// refunds, the money back balanced with it, its journal lines and the transfers written with
+  /// it — each counts on the windows it stands in.
+  private static func standing(
+    of edit: EditedEntry, db: Database
+  ) throws -> (
+    ids: [UUID], operations: [TransactionEntry], transfers: [Transfer], lines: [DebtEntry]
+  ) {
+    let ids =
+      [edit.before.id] + edit.refundsBefore.map(\.id)
+      + edit.settlement.operationsBefore.map(\.id) + edit.settlement.createdOperations
+    let operations = try entries(ids: ids, db: db)
+    let transfers = try Transfer.fetchAll(db, keys: edit.settlingTransfers.map(\.uuidString))
+    let lines = try DebtEntry.filter(Column("transaction_id") == edit.before.id.uuidString)
+      .fetchAll(db)
+    return (ids, operations, transfers, lines)
+  }
+
+  /// A difference of a count comes back under the id it had: any other operation holding its
+  /// key (`reconcile:<reconciliation>:<count>`) — live or in the bin — goes for good first, with
+  /// its journal lines and links, or the unique key would refuse the undo. Nothing for any other
+  /// operation.
+  static func clearTwin(of entry: TransactionEntry, db: Database) throws {
+    guard let key = entry.transaction.externalId,
+      case .reconciledBalance = OperationLink(externalId: key)
+    else { return }
+    let twins = try String.fetchAll(
+      db, sql: "SELECT id FROM transactions WHERE external_id = ? AND id <> ?",
+      arguments: [key, entry.id.uuidString]
+    ).compactMap(UUID.init(uuidString:))
+    try LiveCountsWriter.purge(twins, db: db)
+  }
+
   static func edit(
-    id: UUID, at instant: Date, calendar: CalendarContext,
-    transform: (TransactionEntry) throws -> TransactionEntry?, db: Database
+    id: UUID, at instant: Date, calendar: CalendarContext, settlingTransfers: [Transfer] = [],
+    settlement: SettlementSetting = SettlementSetting(surplusNote: nil),
+    transform: (TransactionEntry) throws -> TransactionEntry?,
+    context: LiveCountsContext = .standard, db: Database
   ) throws -> EditResult {
     guard let fresh = try entry(id: id, db: db), !fresh.transaction.isDeleted else {
       return .gone
@@ -155,9 +280,28 @@ extension TransactionRepository {
 
     let released = try write(changed, over: fresh, db: db)
 
+    // A purchase at a new rate or with new rubles: its refunds follow it, and the money that
+    // came back for its parts is balanced again.
+    var refundsBefore: [TransactionEntry] = []
+    var refundsWritten: [TransactionEntry] = []
+    var settled = SettlementWrite.empty
+    if changed.transaction.kind == .expense, fresh.transaction.kind == .expense {
+      refundsBefore = try followingRefunds(of: changed, at: instant, db: db)
+      for refund in refundsBefore {
+        if let written = try entry(id: refund.id, db: db) { refundsWritten.append(written) }
+      }
+      let old = Dictionary(
+        fresh.parts.map { ($0.id, $0.amountRubE4) }, uniquingKeysWith: { first, _ in first })
+      settled = try settle(
+        partIds: changed.parts.filter { $0.reimbursable && old[$0.id] != $0.amountRubE4 }
+          .map(\.id),
+        rublesBefore: old, setting: settlement, at: instant, db: db)
+    }
+
     let existing = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
     var edited = EditedEntry(
-      before: fresh, after: changed, removedLinks: removedLinks, releasedRefunds: released)
+      before: fresh, after: changed, removedLinks: removedLinks, releasedRefunds: released,
+      settlement: settled, refundsBefore: refundsBefore, refundsWritten: refundsWritten)
     for line in journal.upsert {
       if let old = existing[line.id] {
         edited.journalBefore.append(old)
@@ -174,17 +318,56 @@ extension TransactionRepository {
     }
     for line in journal.upsert { try line.save(db) }
     _ = try DebtEntry.deleteAll(db, keys: journal.delete.map(\.uuidString))
+    edited.settlingTransfers = try writeSettling(
+      settlingTransfers,
+      editing: [fresh.transaction.paymentMethodId, changed.transaction.paymentMethodId], db: db)
+
+    // Everything the edit moved, as it was and as it is: the operation, its refunds, the
+    // surpluses and the owner's own spending on its parts, its journal lines, the transfers.
+    let moved: [(before: TransactionEntry?, after: TransactionEntry?)] =
+      [(fresh, changed)] + refundsBefore.map { ($0, nil) } + refundsWritten.map { (nil, $0) }
+      + settled.operationsBefore.map { ($0, nil) } + settled.written.map { (nil, $0) }
+    let touch = try LiveCountsWriter.touch(
+      entries: moved, transfers: settlingTransfers,
+      lines: edited.journalBefore + journal.upsert, calendar: context.calendar,
+      lookups: WriteLookups(), db: db)
+    edited.counts = try LiveCountsWriter.settle(touch, context: context, now: instant, db: db)
     return .edited(edited)
+  }
+
+  /// Writes the transfers that keep an account in the archive at zero, each held to the rules
+  /// of a transfer, the archived accounts among `editing` — those whose past the write changed
+  /// — allowed. Returns their ids.
+  static func writeSettling(
+    _ transfers: [Transfer], editing accounts: [UUID?], db: Database
+  ) throws -> [UUID] {
+    guard !transfers.isEmpty else { return [] }
+    let all = try PaymentMethod.fetchAll(db)
+    let allowed = Set(accounts.compactMap { $0 })
+    for transfer in transfers {
+      if let issue = TransferRules.validate(transfer, accounts: all, allowingArchived: allowed) {
+        throw SettlingTransferRefusal(transferId: transfer.id, issue: issue)
+      }
+      try transfer.insert(db)
+    }
+    return transfers.map(\.id)
   }
 
   /// What only the database knows about the operation being edited: whether it is a
   /// reimbursement that settled parts, the live money back that reached each of its parts, what
   /// the live refunds took back from each of them, and — for the purchase parts it takes back
-  /// from — what is left of them to refund, its own refunds not counted.
+  /// from — what is left of them to refund, its own refunds not counted. For the difference of a
+  /// count, the categories of the app it may not go to.
   static func editFacts(
     _ before: TransactionEntry, _ after: TransactionEntry, db: Database
   ) throws -> EditFacts {
     var facts = EditFacts(settles: try settles(before.transaction, db: db))
+    if OperationEditRule.isReconcileDifference(before.transaction) {
+      let categories = try CoreKit.Category.fetchAll(db)
+      let tree = CategoryTree(categories)
+      facts.systemCategories = Set(
+        categories.map(\.id).filter { tree.systemRole(of: $0) != nil })
+    }
     let parts = before.parts.map(\.id.uuidString)
     if !parts.isEmpty {
       let marks = databaseQuestionMarks(count: parts.count)

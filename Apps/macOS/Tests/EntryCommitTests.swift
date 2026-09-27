@@ -74,6 +74,59 @@ final class EntryCommitTests: XCTestCase {
     XCTAssertEqual(try references.debts(includeClosed: true).map(\.id), [debt.id], "the debt stays")
   }
 
+  /// Money given back above what is left on a debt owed to me: with the balance the line read,
+  /// the debt takes 1,000 ₽ and closes, and the 700 ₽ over are income in «Доплаты» — the
+  /// operation, the line, the closing and the income one change, one ⌘Z. Without a Surcharges
+  /// category the save is refused; without a balance the whole amount is the payment, as in 1.1.
+  func testMoneyBackOverADebtOwedToMeClosesItAndTheRestIsSurcharges() throws {
+    let lent = Debt(direction: .owedToMe, type: .personal, name: "Igor", paymentsAreExpenses: false)
+    let surcharges = CoreKit.Category(kind: .income, name: "Доплаты", systemRole: .surcharges)
+    var rows = PlanningRows.empty
+    rows.debts = [lent]
+    rows.debtEntries = [
+      DebtRules.makeEntry(debtId: lent.id, kind: .borrowed, amountE4: AmountE4(whole: 1_000))
+    ]
+    rows.categories = [surcharges]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    var back = try TransactionDraft(
+      kind: .reimbursement, amount: AmountE4(whole: 1_700), debtId: lent.id,
+      parts: [PartDraft(amount: AmountE4(whole: 1_700))]
+    ).materialize()
+    back.transaction.note = "Igor"
+    XCTAssertThrowsError(
+      try EntryCommit.change(
+        entry: back, openedCredit: nil, paidDebt: lent, expectedIncomeId: nil, day: saveDay,
+        paidDebtBalance: AmountE4(whole: 1_000), surplus: nil))
+    let change = try XCTUnwrap(
+      EntryCommit.change(
+        entry: back, openedCredit: nil, paidDebt: lent, expectedIncomeId: nil, day: saveDay,
+        paidDebtBalance: AmountE4(whole: 1_000),
+        surplus: EntryCommit.SurplusSetting(categoryId: surcharges.id, note: "Излишек")))
+    XCTAssertEqual(change.created.count, 2)
+    XCTAssertEqual(change.upsert.debtEntries.map(\.amountE4), [AmountE4(whole: -1_000)])
+    XCTAssertEqual(change.upsert.debts.map(\.closed), [true])
+    XCTAssertTrue(store.apply(change))
+    let income = try XCTUnwrap(
+      try transactions.entries(from: .distantPast, to: .distantFuture)
+        .first { $0.transaction.kind == .income })
+    XCTAssertEqual(income.transaction.amountE4, AmountE4(whole: 700))
+    XCTAssertEqual(income.parts.first?.categoryId, surcharges.id)
+    XCTAssertEqual(income.transaction.note, "Излишек")
+
+    store.undo()
+    XCTAssertTrue(try transactions.entries(from: .distantPast, to: .distantFuture).isEmpty)
+    XCTAssertEqual(
+      DebtRules.balance(entries: try references.debtEntries(debtId: lent.id)),
+      AmountE4(whole: 1_000))
+    XCTAssertEqual(try references.debts(includeClosed: true).first?.closed, false)
+
+    let old = try XCTUnwrap(
+      EntryCommit.change(
+        entry: back, openedCredit: nil, paidDebt: lent, expectedIncomeId: nil, day: saveDay))
+    XCTAssertEqual(old.upsert.debtEntries.map(\.amountE4), [AmountE4(whole: -1_700)])
+    XCTAssertEqual(old.created.count, 1)
+  }
+
   /// A refund of a loan payment brings the money back, so the debt grows back by it:
   /// it was written as one more payment, and the debt shrank twice.
   func testARefundOnADebtIOweGrowsItBack() throws {

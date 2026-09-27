@@ -11,9 +11,10 @@ private let event = Date(timeIntervalSince1970: 1_790_000_000.9995)
 private let eventText = "2026-09-21 14:13:20.999"
 
 /// Every way the app stamps an operation as updated — money back closing a part, deleting that
-/// money back and taking the deletion back, writing a part off, refining a rate, a planning
-/// action and its ⌘Z — writes the stamp by the rule of every moment: the millisecond it is in,
-/// never a later one. And what the rule means for a day, a month and a range asked for.
+/// money back, writing a part off, refining a rate, a planning action — writes the stamp by the
+/// rule of every moment: the millisecond it is in, never a later one; ⌘Z of a deletion gives
+/// back the moment each operation had. And what the rule means for a day, a month and a range
+/// asked for.
 @Suite("Every stamp of a moment goes by one rule")
 struct StoredInstantStampTests {
   /// A moment of the dinners: a whole second, far from `event`.
@@ -87,18 +88,20 @@ struct StoredInstantStampTests {
     #expect(try updatedAt(books.stack, purchase.id) == eventText)
   }
 
-  /// Deleting the money back opens the part again, ⌘Z of the deletion closes it again: both
-  /// stamp the purchase.
+  /// Deleting the money back opens the part again and stamps the purchase; ⌘Z of the deletion
+  /// closes it again and gives the purchase back the moment it had before.
   @Test func deletingMoneyBackAndTakingItBackStampThePurchase() throws {
     let books = try books()
     let purchase = try dinner(books, rubles: 1_500)
     let back = try moneyBack(books, 1_500, at: moment)
+    let before = try updatedAt(books.stack, purchase.id)
     let effects = try books.repository.softDelete(id: back, at: event)
     #expect(try updatedAt(books.stack, purchase.id) == eventText)
 
     let later = Date(timeIntervalSince1970: 1_790_000_060.4999)
     try books.repository.restore(id: back, at: later, effects: effects)
-    #expect(try updatedAt(books.stack, purchase.id) == "2026-09-21 14:14:20.499")
+    #expect(before != nil)
+    #expect(try updatedAt(books.stack, purchase.id) == before)
   }
 
   @Test func writingAPartOffStampsItsPurchase() throws {
@@ -156,7 +159,7 @@ struct StoredInstantStampTests {
   }
 
   /// A planning action rewrites and deletes operations at its moment; its ⌘Z gives the deleted
-  /// back at the moment of the ⌘Z.
+  /// back the moment they had: bringing an operation back is not a new write of it.
   @Test func aPlanningActionAndItsUndoStampTheirMoments() throws {
     let stack = try TestSupport.makeStack()
     let fixture = try TestSupport.seedReferences(stack)
@@ -171,13 +174,15 @@ struct StoredInstantStampTests {
     var rewritten = kept
     rewritten.transaction.note = "paid"
     let planning = PlanningRepository(writer: stack.writer)
+    let before = try updatedAt(stack, gone.id)
     let undo = try planning.apply(
       PlanningChange(rewritten: [rewritten], softDeleted: [gone.id], at: event))
     #expect(try updatedAt(stack, kept.id) == eventText)
     #expect(try updatedAt(stack, gone.id) == eventText)
 
     try planning.revert(undo, at: Date(timeIntervalSince1970: 1_790_000_060.4999))
-    #expect(try updatedAt(stack, gone.id) == "2026-09-21 14:14:20.499")
+    #expect(before != nil)
+    #expect(try updatedAt(stack, gone.id) == before)
   }
 
   // MARK: Days, months and ranges

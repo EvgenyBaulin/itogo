@@ -290,4 +290,125 @@ final class OverviewCardsTests: XCTestCase {
       OverviewText.recentAnomalies(AnomalyReport(all: [old]), today: today).map(\.subject), [],
       "an anomaly of three months ago kept «За последний месяц ничего необычного» away")
   }
+
+  /// «Потратили деньги цели?» is the first line of «Стоит посмотреть» while the goals hold more
+  /// than the money of the summary — goal money spent without «Забрать» —, above the anomalies
+  /// and «и ещё N», and «ничего необычного» is not said beside it. Once the goals hold less,
+  /// the line goes.
+  func testGoalsExceedMoneyHintIsFirst() throws {
+    let main = PaymentMethod(name: "Main", currency: .rub, isDefault: true)
+    let goalsRoot = CoreKit.Category(
+      kind: .expense, name: "Goals", quality: .good, systemRole: .goals)
+    let tripCategory = CoreKit.Category(parentId: goalsRoot.id, kind: .expense, name: "Trip")
+    let goal = Goal(
+      name: "Trip", targetE4: AmountE4(whole: 300_000), subcategoryId: tripCategory.id)
+    let today = DateOnly(year: 2026, month: 9, day: 19)
+    let reconciliation = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 1),
+      reconciledAt: CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 1)),
+      actualTotalRubE4: .zero, kind: .accounts)
+    var book = PlanningBook()
+    book.reconciliations = [reconciliation]
+    book.reconciledBalances = [
+      ReconciledBalance(
+        reconciliationId: reconciliation.id, accountId: main.id, currency: .rub,
+        actualE4: AmountE4(whole: 5_000))
+    ]
+    // Put into the goal before Main was counted at 5,000.
+    func free(contributed amount: Int64) throws -> FreeMoney {
+      var draft = TransactionDraft(
+        occurredAt: CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 8, day: 20)),
+        amount: AmountE4(whole: amount), paymentMethodId: main.id)
+      draft.parts = [
+        PartDraft(categoryId: tripCategory.id, amount: AmountE4(whole: amount), goalId: goal.id)
+      ]
+      return DataSnapshot.build(
+        dataset: Dataset(
+          entries: [try draft.materialize()], categories: [goalsRoot, tripCategory],
+          paymentMethods: [main], goals: [goal], planning: book),
+        calendar: .utc, today: today, context: SnapshotContext(), version: DataVersion(load: 1)
+      ).planning.freeMoney
+    }
+    func found(_ subject: String) -> Anomaly {
+      Anomaly(
+        rule: .largeExpense, subject: subject, day: today.adding(days: -2),
+        amount: AmountE4(whole: 1_000))
+    }
+    let first = found("first")
+    let second = found("second")
+    let two = AnomalyReport(all: [first, second])
+
+    let spent = try free(contributed: 100_000)
+    let exceed = OverviewText.AnomalyLine.goalsExceed(
+      goals: AmountE4(whole: 100_000), money: AmountE4(whole: 5_000))
+    XCTAssertEqual(
+      OverviewText.anomalyLines(two, today: today, free: spent, shown: 1),
+      [exceed, .anomaly(first), .more(1)])
+    XCTAssertEqual(
+      OverviewText.anomalyLines(AnomalyReport(), today: today, free: spent, shown: 3),
+      [exceed], "no «ничего необычного» beside it")
+
+    let kept = try free(contributed: 3_000)
+    XCTAssertEqual(
+      OverviewText.anomalyLines(two, today: today, free: kept, shown: 3),
+      [.anomaly(first), .anomaly(second)])
+    XCTAssertEqual(
+      OverviewText.anomalyLines(AnomalyReport(), today: today, free: kept, shown: 3),
+      [.nothingUnusual])
+    XCTAssertEqual(
+      OverviewText.anomalyLines(AnomalyReport(), today: today, free: nil, shown: 3),
+      [.nothingUnusual])
+  }
+}
+
+extension OverviewCardsTests {
+  /// «Наличные» went to the archive in 1.1 with 1,000 ₽ counted on them — 1.2 archives no
+  /// account with money. «Стоит посмотреть» offers to move it: a line after the goals' one and
+  /// before the anomalies, with the amount to the ruble, and no «ничего необычного» beside it.
+  /// A live account with money, an archived one at zero and one never counted are not offered.
+  func testAnArchivedAccountWithMoneyIsOffered() throws {
+    let main = PaymentMethod(name: "Main", currency: .rub, isDefault: true)
+    let cash = PaymentMethod(name: "Наличные", kind: .cash, currency: .rub, archived: true)
+    let empty = PaymentMethod(name: "Old card", currency: .rub, archived: true)
+    let uncounted = PaymentMethod(name: "Wallet", kind: .cash, currency: .rub, archived: true)
+    let today = DateOnly(year: 2026, month: 9, day: 19)
+    let counted = CalendarContext.utc.startOfDay(DateOnly(year: 2026, month: 9, day: 1))
+    let reconciliation = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 1), reconciledAt: counted,
+      actualTotalRubE4: .zero, kind: .accounts)
+    let rows = [(main, 50_000), (cash, 1_000), (empty, 0)].map { account, whole in
+      ReconciledBalance(
+        reconciliationId: reconciliation.id, accountId: account.id, currency: .rub,
+        actualE4: AmountE4(whole: Int64(whole)))
+    }
+    var draft = TransactionDraft(
+      occurredAt: counted.addingTimeInterval(86_400), amount: AmountE4(whole: 300),
+      paymentMethodId: uncounted.id)
+    draft.normalizeSinglePart()
+    let accounts = [main, cash, empty, uncounted]
+    let balances = AccountBalances.build(
+      entries: [try draft.materialize()], transfers: [], debtEntries: [], debts: [:],
+      reconciliations: [reconciliation], balances: rows, accounts: accounts,
+      tree: CategoryTree(), now: CalendarContext.utc.startOfDay(today), calendar: .utc)
+
+    let lines = OverviewText.archivedMoney(accounts: accounts, balances: balances)
+    XCTAssertEqual(lines.map(\.account.id), [cash.id])
+    let line = try XCTUnwrap(lines.first)
+    XCTAssertEqual(line.leftovers.map(\.amount), [AmountE4(whole: 1_000)])
+    XCTAssertEqual(
+      OverviewText.archivedAmounts(line, money: MoneyFormatter(locale: Locale(identifier: "ru"))),
+      "1,000\u{00A0}₽")
+
+    XCTAssertEqual(
+      OverviewText.anomalyLines(
+        AnomalyReport(), today: today, free: nil, shown: 3, archived: lines),
+      [.archivedMoney(line)], "no «ничего необычного» beside it")
+    let found = Anomaly(
+      rule: .largeExpense, subject: "found", day: today.adding(days: -2),
+      amount: AmountE4(whole: 1_000))
+    XCTAssertEqual(
+      OverviewText.anomalyLines(
+        AnomalyReport(all: [found]), today: today, free: nil, shown: 3, archived: lines),
+      [.archivedMoney(line), .anomaly(found)])
+  }
 }

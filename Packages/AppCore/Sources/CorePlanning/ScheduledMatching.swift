@@ -68,16 +68,20 @@ public struct ScheduledMatches: Hashable, Sendable {
 ///   that price; in another currency — a dollar subscription typed in rubles as the bank
 ///   charged them — its rubles are within max(1 ₽, 10 %) of the price in rubles at the rate of
 ///   its day (`dayRates`, else today's `rubPerUnit`); without a rate it does not match;
-/// * it is dated at most 5 days from `d`, and not after today;
-/// * the owner did not say «Это другое» about this very pair
-///   (`<operation>:<payment>:<YYYY-MM-DD>` in `planning.scheduledMatchRejections`).
+/// * it is dated at most 5 days from `d`, and not after today (or the day the caller asks
+///   about instead, `operationsThrough`);
+/// * the owner did not say «Это другое» about this operation and this payment — about any due
+///   date of it: the key `<operation>:<payment>:<YYYY-MM-DD>` in
+///   `planning.scheduledMatchRejections` names the due date answered about only so the setting
+///   can be pruned (`isRejected`).
 ///
-/// Greedy and the same on every run, nearest first: of every pair of a due date and an
-/// operation that could pay it, the pair closest by day is taken first, then the one with the
-/// earlier due date, then the payment by id, the earlier moment and the operation by id. An
-/// operation pays one due date at most, and a due date is paid once. The nearest pair wins, not
-/// the oldest due date: an operation two days before this week's due is this week's payment,
-/// not last week's one, which a count may have settled already.
+/// Greedy and the same on every run: of every pair of a due date and an operation that could
+/// pay it, the pair closest by day is taken first, then the one with the earlier due date,
+/// then the payment by id, the earlier moment and the operation by id. An operation pays one
+/// due date at most, and a due date is paid once. Across payments the nearest pair wins;
+/// within one payment its operations pay its oldest due dates first — an operation between
+/// last week's unpaid due and this week's pays last week's — and the passes repeat until
+/// nothing more is taken.
 ///
 /// The due dates before `next_date` of the history the forecast reads are matched the same way
 /// afterwards, with the operations left: they are paid or skipped already, so the operations
@@ -95,6 +99,29 @@ public enum ScheduledMatching {
   /// The text of one «Это другое»: the operation, the payment and the due date.
   public static func rejectionKey(operation: UUID, payment: UUID, due: DateOnly) -> String {
     "\(operation.uuidString.lowercased()):\(payment.uuidString.lowercased()):\(due.iso)"
+  }
+
+  /// Whether the owner said «Это другое» about `operation` and `payment`: a stored key of this
+  /// pair names any due date of the payment. What the owner dismissed is ordinary spending for
+  /// every due date of that payment, as the hint of the button promises.
+  public static func isRejected(
+    operation: UUID, payment: UUID, rejections: Set<String>
+  ) -> Bool {
+    rejectedPairs(rejections).contains(pairKey(operation: operation, payment: payment))
+  }
+
+  /// `<operation>:<payment>` of every stored key, lowercased.
+  static func rejectedPairs(_ rejections: Set<String>) -> Set<String> {
+    Set(
+      rejections.compactMap { key in
+        let fields = key.split(separator: ":", omittingEmptySubsequences: false)
+        guard fields.count == 3 else { return nil }
+        return "\(fields[0]):\(fields[1])".lowercased()
+      })
+  }
+
+  static func pairKey(operation: UUID, payment: UUID) -> String {
+    "\(operation.uuidString.lowercased()):\(payment.uuidString.lowercased())"
   }
 
   /// The day of a rejection, or `nil` when the text is not one: what the setting is pruned by.
@@ -120,13 +147,22 @@ public enum ScheduledMatching {
   /// every later due date a key paid already (`matches`). A later due date leaves the payment
   /// where it is — an earlier due date is still unpaid and must stay due; the key is enough to
   /// mark the tied one paid.
+  ///
+  /// `eventId` — the event the due date belongs to (`ScheduledRules.event(of:due:events:)`) —
+  /// goes onto every part that carries no event, so the payment counts in the event's
+  /// «потрачено».
   public static func bind(
     _ operation: TransactionEntry, to payment: ScheduledPayment, due: DateOnly,
-    matches: ScheduledMatches = .empty
+    matches: ScheduledMatches = .empty, eventId: UUID? = nil
   ) -> (operation: TransactionEntry, payment: ScheduledPayment) {
     var bound = operation
     bound.transaction.externalId =
       OperationLink.scheduled(paymentId: payment.id, due: due).externalId
+    if let eventId {
+      for index in bound.parts.indices where bound.parts[index].eventId == nil {
+        bound.parts[index].eventId = eventId
+      }
+    }
     guard payment.nextDate == due else { return (bound, payment) }
     var moved = ScheduledRules.advanced(payment, past: due)
     var steps = 0
@@ -137,10 +173,19 @@ public enum ScheduledMatching {
     return (bound, moved)
   }
 
+  /// The due dates paid, as of `today`.
+  ///
+  /// `operationsThrough` — today when not said — is the last day an operation may be dated to
+  /// pay a due date, and the due dates looked at reach `dayWindow` days past it: the free sum
+  /// asks what is paid by now, the plan of the month's end what operations already typed for
+  /// later days pay. The due dates before `next_date` are looked for back from `today` all
+  /// the same.
   public static func matches(
     book: PlanningBook, ledger: Ledger, today: DateOnly, rejections: Set<String>,
-    dayRates: DayRates = .empty, rubPerUnit: [CurrencyCode: Decimal] = [:]
+    dayRates: DayRates = .empty, rubPerUnit: [CurrencyCode: Decimal] = [:],
+    operationsThrough: DateOnly? = nil
   ) -> ScheduledMatches {
+    let through = operationsThrough ?? today
     var linked: [UUID: Set<DateOnly>] = [:]
     for row in ledger.rows where row.isFirstPart {
       if case .scheduled(let paymentId, let due) = row.link {
@@ -155,7 +200,7 @@ public enum ScheduledMatching {
       let transaction = entry.transaction
       guard !transaction.isDeleted, transaction.kind == .expense,
         OperationLink(externalId: transaction.externalId) == nil,
-        let first = entry.parts.first, let row = ledger.row(ofPart: first.id), row.day <= today
+        let first = entry.parts.first, let row = ledger.row(ofPart: first.id), row.day <= through
       else { continue }
       candidates[row.day.dayNumber, default: []].append(
         Candidate(
@@ -170,6 +215,7 @@ public enum ScheduledMatching {
     guard anyCandidate else { return ScheduledMatches(linked: linked, matched: matched) }
     let payments = book.scheduled.filter(\.active)
     let tree = ledger.tree
+    let rejected = rejectedPairs(rejections)
 
     // Every pair of an unpaid due date and an operation that could pay it.
     func pairs(of payment: ScheduledPayment, dues: [DateOnly]) -> [Pair] {
@@ -186,8 +232,7 @@ public enum ScheduledMatching {
                 ? (candidate.amount - price).magnitude <= tolerance
                 : closeInRubles(candidate, to: price, in: payment.currency),
               belongs(candidate, to: payment, tree: tree),
-              !rejections.contains(
-                rejectionKey(operation: candidate.id, payment: payment.id, due: due))
+              !rejected.contains(pairKey(operation: candidate.id, payment: payment.id))
             else { continue }
             result.append(
               Pair(
@@ -226,17 +271,35 @@ public enum ScheduledMatching {
       ahead += pairs(
         of: payment,
         dues: Recurrence.occurrences(
-          from: next, through: today.adding(days: dayWindow), rule: rule, end: payment.endDate,
+          from: next, through: through.adding(days: dayWindow), rule: rule, end: payment.endDate,
           limit: duesPerPayment))
       // A one-off payment has no due date before its only one.
       guard payment.endDate != next else { continue }
       before += pairs(of: payment, dues: dues(before: next, from: earliest, rule: rule))
     }
-    for pair in ahead.sorted(by: Pair.precedes) {
-      guard !used.contains(pair.candidate.id), matched[pair.paymentId]?[pair.due] == nil
-      else { continue }
-      used.insert(pair.candidate.id)
-      matched[pair.paymentId, default: [:]][pair.due] = pair.candidate.id
+    // Which operations pay which payment: the nearest pairs first, across every payment.
+    // Within one payment its operations then pay its oldest due dates: of every way they can
+    // pay its due dates, the one whose due dates are the earliest (`earliestFirst`). An
+    // operation a payment gave up that way stays with it — the matching only ever grows —, and
+    // what is still free is offered again, until nothing more is taken.
+    var byPayment: [UUID: [Pair]] = [:]
+    for pair in ahead { byPayment[pair.paymentId, default: []].append(pair) }
+    let sortedAhead = ahead.sorted(by: Pair.precedes)
+    while true {
+      var touched: Set<UUID> = []
+      for pair in sortedAhead {
+        guard !used.contains(pair.candidate.id), matched[pair.paymentId]?[pair.due] == nil
+        else { continue }
+        used.insert(pair.candidate.id)
+        matched[pair.paymentId, default: [:]][pair.due] = pair.candidate.id
+        touched.insert(pair.paymentId)
+      }
+      guard !touched.isEmpty else { break }
+      for paymentId in touched {
+        let operations = Set(matched[paymentId]?.values.map { $0 } ?? [])
+        matched[paymentId] = earliestFirst(
+          (byPayment[paymentId] ?? []).filter { operations.contains($0.candidate.id) })
+      }
     }
     var earlier: Set<UUID> = []
     var earlierDues: Set<PaymentDue> = []
@@ -282,6 +345,40 @@ public enum ScheduledMatching {
         day: rule.day ?? occurrence.day,
         in: MonthKey(year: occurrence.year - interval, month: month))
     }
+  }
+
+  /// The due dates `pairs` of one payment pay, oldest first: each due date in turn takes an
+  /// operation — the nearest free one, or one moved off a later due date that another can take
+  /// instead —, so as many due dates are paid as the operations can pay, and of those the
+  /// earliest.
+  private static func earliestFirst(_ pairs: [Pair]) -> [DateOnly: UUID] {
+    var byDue: [DateOnly: [Pair]] = [:]
+    for pair in pairs { byDue[pair.due, default: []].append(pair) }
+    for due in byDue.keys {
+      byDue[due]?.sort { left, right in
+        if left.distance != right.distance { return left.distance < right.distance }
+        if left.candidate.occurredAt != right.candidate.occurredAt {
+          return left.candidate.occurredAt < right.candidate.occurredAt
+        }
+        return left.candidate.id.uuidString < right.candidate.id.uuidString
+      }
+    }
+    var dueOf: [UUID: DateOnly] = [:]
+    func take(_ due: DateOnly, _ seen: inout Set<UUID>) -> Bool {
+      for pair in byDue[due] ?? [] where seen.insert(pair.candidate.id).inserted {
+        if let other = dueOf[pair.candidate.id], !take(other, &seen) { continue }
+        dueOf[pair.candidate.id] = due
+        return true
+      }
+      return false
+    }
+    for due in byDue.keys.sorted() {
+      var seen: Set<UUID> = []
+      _ = take(due, &seen)
+    }
+    var result: [DateOnly: UUID] = [:]
+    for (operation, due) in dueOf { result[due] = operation }
+    return result
   }
 
   // MARK: - Pieces

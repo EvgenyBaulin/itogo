@@ -56,7 +56,9 @@ struct CanSaveCard: View {
   private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
 }
 
-/// Scheduled payments and debt payments due within seven days, overdue ones first.
+/// Scheduled payments and debt payments due within seven days, overdue ones first. A payment
+/// in another currency than the default one says under its amount about how much it is in the
+/// default currency at today's rate, in grey — or that there is no rate, never a guess.
 struct UpcomingPaymentsCard: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -67,6 +69,7 @@ struct UpcomingPaymentsCard: View {
       state: compute.states.data, fillsHeight: true, retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let upcoming = snapshot.planning.upcoming
+      let target = snapshot.dataset.accountSettings.defaultCurrency
       if upcoming.isEmpty {
         Text(verbatim: environment.language("overview.upcomingNone", table: "Planning"))
           .foregroundStyle(.secondary)
@@ -85,14 +88,48 @@ struct UpcomingPaymentsCard: View {
               Text(verbatim: payment.name)
                 .lineLimit(1)
               Spacer(minLength: 6)
-              Text(verbatim: environment.money.rounded(payment.amount, currency: payment.currency))
+              // Two lines on the right keep the name from being cut short on a narrow card.
+              VStack(alignment: .trailing, spacing: 0) {
+                Text(
+                  verbatim: environment.money.rounded(payment.amount, currency: payment.currency)
+                )
                 .monospacedDigit()
+                if let approximate = Self.approximateText(
+                  payment.approximate(to: target, rubPerUnit: snapshot.planning.rubPerUnit),
+                  environment)
+                {
+                  Text(verbatim: approximate)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .help(
+                      Text(
+                        verbatim: environment.language(
+                          "overview.upcoming.approxHelp", table: "Planning")))
+                }
+              }
             }
             .font(.callout)
             .accessibilityElement(children: .combine)
           }
         }
       }
+    }
+  }
+}
+
+extension UpcomingPaymentsCard {
+  /// The grey line under a payment's amount: «≈ 269 ₽» in the default currency, «нет курса»
+  /// when a rate is missing, nothing for a payment in the default currency.
+  static func approximateText(
+    _ approximate: UpcomingPayment.Approximate?, _ environment: AppEnvironment
+  ) -> String? {
+    switch approximate {
+    case .none:
+      nil
+    case .amount(let amount, let currency):
+      "≈\u{00A0}\(environment.money.rounded(amount, currency: currency))"
+    case .noRate:
+      environment.language("overview.upcoming.noRate", table: "Planning")
     }
   }
 }

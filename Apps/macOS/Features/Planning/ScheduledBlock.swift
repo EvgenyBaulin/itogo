@@ -241,11 +241,27 @@ struct ScheduledRow: View {
     return "\(own) ≈\u{00A0}\(money.rounded(rubles))"
   }
 
+  /// What pays a payment, as its row names it: «Т-Банк · Black» when it names a card, only
+  /// «Сбер» when the card is called like its account; and whether that card is in the archive.
+  static func paidWith(
+    _ payment: ScheduledPayment, accounts: [PaymentMethod], cards: [PaymentCard]
+  ) -> (name: String?, cardArchived: Bool) {
+    guard let account = accounts.first(where: { $0.id == payment.paymentMethodId }) else {
+      return (nil, false)
+    }
+    let card = payment.cardId.flatMap { id in cards.first { $0.id == id } }
+    return (
+      CardRules.displayName(account: account.name, card: card?.name), card?.archived == true
+    )
+  }
+
   @ViewBuilder
   private var subtitle: some View {
     let payment = status.payment
     let dataset = compute.snapshot?.dataset
-    let method = dataset?.paymentMethods.first { $0.id == payment.paymentMethodId }?.name
+    let paidWith = Self.paidWith(
+      payment, accounts: dataset?.paymentMethods ?? [], cards: dataset?.cards ?? [])
+    let method = paidWith.name
     let debtor = dataset?.people.first { $0.id == (payment.debtorPersonId ?? payment.forPersonId) }?
       .name
     let pieces = [
@@ -259,12 +275,37 @@ struct ScheduledRow: View {
         : nil,
       payment.forWhom == .me ? nil : environment.label(for: payment.forWhom),
       status.chargedDifferently ? t("scheduled.chargedDifferently") : nil,
+      dataset?.events.first { $0.id == payment.eventId }.map {
+        environment.format("scheduled.event", table: "Planning", $0.name)
+      },
     ].compactMap { $0 }
     if !pieces.isEmpty {
       Text(verbatim: pieces.joined(separator: " · "))
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.leading, 60)
+    }
+    // Its card is in the archive: «Провести» pays from the account alone.
+    if paidWith.cardArchived {
+      Label {
+        Text(verbatim: t("scheduled.cardArchived"))
+      } icon: {
+        Image(systemName: "creditcard")
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .padding(.leading, 60)
+    }
+    // Paid from the main account while its own is archived: said with a symbol and words.
+    if status.accountArchived {
+      Label {
+        Text(verbatim: t("scheduled.accountArchived"))
+      } icon: {
+        Image(systemName: "archivebox")
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .padding(.leading, 60)
     }
   }
 

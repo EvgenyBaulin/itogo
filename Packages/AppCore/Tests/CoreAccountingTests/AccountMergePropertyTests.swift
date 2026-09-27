@@ -114,29 +114,46 @@ struct AccountMergePropertyTests {
       }
       return moved
     }
-    let opening = Reconciliation(
-      id: id(999), date: CalendarContext.utc.day(of: plan.at), reconciledAt: plan.at,
-      actualTotalRubE4: .zero, kind: .opening)
-    after.reconciliations.append(opening)
-    for (index, row) in plan.opening.sorted(by: { $0.key < $1.key }).enumerated() {
-      after.counted.append(
-        ReconciledBalance(
-          id: id(990_000 + index), reconciliationId: opening.id, accountId: row.key.accountId,
-          currency: row.key.currency, actualE4: row.value))
+    // One opening per moment of the plan, after every count of the book — the storage's
+    // rowid puts it after a real count of the same moment.
+    for (index, group) in plan.countsByMoment.enumerated() {
+      let opening = Reconciliation(
+        id: id(999 + index), date: CalendarContext.utc.day(of: group.at),
+        reconciledAt: group.at, actualTotalRubE4: .zero, kind: .opening, origin: .merge)
+      after.reconciliations.append(opening)
+      for (row, count) in group.counts.enumerated() {
+        after.counted.append(
+          ReconciledBalance(
+            id: id(990_000 + index * 100 + row), reconciliationId: opening.id,
+            accountId: count.key.accountId, currency: count.key.currency,
+            actualE4: count.actual))
+      }
     }
-    for (index, key) in plan.sourceZero.enumerated() where plan.opening[key] == nil {
-      after.counted.append(
-        ReconciledBalance(
-          id: id(995_000 + index), reconciliationId: opening.id, accountId: key.accountId,
-          currency: key.currency, actualE4: .zero))
-    }
+    // The book's order: by moment, then as written.
+    let moments = Dictionary(
+      after.reconciliations.map { ($0.id, $0.reconciledAt ?? start) },
+      uniquingKeysWith: { first, _ in first })
+    let written = Dictionary(
+      after.reconciliations.enumerated().map { ($1.id, $0) },
+      uniquingKeysWith: { first, _ in first })
+    after.counted = after.counted.enumerated().sorted { left, right in
+      let (l, r) = (
+        moments[left.element.reconciliationId]!, moments[right.element.reconciliationId]!
+      )
+      if l != r { return l < r }
+      let (lw, rw) = (
+        written[left.element.reconciliationId]!, written[right.element.reconciliationId]!
+      )
+      if lw != rw { return lw < rw }
+      return left.offset < right.offset
+    }.map(\.element)
     return after
   }
 
-  /// Every currency of the merged account holds what the two held together — at the moment of
-  /// the merge and after it, what moved on the source since landing on the target —, the source
-  /// holds nothing, the third account is untouched, and the plan asks only for what nobody
-  /// knows.
+  /// Every currency of the merged account holds what the two held together — now and at the
+  /// moment of the merge, what moved on the source since landing on the target —, the source
+  /// holds nothing, the third account is untouched, the plan asks only when one of the two was
+  /// counted and the other only moved, and nothing is dated at the merge itself.
   @Test(arguments: Array(1...60) as [UInt64])
   func theMergedAccountHoldsWhatTheTwoHeld(seed: UInt64) {
     let history = history(seed: seed)
@@ -148,26 +165,29 @@ struct AccountMergePropertyTests {
     archived.archived = true
     archived.isDefault = false
     let after = balances(merged(history, plan: plan), accounts: [archived, plan.target, other])
+    let shown = AccountMerge.balancesAfter(plan, source: source.id, balances: before)
 
     #expect(plan.target.isDefault, "seed \(seed): the main flag passes to the target")
     #expect(Set(plan.target.currencies) == Set([CurrencyCode.rub, .usd, Self.kzt]), "seed \(seed)")
+    #expect(
+      plan.countsByMoment.allSatisfy { $0.at < mergedAt }, "seed \(seed): no count of its own")
     for currency in plan.target.currencies {
       let into = BalanceKey(accountId: target.id, currency: currency)
       let from = BalanceKey(accountId: source.id, currency: currency)
-      let known = [into, from].filter { before.hasHistory($0) }
-      let amounts = known.map { before.balance($0, at: now) }
-      if known.isEmpty {
-        #expect(!needs.contains(into), "seed \(seed), \(currency)")
+      let moved = [into, from].filter { before.hasHistory($0) }
+      let counted = [into, from].filter { before.latestAnchor($0) != nil }
+      let asked = moved.count == 2 && counted.count == 1
+      #expect(needs.contains(into) == asked, "seed \(seed), \(currency)")
+      if asked || counted.isEmpty {
+        if counted.isEmpty {
+          #expect(after[into]?.amountE4 == nil, "seed \(seed), \(currency): still uncounted")
+        }
         continue
       }
-      if amounts.contains(nil) {
-        #expect(needs.contains(into), "seed \(seed), \(currency): nobody knows it, so it is asked")
-        continue
-      }
-      #expect(!needs.contains(into), "seed \(seed), \(currency)")
-      let together = AmountE4.sum(amounts.compactMap { $0 })
+      let together = AmountE4.sum(moved.compactMap { before.balance($0, at: now) })
       #expect(after[into]?.amountE4 == together, "seed \(seed), \(currency)")
-      let atMerge = AmountE4.sum(known.compactMap { before.balance($0, at: mergedAt) })
+      #expect(shown[into] == together, "seed \(seed), \(currency): the dialog shows it")
+      let atMerge = AmountE4.sum(moved.compactMap { before.balance($0, at: mergedAt) })
       #expect(after.balance(into, at: mergedAt) == atMerge, "seed \(seed), \(currency)")
     }
     for key in plan.sourceZero {

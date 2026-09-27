@@ -129,4 +129,22 @@ struct GoalMathEdgeTests {
       #expect(GoalMath.contribution(of: row, to: tripGoal, rates: rates) == .zero)
     }
   }
+
+  /// 27 000 ₽ put into the bike in March on a plan of 9 000 from March: 18 000 of credit. April
+  /// asks nothing, and May, with 9 000 of credit left, nothing either; June asks its 9 000.
+  @Test func planLeftUsesTheCreditOfEarlierMonths() {
+    var goal = bikeGoal
+    goal.planStartMonth = MonthKey(year: 2026, month: 3)
+    let book = ledger([contribution(1, "27000", category: bike, on: "2026-03-10")], goals: [goal])
+    for (month, left) in [(4, nil), (5, nil), (6, money("9000"))] as [(Int, AmountE4?)] {
+      let key = MonthKey(year: 2026, month: month)
+      #expect(
+        GoalMath.planLeft(goals: [goal], rows: book.rows, month: key, rates: rates)[goal.id]
+          == left, "\(key)")
+    }
+    let may = GoalMath.planState(
+      goal: goal, rows: book.rows, month: MonthKey(year: 2026, month: 5), rates: rates)
+    #expect(may?.creditIn == money("9000"))
+    #expect(may?.creditOut == .zero)
+  }
 }

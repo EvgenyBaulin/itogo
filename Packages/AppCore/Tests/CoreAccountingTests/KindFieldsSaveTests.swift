@@ -101,12 +101,12 @@ struct KindFieldsSaveTests {
     #expect(KindFields.fields(of: .refund).contains(.debtor))
   }
 
-  /// The table of fields: a refund has what a purchase has, less credit and a payment on a debt,
-  /// plus the purchase part it takes back from.
+  /// The table of fields: a refund has what a purchase has, less credit, a payment on a debt and
+  /// a cashback of its own, plus the purchase part it takes back from.
   @Test func aRefundHasWhatAPurchaseHasButCreditAndDebt() {
     let purchase = KindFields.fields(of: .expense)
     let refund = KindFields.fields(of: .refund)
-    #expect(purchase.subtracting([.credit, .debt]).union([.refundOf]) == refund)
+    #expect(purchase.subtracting([.credit, .debt, .cashback]).union([.refundOf]) == refund)
   }
 
   /// Money back is one part. Two parts naming two people — the line and the panel never make

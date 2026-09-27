@@ -7,8 +7,10 @@ import SwiftUI
 /// The accounts are listed the way every menu lists them — the main account first and marked,
 /// then in the order the owner dragged them to, alphabetical until then — and can be dragged,
 /// put back in alphabetical order, edited, made main, merged, archived and brought back, and
-/// deleted while nothing points at them. The groups carry «Учитывать в общей сводке». Each
-/// change is one step of ⌘Z, but a merge and a deletion, which are not undone.
+/// deleted while nothing points at them. The groups carry «Учитывать в общей сводке». The cards
+/// of an account are lines inside its row, each with its own «…»: edit, cashback rules, archive,
+/// delete while unused. Each change is one step of ⌘Z, but a merge and a deletion of an account
+/// or a group, which are not undone.
 struct AccountsSettingsView: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.store) private var store
@@ -17,6 +19,12 @@ struct AccountsSettingsView: View {
 
   @State private var accounts: [PaymentMethod] = []
   @State private var groups: [AccountGroup] = []
+  @State private var cards: [PaymentCard] = []
+  @State private var rules: [CashbackRule] = []
+  /// The card the owner asked to delete, waiting for the answer.
+  @State private var deletingCard: PaymentCard?
+  /// What the last action on a card was refused for, said under the list.
+  @State private var cardRefusal: CardRefusal?
   /// Accounts picked in the list, for «Удалить» of several unused ones at once.
   @State private var selection: Set<UUID> = []
   @State private var showsArchive = false
@@ -36,6 +44,12 @@ struct AccountsSettingsView: View {
     case group(AccountGroup?)
     case merge(PaymentMethod, into: UUID?)
     case handOver(PaymentMethod, Hand, candidates: [PaymentMethod], preselected: UUID?)
+    /// «В архив» on an account that still holds money: where each currency of it goes.
+    case archiveMoney(PaymentMethod, newMain: UUID?)
+    /// A new card of the account, or an edit of one.
+    case card(PaymentCard?, accountId: UUID)
+    /// The cashback rules of a card, or of an account without cards.
+    case cashback(accountId: UUID, CashbackHolder)
 
     /// What the main account is leaving for: the archive, or a deletion of these accounts —
     /// the main one and any others picked with it.
@@ -50,6 +64,10 @@ struct AccountsSettingsView: View {
       case .group(let group): "group.\(group?.id.uuidString ?? "new")"
       case .merge(let account, _): "merge.\(account.id.uuidString)"
       case .handOver(let account, _, _, _): "handOver.\(account.id.uuidString)"
+      case .archiveMoney(let account, _): "archiveMoney.\(account.id.uuidString)"
+      case .card(let card, let accountId):
+        "card.\(card?.id.uuidString ?? "new").\(accountId.uuidString)"
+      case .cashback(let accountId, let holder): "cashback.\(accountId.uuidString).\(holder)"
       }
     }
   }
@@ -62,6 +80,7 @@ struct AccountsSettingsView: View {
   }
 
   private var actions: AccountActions { AccountActions(environment: environment, store: store) }
+  private var cardActions: CardActions { CardActions(environment: environment, store: store) }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Accounts") }
 
@@ -124,6 +143,22 @@ struct AccountsSettingsView: View {
     } message: { question in
       Text(verbatim: deleteMessage(count: question.ids.count))
     }
+    // A card goes with its rules; ⌘Z brings both back.
+    .confirmationDialog(
+      deletingCard.map {
+        environment.format("card.delete.title", table: CardText.table, $0.name)
+      } ?? "",
+      isPresented: Binding(get: { deletingCard != nil }, set: { if !$0 { deletingCard = nil } }),
+      titleVisibility: .visible, presenting: deletingCard
+    ) { card in
+      Button(environment.language("action.delete"), role: .destructive) {
+        deletingCard = nil
+        perform(cardActions.delete(card.id))
+      }
+      Button(environment.language("action.cancel"), role: .cancel) {}
+    } message: { _ in
+      Text(verbatim: environment.language("card.delete.message", table: CardText.table))
+    }
     .refusedWriteAlert($failed, environment)
   }
 
@@ -159,13 +194,17 @@ struct AccountsSettingsView: View {
 
       if showsArchive {
         Section {
-          if archived.isEmpty && archivedGroups.isEmpty {
+          if archived.isEmpty && archivedGroups.isEmpty && archivedCards.isEmpty {
             Text(verbatim: t("accounts.archiveEmpty"))
               .foregroundStyle(.secondary)
           }
           ForEach(archived, id: \.id) { account in
             archivedRow(account)
               .tag(account.id)
+          }
+          ForEach(archivedCards, id: \.id) { card in
+            archivedCardRow(card)
+              .selectionDisabled()
           }
           ForEach(archivedGroups, id: \.id) { group in
             archivedGroupRow(group)
@@ -214,7 +253,18 @@ struct AccountsSettingsView: View {
     }
   }
 
+  /// The account, and its live cards as lines inside its row: the row is what is dragged, so a
+  /// card never lands between two accounts.
   private func accountRow(_ account: PaymentMethod) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      accountLine(account)
+      ForEach(liveCards(of: account.id), id: \.id) { card in
+        cardLine(card)
+      }
+    }
+  }
+
+  private func accountLine(_ account: PaymentMethod) -> some View {
     HStack(spacing: 8) {
       Image(systemName: AccountText.kindSymbol(account.kind))
         .foregroundStyle(.secondary)
@@ -244,6 +294,94 @@ struct AccountsSettingsView: View {
     }
   }
 
+  /// A card inside its account's row: its name, how many cashback rules it holds, and its own
+  /// «…».
+  private func cardLine(_ card: PaymentCard) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: "creditcard")
+        .foregroundStyle(.secondary)
+        .frame(width: 18)
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(verbatim: card.name)
+        Text(
+          verbatim: ([card.aliases.isEmpty ? nil : card.aliases.joined(separator: ", ")]
+            + [
+              environment.format(
+                "card.caption", table: CardText.table,
+                counts: rules.filter { $0.cardId == card.id }.count)
+            ]).compactMap { $0 }.joined(separator: " · ")
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Menu {
+        cardMenuItems(card)
+      } label: {
+        Image(systemName: "ellipsis.circle")
+          .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(card.name, environment)))
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+    }
+    .padding(.leading, 26)
+    .contextMenu { cardMenuItems(card) }
+  }
+
+  @ViewBuilder
+  private func cardMenuItems(_ card: PaymentCard) -> some View {
+    Button(environment.language("action.edit")) {
+      sheet = .card(card, accountId: card.accountId)
+    }
+    Button(environment.language("card.cashback", table: CardText.table)) {
+      sheet = .cashback(accountId: card.accountId, .card(card.id))
+    }
+    Divider()
+    Button(environment.language("card.archive", table: CardText.table)) {
+      perform(cardActions.archive(card.id))
+    }
+    Button(environment.language("card.delete", table: CardText.table), role: .destructive) {
+      deletingCard = card
+    }
+  }
+
+  /// A card in the archive, named with its account: «Вернуть», and «Удалить…» while unused.
+  private func archivedCardRow(_ card: PaymentCard) -> some View {
+    let account = accounts.first { $0.id == card.accountId }?.name ?? ""
+    return HStack(spacing: 8) {
+      Image(systemName: "archivebox")
+        .foregroundStyle(.secondary)
+        .frame(width: 18)
+        .accessibilityHidden(true)
+      Label {
+        Text(verbatim: account + " · " + card.name)
+      } icon: {
+        Image(systemName: "creditcard")
+      }
+      Spacer()
+      Button(environment.language("card.restore", table: CardText.table)) {
+        perform(cardActions.restore(card.id))
+      }
+      Menu {
+        Button(environment.language("card.restore", table: CardText.table)) {
+          perform(cardActions.restore(card.id))
+        }
+        Divider()
+        Button(environment.language("card.delete", table: CardText.table), role: .destructive) {
+          deletingCard = card
+        }
+      } label: {
+        Image(systemName: "ellipsis.circle")
+          .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(card.name, environment)))
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+    }
+  }
+
   /// Its kind, currencies — the main one first — and group.
   private func caption(of account: PaymentMethod) -> String {
     var parts = [t(AccountText.kindKey(account.kind))]
@@ -260,7 +398,7 @@ struct AccountsSettingsView: View {
       accountMenuItems(account)
     } label: {
       Image(systemName: "ellipsis.circle")
-        .accessibilityLabel(Text(verbatim: t("accounts.rowMenu")))
+        .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(account.name, environment)))
     }
     .menuStyle(.borderlessButton)
     .menuIndicator(.hidden)
@@ -282,6 +420,17 @@ struct AccountsSettingsView: View {
     }
     if !actions.mergeTargets(for: account).isEmpty {
       Button(t("accounts.mergeWith")) { sheet = .merge(account, into: nil) }
+    }
+    Divider()
+    Button(environment.language("card.add", table: CardText.table)) {
+      sheet = .card(nil, accountId: account.id)
+    }
+    // Rules of the account itself only while it has no card: with cards, each card holds its
+    // own.
+    if liveCards(of: account.id).isEmpty {
+      Button(environment.language("card.cashback", table: CardText.table)) {
+        sheet = .cashback(accountId: account.id, .account(account.id))
+      }
     }
     Divider()
     Button(t("accounts.archive")) { archive(account) }
@@ -325,7 +474,7 @@ struct AccountsSettingsView: View {
         groupMenuItems(group)
       } label: {
         Image(systemName: "ellipsis.circle")
-          .accessibilityLabel(Text(verbatim: t("accounts.rowMenu")))
+          .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(group.name, environment)))
       }
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
@@ -362,7 +511,7 @@ struct AccountsSettingsView: View {
         archivedMenuItems(account)
       } label: {
         Image(systemName: "ellipsis.circle")
-          .accessibilityLabel(Text(verbatim: t("accounts.rowMenu")))
+          .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(account.name, environment)))
       }
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
@@ -393,6 +542,9 @@ struct AccountsSettingsView: View {
 
   @ViewBuilder
   private var footer: some View {
+    if let cardRefusal {
+      CardRefusalNote(refusal: cardRefusal)
+    }
     if let refusal {
       // An account in use cannot be deleted: the note offers a merge and the archive instead,
       // while it is live.
@@ -481,27 +633,52 @@ struct AccountsSettingsView: View {
           },
           cancel: { self.sheet = nil })
       }
+    case .archiveMoney(let account, let newMain):
+      ArchivedMoneySheet(archiving: account, newMain: newMain) { archived in
+        self.sheet = nil
+        if archived {
+          refusal = nil
+          selection = []
+        }
+        reload()
+      }
+    case .card(let card, let accountId):
+      CardEditor(previous: card, accountId: accountId) { _ in
+        self.sheet = nil
+        reload()
+      }
+    case .cashback(let accountId, let holder):
+      CashbackRulesSheet(accountId: accountId, holder: holder) {
+        self.sheet = nil
+        reload()
+      }
     }
   }
 
   // MARK: Actions
 
   /// Into the archive; the main account first asks which one takes over. Money still on the
-  /// account keeps it out, and the note under the list says so.
+  /// account is asked about — where each currency goes — and moved with the archive in one
+  /// step; a balance nobody knows keeps it out, and the note under the list says so.
   private func archive(_ account: PaymentMethod, newMain: UUID? = nil) {
     Task {
       guard let books = await actions.books() else {
         failed = true
         return
       }
+      let reason = actions.archiveRefusal(account, books: books)
       if account.isDefault, newMain == nil {
-        // Money on it is said before the question of who takes over.
-        if let reason = actions.archiveRefusal(account, books: books) {
+        // What keeps it out is said before the question of who takes over.
+        if let reason, reason != .hasMoney {
           refusal = reason
           return
         }
         let next = actions.successors(leaving: account.id, books: books)
         sheet = .handOver(account, .archive, candidates: next.all, preselected: next.preselected)
+        return
+      }
+      if reason == .hasMoney {
+        sheet = .archiveMoney(account, newMain: newMain)
         return
       }
       perform(actions.archive(account.id, newMain: newMain, books: books))
@@ -578,8 +755,19 @@ struct AccountsSettingsView: View {
     case .refused(let reason): refusal = reason
     case .failed: failed = true
     }
+    cardRefusal = nil
     reload()
     return outcome == .done
+  }
+
+  /// The same for an action on a card.
+  private func perform(_ outcome: CardActionOutcome) {
+    switch outcome {
+    case .done: cardRefusal = nil
+    case .refused(let reason): cardRefusal = reason
+    case .failed: failed = true
+    }
+    reload()
   }
 
   // MARK: Data
@@ -596,9 +784,24 @@ struct AccountsSettingsView: View {
   private var liveGroups: [AccountGroup] { groups.filter { !$0.archived } }
   private var archivedGroups: [AccountGroup] { groups.filter(\.archived) }
 
+  /// The live cards of an account, in the order of the lists.
+  private func liveCards(of accountId: UUID) -> [PaymentCard] {
+    CardRules.ordered(cards, of: accountId, locale: environment.language.locale)
+  }
+
+  /// The archived cards of the live accounts; an archived account's cards go and come back
+  /// with it.
+  private var archivedCards: [PaymentCard] {
+    let live = Set(accounts.filter { !$0.archived }.map(\.id))
+    return cards.filter { $0.archived && live.contains($0.accountId) }
+      .sorted { CardRules.precedes($0, $1, locale: environment.language.locale) }
+  }
+
   private func reload() {
     accounts = actions.all
     groups = actions.groups
+    cards = cardActions.cards
+    rules = cardActions.rules
     selection = selection.filter { id in accounts.contains { $0.id == id } }
   }
 }

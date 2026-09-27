@@ -114,6 +114,92 @@ struct PerformanceTests {
     #expect(failure is CancellationError, "the load ended with \(failure.map { type(of: $0) })")
     #expect(latency < .milliseconds(100))
   }
+
+  // MARK: Live counts
+
+  /// The large history in a file of its own, with the main account counted a month before its
+  /// last day and on it: the window of a month a backdated operation lands in.
+  static func countedFixture() throws -> (stack: DatabaseStack, directory: URL, key: BalanceKey) {
+    let (stack, directory) = try TestSupport.makeFileStack(named: "counted.sqlite")
+    try TransactionRepository(writer: stack.writer).insert(TestSupport.batch(Self.fixture.set))
+    let calendar = TestSupport.sampleCalendar
+    let main = try #require(
+      try stack.writer.read { db in try TransactionRepository.mainAccountId(db) })
+    let key = BalanceKey(accountId: main, currency: .rub)
+    let last = Self.fixture.set.lastDay
+    let context = LiveCountsContext(calendar: calendar, categoryName: "Sverka")
+    let planning = PlanningRepository(writer: stack.writer, liveCounts: context)
+    for (day, actual) in [(last.adding(days: -30), 100_000), (last, 90_000)] {
+      let moment = calendar.startOfDay(day).addingTimeInterval(20 * 3_600)
+      let expected = try stack.writer.read { db in
+        try LiveCountsWriter.balance(of: key, at: moment, context: context, db: db)
+      }
+      let reconciliation = Reconciliation(
+        date: day, reconciledAt: moment, actualTotalRubE4: .zero, kind: .accounts)
+      let counted = AmountE4(whole: Int64(actual))
+      var upsert = PlanningRows.empty
+      upsert.reconciliations = [reconciliation]
+      upsert.reconciledBalances = [
+        ReconciledBalance(
+          reconciliationId: reconciliation.id, accountId: key.accountId, currency: .rub,
+          actualE4: counted, expectedE4: expected, differenceE4: expected.map { counted - $0 },
+          recordsDifference: expected == nil ? nil : true)
+      ]
+      _ = try planning.apply(PlanningChange(upsert: upsert, at: moment, settles: [key]))
+    }
+    return (stack, directory, key)
+  }
+
+  /// One backdated operation inside a month's window settles in 15 ms: the counts read, the
+  /// window's operations loaded, the difference rewritten.
+  @Test func settlingOneBackdatedOperation() async throws {
+    let (stack, directory, key) = try Self.countedFixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let context = LiveCountsContext(calendar: TestSupport.sampleCalendar, categoryName: "Sverka")
+    let moment = TestSupport.sampleCalendar.startOfDay(Self.fixture.set.lastDay.adding(days: -10))
+    var step: Int64 = 0
+    let times = try await Bench.measure("settle, one operation in a month's window") {
+      step += 1
+      let touch = CountTouch(
+        movements: [
+          AccountMovement(
+            key: key, at: moment, amountE4: AmountE4(whole: -step), source: .operation(UUID()))
+        ])
+      _ = try stack.writer.write { db in
+        try LiveCountsWriter.settle(touch, context: context, db: db)
+      }
+    }
+    #expect(times.median < .milliseconds(15))
+  }
+
+  /// The catch-up at open over the large history as `make sample-large` opens it — with its
+  /// accounts: groups, accounts in several currencies, transfers, a starting count on the
+  /// first day and a sheet two weeks before the last, whose windows hold almost two years, so
+  /// it reads nearly the whole history. It runs beside the launch, off the main thread, while
+  /// the pipeline makes its first run over the same history: 500 ms, no longer than that run
+  /// with every section of Analytics. The warm-up settles what the generated sheet left; the
+  /// runs measured are every later launch, where everything already follows the books.
+  @Test func settlingEveryCountAtOpen() async throws {
+    let (stack, directory) = try TestSupport.makeFileStack(named: "accounts.sqlite")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let set = TestSupport.sample(
+      months: SampleDataGenerator.largeSetMonths, density: SampleDataGenerator.largeSetDensity
+    ).withAccounts(seed: 20_260_918, calendar: TestSupport.sampleCalendar, language: "en")
+    try TransactionRepository(writer: stack.writer).insert(HistoryBatch(sample: set))
+    let repository = ReconciliationRepository(writer: stack.writer)
+    let context = LiveCountsContext(calendar: TestSupport.sampleCalendar, categoryName: "Sverka")
+    var counts = 0
+    let times = try await Bench.measure(
+      "settle every count at open, \(set.entries.count) operations with accounts"
+    ) {
+      counts = try stack.writer.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM reconciliation_balances") ?? 0
+      }
+      _ = try repository.settleAll(context: context)
+    }
+    #expect(counts > 0)
+    #expect(times.median < .milliseconds(500))
+  }
 }
 
 /// The sections of the Analytics window for one period, as `AnalyticsWindow` of the core's

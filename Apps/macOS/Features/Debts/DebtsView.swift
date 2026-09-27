@@ -12,6 +12,9 @@ struct DebtsView: View {
   @State private var selection: DebtsSelection?
   @State private var sheet: DebtSheet?
   @State private var recordingReimbursement = false
+  /// The debt «Удалить…» asks about.
+  @State private var deleting: DebtLine?
+  @State private var deleteFailed = false
 
   var body: some View {
     ComputedBlock(
@@ -25,8 +28,11 @@ struct DebtsView: View {
           .padding(.vertical, 12)
         Divider()
         HStack(spacing: 0) {
-          DebtsList(overview: overview, people: snapshot.dataset.people, selection: $selection)
-            .frame(width: 300)
+          DebtsList(
+            overview: overview, people: snapshot.dataset.people, selection: $selection,
+            deleting: $deleting
+          )
+          .frame(width: 300)
           Divider()
           detail(overview, snapshot: snapshot)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -48,6 +54,44 @@ struct DebtsView: View {
     .sheet(isPresented: $recordingReimbursement) {
       ReimbursementSheet().handingOver(dependencies)
     }
+    .confirmationDialog(
+      deletionTitle, isPresented: deletionAsked, titleVisibility: .visible, presenting: deleting
+    ) { line in
+      Button(t("debts.delete.action"), role: .destructive) { delete(line) }
+      Button(environment.language("action.cancel"), role: .cancel) {}
+    } message: { line in
+      Text(verbatim: deletionMessage(line))
+    }
+    .alert(t("debts.deleteFailed"), isPresented: $deleteFailed) {
+      Button(environment.language("action.ok")) {}
+    }
+  }
+
+  private var deletionAsked: Binding<Bool> {
+    Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+  }
+
+  private var deletionTitle: String {
+    environment.format("debts.delete.title", table: "Debts", deleting?.debt.name ?? "")
+  }
+
+  /// What the confirmation says stays and goes, from the data on screen.
+  private func deletionMessage(_ line: DebtLine) -> String {
+    guard let snapshot = compute.snapshot else { return t("debts.delete.undo") }
+    let deletion = DebtActions.deletion(of: line.debt, snapshot: snapshot, at: Date())
+    return DebtDeletionText.message(
+      deletion, personName: snapshot.dataset.people.first { $0.id == line.debt.personId }?.name,
+      language: environment.language, money: environment.money)
+  }
+
+  private func delete(_ line: DebtLine) {
+    guard let dependencies else { return }
+    if DebtActions(dependencies).delete(line.debt) {
+      if selection == .debt(line.id) { selection = nil }
+    } else {
+      deleteFailed = true
+    }
+    deleting = nil
   }
 
   private func totals(_ overview: DebtsOverview) -> some View {
@@ -85,7 +129,8 @@ struct DebtsView: View {
         .first(where: { $0.id == id })
       {
         DebtDetail(
-          line: line, all: overview.iOwe + overview.owedToMe.flatMap(\.debts), sheet: $sheet)
+          line: line, all: overview.iOwe + overview.owedToMe.flatMap(\.debts), sheet: $sheet,
+          deleting: $deleting)
       } else {
         placeholder
       }
@@ -137,15 +182,71 @@ enum OwedToMeRow: Identifiable, Hashable {
   }
 }
 
-/// The actions the card of a debt offers. A closed debt offers only «Reopen»: a payment or a
-/// line on it would move a balance no list, total or reminder shows any more.
+/// The actions the card of a debt offers. A closed debt offers «Reopen» and «Delete…» only: a
+/// payment or a line on it would move a balance no list, total or reminder shows any more.
+/// «Delete…» comes last, open or closed.
 enum DebtCardAction: Hashable {
-  case pay, addEntry, offset, transfer, adjust, close, reopen
+  case pay, addEntry, offset, transfer, adjust, close, reopen, delete
 
   static func offered(for debt: Debt) -> [DebtCardAction] {
-    guard !debt.closed else { return [.reopen] }
+    guard !debt.closed else { return [.reopen, .delete] }
     return [.pay, .addEntry] + (debt.direction == .iOwe ? [.offset] : [])
-      + [.transfer, .adjust, .close]
+      + [.transfer, .adjust, .close, .delete]
+  }
+}
+
+extension DebtLine {
+  /// The next payment was due before today and is still unpaid: «просрочен» beside it.
+  func isOverdue(today: DateOnly) -> Bool {
+    guard !debt.closed, let next = nextPayment else { return false }
+    return next < today
+  }
+}
+
+/// The words of the confirmation of «Удалить…»: what leaves with the debt and what stays, one
+/// sentence a line — the journal, what was left on it, the operations that paid it by what they
+/// were, the purchases on credit, the money the journal moved, the archived subcategory, the
+/// income a later repayment would be, and that ⌘Z brings it back.
+@MainActor
+enum DebtDeletionText {
+  static func message(
+    _ deletion: DebtDeletion, personName: String?, language: AppLanguage, money: MoneyFormatter
+  ) -> String {
+    let debt = deletion.debt
+    var lines = [
+      language.format("debts.delete.journal", table: "Debts", counts: deletion.journalLines)
+    ]
+    if !deletion.balance.isZero {
+      let amount = money.exact(deletion.balance.magnitude, currency: debt.currency)
+      lines.append(
+        language.format(
+          "debts.delete.left", table: "Debts",
+          deletion.balance.isNegative ? "\u{2212}" + amount : amount))
+    }
+    if deletion.operations > 0 {
+      let key =
+        switch deletion.meaning {
+        case .loansExpense: "debts.delete.ops.loans"
+        case .notSpending: "debts.delete.ops.notSpending"
+        case .moneyBack: "debts.delete.ops.moneyBack"
+        }
+      lines.append(language.format(key, table: "Debts", counts: deletion.operations))
+    }
+    for purchase in deletion.creditPurchases {
+      lines.append(
+        language.format(
+          "debts.delete.purchase", table: "Debts", purchase.transaction.note ?? debt.name))
+    }
+    if deletion.movesMoneyLines > 0 { lines.append(language("debts.delete.cash", table: "Debts")) }
+    if let subcategory = deletion.archivedSubcategory {
+      lines.append(language.format("debts.delete.category", table: "Debts", subcategory.name))
+    }
+    if deletion.warnsOfIncomeLater {
+      lines.append(
+        language.format("debts.delete.owedLater", table: "Debts", personName ?? debt.name))
+    }
+    lines.append(language("debts.delete.undo", table: "Debts"))
+    return lines.joined(separator: "\n")
   }
 }
 
@@ -155,6 +256,7 @@ private struct DebtsList: View {
   let overview: DebtsOverview
   let people: [Person]
   @Binding var selection: DebtsSelection?
+  @Binding var deleting: DebtLine?
   @State private var showsClosed = false
 
   var body: some View {
@@ -170,6 +272,7 @@ private struct DebtsList: View {
             withoutRate: overview.withoutRate.contains(line.id)
           )
           .tag(DebtsSelection.debt(line.id))
+          .contextMenu { deleteButton(line) }
         }
       } header: {
         Text(verbatim: t("debts.iOwe"))
@@ -193,6 +296,7 @@ private struct DebtsList: View {
             )
             .padding(.leading, 14)
             .tag(item.selection)
+            .contextMenu { deleteButton(line) }
           }
         }
       } header: {
@@ -207,6 +311,7 @@ private struct DebtsList: View {
               row(line.debt.name, line.balance, currency: line.debt.currency)
                 .foregroundStyle(.secondary)
                 .tag(DebtsSelection.debt(line.id))
+                .contextMenu { deleteButton(line) }
             }
           }
         } header: {
@@ -247,6 +352,10 @@ private struct DebtsList: View {
     people.first { $0.id == id }?.name ?? t("debts.noPerson")
   }
 
+  private func deleteButton(_ line: DebtLine) -> some View {
+    Button(t("debts.delete"), role: .destructive) { deleting = line }
+  }
+
   private func t(_ key: String) -> String { environment.language(key, table: "Debts") }
 }
 
@@ -258,6 +367,7 @@ private struct DebtDetail: View {
   let line: DebtLine
   let all: [DebtLine]
   @Binding var sheet: DebtSheet?
+  @Binding var deleting: DebtLine?
   @State private var confirmsToggle = false
   @State private var reopenFailed = false
 
@@ -277,6 +387,11 @@ private struct DebtDetail: View {
                 "debts.nextPayment", table: "Debts", environment.dates.longDay(next))
             )
             .foregroundStyle(.secondary)
+            if line.isOverdue(today: environment.today) {
+              // A symbol and a word, never a colour alone.
+              Label(t("debts.overdue"), systemImage: "exclamationmark.circle")
+                .accessibilityIdentifier("debts.overdue")
+            }
           }
         }
         if debt.direction == .iOwe {
@@ -391,6 +506,8 @@ private struct DebtDetail: View {
         guard let dependencies else { return }
         if !DebtActions(dependencies).reopen(debt) { reopenFailed = true }
       }
+    case .delete:
+      return Button(t("debts.delete"), role: .destructive) { deleting = line }
     }
   }
 

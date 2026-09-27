@@ -233,6 +233,9 @@ final class DataSetTests: XCTestCase {
       XCTAssertEqual(counts["reconciliations"], set.reconciliations.count)
       XCTAssertEqual(counts["reconciliation_balances"], set.reconciledBalances.count)
       XCTAssertEqual(counts["scheduled_payments"], set.planning.scheduled.count)
+      XCTAssertEqual(counts["cards"], set.cards.count)
+      XCTAssertEqual(counts["cashback_rules"], set.cashbackRules.count)
+      XCTAssertFalse(set.cards.isEmpty, "the accounts come with their cards")
 
       let accounts = try AccountRepository(writer: stack.writer).accounts()
       XCTAssertEqual(accounts.filter(\.isMain).count, 1, "one main account")

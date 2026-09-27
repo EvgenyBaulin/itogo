@@ -33,17 +33,18 @@ struct LegacyDatabaseTests {
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
-    #expect(try stack.appliedMigrations().count == 4)
+    #expect(try stack.appliedMigrations().count == 5)
 
     // Of the three accounts flagged main — the everyday card, a second live one and an
     // archived one — the card with the operations stays main.
     let main = book.mainCard.id
     #expect(
-      stack.applied.dataSteps
+      TestSupport.accountsStep(stack.applied.dataSteps)
         == [
           "mainKept": 1, "mainChosen": 0, "mainCreated": 0, "defaultsCleared": 2,
           "assigned": book.unassignedCount,
         ])
+    #expect(TestSupport.cardsStep(stack.applied.dataSteps) == book.cardsStep)
     try stack.writer.read { db in
       let after = try TestSupport.contents(db, columns: before.mapValues(\.columns))
       // 1. Every table keeps its rows, in their order.
@@ -116,11 +117,12 @@ struct LegacyDatabaseTests {
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
     #expect(
-      stack.applied.dataSteps
+      TestSupport.accountsStep(stack.applied.dataSteps)
         == [
           "mainKept": 0, "mainChosen": 0, "mainCreated": 1, "defaultsCleared": 0,
           "assigned": book.unassignedCount,
         ])
+    #expect(TestSupport.cardsStep(stack.applied.dataSteps) == book.cardsStep)
     try stack.writer.read { db in
       let created = try #require(
         try Row.fetchOne(db, sql: "SELECT * FROM payment_methods WHERE is_default = 1"))
@@ -176,8 +178,12 @@ struct LegacyDatabaseTests {
     let stack = try DatabaseStack(url: url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
     #expect(
-      stack.applied.dataSteps
+      TestSupport.accountsStep(stack.applied.dataSteps)
         == ["mainKept": 0, "mainChosen": 1, "mainCreated": 0, "defaultsCleared": 0, "assigned": 0])
+    // Both accounts are live cards: each gets its own.
+    #expect(
+      TestSupport.cardsStep(stack.applied.dataSteps)
+        == TestSupport.cardsStep(cardsCreated: 2))
     let main = try stack.writer.read { db in
       try String.fetchAll(db, sql: "SELECT id FROM payment_methods WHERE is_default = 1")
     }
@@ -189,8 +195,9 @@ struct LegacyDatabaseTests {
   @Test func aNewDatabaseGetsNoAccount() throws {
     let stack = try TestSupport.makeStack()
     #expect(
-      stack.applied.dataSteps
+      TestSupport.accountsStep(stack.applied.dataSteps)
         == ["mainKept": 0, "mainChosen": 0, "mainCreated": 0, "defaultsCleared": 0, "assigned": 0])
+    #expect(TestSupport.cardsStep(stack.applied.dataSteps) == TestSupport.cardsStep())
     #expect(try ReferenceRepository(writer: stack.writer).paymentMethods().isEmpty)
     // A database already up to date runs no step at all.
     let (file, directory) = try TestSupport.makeFileStack()
@@ -222,7 +229,7 @@ struct LegacyDatabaseTests {
         try DatabaseStack(url: book.url, schema: TestSupport.schemaSource, context: stopping)
       })
     #expect(failure.from == 3)
-    #expect(failure.to == 4)
+    #expect(failure.to == 5)
     #expect(failure.migration == "0004_accounts")
 
     #expect(
@@ -238,7 +245,7 @@ struct LegacyDatabaseTests {
     // And it migrates once nothing stops it.
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
-    #expect(try stack.appliedMigrations().count == 4)
+    #expect(try stack.appliedMigrations().count == 5)
     try stack.close()
   }
 
@@ -263,7 +270,7 @@ struct LegacyDatabaseTests {
     }
     let stack = try DatabaseStack(url: url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
-    #expect(try stack.appliedMigrations().count == 4)
+    #expect(try stack.appliedMigrations().count == 5)
     #expect(stack.applied.dataSteps["mainCreated"] == 1)
     let orphans = try stack.writer.read { db in
       try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").count
@@ -386,7 +393,7 @@ struct LegacyDatabaseTests {
 /// reconciliation with its breakdown and its difference, every kind of debt and of journal
 /// line, goal contributions, templates, expected income and its links, anomalies waved away,
 /// the owner's choices of a category, currencies, rates and settings.
-private struct LegacyBook {
+struct LegacyBook {
   let url: URL
   let set: SampleDataSet
   let mainCard: PaymentMethod
@@ -575,6 +582,18 @@ private struct LegacyBook {
 
   var edgeEntries: [TransactionEntry] { [unassigned, binnedUnassigned, income, difference] }
 
+  /// What the step of the cards gives this book: a card for every live card account, no mode
+  /// for any count — 1.0.0 counted one total —, and the plan of every goal with one started.
+  var cardsStep: [String: Int] {
+    let accounts = (set.paymentMethods + [secondMain, archivedMain, noCurrency]).map {
+      MigratingCardAccount(id: $0.id, name: $0.name, kind: $0.kind, archived: $0.archived)
+    }
+    let plan = CardsMigration.plan(accounts: accounts)
+    return TestSupport.cardsStep(
+      cardsCreated: plan.cards.count, cardsSkipped: plan.skipped,
+      goalPlansStarted: set.goals.filter { ($0.monthlyPlanE4?.raw ?? 0) > 0 }.count)
+  }
+
   /// The history as the core has it, before the update: what the ledger of the older build
   /// was made of.
   var dataset: Dataset {
@@ -642,7 +661,7 @@ struct PendingMigrationsTests {
     let files = try FileManager.default.contentsOfDirectory(atPath: folder).sorted()
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts"])
+        == ["0004_accounts", "0005_cards"])
     // Asking leaves the folder as it was: no log is left for the next file of that name.
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder).sorted() == files)
     let recorded = try book.read { db in
@@ -746,14 +765,18 @@ struct MigrationDryRunTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 3 -> 4 (applied 1)"))
-    #expect(output.contains("data step: assigned=\(book.unassignedCount) defaultsCleared=2"))
-    // What the update has to give: every operation on an account, one live main account, and
-    // the tables it adds empty.
+    #expect(output.contains("schema: 3 -> 5 (applied 2)"))
+    #expect(output.contains("data step: assigned=\(book.unassignedCount) "))
+    #expect(output.contains(" defaultsCleared=2 "))
+    #expect(output.contains(" cardsCreated=\(book.cardsStep["cardsCreated"] ?? -1) "))
+    // What the update has to give: every operation on an account, one live main account, the
+    // tables it adds empty but the cards, one for every live card account.
     #expect(output.contains("accounts after: operations without an account 0, live main 1"))
-    for table in ["account_groups", "transfers", "reconciliation_balances"] {
+    for table in ["account_groups", "transfers", "reconciliation_balances", "cashback_rules"] {
       #expect(output.contains("\(table.padding(toLength: 26, withPad: " ", startingAt: 0)) - -> 0"))
     }
+    let cards = "cards".padding(toLength: 26, withPad: " ", startingAt: 0)
+    #expect(output.contains("\(cards) - -> \(book.cardsStep["cardsCreated"] ?? -1)\n"))
     #expect(output.contains("month totals by kind: equal"))
     #expect(output.contains("loads: ok"))
     #expect(output.contains("result: equal"))
@@ -774,7 +797,7 @@ struct MigrationDryRunTests {
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == files)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts"])
+        == ["0004_accounts", "0005_cards"])
   }
 
   /// Not only what the update keeps is checked, but what it has to give: a database with an

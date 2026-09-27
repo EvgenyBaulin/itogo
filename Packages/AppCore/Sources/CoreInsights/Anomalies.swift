@@ -135,7 +135,9 @@ public enum AnomalyRules {
   ///
   /// The rules read `contribution`, so they see a refund where the ledger counts it: in the
   /// purchase it takes back from. A purchase refunded in full contributes nothing and is no
-  /// large payment and nobody's duplicate; a refund's week is no spike of its own.
+  /// large payment and nobody's duplicate; a refund's week is no spike of its own. Duplicates
+  /// alone compare the checks (`amountRubE4`, before refunds): a charge made twice is the same
+  /// charge whatever came back of one of them later.
   static func isMyOwnSpending(_ row: LedgerRow) -> Bool {
     row.kind == .expense && row.contribution.raw > 0 && row.systemRole == nil
       && !row.isGoalContribution && row.debtId == nil && !row.reimbursable
@@ -178,6 +180,11 @@ public enum AnomalyRules {
   /// The same amount and category within 10 minutes — the same operation entered twice,
   /// or the card charged twice. Two parts of one operation are not a duplicate of each other.
   ///
+  /// The amount is the check — the part's rubles before refunds: 1,000 ₽ with 400 taken back
+  /// and a 600 ₽ purchase next to it are two purchases, two checks of 1,000 ₽ are one charge
+  /// made twice even after a refund of one. A twin refunded in full is gone from `rows`
+  /// altogether (nothing is left of it): the double charge was taken back.
+  ///
   /// Ten minutes need two moments somebody said. An operation dated a day typed without a
   /// time carries the app's noon of that day (`CalendarContext.noon(of:)`), which says
   /// nothing about minutes: it is nobody's duplicate — or every fare of that day would be
@@ -189,7 +196,7 @@ public enum AnomalyRules {
     var groups: [Key: [LedgerRow]] = [:]
     for row in rows where row.occurredAt != calendar.noon(of: row.day) {
       guard let category = row.categoryId else { continue }
-      groups[Key(category: category, amount: row.contribution.raw), default: []].append(row)
+      groups[Key(category: category, amount: row.amountRubE4.raw), default: []].append(row)
     }
     let window = TimeInterval(options.duplicateWindowSeconds)
     var found: [Anomaly] = []
@@ -206,7 +213,7 @@ public enum AnomalyRules {
         found.append(
           Anomaly(
             rule: .possibleDuplicate, subject: self.key(row.partId), day: row.day,
-            amount: row.contribution, reference: before.contribution,
+            amount: row.amountRubE4, reference: before.amountRubE4,
             transactionId: row.transactionId, partId: row.partId, categoryId: key.category))
       }
     }

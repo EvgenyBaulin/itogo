@@ -93,6 +93,27 @@ final class CategoryModelInTheLineTests: XCTestCase {
     XCTAssertEqual(model.draft.parts[0].categorySource, .model)
   }
 
+  /// A category the model fills in brings its quality, as one chosen by hand or by history
+  /// does: «Штрафы» is bad, so a fine the model files there is saved bad, and the day's streak
+  /// without bad spending ends. The quality used to be worked out before the model had filed
+  /// the part, so it was the quality of no category — ordinary.
+  func testACategoryTheModelFillsBringsItsQuality() throws {
+    let filed = try trainTheModel()
+    var taxi = try XCTUnwrap(filed["taxi"])
+    taxi.quality = .bad
+    try references.save(taxi)
+    let model = EntryDraftModel(environment: environment)
+    model.reload()
+
+    model.apply(line("taxi 250"), amount: AmountE4(whole: 250), today: today)
+
+    let part = model.draft.parts[0]
+    XCTAssertEqual(part.categoryId, taxi.id)
+    XCTAssertEqual(part.categorySource, .model)
+    XCTAssertEqual(part.quality, .bad)
+    XCTAssertEqual(part.qualitySource, .category)
+  }
+
   /// The editor of a saved operation asks the model the pipeline trained, like the ↓ panel of
   /// the line: a description the model knows well is filed by it, and offered as its chip.
   func testTheEditorAsksTheModelThePipelineTrained() throws {

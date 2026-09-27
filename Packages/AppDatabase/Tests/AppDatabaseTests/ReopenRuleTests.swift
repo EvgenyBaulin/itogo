@@ -239,10 +239,12 @@ struct ReopenRuleTests {
     }
   }
 
-  /// A part of 50 dollars at 90 (4 500 ₽), 1 800 ₽ of it back. A rate of 30 would leave the part
-  /// at 1 500 ₽ — below what came back: neither owed, nor to be written off, nor closed. Refused;
-  /// a rate that still leaves something to wait for is written.
-  @Test func aNewRateCannotTakeThePartBelowWhatCameBack() throws {
+  /// A part of 50 dollars at 90 (4 500 ₽), 1 800 ₽ of it back. A rate of 92 still leaves 2 800 ₽
+  /// to wait for. A rate of 30 takes the part to 1 500 ₽ — below what came back: the money back
+  /// is balanced again in the same write, the part closes and its link is its 1 500 ₽ (the
+  /// 300 ₽ over are income in «Доплаты» where the book has that category; this one has none,
+  /// so they stay drift). Nothing is left waiting for less than nothing.
+  @Test func aNewRateBelowWhatCameBackClosesThePart() throws {
     let books = try books()
     let entry = try dinner(books, rubles: 4500, currency: .usd, amount: 50)
     try moneyBack(books, 1800)
@@ -256,18 +258,24 @@ struct ReopenRuleTests {
         return edited
       }
     }
-    #expect(throws: LinkedEditRefusal.partlyReturnedPartChanged) {
-      try books.repository.edit(
-        id: entry.id, at: moment, calendar: .utc, transform: rated(30, rubles: 1500))
-    }
-    #expect(try books.repository.owedParts().map(\.remainingRubE4) == [AmountE4(whole: 2700)])
-    let result = try books.repository.edit(
+    let dearer = try books.repository.edit(
       id: entry.id, at: moment, calendar: .utc, transform: rated(92, rubles: 4600))
-    guard case .edited = result else {
-      Issue.record("a rate that leaves something owed was not written: \(result)")
+    guard case .edited = dearer else {
+      Issue.record("a rate that leaves something owed was not written: \(dearer)")
       return
     }
     #expect(try books.repository.owedParts().map(\.remainingRubE4) == [AmountE4(whole: 2800)])
+    let cheaper = try books.repository.edit(
+      id: entry.id, at: moment, calendar: .utc, transform: rated(30, rubles: 1500))
+    guard case .edited = cheaper else {
+      Issue.record("a rate below what came back was not written: \(cheaper)")
+      return
+    }
+    #expect(try books.repository.owedParts().isEmpty)
+    #expect(try books.repository.entry(id: entry.id)?.parts[0].reimbursementStatus == .returned)
+    #expect(
+      try books.stack.writer.read { db in try ReimbursementLink.fetchAll(db) }.map(\.amountE4)
+        == [AmountE4(whole: 1500)])
   }
 
   // MARK: Deleting what was written for a part

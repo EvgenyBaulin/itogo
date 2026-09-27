@@ -3,8 +3,9 @@ import SwiftUI
 
 /// The setup of the accounts: banks picked with one click, cash and any other account, the
 /// accounts the database already has, and for each its currencies, its group and how much is on
-/// it now. «Готово» writes it all at once; «Позже» (Esc) puts it off with a main account made
-/// when there is none. Neither is a step of ⌘Z.
+/// it now — a field left empty is «не знаю», and a credit card's balance may go below zero.
+/// «Готово» writes it all at once; «Позже» (Esc) puts it off with a main account made when there
+/// is none. Neither is a step of ⌘Z.
 ///
 /// Plain system controls in a form: this is content, not a floating control, so no glass.
 struct AccountSetupSheet: View {
@@ -71,6 +72,18 @@ struct AccountSetupSheet: View {
       quickPick
       ForEach(model?.accounts ?? []) { account in
         accountSection(account)
+      }
+      if model?.leavesAccountsUncounted == true {
+        Section {
+          Label {
+            Text(verbatim: t("onboarding.emptyBalances"))
+              .fixedSize(horizontal: false, vertical: true)
+          } icon: {
+            Image(systemName: "info.circle")
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
       }
       groupsSection
       mainSection
@@ -184,6 +197,13 @@ struct AccountSetupSheet: View {
       ForEach(Array(account.currencies.enumerated()), id: \.element) { index, currency in
         currencyRow(account, currency, isMain: index == 0)
       }
+      if account.kind == .card {
+        // What a credit card holds is typed as what is owed, with a minus.
+        Text(verbatim: environment.language("account.balance.creditHint", table: "Accounts"))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       HStack {
         Menu {
           ForEach(model?.addableCurrencies(to: account.id) ?? [], id: \.self) { currency in
@@ -234,15 +254,19 @@ struct AccountSetupSheet: View {
     let key = account.key(currency)
     return LabeledContent {
       HStack(spacing: 8) {
-        AmountField(
+        // Empty is «не знаю»; a key counted before shows what the books expect instead, and
+        // left empty it keeps its count.
+        BalanceField(
           amount: Binding(
-            get: { model?.balance(key) ?? .zero },
-            set: { model?.setBalance($0, for: key) })
+            get: { model?.balance(key) },
+            set: { model?.setBalance($0, for: key) }),
+          placeholder: model?.expected[key].map { BalanceField.text(for: $0) }
+            ?? t("onboarding.balance.unknown")
         )
         .textFieldStyle(.roundedBorder)
         .frame(width: 150)
         // The label of the row does not reach a field among several views: named here, it is
-        // not read out as its placeholder «0».
+        // not read out as its placeholder.
         .accessibilityLabel(
           Text(
             verbatim: environment.format("onboarding.balance", table: "Onboarding", currency.code)
@@ -439,7 +463,7 @@ struct AccountSetupSheet: View {
         .foregroundStyle(.red)
       } else if let model, let issue = model.issues.first {
         Label {
-          Text(verbatim: t(model.messageKey(for: issue)))
+          Text(verbatim: model.message(for: issue, language: environment.language))
         } icon: {
           Image(systemName: "info.circle")
         }

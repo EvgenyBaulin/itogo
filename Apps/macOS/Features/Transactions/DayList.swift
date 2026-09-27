@@ -2,16 +2,17 @@ import AppCore
 import AppKit
 import SwiftUI
 
-/// Operations by day, newest first: the days of Overview. Income and expenses are listed
-/// separately inside a day, and the header of the day says what it comes to; the transfers
-/// between the owner's accounts come last, ⇄ rows counted in no total. The Transactions
+/// Operations by day, newest first: the days of Overview. Each day is one list by time — income,
+/// spending, refunds, money back and the transfers between the owner's accounts side by side —
+/// and the kinds are told apart by the symbol of each row, which VoiceOver speaks too; the
+/// header of the day says what it comes to, transfers counted in no total. The Transactions
 /// window shows the whole history in a table of its own (`TransactionsTable`).
 ///
 /// Selection is the list's own: click, ⌘-click and ⇧-click are native, ⌘A is the system
 /// «Select All», Esc clears it. A double click and the context menu go through
 /// `contextMenu(forSelectionType:)`, because a tap gesture on a row fights the selection.
-/// Only operations and transfers can be selected: the rows that head a day's income, expenses
-/// and transfers, and whatever `header` puts on top, carry no tag.
+/// Only operations and transfers can be selected: whatever `header` puts on top carries no
+/// tag.
 ///
 /// The list owns no sheets and no dialogs. Rows are redrawn on every change of the data,
 /// and a sheet hung on a row goes away with it — so everything the menu opens hangs on the
@@ -67,21 +68,11 @@ struct DayList<Header: View, MenuItems: View>: View {
     }
     ForEach(groups) { group in
       Section {
-        if !group.income.isEmpty {
-          sideHeader("transactions.income")
-          ForEach(group.income) { entry in
+        ForEach(group.items) { item in
+          switch item {
+          case .operation(let entry):
             row(entry)
-          }
-        }
-        if !group.expenses.isEmpty {
-          sideHeader("transactions.expenses")
-          ForEach(group.expenses) { entry in
-            row(entry)
-          }
-        }
-        if !group.transfers.isEmpty {
-          sideHeader("transactions.transfers")
-          ForEach(group.transfers) { transfer in
+          case .transfer(let transfer):
             TransferRow(transfer: transfer, accounts: names)
               .tag(transfer.id)
           }
@@ -107,15 +98,6 @@ struct DayList<Header: View, MenuItems: View>: View {
     Dictionary(
       (ledger?.dataset.paymentMethods ?? []).map { ($0.id, $0.name) },
       uniquingKeysWith: { first, _ in first })
-  }
-
-  /// «Доходы», «Расходы» and «Переводы» inside a day: a heading, not something to select.
-  private func sideHeader(_ key: String) -> some View {
-    Text(verbatim: environment.language(key, table: "Transactions"))
-      .font(.subheadline.weight(.semibold))
-      .foregroundStyle(.secondary)
-      .listRowSeparator(.hidden)
-      .selectionDisabled()
   }
 
   private func emptyRow(_ text: String) -> some View {
@@ -217,25 +199,40 @@ struct TransactionRow: View {
   let quality: RowCell<Quality>
   /// «вернули 500 ₽» on a purchase, the purchase on its refund (`RefundMark`).
   var refund: RefundMark? = nil
+  /// The card that paid, where the list tells cards apart: on the screen of an account with
+  /// more than one.
+  var cardName: String? = nil
 
   var body: some View {
     HStack(spacing: 12) {
+      // Nothing in the day heads a kind: the symbol says it, in words for VoiceOver and on
+      // hover.
+      let kind = Self.kindWords(entry.transaction.kind, language: environment.language)
       Image(systemName: Palette.kindSymbol(entry.transaction.kind))
         .foregroundStyle(entry.transaction.kind == .income ? .green : .secondary)
+        .help(Text(verbatim: kind))
+        .accessibilityLabel(Text(verbatim: kind))
       VStack(alignment: .leading, spacing: 2) {
         // A row typed without a description is named by its category, in the secondary
         // style, rather than by a dash nobody can tell apart (first live run, 18 September).
         RowTitleText(title: RowTitle.of(entry, tree: names))
         HStack(spacing: 8) {
           Text(verbatim: environment.dates.time(entry.transaction.occurredAt))
+          if let cardName {
+            Label {
+              Text(verbatim: cardName)
+            } icon: {
+              Image(systemName: "creditcard")
+            }
+            .lineLimit(1)
+          }
           // A formula kept from before is shown with its numbers written the way the app
           // writes them, like every other number.
           if let expression = entry.transaction.amountExpr {
             Text(verbatim: ExpressionEvaluator.canonical(expression) ?? expression)
           }
           if entry.transaction.kind == .reimbursement {
-            // Listed among the income because money came in, but it is not income: it
-            // closes what I paid for somebody else.
+            // Money came in, but it is not income: it closes what I paid for somebody else.
             Text(
               verbatim: environment.language(
                 "transactions.moneyBackNotIncome", table: "Transactions"))
@@ -288,6 +285,12 @@ struct TransactionRow: View {
     .accessibilityElement(children: .combine)
     .accessibilityValue(Text(verbatim: categories))
     .accessibilityIdentifier("operation.\(entry.transaction.kind.rawValue)")
+  }
+
+  /// The kind of an operation in words — «Доход», «Расход», «Возврат покупки», «Возврат
+  /// денег» — what its symbol says.
+  static func kindWords(_ kind: TransactionKind, language: AppLanguage) -> String {
+    language("kind.\(kind.rawValue)")
   }
 
   /// The categories of the parts, each once: «Food out › Cafes; Groceries».

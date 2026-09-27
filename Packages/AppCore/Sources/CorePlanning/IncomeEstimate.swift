@@ -62,7 +62,10 @@ public struct MonthIncomeEstimate: Hashable, Sendable {
 ///   it came in whole already. Otherwise it is the median of the last complete months, at
 ///   most three — or what already came when that is more. That last clause is a deliberate
 ///   step away from a plain median: income already in hand is never ignored, and a month
-///   with a large one-off payment is not estimated below what it already brought.
+///   with a large one-off payment is not estimated below what it already brought. The first
+///   month of the history counts only when the history starts on its 1st (`historyStart`):
+///   a month the owner began to write down on the 25th holds a few days of it, not a
+///   month's income.
 /// * With neither — no expectation, and no complete month that brought any income — the
 ///   estimate is what came, marked «not enough data», and with nothing come there is no
 ///   estimate at all. Months without income next to one that had some are real zeros.
@@ -102,7 +105,7 @@ public enum IncomeEstimate {
     }
 
     let history = SavingsMath.completeMonths(
-      before: month, historyStart: ledger.firstDay?.monthKey, count: medianMonths)
+      before: month, historyStart: historyStart(firstDay: ledger.firstDay), count: medianMonths)
     let incomes = history.map { ledger.income(attributedTo: [$0]) }
     // Months without any income are no history of income: an owner who wrote down only
     // expenses has no median to go by, and 0 would be an invented figure.
@@ -124,6 +127,13 @@ public enum IncomeEstimate {
       month: month, received: received, expectedRemaining: expected, median3: median3,
       monthsInMedian: median3 == nil ? 0 : history.count, value: value, source: source,
       lowData: source == .receivedOnly, expectationsWithoutRate: withoutRate)
+  }
+
+  /// The first month the income history counts: the month of the first record when it is on
+  /// the 1st, else the month after — a first month begun later is only part of a month.
+  public static func historyStart(firstDay: DateOnly?) -> MonthKey? {
+    guard let firstDay else { return nil }
+    return firstDay.day == 1 ? firstDay.monthKey : firstDay.monthKey.next
   }
 
   /// The income rubles of the operations counted towards a due date that belong to `month`

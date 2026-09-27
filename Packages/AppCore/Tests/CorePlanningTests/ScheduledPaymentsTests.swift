@@ -624,3 +624,96 @@ struct ScheduledPaymentsTests {
     #expect(ScheduledIssue.badDay.key == "planning.scheduled.issue.badDay")
   }
 }
+
+/// «Провести» of a due that belongs to an event, with the payment's card; «Уже списано до
+/// сверки»; a payment on an archived account.
+@Suite("Scheduled payments: events, cards, a due closed by a count, archived accounts")
+struct ScheduledPaymentsTwelveTests {
+  typealias Fx = SchedFx
+
+  static let trip = Event(
+    id: Fx.id(501), name: "Trip", startDate: Fx.day("2026-09-25"),
+    endDate: Fx.day("2026-09-29"), budgetE4: Fx.money("50000"))
+
+  func parking(event: UUID? = Self.trip.id) -> ScheduledPayment {
+    ScheduledPayment(
+      id: Fx.id(1), name: "Parking", amountE4: Fx.money("3000"), paymentMethodId: Fx.id(30),
+      freq: .weekly, day: 1, nextDate: Fx.day("2026-09-28"), cardId: Fx.id(31), eventId: event)
+  }
+
+  /// The due of the 28th is the trip's: every part of the operation carries it.
+  @Test func markAsPaidCarriesTheEventOfATiedDue() throws {
+    let due = Fx.day("2026-09-28")
+    let event = ScheduledRules.event(of: parking(), due: due, events: [Self.trip])
+    #expect(event == Self.trip.id)
+    let plan = try ScheduledRules.markAsPaid(
+      parking(), due: due, amount: Fx.money("3000"), occurredAt: Fx.noon("2026-09-28"),
+      eventId: event)
+    #expect(plan.draft.parts.map(\.eventId) == [Self.trip.id])
+  }
+
+  /// The due of 5 October is after the trip's end: an ordinary payment, no event.
+  @Test func markAsPaidCarriesTheEventOfATiedDueButNotAfterTheEventsEnd() throws {
+    let due = Fx.day("2026-10-05")
+    let event = ScheduledRules.event(of: parking(), due: due, events: [Self.trip])
+    #expect(event == nil)
+    #expect(
+      ScheduledRules.event(of: parking(event: nil), due: Fx.day("2026-09-28"), events: [Self.trip])
+        == nil)
+    let plan = try ScheduledRules.markAsPaid(
+      parking(), due: due, amount: Fx.money("3000"), occurredAt: Fx.noon("2026-10-05"),
+      eventId: event)
+    #expect(plan.draft.parts.map(\.eventId) == [nil])
+  }
+
+  /// «Провести» keeps the payment's card while it is live; an archived or unknown card is
+  /// left off, the account stays.
+  @Test func markAsPaidCarriesALiveCard() throws {
+    let card = PaymentCard(id: Fx.id(31), accountId: Fx.id(30), name: "Black")
+    let plan = try ScheduledRules.markAsPaid(
+      parking(), due: Fx.day("2026-09-28"), amount: Fx.money("3000"),
+      occurredAt: Fx.noon("2026-09-28"), cards: [card])
+    #expect(plan.draft.cardId == card.id)
+    #expect(plan.draft.paymentMethodId == Fx.id(30))
+  }
+
+  @Test func markAsPaidDropsAnArchivedCard() throws {
+    let card = PaymentCard(id: Fx.id(31), accountId: Fx.id(30), name: "Black", archived: true)
+    let archived = try ScheduledRules.markAsPaid(
+      parking(), due: Fx.day("2026-09-28"), amount: Fx.money("3000"),
+      occurredAt: Fx.noon("2026-09-28"), cards: [card])
+    #expect(archived.draft.cardId == nil)
+    #expect(archived.draft.paymentMethodId == Fx.id(30))
+    let unknown = try ScheduledRules.markAsPaid(
+      parking(), due: Fx.day("2026-09-28"), amount: Fx.money("3000"),
+      occurredAt: Fx.noon("2026-09-28"))
+    #expect(unknown.draft.cardId == nil)
+  }
+
+  /// «Уже списано до сверки» moves `next_date` past the due exactly as «Пропустить» does.
+  @Test func settledByCountMovesNextDate() {
+    let payment = parking()
+    let settled = ScheduledRules.settledByCount(payment, due: Fx.day("2026-09-28"))
+    #expect(settled.nextDate == Fx.day("2026-10-05"))
+    #expect(settled == ScheduledRules.skip(payment, due: Fx.day("2026-09-28")))
+    // A due earlier than `next_date` leaves the payment where it is.
+    #expect(ScheduledRules.settledByCount(settled, due: Fx.day("2026-09-28")) == settled)
+  }
+
+  /// The list says a payment names an archived account.
+  @Test func statusSaysTheAccountIsArchived() {
+    let accounts = [
+      PaymentMethod(id: Fx.id(30), name: "Old", currency: .rub, archived: true),
+      PaymentMethod(id: Fx.id(40), name: "Main", currency: .rub, isDefault: true),
+    ]
+    var other = parking(event: nil)
+    other.id = Fx.id(2)
+    other.paymentMethodId = Fx.id(40)
+    let book = PlanningBook(scheduled: [parking(event: nil), other])
+    let ledger = Ledger(
+      dataset: Dataset(paymentMethods: accounts, planning: book), calendar: .utc)
+    let statuses = ScheduledRules.statuses(book: book, ledger: ledger, today: Fx.day("2026-09-19"))
+    #expect(statuses.first { $0.id == Fx.id(1) }?.accountArchived == true)
+    #expect(statuses.first { $0.id == Fx.id(2) }?.accountArchived == false)
+  }
+}

@@ -127,4 +127,99 @@ struct SampleShowsEverythingTests {
 
     #expect(!report.all.isEmpty, "six months of the sample gave the seven rules nothing")
   }
+
+  // MARK: - The layers after the accounts
+
+  static let layered = SampleDataGenerator(seed: 20_260_920).generate(
+    months: 6, endingOn: endingOn, calendar: .moscow, language: "en"
+  ).withEveryFeature(seed: 20_260_920, calendar: .moscow, language: "en")
+  static let demo = SampleDataGenerator(seed: 20_260_920).generate(
+    months: 6, endingOn: endingOn, calendar: .moscow, language: "en"
+  ).withEveryFeature(seed: 20_260_920, calendar: .moscow, language: "en", demo: true)
+
+  static func dataset(of set: SampleDataSet) -> Dataset {
+    Dataset(
+      entries: set.entries, links: set.links, categories: set.categories, people: set.people,
+      places: set.places, events: set.events, paymentMethods: set.paymentMethods,
+      debts: set.debts, goals: set.goals, planning: set.planningBook,
+      settings: AnalyticsSettings(cashbackCategoryId: set.cashbackCategoryId),
+      transfers: set.transfers, accountGroups: set.accountGroups,
+      accountSettings: AccountSettings(storedValues: set.settings), cards: set.cards,
+      cashbackRules: set.cashbackRules)
+  }
+
+  static func overdue(_ set: SampleDataSet) -> [OverdueDue] {
+    let ledger = Ledger(dataset: dataset(of: set), calendar: .moscow)
+    let now = CalendarContext.moscow.startOfDay(set.lastDay).addingTimeInterval(12 * 3_600)
+    return PlanningSnapshot.build(
+      ledger: ledger, today: set.lastDay, now: now,
+      rubPerUnit: [.usd: 95, .eur: 103, CurrencyCode("KZT"): Decimal(2) / Decimal(10)]
+    ).overdue
+  }
+
+  /// The demo has one scheduled payment due and not paid, which the launch asks about; the
+  /// sample has none of its own.
+  @Test("The demo asks about one overdue payment, the sample about none")
+  func theDemoHasAnOverduePayment() throws {
+    #expect(!Self.overdue(Self.layered).contains { !$0.isDebt })
+    let overdue = Self.overdue(Self.demo).filter { !$0.isDebt }
+    #expect(overdue.count == 1)
+    let due = try #require(overdue.first)
+    #expect(due.name == "Car inspection")
+    #expect(due.due < Self.demo.lastDay)
+    #expect(due.moreOverdue == 0)
+    // The phone, bought on credit on its payment day and paid every month since, owes nothing
+    // overdue.
+    for set in [Self.layered, Self.demo] {
+      #expect(set.debts.contains { $0.name == "New phone" })
+      #expect(!Self.overdue(set).contains { $0.name == "New phone" })
+    }
+  }
+
+  /// The later count follows the books: take away the groceries entered after it but dated
+  /// inside its window, and its difference shrinks by what they cost — the operation of the
+  /// difference is rewritten in place, as the app rewrites it.
+  @Test("The later count of the sample follows an operation entered after it")
+  func theLaterCountFollowsTheBooks() throws {
+    let set = Self.layered
+    let later = try #require(set.reconciliations.last { $0.kind == .accounts })
+    let countedAt = try #require(later.reconciledAt)
+    let count = try #require(
+      set.reconciledBalances.first {
+        $0.reconciliationId == later.id && !($0.differenceE4?.isZero ?? true)
+      })
+    let entered = try #require(
+      set.entries.first { entry in
+        entry.transaction.paymentMethodId == count.accountId
+          && entry.transaction.createdAt > countedAt && entry.transaction.occurredAt < countedAt
+      })
+    let operation = try #require(set.entries.first { $0.id == count.transactionId })
+    let categories = ReconcileCategories(
+      expense: try #require(
+        set.settings[PlanningSettings.reconcileExpenseCategoryKey].flatMap(UUID.init)),
+      income: try #require(
+        set.settings[PlanningSettings.reconcileIncomeCategoryKey].flatMap(UUID.init)))
+    let without = set.entries.filter { $0.id != entered.id }
+    let balances = AccountBalances.build(
+      entries: without, transfers: set.transfers, debtEntries: set.debtEntries,
+      debts: Dictionary(uniqueKeysWithValues: set.debts.map { ($0.id, $0) }),
+      reconciliations: set.reconciliations, balances: set.reconciledBalances,
+      accounts: set.paymentMethods, tree: CategoryTree(set.categories), now: countedAt,
+      calendar: .moscow)
+    let expected = try #require(balances.expected(forCount: count.id))
+    let settled = LiveCounts.settle(
+      CountState(count: count, countAt: countedAt, operation: operation), expected: expected,
+      rate: nil, categories: categories, tree: CategoryTree(set.categories), now: countedAt)
+
+    let before = try #require(count.differenceE4)
+    #expect(settled.count.differenceE4 == before - entered.transaction.amountE4)
+    guard case .rewrite(let rewritten) = settled.operation else {
+      Issue.record("the difference was not rewritten: \(settled.operation)")
+      return
+    }
+    #expect(rewritten.id == operation.id)
+    #expect(
+      rewritten.transaction.amountE4 == operation.transaction.amountE4
+        + entered.transaction.amountE4)
+  }
 }

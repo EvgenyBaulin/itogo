@@ -122,6 +122,9 @@ public struct PlanningSnapshot: Hashable, Sendable {
   /// The free sum through the end of the month (`FreeMoney`); another day D —
   /// `freeMoney(until:ledger:)`.
   public var freeMoney: FreeMoney
+  /// The scheduled payments and debts with a due date passed and unpaid, one row each
+  /// (`OverdueDues.build`): what the launch asks about.
+  public var overdue: [OverdueDue]
 
   public init(
     today: DateOnly, now: Date, rubPerUnit: [CurrencyCode: Decimal], book: PlanningBook,
@@ -134,7 +137,7 @@ public struct PlanningSnapshot: Hashable, Sendable {
     subscriptionsYearly: AmountE4, forOthersThisMonth: AmountE4,
     accounts: AccountsSnapshot = .empty, dayRates: DayRates = .empty,
     matches: ScheduledMatches = .empty, budgetedEvents: [EventPlan] = [],
-    freeMoney: FreeMoney? = nil
+    freeMoney: FreeMoney? = nil, overdue: [OverdueDue] = []
   ) {
     self.today = today
     self.now = now
@@ -170,6 +173,7 @@ public struct PlanningSnapshot: Hashable, Sendable {
       ?? FreeMoney(
         accounts: accounts, plan: CashPlan(), stillExpected: .zero, today: today,
         until: today.monthKey.lastDay)
+    self.overdue = overdue
   }
 
   /// Nothing known yet: empty lists, zeros and no reminder — what a screen holds before the
@@ -289,7 +293,10 @@ public struct PlanningSnapshot: Hashable, Sendable {
       freeMoney: freeMoney(
         until: nil, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
         matches: matches, goals: goals, debts: debts, events: budgetedEvents,
-        expected: expected))
+        expected: expected, dayRates: dayRates),
+      overdue: OverdueDues.build(
+        ledger: ledger, book: book, matches: matches, debts: debts, accounts: accounts,
+        today: today))
   }
 
   /// What the goals' monthly plans still ask this month, in rubles at today's rate: each
@@ -324,13 +331,14 @@ public struct PlanningSnapshot: Hashable, Sendable {
     return Self.freeMoney(
       until: end, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
       matches: matches, goals: goals, debts: debts, events: budgetedEvents,
-      expected: expected)
+      expected: expected, dayRates: dayRates)
   }
 
   private static func freeMoney(
     until: DateOnly?, ledger: Ledger, today: DateOnly, rubPerUnit: [CurrencyCode: Decimal],
     accounts: AccountsSnapshot, matches: ScheduledMatches, goals: [GoalStatus],
-    debts: DebtsOverview, events: [EventPlan], expected: [ExpectedIncomeStatus]
+    debts: DebtsOverview, events: [EventPlan], expected: [ExpectedIncomeStatus],
+    dayRates: DayRates
   ) -> FreeMoney {
     let book = ledger.dataset.planning
     let end = FreeMoney.window(today: today, until: until).end
@@ -338,7 +346,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
       ledger: ledger, book: book, accounts: accounts, today: today, until: end,
       rubPerUnit: rubPerUnit, matches: matches, goals: goals, debts: debts, events: events,
       reserveGoalPlan: book.settings.reserveGoalPlan,
-      subtractGoalSavings: book.settings.reconcileIncludesGoalSavings)
+      subtractGoalSavings: book.settings.reconcileIncludesGoalSavings, dayRates: dayRates,
+      goalSavingsValuation: book.settings.goalSavingsValuation)
     let still = IncomeEstimate.stillExpected(
       statuses: expected, today: today, through: end, ledger: ledger)
     return FreeMoney(
@@ -423,12 +432,10 @@ public struct PlanningSnapshot: Hashable, Sendable {
   ///   operation paid (`sched:<payment>:<due>`, or an ordinary one that matches it:
   ///   `ScheduledMatches`), the first `upcomingPerPayment` unpaid ones of one payment, at the
   ///   price on the date, in the currency of the payment. The dates before today are overdue.
-  /// * Debts — the next payment of every open debt I owe that has a monthly payment
-  ///   (`DebtLine.nextPayment`): this month's day while this month is unpaid, overdue once
-  ///   it has passed; next month's once this month is paid or when this month's day came
-  ///   before the debt began, unless that month is paid ahead too — the rule of the
-  ///   reminders. A debt without a monthly payment has no amount to show and stays on the
-  ///   Debts screen.
+  /// * Debts — the earliest unpaid due of every open debt I owe that has a monthly payment
+  ///   (`DebtLine.nextPayment`: each payment closes the earliest due still unpaid, counted from
+  ///   the start of the debt), overdue once it has passed — the rule of the reminders. A debt
+  ///   without a monthly payment has no amount to show and stays on the Debts screen.
   private static func upcoming(
     scheduled: [ScheduledStatus], debts: DebtsOverview, ledger: Ledger, today: DateOnly,
     matches: ScheduledMatches
@@ -460,29 +467,10 @@ public struct PlanningSnapshot: Hashable, Sendable {
       }
     }
 
-    var paidIn: [MonthKey: Set<UUID>] = [:]
     for line in debts.iOwe {
       guard let due = line.nextPayment, due <= horizon,
         let amount = line.debt.monthlyPaymentE4, amount.raw > 0
       else { continue }
-      // A payment of a later month — this one is paid, or its day came before the debt
-      // began — paid ahead in its own month is not shown either.
-      if due.monthKey != today.monthKey {
-        let paid = DebtSchedule.isPaid(
-          line.debt, for: due.monthKey,
-          startsOn: DebtSchedule.start(of: line.entries, calendar: ledger.calendar),
-          calendar: ledger.calendar
-        ) { month in
-          let byOperation =
-            paidIn[month]
-            ?? DebtSchedule.debtsPaid(
-              in: month, ledger: ledger, journal: ledger.dataset.planning.debtEntries)
-          paidIn[month] = byOperation
-          return DebtSchedule.isPaid(
-            line.debt.id, in: month, paidByOperation: byOperation, journal: line.entries)
-        }
-        if paid { continue }
-      }
       result.append(
         UpcomingPayment(
           kind: .debt, id: line.debt.id, name: line.debt.name, due: due,

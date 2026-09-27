@@ -275,12 +275,13 @@ struct MoneyBackCurrenciesPropertyTests {
       plan: plan, model: model, parts: book.parts, over: received > AmountE4.sum(needs))
   }
 
-  /// Those books close a part within the drift, leave one open just over it, and let money over
-  /// everything dissolve as drift, each more than once — the corners the rule is about are reached.
+  /// Those books close a part within the drift, leave one open just over it, and turn money a
+  /// few rubles over everything into income, each more than once — the corners the rule is
+  /// about are reached.
   @Test func moneyRunningOutNearAPartReachesTheDrift() {
     var closedWithin = 0
     var leftJustOver = 0
-    var overDissolved = 0
+    var overIsIncome = 0
     for seed in Self.seeds {
       let near = nearAPart(seed: seed)
       for allocation in near.plan.allocations {
@@ -293,11 +294,11 @@ struct MoneyBackCurrenciesPropertyTests {
           leftJustOver += 1
         }
       }
-      if near.over, near.plan.surplus.isZero { overDissolved += 1 }
+      if near.over, near.plan.surplus.raw > 0 { overIsIncome += 1 }
     }
     #expect(
-      closedWithin > 5 && leftJustOver > 5 && overDissolved > 5,
-      "\(closedWithin), \(leftJustOver), \(overDissolved)")
+      closedWithin > 5 && leftJustOver > 5 && overIsIncome > 5,
+      "\(closedWithin), \(leftJustOver), \(overIsIncome)")
   }
 
   /// The random books reach every refusal, parts passed over for their rate, tenge and a third

@@ -14,6 +14,11 @@ BUILD_DIR    := Build.nosync
 # allowed root paths", and 1433 stale files are left behind with a warning each.
 DERIVED      := $(BUILD_ROOT)/DerivedData
 SPM_PKGS     := $(BUILD_ROOT)/SourcePackages
+# Where `swift test` of the two packages keeps its build (`spm-appcore`, `spm-appdatabase` and the
+# release twins of `bench` inside it). A second run of the package tests at the same time gives
+# a folder of its own, `SPM_SCRATCH=<folder>`: SwiftPM locks its scratch directory, so two runs
+# over one wait for each other or fail.
+SPM_SCRATCH  ?= $(BUILD_DIR)
 DEST         := platform=macOS,arch=arm64
 SIGN         := CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=""
 # The Debug build, its tests and the UI-test runner are signed with the owner's self-signed
@@ -222,7 +227,7 @@ test-core: build-dir check-toolchain
 	@mkdir -p $(LOGS)
 	set -o pipefail; if [ -f "$(PYENV_MARKER)" ]; then export ITOGO_PYTHON="$(PYENV_PYTHON)"; fi; \
 	    $(AWAKE) $(TMO) 900 $(SWIFT) test --package-path Packages/AppCore \
-	    --scratch-path $(BUILD_DIR)/spm-appcore 2>&1 | tee $(LOGS)/test-core.log
+	    --scratch-path $(SPM_SCRATCH)/spm-appcore 2>&1 | tee $(LOGS)/test-core.log
 
 # A venv with pandas for the CSV check (scripts/requirements-dev.txt), built from scratch:
 # outside the repository, with no pip cache left behind. A failed install leaves no marker,
@@ -242,7 +247,7 @@ test-db: build-dir check-toolchain
 	@mkdir -p $(LOGS)
 	@cp Packages/AppDatabase/Package.resolved $(BUILD_DIR)/appdatabase-resolved.before
 	set -o pipefail; $(AWAKE) $(TMO) 900 $(SWIFT) test --package-path Packages/AppDatabase \
-	    --scratch-path $(BUILD_DIR)/spm-appdatabase 2>&1 | tee $(LOGS)/test-db.log
+	    --scratch-path $(SPM_SCRATCH)/spm-appdatabase 2>&1 | tee $(LOGS)/test-db.log
 	@cmp -s $(BUILD_DIR)/appdatabase-resolved.before Packages/AppDatabase/Package.resolved || \
 	    (echo "test-db: the run rewrote Packages/AppDatabase/Package.resolved; commit SwiftPM's own file" && exit 1)
 
@@ -253,9 +258,9 @@ test-db: build-dir check-toolchain
 # scratch directory of its own, so it never throws away the debug one.
 bench: build-dir check-toolchain
 	ITOGO_BENCH=1 $(AWAKE) $(TMO) 1800 $(SWIFT) test -c release --package-path Packages/AppCore \
-	    --scratch-path $(BUILD_DIR)/spm-appcore-release --filter Performance
+	    --scratch-path $(SPM_SCRATCH)/spm-appcore-release --filter Performance
 	ITOGO_BENCH=1 $(AWAKE) $(TMO) 1800 $(SWIFT) test -c release --package-path Packages/AppDatabase \
-	    --scratch-path $(BUILD_DIR)/spm-appdatabase-release --filter Performance
+	    --scratch-path $(SPM_SCRATCH)/spm-appdatabase-release --filter Performance
 
 test: generate
 	@mkdir -p $(LOGS)

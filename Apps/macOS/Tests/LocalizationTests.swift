@@ -192,6 +192,39 @@ final class LocalizationTests: XCTestCase {
     }
   }
 
+  /// The entry line and its ↓ panel: what Enter asks for, an impossible day, a debt gone; the
+  /// tab of the fields' order and the name of every field; the lock of a count's difference.
+  func testTheCaptionsOfTheEntryPanelAndItsOrderAreTranslatedInBothLanguages() {
+    let tables: [(String, [String])] = [
+      (
+        "Entry",
+        [
+          "entry.gap.category", "entry.gap.subcategory", "entry.gap.mark.category",
+          "entry.gap.mark.subcategory", "entry.error.noSuchDate", "entry.error.noLeapDay",
+          "entry.debt.gone", "entry.debt.closed",
+        ]
+      ),
+      (
+        "Settings",
+        [
+          "settings.tab.entry", "settings.entry.order", "settings.entry.orderHint",
+          "settings.entry.returnHint", "settings.entry.keyboardHint", "settings.entry.reset",
+          "settings.entry.moveUp", "settings.entry.moveDown",
+        ] + EntryField.allCases.map { "settings.entry.field.\($0.rawValue)" }
+      ),
+      ("Transactions", ["editor.reconcileDifference.locked"]),
+    ]
+    for choice in [AppLanguage.Choice.english, .russian] {
+      language.choice = choice
+      for (table, keys) in tables {
+        for key in keys {
+          XCTAssertNotEqual(
+            language(key, table: table), key, "\(key) is missing in \(choice.rawValue)")
+        }
+      }
+    }
+  }
+
   /// Settings → Appearance: the tab, both pickers and both footers. The names
   /// of the themes and of the accent colours are checked beside the model they belong to
   /// (`AppThemeTests`), so a new option without a translation fails there.
@@ -459,6 +492,39 @@ final class LocalizationTests: XCTestCase {
         "Settings.stringsdict",
       ] {
         XCTAssertTrue(tables.contains(table), "\(code): no \(table) in \(tables)")
+      }
+    }
+  }
+
+  /// Keys nothing shows any more stay out of the shipped tables: a catalog merged again from
+  /// an older copy would bring back words about a line the free sum no longer has, a refusal
+  /// no longer made, and row menus that were replaced — dead text a later change could pick
+  /// up by its old key.
+  func testRetiredKeysAreGone() throws {
+    let retired: [(table: String, key: String)] = [
+      ("Planning", "free.goalSavingsInside"), ("Planning", "planning.free.goalSavings"),
+      ("Planning", "reconcile.negative"), ("Accounts", "accounts.rowMenu"),
+      ("Settings", "templates.rowMenu"),
+    ]
+    for code in ["en", "ru"] {
+      let folder = try XCTUnwrap(Bundle.main.url(forResource: code, withExtension: "lproj"))
+      for (table, key) in retired {
+        XCTAssertNotNil(
+          NSDictionary(contentsOf: folder.appendingPathComponent("\(table).strings")),
+          "\(code): no \(table).strings to look in")
+        for suffix in ["strings", "stringsdict"] {
+          let entries =
+            NSDictionary(contentsOf: folder.appendingPathComponent("\(table).\(suffix)"))
+            as? [String: Any] ?? [:]
+          XCTAssertNil(entries[key], "\(code) \(table).\(suffix) still has \(key)")
+        }
+      }
+    }
+    for choice in [AppLanguage.Choice.english, .russian] {
+      language.choice = choice
+      for (table, key) in retired {
+        XCTAssertEqual(
+          language(key, table: table), key, "\(key) still says something in \(choice.rawValue)")
       }
     }
   }

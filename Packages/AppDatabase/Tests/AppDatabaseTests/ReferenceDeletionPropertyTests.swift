@@ -44,7 +44,14 @@ struct ReferenceDeletionPropertyTests {
           try Place(name: "Nowhere \(index)").insert(db)
         case .events:
           let day = DateOnly(year: 2027, month: 1, day: index + 1)
-          try Event(name: "Nothing \(index)", kind: .other, startDate: day, endDate: day).insert(db)
+          let event = Event(name: "Nothing \(index)", kind: .other, startDate: day, endDate: day)
+          try event.insert(db)
+          // A payment that belongs to an event uses it: the event stays.
+          if index == 2 {
+            try ScheduledPayment(
+              name: "Venue", amountE4: AmountE4(whole: 1_000), eventId: event.id
+            ).insert(db)
+          }
         }
       }
     }

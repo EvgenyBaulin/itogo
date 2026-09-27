@@ -67,6 +67,9 @@ public struct LedgerRow: Hashable, Sendable {
   public var creditDebtId: UUID?
   /// What the operation was written for by the app itself, from its `external_id`.
   public var link: OperationLink?
+  /// The card that paid, a card of `paymentMethodId`; `nil` — the account itself. The money is
+  /// the account's: a card only says what paid.
+  public var cardId: UUID? = nil
 
   /// The person the part is about: whom it was for, or who owes it.
   public var personId: UUID? { forPersonId ?? debtorPersonId }
@@ -196,7 +199,8 @@ public struct Ledger: Sendable {
               goalId: part.goalId, categoryId: part.categoryId, categories: tree),
             debtId: transaction.debtId,
             creditDebtId: transaction.creditDebtId,
-            link: OperationLink(externalId: transaction.externalId)))
+            link: OperationLink(externalId: transaction.externalId),
+            cardId: transaction.cardId))
       }
     }
 
@@ -344,6 +348,7 @@ private struct SearchNames {
   let places: [UUID: String]
   let methods: [UUID: String]
   let events: [UUID: String]
+  let cards: [UUID: String]
 
   init(dataset: Dataset) {
     func index<T>(
@@ -357,9 +362,10 @@ private struct SearchNames {
     places = index(dataset.places, \.id, \.name)
     methods = index(dataset.paymentMethods, \.id, \.name)
     events = index(dataset.events, \.id, \.name)
+    cards = index(dataset.cards, \.id, \.name)
   }
 
-  /// Description, part notes, place, payment method, categories with their parents,
+  /// Description, part notes, place, payment method and card, categories with their parents,
   /// people, events and the amount as typed in a CSV («1234.5»), lower-cased and joined.
   func key(for entry: TransactionEntry, tree: CategoryTree) -> String {
     let transaction = entry.transaction
@@ -367,6 +373,7 @@ private struct SearchNames {
     if let note = transaction.note { fields.append(note) }
     if let id = transaction.placeId, let name = places[id] { fields.append(name) }
     if let id = transaction.paymentMethodId, let name = methods[id] { fields.append(name) }
+    if let id = transaction.cardId, let name = cards[id] { fields.append(name) }
     fields.append(CSVValue.string(amount: transaction.amountE4))
     if let expression = transaction.amountExpr { fields.append(expression) }
     for part in entry.parts {

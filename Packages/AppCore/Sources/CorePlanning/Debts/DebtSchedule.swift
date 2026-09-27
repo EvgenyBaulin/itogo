@@ -1,13 +1,18 @@
+import CoreAccounting
 import CoreAnalytics
 import CoreKit
 import Foundation
 
-/// When the next payment of a debt is due (the card shows the day of the
-/// monthly payment, and the reminders fire from it).
+/// The month helpers of a debt's schedule: when it began, whether a month has a payment, the
+/// payment day of a month. Which dues are paid — each payment closing the earliest one still
+/// unpaid — is `DebtDues`, which every screen reads (`DebtLine.dues`); what is here answers
+/// about one month alone.
 public enum DebtSchedule {
 
-  /// The day of the next payment, or `nil` for a debt without a payment day and for a closed
-  /// one.
+  /// The day of the next payment as one month tells it — this month's day until a payment is
+  /// dated in it, then next month's —, or `nil` for a debt without a payment day and for a
+  /// closed one. The screens read `DebtDueState.firstUnpaid` instead, which sees every month
+  /// since the debt began.
   ///
   /// * The payment day is clipped to the length of the month: a debt paid on the 31st is due
   ///   on 30 September and on 28 (29) February.
@@ -16,8 +21,8 @@ public enum DebtSchedule {
   ///   is overdue, not skipped, so the reminder keeps pointing at it.
   /// * A payment day before the debt began (`start`, the earliest day of its journal:
   ///   `start(of:calendar:)`) owed nothing: a phone bought in parts on the 15th, paid on the
-  ///   5th, first owes on the 5th of the next month. A debt that began on its payment day
-  ///   owes that day.
+  ///   5th, first owes on the 5th of the next month. A loan that began on its payment day
+  ///   owes that day; something bought on credit on its payment day first owes a month later.
   /// * A payment made in the month the debt began, when that month owed nothing, has nothing
   ///   to pay but the first due: the phone paid on 25 September next owes on 5 November.
   ///
@@ -108,9 +113,7 @@ public enum DebtSchedule {
   /// The operations that point at a debt without paying it: the journal wrote them as an
   /// `offset` or as more `borrowed`.
   public static func notPayments(_ journal: [DebtEntry]) -> Set<UUID> {
-    Set(
-      journal.lazy.filter { $0.kind == .offset || $0.kind == .borrowed }
-        .compactMap(\.transactionId))
+    DebtRules.notPayments(journal)
   }
 
   static func isPaid(

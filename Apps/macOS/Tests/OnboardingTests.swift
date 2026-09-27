@@ -290,6 +290,8 @@ final class OnboardingTests: XCTestCase {
     XCTAssertNil(empty.plan(at: Date()))
   }
 
+  /// The balances typed become the first count of their account and currency; a field left
+  /// empty is «не знаю» and writes nothing.
   func testTheBalancesBecomeTheFirstCountOfEveryAccountAndCurrency() throws {
     var model = AccountSetupModel(
       accounts: [], groups: [], defaultCurrency: .rub, enabled: CurrencyCode.defaultEnabled)
@@ -306,10 +308,123 @@ final class OnboardingTests: XCTestCase {
       plan.openingBalances,
       [
         BalanceKey(accountId: cash, currency: .rub): AmountE4(whole: 12_000),
-        BalanceKey(accountId: card, currency: .rub): .zero,
         BalanceKey(accountId: card, currency: .usd): AmountE4(whole: 300),
-      ], "a field left empty is a count of zero")
+      ], "a field left empty is no count")
     XCTAssertEqual(plan.expected, [:], "every key is a starting point")
+  }
+
+  /// «Card» 12,000 and «Dollars» 0 typed, «Cash» left empty: «Готово» writes one opening of
+  /// the setup with the two typed balances; Cash stays uncounted — out of «Всего» —, and its
+  /// first count will be its starting point.
+  func testAnEmptyFieldWritesNoOpening() async throws {
+    var model = try XCTUnwrap(AccountSetupModel.load(from: environment))
+    let card = try XCTUnwrap(model.addAccount(name: "Card", kind: .card))
+    let dollars = try XCTUnwrap(model.addAccount(name: "Dollars", kind: .account, currency: .usd))
+    let cash = try XCTUnwrap(model.addAccount(name: "Cash", kind: .cash))
+    let cashKey = BalanceKey(accountId: cash, currency: .rub)
+    model.setBalance(AmountE4(whole: 12_000), for: BalanceKey(accountId: card, currency: .rub))
+    model.setBalance(.zero, for: BalanceKey(accountId: dollars, currency: .usd))
+    let at = Date()
+    let read = await AccountSetupExpectations.load(from: environment, at: at)
+    model.setExpected(try XCTUnwrap(read))
+    XCTAssertNil(model.balance(cashKey), "an empty field is «не знаю», not zero")
+    XCTAssertTrue(model.leavesAccountsUncounted)
+    let plan = try XCTUnwrap(model.plan(at: at))
+    XCTAssertEqual(
+      plan.openingBalances,
+      [
+        BalanceKey(accountId: card, currency: .rub): AmountE4(whole: 12_000),
+        BalanceKey(accountId: dollars, currency: .usd): .zero,
+      ])
+
+    XCTAssertEqual(
+      AccountSetupWrites.finish(plan, environment: environment, store: store), .written)
+    let book = try XCTUnwrap(environment.planning).book()
+    let openings = book.reconciliations.filter { $0.kind == .opening }
+    XCTAssertEqual(openings.count, 1)
+    XCTAssertEqual(openings.first?.origin, .setup)
+    XCTAssertEqual(Set(book.reconciledBalances.map(\.key)), Set(plan.openingBalances.keys))
+    XCTAssertFalse(book.reconciledBalances.contains { $0.key == cashKey }, "Cash was counted")
+  }
+
+  /// A 0 typed is a count of zero, and shows «0»; emptied again, it is «не знаю» once more.
+  func testATypedZeroIsWritten() throws {
+    var model = AccountSetupModel(
+      accounts: [], groups: [], defaultCurrency: .rub, enabled: CurrencyCode.defaultEnabled)
+    let cash = try XCTUnwrap(model.addAccount(name: "Cash", kind: .cash))
+    let key = BalanceKey(accountId: cash, currency: .rub)
+    model.setExpected([:])
+    model.setBalance(.zero, for: key)
+    XCTAssertEqual(model.balance(key), .zero)
+    XCTAssertFalse(model.leavesAccountsUncounted)
+    XCTAssertEqual(try XCTUnwrap(model.plan(at: Date())).openingBalances, [key: .zero])
+    XCTAssertEqual(BalanceField.text(for: .zero), "0", "a zero typed shows as zero")
+    XCTAssertEqual(BalanceField.read("0"), .amount(.zero))
+
+    model.setBalance(nil, for: key)
+    XCTAssertNil(model.balance(key))
+    XCTAssertTrue(model.leavesAccountsUncounted)
+    XCTAssertEqual(try XCTUnwrap(model.plan(at: Date())).openingBalances, [:])
+    XCTAssertEqual(BalanceField.read("  "), .unknown)
+    XCTAssertEqual(BalanceField.text(for: nil), "")
+  }
+
+  /// A credit card's balance is what is owed, typed with a minus — «-» or «−» —; it is written
+  /// as the card's first count and counts below zero.
+  func testANegativeBalanceIsAccepted() async throws {
+    XCTAssertEqual(BalanceField.read("−30,000"), .amount(AmountE4(whole: -30_000)))
+    XCTAssertEqual(BalanceField.read("-30000"), .amount(AmountE4(whole: -30_000)))
+    XCTAssertEqual(BalanceField.read("-1500-500"), .amount(AmountE4(whole: -2_000)))
+    XCTAssertEqual(BalanceField.read("30,000-"), .unreadable, "half typed")
+    XCTAssertEqual(BalanceField.text(for: AmountE4(whole: -30_000)), "-30,000")
+    XCTAssertEqual(BalanceField.settledText("−30000"), "-30,000")
+    XCTAssertNil(BalanceField.settledText("-30,000"), "already written the app's way")
+
+    var model = try XCTUnwrap(AccountSetupModel.load(from: environment))
+    let credit = try XCTUnwrap(model.addAccount(name: "Credit", kind: .card))
+    let sber = try XCTUnwrap(model.addAccount(name: "Sber", kind: .card))
+    model.setBalance(
+      AmountE4(whole: -30_000), for: BalanceKey(accountId: credit, currency: .rub))
+    model.setBalance(AmountE4(whole: 100_000), for: BalanceKey(accountId: sber, currency: .rub))
+    let at = Date().addingTimeInterval(-1)
+    let read = await AccountSetupExpectations.load(from: environment, at: at)
+    model.setExpected(try XCTUnwrap(read))
+    XCTAssertEqual(model.issues, [])
+    let plan = try XCTUnwrap(model.plan(at: at))
+    XCTAssertEqual(
+      AccountSetupWrites.finish(plan, environment: environment, store: store), .written)
+
+    let readAfter = await AccountSetupExpectations.load(from: environment, at: Date())
+    let expected = try XCTUnwrap(readAfter)
+    XCTAssertEqual(
+      expected[BalanceKey(accountId: credit, currency: .rub)], AmountE4(whole: -30_000))
+    XCTAssertNotEqual(
+      environment.language("account.balance.creditHint", table: "Accounts"),
+      "account.balance.creditHint")
+  }
+
+  /// A name that is another name of an account says whose: «Card» against «Cash», which also
+  /// goes by «card».
+  func testTheClashNamesTheAccountOfTheOtherName() throws {
+    let cash = PaymentMethod(name: "Cash", kind: .cash, aliases: ["card"], isDefault: true)
+    var model = AccountSetupModel(
+      accounts: [cash], groups: [], defaultCurrency: .rub, enabled: CurrencyCode.defaultEnabled)
+    model.setExpected([:])
+    let card = try XCTUnwrap(model.addAccount(name: "Card", kind: .card))
+    let issue = AccountSetupModel.Issue.nameIsOtherNameOf(card, rival: "Cash")
+    XCTAssertEqual(model.issues, [issue])
+    XCTAssertNil(model.plan(at: Date()))
+    for choice in [AppLanguage.Choice.english, .russian] {
+      environment.language.choice = choice
+      let message = model.message(for: issue, language: environment.language)
+      XCTAssertTrue(message.contains("«Cash»"), message)
+      XCTAssertNotEqual(message, "onboarding.issue.nameIsOtherName")
+    }
+    environment.language.choice = .russian
+
+    // Named like the account itself, it is the plain clash of names.
+    model.accounts[model.accounts.firstIndex { $0.id == card }!].name = "CASH"
+    XCTAssertEqual(Set(model.issues), [.nameTaken(card), .nameTaken(cash.id)])
   }
 
   // MARK: What the answers write
@@ -390,7 +505,8 @@ final class OnboardingTests: XCTestCase {
   }
 
   /// A key counted after «Позже» is no starting point: the setup shows what the books expect
-  /// for it — its count plus what moved since — and writes the difference with the count.
+  /// for it — its count plus what moved since. Left empty, it keeps its count; typed, it is
+  /// compared, and the difference is written with the count.
   func testAKeyCountedAfterLaterShowsItsDifference() async throws {
     XCTAssertTrue(AccountSetupWrites.postpone(environment: environment, store: store))
     let main = try XCTUnwrap(try accounts.accounts().first)
@@ -422,8 +538,10 @@ final class OnboardingTests: XCTestCase {
     let expected = await AccountSetupExpectations.load(from: environment, at: now)
     model.setExpected(try XCTUnwrap(expected))
     XCTAssertEqual(model.expected[key], AmountE4(whole: 8_500), "the count less what was spent")
-    XCTAssertEqual(model.balance(key), AmountE4(whole: 8_500), "left alone, it is confirmed")
-    XCTAssertEqual(model.difference(key), .zero)
+    XCTAssertNil(model.balance(key), "left alone, nothing is counted")
+    XCTAssertNil(model.difference(key))
+    XCTAssertFalse(model.leavesAccountsUncounted, "a key counted before keeps its count")
+    XCTAssertEqual(try XCTUnwrap(model.plan(at: now)).openingBalances, [:])
     model.setBalance(AmountE4(whole: 8_000), for: key)
     XCTAssertEqual(model.difference(key), AmountE4(whole: -500))
 
@@ -439,31 +557,32 @@ final class OnboardingTests: XCTestCase {
     XCTAssertNil(last.transactionId, "the difference is shown, never written as an operation")
   }
 
-  /// The field of a balance writes back what it shows as soon as it shows it. For a key
-  /// counted before and left alone, that echo is no count of the owner's: what moves while
-  /// the sheet is open still reaches the balance «Готово» writes.
+  /// A key counted before shows what the books expect in its empty field, as a hint, not a
+  /// value: left alone it writes nothing, so what moves while the sheet is open never becomes a
+  /// count nobody made. What the owner types is the count, whatever the books say after.
   func testAnUntouchedBalanceFollowsTheBooksPastTheEchoOfItsField() throws {
     let card = PaymentMethod(name: "Card", kind: .card, isDefault: true)
     var model = AccountSetupModel(
       accounts: [card], groups: [], defaultCurrency: .rub, enabled: CurrencyCode.defaultEnabled)
     let key = BalanceKey(accountId: card.id, currency: .rub)
     model.setExpected([key: AmountE4(whole: 8_500)])
-    // The field shows 8 500 and writes it back.
+    // The field shows nothing and tells nothing back.
     model.setBalance(model.balance(key), for: key)
     // An operation of 500 is written in another window; «Готово» reads the books again.
     model.setExpected([key: AmountE4(whole: 8_000)])
 
-    XCTAssertEqual(model.balance(key), AmountE4(whole: 8_000))
-    XCTAssertEqual(model.difference(key), .zero)
+    XCTAssertNil(model.balance(key))
+    XCTAssertNil(model.difference(key))
     let plan = try XCTUnwrap(model.plan(at: Date()))
-    XCTAssertEqual(plan.openingBalances[key], AmountE4(whole: 8_000))
-    XCTAssertEqual(plan.expected[key], AmountE4(whole: 8_000))
+    XCTAssertNil(plan.openingBalances[key])
+    XCTAssertNil(plan.expected[key])
 
-    // What the owner types is the count, whatever the books say after.
     model.setBalance(AmountE4(whole: 7_000), for: key)
     model.setExpected([key: AmountE4(whole: 7_500)])
-    XCTAssertEqual(
-      try XCTUnwrap(model.plan(at: Date())).openingBalances[key], AmountE4(whole: 7_000))
+    let typed = try XCTUnwrap(model.plan(at: Date()))
+    XCTAssertEqual(typed.openingBalances[key], AmountE4(whole: 7_000))
+    XCTAssertEqual(typed.expected[key], AmountE4(whole: 7_500))
+    XCTAssertEqual(model.difference(key), AmountE4(whole: -500))
   }
 
   /// Settings stays usable while the sheet is open. «Готово» reads the accounts again: an
@@ -501,7 +620,12 @@ final class OnboardingTests: XCTestCase {
     XCTAssertEqual(written.kind, .account, "the kind was changed here")
     XCTAssertEqual(written.aliases, ["Old Visa"], "what the sheet does not edit stays")
     XCTAssertEqual(plan.mainAccountId, visa.id)
-    XCTAssertEqual(plan.openingBalances[BalanceKey(accountId: bonus.id, currency: .usd)], .zero)
+    XCTAssertNil(
+      plan.openingBalances[BalanceKey(accountId: bonus.id, currency: .usd)],
+      "an account made meanwhile, never typed, stays uncounted")
+    XCTAssertEqual(
+      plan.openingBalances[BalanceKey(accountId: spare.id, currency: .rub)], nil,
+      "no merged account is counted")
 
     XCTAssertFalse(
       model.rebase(accounts: [renamed, wallet, merged, bonus], groups: []),
@@ -525,7 +649,9 @@ final class OnboardingTests: XCTestCase {
     model.setExpected([:])
 
     let tinkoff = try XCTUnwrap(model.addAccount(name: "tinkoff", kind: .card))
-    XCTAssertEqual(model.issues, [.nameTaken(tinkoff)], "another name of an account is taken")
+    XCTAssertEqual(
+      model.issues, [.nameIsOtherNameOf(tinkoff, rival: "Visa")],
+      "another name of an account is taken, and the words say whose")
     model.removeAccount(tinkoff)
 
     model.accounts[0].name = "Old Card"

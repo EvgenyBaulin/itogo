@@ -55,11 +55,11 @@ struct DebtsTests {
 
   func line(
     _ debtId: UUID, _ kind: DebtEntryKind, _ amount: String, on iso: String? = nil,
-    group: String? = nil, number: Int? = nil
+    group: String? = nil, number: Int? = nil, transaction: Int? = nil
   ) -> DebtEntry {
     DebtRules.makeEntry(
       id: number.map(id) ?? UUID(), debtId: debtId, kind: kind, amountE4: money(amount),
-      date: iso.map(day), groupName: group)
+      date: iso.map(day), groupName: group, transactionId: transaction.map(id))
   }
 
   func loan(
@@ -335,13 +335,13 @@ struct DebtsTests {
     }
   }
 
-  /// No estimate: the load takes `IncomeEstimate` from the history — the median of June, July
-  /// and August: 50 000, 80 000 (the salary for July arrives on 2 August), 60 000 — 60 000;
+  /// No estimate: the load takes `IncomeEstimate` from the history, which begins on 1 June —
+  /// the median of June, July and August: 50 000, 80 000 (the salary for July arrives on 2 August), 60 000 — 60 000;
   /// 18 500 ÷ 60 000 = 3 083.3 bp → 3 083. The salary entered ahead for 20 September has not
   /// come yet and stays out.
   @Test func withoutAnEstimateTheLoadTakesTheIncomeOfTheLastMonths() {
     var entries = [
-      operation(201, .income, on: "2026-06-05", parts: [part(2011, "50000")]),
+      operation(201, .income, on: "2026-06-01", parts: [part(2011, "50000")]),
       operation(202, .income, on: "2026-07-05", parts: [part(2021, "20000")]),
       operation(203, .income, on: "2026-08-02", parts: [part(2031, "60000")]),
       operation(204, .income, on: "2026-08-20", parts: [part(2041, "60000")]),
@@ -387,7 +387,9 @@ struct DebtsTests {
   }
 
   /// Three debts I owe (rubles, dollars, euros), two owed to me, one closed, and purchases
-  /// with parts paid for others.
+  /// with parts paid for others. The bank loan took its second sum on 1 August and was paid on
+  /// 25 August and 5 September (the operation and its journal line); the dollar and euro loans
+  /// began on 1 September.
   func section() -> Section {
     let anna = id(40)
     let boris = id(41)
@@ -411,11 +413,11 @@ struct DebtsTests {
 
     let journal = [
       line(bank.id, .borrowed, "100000", group: "Renovation", number: 901),
-      line(bank.id, .borrowed, "20000", on: "2026-02-01", group: "Car", number: 902),
+      line(bank.id, .borrowed, "20000", on: "2026-08-01", group: "Car", number: 902),
       line(bank.id, .payment, "7000", on: "2026-08-25", group: "Renovation", number: 903),
-      line(bank.id, .payment, "7000", on: "2026-09-05", number: 904),
-      line(dollar.id, .borrowed, "1000", on: "2026-01-10", number: 911),
-      line(euro.id, .borrowed, "500", on: "2026-03-01", number: 921),
+      line(bank.id, .payment, "7000", on: "2026-09-05", number: 904, transaction: 101),
+      line(dollar.id, .borrowed, "1000", on: "2026-09-01", number: 911),
+      line(euro.id, .borrowed, "500", on: "2026-09-01", number: 921),
       line(annaDebt.id, .borrowed, "5000", on: "2026-06-01", number: 931),
       line(annaDebt.id, .payment, "2000", on: "2026-07-01", number: 932),
       line(borisDebt.id, .borrowed, "20", on: "2026-08-01", number: 941),
@@ -469,7 +471,8 @@ struct DebtsTests {
       rubPerUnit: [.usd: 95])
 
     // Nearest payment first: the euro loan is overdue since the 10th, the dollar loan is due
-    // on the 28th, the bank loan was paid on the 5th and is next due on 25 October.
+    // on the 28th, the bank loan's two payments closed 25 August and 25 September — next due
+    // on 25 October.
     #expect(overview.iOwe.map(\.id) == [fixture.euro.id, fixture.dollar.id, fixture.bank.id])
     #expect(
       overview.iOwe.map(\.nextPayment) == [day("2026-09-10"), day("2026-09-28"), day("2026-10-25")])

@@ -346,27 +346,21 @@ struct CashPlanPropertyTests {
 
     // MARK: The model
 
-    /// Every unpaid due date after the count of its balance, through D, in full, at today's
-    /// rate; the account left out of the summary and payments that are not active stay out.
-    /// Paid is «Провести» — or `paid`, the due dates ordinary operations pay by matching.
+    /// Every unpaid due date from `next_date` through D, in full, at today's rate — a count of
+    /// the balance settles none of them: an unpaid due is money not yet gone; the account left
+    /// out of the summary and payments that are not active stay out. Paid is «Провести» — or
+    /// `paid`, the due dates ordinary operations pay by matching.
     func scheduled(
       paid: (UUID, DateOnly) -> Bool = { _, _ in false }
     ) -> (amount: AmountE4, withoutRate: Set<CurrencyCode>) {
       var total = AmountE4.zero
       var missing: Set<CurrencyCode> = []
-      let accounts = Dictionary(uniqueKeysWithValues: fx.accounts.map { ($0.id, $0) })
       for payment in fx.scheduled where payment.active {
         guard let next = payment.nextDate, next <= until,
           payment.paymentMethodId != CashFx.freedom
         else { continue }
-        let account = accounts[payment.paymentMethodId ?? CashFx.main]
-        let currency =
-          account.map { $0.holds(payment.currency) ? payment.currency : $0.mainCurrency }
-          ?? payment.currency
-        let key = BalanceKey(accountId: payment.paymentMethodId ?? CashFx.main, currency: currency)
-        let settled = countDays[key] ?? CashFx.day("2026-08-31")
         for day in PlainCalendar.days(from: next, through: until)
-        where PlainCalendar.isDue(day, of: payment) && day > settled
+        where PlainCalendar.isDue(day, of: payment)
           && linked[payment.id]?.contains(day) != true && !paid(payment.id, day)
         {
           let price =
@@ -382,10 +376,12 @@ struct CashPlanPropertyTests {
       return (total, missing)
     }
 
-    /// Every month from this one through D whose payment day (the last day of a shorter
-    /// month) is by D, not before the debt started and not paid, never more than the debt. A
-    /// month is paid by a payment dated in it; the first month that owes, when the month the
-    /// debt began owed nothing, is also paid by a payment dated in the month it began.
+    /// Each payment closes the earliest due still unpaid: of the dues from the first one the
+    /// debt owes (its payment day, the last day of a shorter month, in the month it began or,
+    /// when that day came before the start — or on it, for a purchase on credit —, in the next)
+    /// through D, as many are paid as there are payments dated from the start through today —
+    /// operations on the debt and `payment` lines of its journal —; the rest is owed, never
+    /// more than the debt.
     func debts() -> AmountE4 {
       var total = AmountE4.zero
       // Only what I owe on open debts: money owed to me and closed debts ask for nothing.
@@ -393,57 +389,67 @@ struct CashPlanPropertyTests {
         guard let payment = debt.monthlyPaymentE4, let day = debt.paymentDay else { continue }
         let journal = fx.debtEntries.filter { $0.debtId == debt.id }
         let balance = AmountE4.sum(journal.map(\.amountE4))
-        guard balance.raw > 0 else { continue }
-        let start = journal.compactMap(\.date).min()
+        guard balance.raw > 0, let start = journal.compactMap(\.date).min() else { continue }
         func payday(_ month: MonthKey) -> DateOnly {
           DateOnly(
             year: month.year, month: month.month,
             day: min(day, PlainCalendar.daysIn(month.year, month.month)))
         }
-        func isPaid(_ month: MonthKey) -> Bool {
-          let paid = paidMonths[debt.id] ?? []
-          if paid.contains(month) { return true }
-          guard let start else { return false }
-          let began = start.monthKey
-          return payday(began) < start && month == began.adding(months: 1)
-            && paid.contains(began)
+        let first = payday(start.monthKey)
+        let owesNext = debt.origin == .purchase ? first <= start : first < start
+        let firstMonth = owesNext ? start.monthKey.next : start.monthKey
+        var dues = 0
+        if firstMonth <= until.monthKey {
+          for month in MonthKey.range(firstMonth, through: until.monthKey)
+          where payday(month) <= until {
+            dues += 1
+          }
         }
-        var owed = AmountE4.zero
-        for month in MonthKey.range(CashFx.today.monthKey, through: until.monthKey) {
-          guard payday(month) <= until, start.map({ payday(month) >= $0 }) ?? true,
-            !isPaid(month)
-          else { continue }
-          owed += payment
-        }
-        guard owed.raw > 0 else { continue }
+        let counts = { (day: DateOnly) in day >= start && day <= CashFx.today }
+        let operations = fx.entries.filter { entry in
+          entry.transaction.debtId == debt.id
+            && counts(CalendarContext.utc.day(of: entry.transaction.occurredAt))
+        }.count
+        let lines = journal.filter { $0.kind == .payment && $0.date.map(counts) == true }.count
+        let unpaid = max(0, dues - operations - lines)
+        guard unpaid > 0 else { continue }
+        let owed = SubscriptionMath.rounded(payment.decimal * Decimal(unpaid))
         total += rubles(min(owed, balance), debt.currency) ?? .zero
       }
       return total
     }
 
-    /// What is saved in each goal, and the rest of this month's plan plus a full plan for
-    /// every later month by D, never more than the goal still needs.
+    /// What is saved in each goal; and, of each plan, this month's rest plus a full plan for
+    /// every later month by D, less what went in above the plans since the month of the first
+    /// contribution, never more than the goal still needs.
     func goals() -> (savings: AmountE4, plans: AmountE4) {
       var savings = AmountE4.zero
       var plans = AmountE4.zero
       let later = PlainCalendar.months(from: CashFx.today, to: until)
+      let month = CashFx.today.monthKey
       for goal in fx.goals where !goal.archived {
         var saved = AmountE4.zero
-        var thisMonth = AmountE4.zero
+        var byMonth: [MonthKey: AmountE4] = [:]
         for entry in fx.entries where entry.parts.first?.goalId == goal.id {
           saved += entry.transaction.amountE4
-          if CalendarContext.utc.day(of: entry.transaction.occurredAt).monthKey
-            == CashFx.today.monthKey
-          {
-            thisMonth += entry.transaction.amountE4
-          }
+          let entryMonth = CalendarContext.utc.day(of: entry.transaction.occurredAt).monthKey
+          byMonth[entryMonth, default: .zero] += entry.transaction.amountE4
         }
         if saved.raw > 0 { savings += rubles(saved, goal.currency) ?? .zero }
         guard let plan = goal.monthlyPlanE4 else { continue }
-        let rest = min(max(.zero, plan - thisMonth), plan)
-        let asked = min(
-          rest + SubscriptionMath.rounded(plan.decimal * Decimal(later)),
-          max(.zero, goal.targetE4 - saved))
+        var credit = AmountE4.zero
+        if let first = byMonth.keys.min(), first < month {
+          for current in MonthKey.range(first, through: month.previous) {
+            credit = max(.zero, credit + (byMonth[current] ?? .zero) - plan)
+          }
+        }
+        let thisMonth = byMonth[month] ?? .zero
+        let needed = max(.zero, goal.targetE4 - saved)
+        let rest = min(plan, max(.zero, plan - credit - thisMonth), needed)
+        let creditOut = max(.zero, credit + thisMonth - plan)
+        let ahead = max(
+          .zero, SubscriptionMath.rounded(plan.decimal * Decimal(later)) - creditOut)
+        let asked = min(rest + ahead, needed)
         if asked.raw > 0 { plans += rubles(asked, goal.currency) ?? .zero }
       }
       return (savings, plans)
@@ -573,9 +579,8 @@ struct CashPlanPropertyTests {
         #expect(plan.goalSavings == previous.goalSavings, "seed \(seed), +\(offset)")
         #expect(plan.events >= previous.events, "seed \(seed), +\(offset)")
       }
-      #expect(
-        plan.total == plan.scheduled + plan.debts + plan.goalSavings + plan.goalPlans
-          + plan.events)
+      // The goal savings are taken off the money now, not by the grey line.
+      #expect(plan.total == plan.scheduled + plan.debts + plan.goalPlans + plan.events)
       previous = plan
     }
   }
@@ -600,6 +605,9 @@ struct CashPlanPropertyTests {
       return
     }
     #expect(grey == main - plan.total, "seed \(seed)")
+    // What can be spent now is the money now less what the goals hold.
+    #expect(free.main == free.moneyNow.map { $0 - free.goalSavings }, "seed \(seed)")
+    #expect(free.goalSavings == (plan.subtractsGoalSavings ? plan.goalSavings : .zero))
     #expect(grey == main + AmountE4.sum(free.lines.map(\.signedAmount)), "seed \(seed)")
     #expect(free.lines.allSatisfy { $0.sign == .minus && !$0.amount.isNegative })
     #expect(free.days == CashFx.today.days(to: book.until) + 1)
@@ -672,7 +680,7 @@ extension CashPlanPropertyTests {
   }
 
   /// The operations typed near due dates reach what the matching is about: due dates they pay
-  /// after the count, and due dates the count already holds.
+  /// on both sides of the count — all of them due until paid, the count settling none.
   @Test func theTypedDuesReachBothSidesOfTheCount() {
     var afterCount = 0
     var insideCount = 0

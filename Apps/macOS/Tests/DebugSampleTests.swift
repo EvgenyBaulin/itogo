@@ -96,7 +96,7 @@
         .months(2), today: today, calendar: .utc, language: "en", seed: 42)
       let drawn = SampleDataGenerator(seed: 42)
         .generate(months: 2, endingOn: today, calendar: .utc, language: "en")
-        .withAccounts(seed: 42, calendar: .utc, language: "en", now: nil)
+        .withEveryFeature(seed: 42, calendar: .utc, language: "en", now: nil)
       XCTAssertEqual(seeded.entries.map(\.id), drawn.entries.map(\.id))
       XCTAssertEqual(seeded.transfers.map(\.id), drawn.transfers.map(\.id))
       XCTAssertFalse(seeded.transfers.isEmpty, "the accounts come with the history")
@@ -115,7 +115,8 @@
     /// whole — a year of operations with their accounts, set up, so no setup is offered on it —
     /// with what the showcase adds on top: an old card merged into the main card and kept in the
     /// archive, and dollars taken from an ATM abroad with a fee in dollars. Every balance of
-    /// every account and currency is the one the layers wrote, and none is below zero.
+    /// every account and currency is the one the layers wrote, and none is below zero but the
+    /// credit card's.
     func testAYearFromAnySeedTheDemoCanDrawLandsWholeAndAddsUp() async throws {
       let seeds: [UInt64] = [0, 1, 99_991, 140_737_488_355_328, 281_474_976_710_655]
       for (index, seed) in seeds.enumerated() {
@@ -127,7 +128,7 @@
           schema: BundleSchemaSource(bundle: .main), seed: seed, showcase: true)
         defer { try? stack.close() }
         let set = DataSetGeneration.generate(
-          .months(12), today: today, calendar: .utc, language: language, seed: seed)
+          .months(12), today: today, calendar: .utc, language: language, seed: seed, demo: true)
 
         let counts = try ExportRepository(writer: stack.writer).rowCounts()
         XCTAssertEqual(counts["transactions"], set.entries.count + 1, "seed \(seed)")
@@ -174,9 +175,18 @@
         let expected = try XCTUnwrap(
           DemoShowcase.expectedBalances(of: set, seed: seed), "seed \(seed)")
         XCTAssertEqual(Set(balances.keys), Set(expected.keys), "seed \(seed)")
+        // Only a credit card, which started below zero, may end there.
+        let owing = Set(
+          set.reconciledBalances.filter { $0.isStartingPoint && $0.actualE4.isNegative }
+            .map(\.key))
+        XCTAssertEqual(owing.count, 1, "seed \(seed): the credit card")
         for (key, amount) in expected {
           XCTAssertEqual(balances[key]?.amountE4, amount, "seed \(seed) \(key)")
-          XCTAssertGreaterThanOrEqual(amount.raw, 0, "seed \(seed) \(key)")
+          if owing.contains(key) {
+            XCTAssertLessThan(amount.raw, 0, "seed \(seed) \(key)")
+          } else {
+            XCTAssertGreaterThanOrEqual(amount.raw, 0, "seed \(seed) \(key)")
+          }
         }
       }
     }

@@ -53,6 +53,8 @@ public enum AccountWriteError: Error, Equatable, Sendable {
   /// An operation that moves money on an account that does not hold its currency, saved
   /// without what the account moved (`Transaction.accountCurrency`/`accountAmountE4`).
   case chargeMissing
+  /// An operation names a card that is not one of its account's, or no card at all.
+  case cardOfAnotherAccount
   /// The account or the group is not there.
   case notFound
 }
@@ -97,6 +99,8 @@ public struct AccountRepository: Sendable {
     try writer.read { db in try Self.usage(of: accountId, db: db) }
   }
 
+  /// Its cards, the cashback rules on it and an income expected on it do not use an account:
+  /// they go with it, or let go of it.
   static func usage(of accountId: UUID, db: Database) throws -> AccountUsage {
     func count(_ sql: String) throws -> Int {
       try Int.fetchOne(db, sql: sql, arguments: ["id": accountId.uuidString]) ?? 0
@@ -176,17 +180,21 @@ public struct AccountRepository: Sendable {
   /// 1. The transfers of `deletedTransferIds` go: between the two accounts in one currency
   ///    they would be transfers of an account to itself. Their fees stay, as ordinary
   ///    expenses.
-  /// 2. Whatever pointed at the source points at the target (`ReferenceRepository.repoint`);
-  ///    the balances counted on the source stay its history.
+  /// 2. Whatever pointed at the source points at the target (`ReferenceRepository.repoint`),
+  ///    its cards first; the balances counted on the source stay its history. A cashback rule
+  ///    of the source's own (not on a card) whose month and category a rule of the target's
+  ///    own already has goes first: the target's rule stays.
   /// 3. The target is written as the plan has it — the currencies of both — and is the main
   ///    account when the plan makes it so or when the source or the target was main before:
   ///    a merge never leaves the accounts without a main one. Then no other account is main.
   /// 4. The source goes to the archive, no longer main.
-  /// 5. One reconciliation of kind `opening`, at `at`, counts the target in every currency of
-  ///    `opening` and the source at zero in every currency of `sourceZero`, so bringing the
-  ///    source back never counts its money twice. A key counted before (`hadAnchor`) compares,
-  ///    with no difference; any other is a starting point. With nothing to count there is no
-  ///    such reconciliation.
+  /// 5. A merge is no count: one reconciliation of kind `opening` that says it came from a
+  ///    merge (`ReconciliationOrigin.merge`) for each moment of the plan
+  ///    (`AccountMergePlan.countsByMoment`) — the moment of a real count the balance rests on,
+  ///    or of the merge for a balance the owner typed — counts the target at its balance then
+  ///    and the source at zero right after its own latest count, so bringing the source back
+  ///    never counts its money twice. Every row is a starting point. With nothing to count
+  ///    there is no such reconciliation.
   ///
   /// The fees of the deleted transfers lose their key `transfer:<id>:fee` in the same write:
   /// the transfer they pointed at is gone. `calendar` gives the reconciliation its day.
@@ -212,6 +220,7 @@ public struct AccountRepository: Sendable {
           arguments: [OperationLink.transferFee(transferId).externalId])
       }
       _ = try Transfer.deleteAll(db, keys: plan.deletedTransferIds.map(\.uuidString))
+      try Self.dropCollidingRules(of: plan.sourceId, into: plan.target.id, db: db)
       try ReferenceRepository.repoint(
         "payment_methods", from: plan.sourceId, to: plan.target.id, db: db)
       var target = plan.target
@@ -221,20 +230,11 @@ public struct AccountRepository: Sendable {
         sql: "UPDATE payment_methods SET archived = 1, is_default = 0 WHERE id = ?",
         arguments: [plan.sourceId.uuidString])
 
-      var counts: [(key: BalanceKey, actual: AmountE4, compares: Bool)] = []
-      for (key, amount) in plan.opening.sorted(by: { $0.key < $1.key }) {
-        counts.append((key, amount, plan.hadAnchor.contains(key)))
+      for moment in plan.countsByMoment {
+        try Self.writeOpening(
+          at: moment.at, calendar: calendar,
+          balances: moment.counts.map { ($0.key, $0.actual, nil) }, origin: .merge, db: db)
       }
-      for key in plan.sourceZero.sorted() where plan.opening[key] == nil {
-        counts.append((key, .zero, plan.hadAnchor.contains(key)))
-      }
-      guard !counts.isEmpty else { return }
-      try Self.writeOpening(
-        at: plan.at, calendar: calendar,
-        balances: counts.map { count in
-          (count.key, count.actual, count.compares ? count.actual : nil)
-        },
-        db: db)
     }
   }
 
@@ -242,12 +242,13 @@ public struct AccountRepository: Sendable {
 
   /// Writes the setup of the accounts in one write, for good:
   ///
-  /// 1. the groups and 2. the accounts, as the plan has them;
+  /// 1. the groups and 2. the accounts, as the plan has them, then the cards of the plan;
   /// 3. the main account, and no other;
-  /// 4. one reconciliation of kind `opening` at `at` with the balances counted — the starting
-  ///    point of each account and currency, or, for a key a reconciliation had already
-  ///    counted (`expected`), a count compared with what was expected, whose difference is
-  ///    shown and never written as an operation;
+  /// 4. one reconciliation of kind `opening` at `at` with the balances counted, which says it
+  ///    came from the setup (`ReconciliationOrigin.setup`) — the starting point of each account
+  ///    and currency, or, for a key a reconciliation had already counted (`expected`), a count
+  ///    compared with what was expected, whose difference is shown and never written as an
+  ///    operation;
   /// 5. every currency an account holds, and the default one, switched on — refused with
   ///    `AccountWriteError.tooManyCurrencies` beyond ten;
   /// 6. the default currency, when the plan chose one;
@@ -260,6 +261,7 @@ public struct AccountRepository: Sendable {
     try writer.write { db in
       for group in plan.groups { try group.save(db) }
       for account in plan.accounts { try account.save(db) }
+      for card in plan.cards { try card.save(db) }
       guard try PaymentMethod.exists(db, key: plan.mainAccountId.uuidString) else {
         throw AccountWriteError.notFound
       }
@@ -269,7 +271,8 @@ public struct AccountRepository: Sendable {
         (key, amount, plan.expected[key])
       }
       if !balances.isEmpty {
-        try Self.writeOpening(at: plan.at, calendar: calendar, balances: balances, db: db)
+        try Self.writeOpening(
+          at: plan.at, calendar: calendar, balances: balances, origin: .setup, db: db)
       }
 
       var held: [CurrencyCode] = []
@@ -434,16 +437,35 @@ public struct AccountRepository: Sendable {
       arguments: [main.uuidString])
   }
 
+  /// Deletes the cashback rules of `source`'s own — on the account, not on a card — whose month
+  /// and category a rule of `target`'s own already has: one rule per holder, month and
+  /// category (`idx_cashback_rules_key`) would refuse moving them. The target's rule stays. A
+  /// merge is no step of ⌘Z, so they are not kept.
+  static func dropCollidingRules(of source: UUID, into target: UUID, db: Database) throws {
+    try db.execute(
+      sql: """
+        DELETE FROM cashback_rules
+        WHERE payment_method_id = :source AND card_id IS NULL
+          AND EXISTS (SELECT 1 FROM cashback_rules t
+                      WHERE t.payment_method_id = :target AND t.card_id IS NULL
+                        AND COALESCE(t.month, '') = COALESCE(cashback_rules.month, '')
+                        AND COALESCE(t.category_id, '') = COALESCE(cashback_rules.category_id, ''))
+        """,
+      arguments: ["source": source.uuidString, "target": target.uuidString])
+  }
+
   /// One reconciliation of kind `opening` at `instant`, with a balance for each count: the
   /// counted amount and, when it compares, the amount expected — the difference follows.
   /// Its ruble columns stay at zero: they are for a total, and this one counts accounts.
+  /// `origin` says where the balances came from.
   private static func writeOpening(
     at instant: Date, calendar: CalendarContext,
-    balances: [(key: BalanceKey, actual: AmountE4, expected: AmountE4?)], db: Database
+    balances: [(key: BalanceKey, actual: AmountE4, expected: AmountE4?)],
+    origin: ReconciliationOrigin? = nil, db: Database
   ) throws {
     let reconciliation = Reconciliation(
       date: calendar.day(of: instant), reconciledAt: instant, actualTotalRubE4: .zero,
-      kind: .opening)
+      kind: .opening, origin: origin)
     try reconciliation.insert(db)
     for balance in balances {
       try ReconciledBalance(

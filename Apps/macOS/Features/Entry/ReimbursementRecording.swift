@@ -1,4 +1,5 @@
 import AppCore
+import AppDatabase
 import Foundation
 
 /// Everything one reimbursement writes, worked out before anything touches the database.
@@ -80,6 +81,16 @@ struct ReimbursementRecording {
   ///
   /// `occurredAt` is the moment the money came — the day the entry line named — and the
   /// surplus and the shortfalls share it; `now` by default. `note` describes the reimbursement.
+  ///
+  /// `money` is what came when it was not rubles — 22 $ at `rate` (rubles a unit, from the
+  /// statement or the bank, as `rateSource` says) —: `received` is then its rubles, which the
+  /// parts share, the money back is written in its own currency with those rubles, and a
+  /// surplus is income in that currency at that rate.
+  ///
+  /// Less than a kopeck either way is never written: neither a surplus nor a shortfall. Money
+  /// in another currency that comes to what the parts cost but for the rounding of its four
+  /// decimals — 1,000 ₽ at 95 are 10.5263 $, which are 999.9985 ₽ — closes them at what they
+  /// cost; the money back keeps its own rubles, and the crumb between them is drift.
   static func make(
     id: UUID,
     received: AmountE4,
@@ -91,26 +102,59 @@ struct ReimbursementRecording {
     note: String? = nil,
     accountId: UUID? = nil,
     leg: MoneyLeg? = nil,
+    money: Money? = nil,
+    rate: Decimal? = nil,
+    rateDate: DateOnly? = nil,
+    rateSource: RateSource? = nil,
     setting: Setting
   ) throws -> ReimbursementRecording {
     let payer = payer(chosen: personId, closing: parts)
     guard payer != .differentPeople else { throw Failure.partsOfDifferentPeople }
     let owed = parts.map(\.inRubles)
-    let outcome = try ReimbursementResolver.resolve(
-      reimbursementTxId: id, amountE4: received, closing: owed,
-      allocation: distribution.allocation(over: owed), accountId: accountId)
+    let foreign = money.flatMap { $0.currency == .rub ? nil : $0 }
+    let allocation = distribution.allocation(over: owed)
+    let owedRub = AmountE4.sum(owed.map(\.amountE4))
+    let shared =
+      foreign != nil && allocation == nil && (received - owedRub).magnitude < MoneyBack.crumb
+      ? owedRub : received
+    var outcome = try ReimbursementResolver.resolve(
+      reimbursementTxId: id, amountE4: shared, closing: owed, allocation: allocation,
+      accountId: accountId)
+    if let surplus = outcome.surplus, surplus.amountE4 < MoneyBack.crumb { outcome.surplus = nil }
+    outcome.shortfalls.removeAll { $0.amountE4 < MoneyBack.crumb }
 
     let day = occurredAt ?? now
     var draft = TransactionDraft(
-      kind: .reimbursement, occurredAt: day, currency: .rub, amount: received, note: note,
-      paymentMethodId: accountId, accountCurrency: leg?.currency, accountAmount: leg?.amount)
+      kind: .reimbursement, occurredAt: day, currency: foreign?.currency ?? .rub,
+      amount: foreign?.amount ?? received, rate: foreign == nil ? nil : rate,
+      rateDate: foreign == nil ? nil : rateDate, rateSource: foreign == nil ? nil : rateSource,
+      note: note, paymentMethodId: accountId, accountCurrency: leg?.currency,
+      accountAmount: leg?.amount)
     draft.normalizeSinglePart()
     draft.parts[0].forPersonId = payer.personId
-    let reimbursement = try draft.materialize(id: id, now: now)
+    let reimbursement = try draft.materialize(
+      id: id, now: now, rublesConverter: { amount in foreign == nil ? amount : received })
 
+    if let foreign, let surplus = outcome.surplus, received.raw > 0 {
+      // The resolver works in rubles: the income is the same money in the currency it came in,
+      // and none at all when that rounds to nothing.
+      let rubles = surplus.amountE4
+      let amount =
+        (try? AmountE4(decimal: rubles.decimal * foreign.amount.decimal / received.decimal))
+        ?? .zero
+      outcome.surplus =
+        amount.raw > 0
+        ? SurchargeIncome(
+          amountE4: amount, currency: foreign.currency, amountRubE4: rubles,
+          accountId: surplus.accountId)
+        : nil
+    }
     var extra: [TransactionEntry] = []
     if let surplus = outcome.surplus {
-      extra.append(try surplusEntry(surplus, of: id, on: day, now: now, setting: setting))
+      extra.append(
+        try surplusEntry(
+          surplus, of: id, on: day, now: now, rate: foreign == nil ? nil : rate,
+          rateDate: rateDate, setting: setting))
     }
     let owedById = Dictionary(
       parts.map { ($0.partId, $0) }, uniquingKeysWith: { first, _ in first })
@@ -142,24 +186,9 @@ struct ReimbursementRecording {
     guard let surcharges = setting.surchargesCategoryId else {
       throw Failure.noSurchargesCategory
     }
-    let foreign = surplus.currency != .rub && !surplus.amountE4.isZero
-    var draft = TransactionDraft(
-      kind: .income, occurredAt: day, currency: surplus.currency, amount: surplus.amountE4,
-      rate: foreign
-        ? rate
-          ?? DecimalMath.round(surplus.amountRubE4.decimal / surplus.amountE4.decimal, scale: 6)
-        : nil,
-      rateDate: foreign ? rateDate : nil,
-      rateSource: foreign ? .manual : nil,
-      paymentMethodId: surplus.accountId)
-    draft.normalizeSinglePart()
-    draft.parts[0].categoryId = surcharges
-    draft.parts[0].categorySource = .system
-    draft.note = setting.surplusNote
-    let rubles = surplus.amountRubE4
-    var entry = try draft.materialize(now: now, rublesConverter: { _ in rubles })
-    entry.transaction.externalId = ReimbursementCompanions.surplusKey(of: reimbursementId)
-    return entry
+    return try MoneyBack.surplusEntry(
+      surplus, of: reimbursementId, on: day, now: now, rate: rate, rateDate: rateDate,
+      categoryId: surcharges, note: setting.surplusNote)
   }
 
   /// Less came back than I paid: the difference becomes my spending in the category the
@@ -303,5 +332,25 @@ struct ReimbursementPrefill: Identifiable, Equatable {
     guard let personId else { return [] }
     return Set(
       owed.filter { $0.debtorPersonId == personId && !$0.rateProvisional }.map(\.partId))
+  }
+}
+
+extension SettlementCounts {
+  /// Writes to the journal how much the money that came back earlier was balanced again, when
+  /// anything was — counts only; and says so when money over the parts stayed drift for want
+  /// of the Surcharges category.
+  func log() {
+    guard !isEmpty else { return }
+    AppLog.info(
+      "settlement.rebalanced", .db, "money back was balanced again",
+      [
+        LogPair("parts", .count(parts)), LogPair("surpluses", .count(surpluses)),
+        LogPair("companions", .count(companions)),
+      ])
+    if surplusesWithoutCategory > 0 {
+      AppLog.warning(
+        "settlement.noSurcharges", .db, "money over the parts stayed drift without Surcharges",
+        [LogPair("surpluses", .count(surplusesWithoutCategory))])
+    }
   }
 }

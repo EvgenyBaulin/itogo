@@ -72,7 +72,7 @@ final class AccountMergeFlowTests: XCTestCase {
     let preview = try XCTUnwrap(
       actions.mergePreview(tinkoff.id, into: tbank.id, books: books2))
     XCTAssertEqual(
-      preview.plan.opening[BalanceKey(accountId: tbank.id, currency: .rub)],
+      preview.balancesAfter[BalanceKey(accountId: tbank.id, currency: .rub)],
       AmountE4(whole: 1_500), "the dialog shows what the merged account will hold")
     XCTAssertEqual(actions.merge(preview), .done)
 
@@ -148,8 +148,8 @@ final class AccountMergeFlowTests: XCTestCase {
       books.dataset.entries.first { $0.id == spent.id }?.transaction.paymentMethodId, main.id)
   }
 
-  /// A key the books cannot work out is asked: typed, it is counted; left empty, it stays
-  /// uncounted.
+  /// A key the books cannot work out is asked: typed, it is counted now; left empty, the
+  /// target keeps its own latest count and the other account's past becomes history.
   func testAKeyNobodyCanWorkOutIsAsked() async throws {
     let main = try account("Сбер", main: true)
     let freedom = try account("Freedom", currencies: [.usd])
@@ -161,7 +161,8 @@ final class AccountMergeFlowTests: XCTestCase {
     let key = BalanceKey(accountId: freedom.id, currency: .usd)
     let asked = try XCTUnwrap(actions.mergePreview(other.id, into: freedom.id, books: books))
     XCTAssertEqual(asked.needsBalance, [key], "moved but never counted: nobody knows its money")
-    XCTAssertNil(asked.plan.opening[key])
+    XCTAssertEqual(asked.plan.opening[key], AmountE4(whole: 70), "empty: its own latest count")
+    XCTAssertTrue(asked.keepsItsCountWhenEmpty(key))
 
     let answered = try XCTUnwrap(
       actions.mergePreview(
@@ -171,6 +172,57 @@ final class AccountMergeFlowTests: XCTestCase {
     let books6 = try await freshBooks()
     XCTAssertEqual(balance(books6, freedom.id, .usd), AmountE4(whole: 60))
     _ = main
+  }
+
+  // MARK: A merge is no count
+
+  /// Both accounts counted earlier the same day, merged now: the merged account rests on that
+  /// count, not on the merge — «сверено» and «до сверки?» name the count's moment — and the
+  /// openings the merge writes say they came from a merge. The count is an hour ago, or at
+  /// midnight when the day is younger than that: «до сверки?» asks only about counts of the
+  /// operation's own day, so a count of the day before would leave nothing to ask about.
+  func testTheMergeMomentIsNoCount() async throws {
+    let sber = try account("Сбер", main: true)
+    let cash = try account("Наличные", kind: .cash)
+    let now = Date()
+    let calendar = environment.calendar
+    let earlierToday = max(
+      calendar.startOfDay(calendar.day(of: now)), now.addingTimeInterval(-3_600))
+    try count(
+      [(sber.id, .rub, AmountE4(whole: 100_000)), (cash.id, .rub, AmountE4(whole: 5_000))],
+      at: earlierToday)
+    let books = try await freshBooks()
+    let key = BalanceKey(accountId: sber.id, currency: .rub)
+    let counted = try XCTUnwrap(books.balances.latestAnchor(key)).at
+    let preview = try XCTUnwrap(actions.mergePreview(cash.id, into: sber.id, books: books))
+    XCTAssertEqual(preview.balancesAfter[key], AmountE4(whole: 105_000))
+    XCTAssertEqual(actions.merge(preview), .done)
+
+    let after = try await freshBooks()
+    XCTAssertEqual(balance(after, sber.id, .rub), AmountE4(whole: 105_000))
+    XCTAssertEqual(after.balances.latestAnchor(key)?.at, counted, "the count, not the merge")
+    let origins = after.dataset.planning.reconciliations.filter { $0.kind == .opening }
+      .map(\.origin)
+    XCTAssertEqual(origins, [.merge])
+    let counts = AccountReconciliation.countsOfTheDay(
+      occurredAt: now, savedAt: Date(), keys: [key], balances: after.balances,
+      calendar: calendar)
+    XCTAssertEqual(Set(counts.map(\.at)), [counted], "only the real count is asked about")
+  }
+
+  /// «Сбер» 100,000 and «Наличные» 5,000 counted an hour ago, merged; a coffee of half an
+  /// hour ago entered afterwards on «Сбер» moves money — 104,700, not 105,000.
+  func testACoffeeBeforeTheMergeMovesMoney() async throws {
+    let sber = try account("Сбер", main: true)
+    let cash = try account("Наличные", kind: .cash)
+    try count([(sber.id, .rub, AmountE4(whole: 100_000)), (cash.id, .rub, AmountE4(whole: 5_000))])
+    let books = try await freshBooks()
+    let preview = try XCTUnwrap(actions.mergePreview(cash.id, into: sber.id, books: books))
+    XCTAssertEqual(actions.merge(preview), .done)
+    try spend(on: sber.id, amount: AmountE4(whole: 300))
+    let after = try await freshBooks()
+    XCTAssertEqual(balance(after, sber.id, .rub), AmountE4(whole: 104_700))
+    XCTAssertEqual(balance(after, cash.id, .rub), .zero, "the archived source holds nothing")
   }
 
   // MARK: The main account
@@ -251,9 +303,11 @@ final class AccountMergeFlowTests: XCTestCase {
     return account
   }
 
-  /// Counts of keys at one moment, as a reconciliation of accounts writes them.
-  private func count(_ counts: [(UUID, CurrencyCode, AmountE4)]) throws {
-    let at = Date().addingTimeInterval(-3_600)
+  /// Counts of keys at one moment — an hour ago unless said —, as a reconciliation of accounts
+  /// writes them.
+  private func count(
+    _ counts: [(UUID, CurrencyCode, AmountE4)], at: Date = Date().addingTimeInterval(-3_600)
+  ) throws {
     let reconciliation = Reconciliation(
       date: environment.calendar.day(of: at), reconciledAt: at, actualTotalRubE4: .zero,
       kind: .accounts)

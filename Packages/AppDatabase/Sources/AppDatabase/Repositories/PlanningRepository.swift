@@ -5,8 +5,8 @@ import GRDB
 
 /// Rows of the tables an action of the planning writes, one list per table. The reference
 /// books are here because the planning makes rows of them too: the subcategory of a new goal,
-/// of a new debt. So are the accounts and their groups, the transfers between them and the
-/// balances counted on them.
+/// of a new debt. So are the accounts and their groups, the cards of the accounts and their
+/// cashback rules, the transfers between them and the balances counted on them.
 public struct PlanningRows: Sendable, Hashable {
   public var accountGroups: [AccountGroup]
   public var paymentMethods: [PaymentMethod]
@@ -23,6 +23,8 @@ public struct PlanningRows: Sendable, Hashable {
   public var reconciliations: [Reconciliation]
   public var transfers: [Transfer]
   public var reconciledBalances: [ReconciledBalance]
+  public var cards: [PaymentCard]
+  public var cashbackRules: [CashbackRule]
 
   public init(
     categories: [CoreKit.Category] = [], events: [Event] = [], goals: [Goal] = [],
@@ -30,8 +32,11 @@ public struct PlanningRows: Sendable, Hashable {
     expected: [ExpectedIncome] = [], expectedLinks: [ExpectedIncomeLink] = [],
     budgets: [Budget] = [], debtEntries: [DebtEntry] = [], reconciliations: [Reconciliation] = [],
     accountGroups: [AccountGroup] = [], paymentMethods: [PaymentMethod] = [],
-    transfers: [Transfer] = [], reconciledBalances: [ReconciledBalance] = []
+    transfers: [Transfer] = [], reconciledBalances: [ReconciledBalance] = [],
+    cards: [PaymentCard] = [], cashbackRules: [CashbackRule] = []
   ) {
+    self.cards = cards
+    self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
     self.paymentMethods = paymentMethods
     self.transfers = transfers
@@ -69,14 +74,19 @@ public struct PlanningRowIDs: Sendable, Hashable {
   public var reconciliations: [UUID]
   public var transfers: [UUID]
   public var reconciledBalances: [UUID]
+  public var cards: [UUID]
+  public var cashbackRules: [UUID]
 
   public init(
     categories: [UUID] = [], events: [UUID] = [], goals: [UUID] = [], debts: [UUID] = [],
     scheduled: [UUID] = [], prices: [UUID] = [], expected: [UUID] = [],
     expectedLinks: [UUID] = [], budgets: [UUID] = [], debtEntries: [UUID] = [],
     reconciliations: [UUID] = [], accountGroups: [UUID] = [], paymentMethods: [UUID] = [],
-    transfers: [UUID] = [], reconciledBalances: [UUID] = []
+    transfers: [UUID] = [], reconciledBalances: [UUID] = [], cards: [UUID] = [],
+    cashbackRules: [UUID] = []
   ) {
+    self.cards = cards
+    self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
     self.paymentMethods = paymentMethods
     self.transfers = transfers
@@ -122,11 +132,38 @@ public struct PlanningChange: Sendable, Hashable {
   /// The instant of the change: `updated_at` of what it rewrites, `deleted_at` of what it
   /// deletes.
   public var at: Date
+  /// Rows whose links from operations the change lets go of before it deletes them: a goal of
+  /// `goals` is deleted with the parts that were put into it keeping their money and category
+  /// and losing only the goal, and ⌘Z ties them back. Only goals: a list of another table
+  /// refuses the change with `PlanningWriteError.unsupportedUnlinking`.
+  public var unlinking: PlanningRowIDs
+  /// Keys of counted balances whose difference the change asks to follow the books again: every
+  /// live count of each is settled at the end of the write, after the settings — a count the
+  /// owner has just called a real difference follows the books in the same step.
+  public var settles: Set<BalanceKey>
+  /// The balances the change expects the keys to hold when it is written, for a change that is
+  /// only right while they do: each is worked out inside the write, before anything is written
+  /// — its latest count made by `at` plus what moved after it, a movement typed ahead of `at`
+  /// too, as `AccountBalances.balanceAhead` works it out —, and one that differs refuses the
+  /// change with `PlanningWriteError.balanceChanged`.
+  public var expectingBalances: [BalanceKey: AmountE4]
+  /// The balances the change expects the keys to hold at `at` itself — the latest count made by
+  /// then plus what moved after it and up to `at` —, checked the same way: money typed ahead of
+  /// `at` is settled apart from the money of the moment, so both are to hold.
+  public var expectingBalancesNow: [BalanceKey: AmountE4]
+  /// For a deletion that brings transfers keeping an account in the archive at zero: the
+  /// operations of `softDeleted` the transfers were worked out on. They count the money of
+  /// exactly those, so when the live operations among `softDeleted` are others — one deleted
+  /// elsewhere since — nothing is written (`SettlingPlanOutdated`). `nil`: no such check.
+  public var settlingPlanned: Set<UUID>?
 
   public init(
     created: [TransactionEntry] = [], upsert: PlanningRows = .empty,
     delete: PlanningRowIDs = .empty, settings: [String: String?] = [:],
-    rewritten: [TransactionEntry] = [], softDeleted: [UUID] = [], at: Date = Date()
+    rewritten: [TransactionEntry] = [], softDeleted: [UUID] = [], at: Date = Date(),
+    unlinking: PlanningRowIDs = .empty, settles: Set<BalanceKey> = [],
+    expectingBalances: [BalanceKey: AmountE4] = [:],
+    expectingBalancesNow: [BalanceKey: AmountE4] = [:], settlingPlanned: Set<UUID>? = nil
   ) {
     self.created = created
     self.upsert = upsert
@@ -135,6 +172,11 @@ public struct PlanningChange: Sendable, Hashable {
     self.rewritten = rewritten
     self.softDeleted = softDeleted
     self.at = at
+    self.unlinking = unlinking
+    self.settles = settles
+    self.expectingBalances = expectingBalances
+    self.expectingBalancesNow = expectingBalancesNow
+    self.settlingPlanned = settlingPlanned
   }
 }
 
@@ -151,8 +193,9 @@ public struct PlanningUndo: Sendable, Hashable {
   /// The rowid each row of `before` had, by id: lists read in rowid order — the limits, the
   /// lines of one day of a journal — get a removed row back in its place, not last.
   public var rowIDs: [UUID: Int64]
-  /// Links to a deleted category the schema cleared in tables the planning does not write —
-  /// templates, import mappings, the model's corrections — set back once the category is.
+  /// Links the change let go of in rows the planning does not write — templates, import
+  /// mappings and the model's corrections that pointed at a deleted category, parts put into a
+  /// goal it deleted —, set back once the row they point at is.
   public var cleared: [ClearedReference]
   /// The operations the change rewrote, as they were before it.
   public var rewrittenBefore: [TransactionEntry]
@@ -168,6 +211,11 @@ public struct PlanningUndo: Sendable, Hashable {
   /// The operations the change created and rewrote, as the write left them — with the account
   /// it gave the ones that named none —, for the caller to show; ⌘Z does not need them.
   public var written: [TransactionEntry]
+  /// What the change moved, for the counts: ⌘Z settles the same windows again.
+  public var countTouch: CountTouch
+  /// What the counts it reached wrote in the same write — for the caller to show, and for ⌘Z to
+  /// give back the numbers of a count that no longer follows the books after it.
+  public var counts: CountsSettled
 
   public init(
     createdTransactionIds: [UUID] = [], inserted: PlanningRowIDs = .empty,
@@ -175,8 +223,11 @@ public struct PlanningUndo: Sendable, Hashable {
     rowIDs: [UUID: Int64] = [:], cleared: [ClearedReference] = [],
     rewrittenBefore: [TransactionEntry] = [], removedLinks: [ReimbursementLink] = [],
     deletion: DeletionEffects = .none, releasedRefunds: [UUID: UUID] = [:],
-    written: [TransactionEntry] = []
+    written: [TransactionEntry] = [], countTouch: CountTouch = .none,
+    counts: CountsSettled = .none
   ) {
+    self.countTouch = countTouch
+    self.counts = counts
     self.createdTransactionIds = createdTransactionIds
     self.inserted = inserted
     self.before = before
@@ -191,13 +242,14 @@ public struct PlanningUndo: Sendable, Hashable {
   }
 }
 
-/// One link a category deletion cleared (`ON DELETE SET NULL`) in a row the planning does not
-/// otherwise write: `column` of the row `rowId` of `table` pointed at `categoryId`.
+/// One link a deletion cleared — the schema (`ON DELETE SET NULL`), or the change itself
+/// (`PlanningChange.unlinking`) — in a row the planning does not otherwise write: `column` of
+/// the row `rowId` of `table` pointed at `referencedId`.
 public struct ClearedReference: Sendable, Hashable {
   public let table: String
   public let column: String
   public let rowId: String
-  public let categoryId: UUID
+  public let referencedId: UUID
 }
 
 public enum PlanningWriteError: Error, Equatable, Sendable {
@@ -205,17 +257,35 @@ public enum PlanningWriteError: Error, Equatable, Sendable {
   /// deleted (the schema's rule). Deleting it would quietly clear the operations' references
   /// — a contribution would stop counting towards its goal — and undo could not put them
   /// back, since operations are not rows of the planning. The same holds for an account that
-  /// operations, transfers, scheduled payments or debt journal lines point at.
+  /// operations, transfers, scheduled payments or debt journal lines point at, and for a card
+  /// that operations or scheduled payments name.
   case referencedByOperations(UUID)
+  /// The change asks to let go of links to rows other than goals.
+  case unsupportedUnlinking
+  /// The key no longer holds the balance the change expected of it
+  /// (`PlanningChange.expectingBalances`): something moved its money since it was shown.
+  case balanceChanged(BalanceKey)
+
+  /// Whether the refusal is about rows tied to other rows — what `WriteFailureCause` tells the
+  /// owner as such.
+  public var tiesRows: Bool {
+    switch self {
+    case .referencedByOperations, .unsupportedUnlinking: true
+    case .balanceChanged: false
+    }
+  }
 }
 
 /// The one write path of the planning, so every action is one transaction and one step of
 /// undo, plus the reads the planning screens need.
 public struct PlanningRepository: Sendable {
   private let writer: any DatabaseWriter
+  /// The owner's calendar and the name of «Сверка», for the counts every change settles.
+  private let liveCounts: LiveCountsContext
 
-  public init(writer: any DatabaseWriter) {
+  public init(writer: any DatabaseWriter, liveCounts: LiveCountsContext = .standard) {
     self.writer = writer
+    self.liveCounts = liveCounts
   }
 
   // MARK: Writing
@@ -228,13 +298,14 @@ public struct PlanningRepository: Sendable {
   /// income, the journal of a debt, the limits and definitions filed under a category, the
   /// balances counted on an account or in a reconciliation — so undo gives them back as well.
   ///
-  /// Rows go in the order their foreign keys need: groups of accounts, accounts, categories
-  /// (parents first), events, goals, debts, scheduled payments, prices, expected income,
-  /// limits, then the new operations with their parts and the operations rewritten, and after
-  /// them the debt journal, the income links, the transfers, the reconciliations and the
-  /// balances they counted, which may point at those operations. Deletions come after, in the
-  /// reverse order; then the operations deleted softly, with what their deletion takes along;
-  /// and the settings after everything.
+  /// Rows go in the order their foreign keys need: groups of accounts, accounts, their cards,
+  /// categories (parents first), events, goals, debts, scheduled payments, prices, expected
+  /// income, limits, cashback rules, then the new operations with their parts and the
+  /// operations rewritten, and after them the debt journal, the income links, the transfers,
+  /// the reconciliations and the balances they counted, which may point at those operations.
+  /// Deletions come after, in the reverse order — the parts put into a goal of
+  /// `PlanningChange.unlinking` let go of it right before the goals go —; then the operations
+  /// deleted softly, with what their deletion takes along; and the settings after everything.
   ///
   /// The accounts keep one main account: one written as main takes the flag from every other,
   /// and a main account is deleted only while another live account is main. An account
@@ -251,29 +322,87 @@ public struct PlanningRepository: Sendable {
   /// Throws `DatabaseError.unbalancedParts` before writing anything when an operation does
   /// not add up, `DatabaseError.notFound` when an operation to rewrite is not there or is
   /// deleted, `PlanningWriteError.referencedByOperations` when an event, a goal, a debt or
-  /// an account to delete is still used, `AccountWriteError.isMain` when the main account
-  /// to delete is the only one, `AccountWriteError.chargeMissing` when a charge is
+  /// an account or a card to delete is still used, `PlanningWriteError.unsupportedUnlinking`
+  /// when it asks to let go of links to anything but goals, `AccountWriteError.isMain` when
+  /// the main account to delete is the only one, `AccountWriteError.cardOfAnotherAccount` when
+  /// an operation names a card of another account, `AccountWriteError.chargeMissing` when a
+  /// charge is
   /// missing, and `LinkedEditRefusal` or `RefundError` when a refund or partial money back
   /// would be left without its ground. Any failure rolls the whole change back — among them the
   /// unique `external_id`, which keeps one due date from being paid twice.
+  ///
+  /// Last, the counts whose windows the change moved money in follow the books in the same write
+  /// — the keys of `PlanningChange.settles` and of the counts it wrote or removed whole, and
+  /// every key of the main account and of the one it was before when the flag moved (money
+  /// without an account moves the main one) —, and a change that expects balances
+  /// (`PlanningChange.expectingBalances`, `expectingBalancesNow`) is refused with
+  /// `PlanningWriteError.balanceChanged` before anything is written when a key holds another. A
+  /// deletion whose settling transfers were worked out on other operations than it now takes
+  /// (`PlanningChange.settlingPlanned`) is refused with `SettlingPlanOutdated`.
   public func apply(_ change: PlanningChange) throws -> PlanningUndo {
     try Self.refuseUnbalanced(change)
-    return try writer.write { db in try Self.apply(change, db: db) }
+    let context = liveCounts
+    return try writer.write { db in try Self.apply(change, context: context, db: db) }
   }
 
   /// `apply` off the calling thread: the same write, awaited — for a change of many
   /// operations, which would otherwise freeze the window.
   public func applyInBackground(_ change: PlanningChange) async throws -> PlanningUndo {
     try Self.refuseUnbalanced(change)
-    return try await writer.write { db in try Self.apply(change, db: db) }
+    let context = liveCounts
+    return try await writer.write { db in try Self.apply(change, context: context, db: db) }
   }
 
   private static func refuseUnbalanced(_ change: PlanningChange) throws {
     guard change.created.allSatisfy(\.isBalanced), change.rewritten.allSatisfy(\.isBalanced)
     else { throw DatabaseError.unbalancedParts }
+    var others = change.unlinking
+    others.goals = []
+    guard others == .empty else { throw PlanningWriteError.unsupportedUnlinking }
   }
 
-  static func apply(_ change: PlanningChange, db: Database) throws -> PlanningUndo {
+  /// The money on `key` as the books say inside this write: at `instant` — its latest count
+  /// made by then plus what moved after it and up to `instant` —, and once everything written on
+  /// it has happened — every movement after the count, one typed ahead of `instant` too, what
+  /// `AccountBalances.balanceAhead` shows the owner. `nil` while the key was never counted.
+  private static func balances(
+    of key: BalanceKey, at instant: Date, context: LiveCountsContext, db: Database
+  ) throws -> (now: AmountE4?, ahead: AmountE4?) {
+    let book = try LiveCountsWriter.Book.read(context: context, now: instant, db: db)
+    guard let anchor = book.anchors.anchors(key).last(where: { $0.at <= instant }) else {
+      return (nil, nil)
+    }
+    let window = try LiveCountsWriter.Window.load(
+      spans: [key.accountId: (anchor.at, .distantFuture)], book: book, context: context,
+      now: instant, db: db)
+    return (window.balance(key, at: instant), window.balanceAhead(key))
+  }
+
+  static func apply(
+    _ change: PlanningChange, context: LiveCountsContext = .standard, db: Database
+  ) throws -> PlanningUndo {
+    let expected = Set(change.expectingBalances.keys).union(change.expectingBalancesNow.keys)
+    for key in expected.sorted() {
+      let held = try balances(of: key, at: change.at, context: context, db: db)
+      if let ahead = change.expectingBalances[key], held.ahead != ahead {
+        throw PlanningWriteError.balanceChanged(key)
+      }
+      if let now = change.expectingBalancesNow[key], held.now != now {
+        throw PlanningWriteError.balanceChanged(key)
+      }
+    }
+    let mainBefore = try TransactionRepository.mainAccountId(db)
+    let deleting = try TransactionRepository.entries(ids: change.softDeleted, db: db)
+      .filter { !$0.transaction.isDeleted }
+    // Transfers that settle an account in the archive count the money of the operations they
+    // were worked out on: a deletion that would take others writes nothing.
+    if let planned = change.settlingPlanned {
+      let moved = planned.symmetricDifference(deleting.map(\.id))
+      guard moved.isEmpty else {
+        throw SettlingPlanOutdated(operationIds: moved.sorted { $0.uuidString < $1.uuidString })
+      }
+    }
+    let unlinked = try Self.operations(puttingInto: change.unlinking.goals, db: db)
     var journal = UndoJournal()
     let rows = change.upsert
     try journal.upsert(rows.accountGroups, db: db)
@@ -283,6 +412,7 @@ public struct PlanningRepository: Sendable {
     if let main = rows.paymentMethods.last(where: \.isDefault) {
       try journal.takeMainFlag(for: main.id, db: db)
     }
+    try journal.upsert(rows.cards, db: db)
     try journal.upsert(Self.parentsFirst(rows.categories), db: db)
     try journal.upsert(rows.events, db: db)
     try journal.upsert(rows.goals, db: db)
@@ -291,6 +421,7 @@ public struct PlanningRepository: Sendable {
     try journal.upsert(rows.prices, db: db)
     try journal.upsert(rows.expected, db: db)
     try journal.upsert(rows.budgets, db: db)
+    try journal.upsert(rows.cashbackRules, db: db)
     // New operations are written the way `TransactionRepository.insert` writes them: as new
     // rows, so an id or an `external_id` that is already there fails the change. Each is given
     // an account like any other (`TransactionRepository.assigningAccount`), and a refund is
@@ -319,15 +450,23 @@ public struct PlanningRepository: Sendable {
     try journal.delete(Transfer.self, ids: gone.transfers, db: db)
     try journal.delete(ExpectedIncomeLink.self, ids: gone.expectedLinks, db: db)
     try journal.delete(DebtEntry.self, ids: gone.debtEntries, db: db)
+    try journal.delete(CashbackRule.self, ids: gone.cashbackRules, db: db)
     try journal.delete(Budget.self, ids: gone.budgets, db: db)
     try journal.delete(ExpectedIncome.self, ids: gone.expected, db: db)
     try journal.delete(SubscriptionPrice.self, ids: gone.prices, db: db)
     try journal.delete(ScheduledPayment.self, ids: gone.scheduled, db: db)
     try journal.delete(Debt.self, ids: gone.debts, db: db)
+    for goal in change.unlinking.goals {
+      try journal.keepReference(table: "transaction_parts", column: "goal_id", to: goal, db: db)
+      try db.execute(
+        sql: "UPDATE transaction_parts SET goal_id = NULL WHERE goal_id = ?",
+        arguments: [goal.uuidString])
+    }
     try journal.delete(Goal.self, ids: gone.goals, db: db)
     try journal.delete(Event.self, ids: gone.events, db: db)
     try journal.delete(
       CoreKit.Category.self, ids: Self.childrenFirst(gone.categories, db: db), db: db)
+    try journal.delete(PaymentCard.self, ids: gone.cards, db: db)
     try Self.deleteAccounts(gone.paymentMethods, journal: &journal, db: db)
     try journal.delete(AccountGroup.self, ids: gone.accountGroups, db: db)
 
@@ -341,12 +480,57 @@ public struct PlanningRepository: Sendable {
       settingsBefore.updateValue(try Self.setting(key, db: db), forKey: key)
       try Self.setSetting(key, to: value, db: db)
     }
+
+    // What the change moved, old and new positions alike, and the counts it reached.
+    let unlinkedAfter = try TransactionRepository.entries(ids: unlinked.map(\.id), db: db)
+    var entries: [(before: TransactionEntry?, after: TransactionEntry?)] = []
+    entries += written.filter { entry in change.created.contains { $0.id == entry.id } }
+      .map { (nil, $0) }
+    entries += rewrites.before.map { before in
+      (before, written.last { $0.id == before.id })
+    }
+    entries += deleting.map { ($0, nil) }
+    entries += unlinked.map { before in (before, unlinkedAfter.first { $0.id == before.id }) }
+    var touch = try LiveCountsWriter.touch(
+      entries: entries, transfers: journal.before.transfers + rows.transfers,
+      lines: journal.before.debtEntries + rows.debtEntries,
+      debts: journal.before.debts + rows.debts, calendar: context.calendar,
+      lookups: WriteLookups(), db: db)
+    touch.wholeKeys.formUnion(change.settles)
+    touch.wholeKeys.formUnion(rows.reconciledBalances.map(\.key))
+    touch.wholeKeys.formUnion(journal.before.reconciledBalances.map(\.key))
+    let mainAfter = try TransactionRepository.mainAccountId(db)
+    if mainAfter != mainBefore {
+      touch.wholeAccounts.formUnion([mainBefore, mainAfter].compactMap { $0 })
+    }
+    let counts = try LiveCountsWriter.settle(touch, context: context, now: change.at, db: db)
     return PlanningUndo(
       createdTransactionIds: change.created.map(\.id), inserted: journal.inserted,
       before: journal.before, settingsBefore: settingsBefore, rowIDs: journal.rowIDs,
       cleared: journal.cleared, rewrittenBefore: rewrites.before,
       removedLinks: rewrites.removedLinks, deletion: deletion,
-      releasedRefunds: rewrites.releasedRefunds, written: written)
+      releasedRefunds: rewrites.releasedRefunds, written: written, countTouch: touch,
+      counts: counts)
+  }
+
+  /// The live operations with a part put into one of these goals, as they are.
+  private static func operations(
+    puttingInto goals: [UUID], db: Database
+  ) throws -> [TransactionEntry] {
+    guard !goals.isEmpty else { return [] }
+    var ids: [UUID] = []
+    for chunk in goals.map(\.uuidString).chunked(by: TransactionRepository.chunkSize) {
+      ids += try String.fetchAll(
+        db,
+        sql: """
+          SELECT DISTINCT transaction_id FROM transaction_parts
+          WHERE goal_id IN (\(databaseQuestionMarks(count: chunk.count)))
+          """,
+        arguments: StatementArguments(Array(chunk))
+      ).compactMap(UUID.init(uuidString:))
+    }
+    return try TransactionRepository.entries(ids: ids, db: db)
+      .filter { !$0.transaction.isDeleted }
   }
 
   /// What `rewrite` did: the rows as they were — each one once, as it was before its first
@@ -470,26 +654,55 @@ public struct PlanningRepository: Sendable {
   /// does, since the foreign key would only clear a line's `transaction_id` and leave the debt
   /// moved by a payment that never happened. Then the rows it added go, in the reverse order
   /// of the foreign keys, and the rows it changed or removed are written back as they were, in
-  /// the forward order, each at the rowid it had (`PlanningUndo.rowIDs`). The accounts and
-  /// groups it added go only after that: a payment, a transfer or a journal line it moved onto
-  /// a new account points at it until written back. The settings come last. `instant` stamps
-  /// the operations brought back.
+  /// the forward order, each at the rowid it had (`PlanningUndo.rowIDs`); the links it let go
+  /// of are set back after them, once what they point at is there again. The cards, accounts
+  /// and groups it added go only after that: a payment, a transfer or a journal line it moved
+  /// onto a new account or card points at it until written back. The settings come last.
+  /// `instant` stamps the operations brought back.
+  ///
+  /// The operations of the differences of the counts the change added go with them, live or
+  /// in the bin, whatever the settles did to them since (their ids are derived from the count).
+  /// Last, the counts whose windows the change moved money in follow the books again — a
+  /// difference the change purged at zero comes back as the owner left it —, and a count the
+  /// change settled that no longer follows them — a first count kept by the change — gets back
+  /// its numbers and its operation as they were.
   ///
   /// A row changed elsewhere between the change and its undo is written back all the same.
   /// An operation made since that points at a row the change added — filed
   /// under a goal's new subcategory, tagged with a new event, paid from a new account — makes
   /// the undo fail and roll back (`PlanningWriteError.referencedByOperations`, or the schema's
   /// `RESTRICT`).
-  public func revert(_ undo: PlanningUndo, at instant: Date = Date()) throws {
-    try writer.write { db in try Self.revert(undo, at: instant, db: db) }
+  @discardableResult
+  public func revert(_ undo: PlanningUndo, at instant: Date = Date()) throws -> CountsSettled {
+    let context = liveCounts
+    return try writer.write { db in
+      try Self.revert(undo, at: instant, context: context, db: db)
+    }
   }
 
   /// `revert` off the calling thread, awaited.
-  public func revertInBackground(_ undo: PlanningUndo, at instant: Date = Date()) async throws {
-    try await writer.write { db in try Self.revert(undo, at: instant, db: db) }
+  @discardableResult
+  public func revertInBackground(
+    _ undo: PlanningUndo, at instant: Date = Date()
+  ) async throws -> CountsSettled {
+    let context = liveCounts
+    return try await writer.write { db in
+      try Self.revert(undo, at: instant, context: context, db: db)
+    }
   }
 
-  static func revert(_ undo: PlanningUndo, at instant: Date, db: Database) throws {
+  @discardableResult
+  static func revert(
+    _ undo: PlanningUndo, at instant: Date, context: LiveCountsContext = .standard, db: Database
+  ) throws -> CountsSettled {
+    try revertRows(undo, at: instant, db: db)
+    try LiveCountsWriter.restoreUnsettled(undo.counts, context: context, now: instant, db: db)
+    return try LiveCountsWriter.settle(
+      undo.countTouch, context: context, now: instant, templates: undo.counts.operationsBefore,
+      db: db)
+  }
+
+  private static func revertRows(_ undo: PlanningUndo, at instant: Date, db: Database) throws {
     if !undo.deletion.deletedIds.isEmpty {
       try TransactionRepository.restore(
         ids: undo.deletion.deletedIds, at: instant, effects: undo.deletion, db: db)
@@ -534,11 +747,13 @@ public struct PlanningRepository: Sendable {
     }
 
     let added = undo.inserted
+    try LiveCountsWriter.purgeOperations(ofCounts: added.reconciledBalances, db: db)
     try Self.deleteAll(ReconciledBalance.self, ids: added.reconciledBalances, db: db)
     try Self.deleteAll(Reconciliation.self, ids: added.reconciliations, db: db)
     try Self.deleteAll(Transfer.self, ids: added.transfers, db: db)
     try Self.deleteAll(ExpectedIncomeLink.self, ids: added.expectedLinks, db: db)
     try Self.deleteAll(DebtEntry.self, ids: added.debtEntries, db: db)
+    try Self.deleteAll(CashbackRule.self, ids: added.cashbackRules, db: db)
     try Self.deleteAll(Budget.self, ids: added.budgets, db: db)
     try Self.deleteAll(ExpectedIncome.self, ids: added.expected, db: db)
     try Self.deleteAll(SubscriptionPrice.self, ids: added.prices, db: db)
@@ -553,17 +768,8 @@ public struct PlanningRepository: Sendable {
     let before = undo.before
     for row in before.accountGroups { try row.save(db) }
     for row in before.paymentMethods { try row.save(db) }
+    for row in before.cards { try row.save(db) }
     for category in Self.parentsFirst(before.categories) { try category.save(db) }
-    // Only where the link is still empty: the deletion did nothing else to these rows, and
-    // a category given to one of them since is the owner's, not the deletion's.
-    for reference in undo.cleared {
-      try db.execute(
-        sql: """
-          UPDATE \(reference.table) SET \(reference.column) = ?
-          WHERE id = ? AND \(reference.column) IS NULL
-          """,
-        arguments: [reference.categoryId.uuidString, reference.rowId])
-    }
     for row in before.events { try row.save(db) }
     for row in before.goals { try row.save(db) }
     for row in before.debts { try row.save(db) }
@@ -571,23 +777,39 @@ public struct PlanningRepository: Sendable {
     for row in before.prices { try row.save(db) }
     for row in before.expected { try row.save(db) }
     for row in before.budgets { try row.save(db) }
+    for row in before.cashbackRules { try row.save(db) }
     for row in before.debtEntries { try row.save(db) }
     for row in before.expectedLinks { try row.save(db) }
     for row in before.transfers { try row.save(db) }
     for row in before.reconciliations { try row.save(db) }
     for row in before.reconciledBalances { try row.save(db) }
-    // Nothing written back points at an account or a group the change added, while rows it
-    // moved onto them did until now: they go here, still under the refusal of `apply`, and
-    // before the rowids are put back, so a removed account gets back a rowid a new one took.
+    // Only where the link is still empty: the deletion did nothing else to these rows, and
+    // a category or a goal given to one of them since is the owner's, not the deletion's.
+    // After every row is back, so the row a link points at is there again.
+    for reference in undo.cleared {
+      try db.execute(
+        sql: """
+          UPDATE \(reference.table) SET \(reference.column) = ?
+          WHERE id = ? AND \(reference.column) IS NULL
+          """,
+        arguments: [reference.referencedId.uuidString, reference.rowId])
+    }
+    // Nothing written back points at a card, an account or a group the change added, while
+    // rows it moved onto them did until now: they go here, still under the refusal of `apply`,
+    // and before the rowids are put back, so a removed account gets back a rowid a new one
+    // took.
+    try Self.deleteAll(PaymentCard.self, ids: added.cards, db: db)
     try Self.deleteAll(PaymentMethod.self, ids: added.paymentMethods, db: db)
     try Self.deleteAll(AccountGroup.self, ids: added.accountGroups, db: db)
     try Self.restoreRowIDs(before.accountGroups, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.paymentMethods, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.cards, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.categories, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.events, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.goals, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.debts, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.budgets, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.cashbackRules, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.debtEntries, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.expectedLinks, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.prices, undo.rowIDs, db: db)
@@ -697,8 +919,10 @@ public struct PlanningRepository: Sendable {
     try Budget.order(Column.rowID).fetchAll(db)
   }
 
+  /// Every key the settings read — the ones the planning screen writes and the two categories
+  /// the reconciliation remembers, which it only reads.
   static func settings(_ db: Database) throws -> PlanningSettings {
-    let keys = PlanningSettings.storageKeys
+    let keys = PlanningSettings.readKeys
     let marks = databaseQuestionMarks(count: keys.count)
     let rows = try Row.fetchAll(
       db, sql: "SELECT key, value FROM settings WHERE key IN (\(marks))",
@@ -818,14 +1042,15 @@ struct UndoJournal {
     }
   }
 
-  /// Rows of a table the planning does not write whose `column` points at `id`: the schema
-  /// clears the link when `id` goes (`ON DELETE SET NULL`), and undo sets it back.
+  /// Rows of a table the planning does not write whose `column` points at `id`: the link is
+  /// cleared when `id` goes — by the schema (`ON DELETE SET NULL`) or by the change itself —,
+  /// and undo sets it back.
   mutating func keepReference(table: String, column: String, to id: UUID, db: Database) throws {
     let rows = try String.fetchAll(
       db, sql: "SELECT id FROM \(table) WHERE \(column) = ? ORDER BY rowid",
       arguments: [id.uuidString])
     cleared += rows.map {
-      ClearedReference(table: table, column: column, rowId: $0, categoryId: id)
+      ClearedReference(table: table, column: column, rowId: $0, referencedId: id)
     }
   }
 
@@ -898,6 +1123,8 @@ extension CoreKit.Category: PlanningRow {
         try journal.keepRows(ExpectedIncome.self, where: column, is: id, db: db)
       case Budget.databaseTableName:
         try journal.keepRows(Budget.self, where: column, is: id, db: db)
+      case CashbackRule.databaseTableName:
+        try journal.keepRows(CashbackRule.self, where: column, is: id, db: db)
       default: try journal.keepReference(table: table, column: column, to: id, db: db)
       }
     }
@@ -905,8 +1132,10 @@ extension CoreKit.Category: PlanningRow {
 
   /// Every column of another table that points at a category and is not `RESTRICT`
   /// (operations are refused by the schema itself, `ON DELETE RESTRICT` on their parts).
-  /// Limits on the category go with it; goals, debts, payments and expected income filed
-  /// under it lose the reference; these rows of the planning are kept whole. The rest are
+  /// Limits and cashback rules on the category go with it; goals, debts, payments and expected
+  /// income filed under it lose the reference; these rows of the planning are kept whole. A
+  /// rule is kept whole rather than let go of its category: a rule without one would become a
+  /// rule on everything else, which the owner never set. The rest are
   /// not rows the planning writes — a template of the entry line, a mapping of the import, a
   /// correction of the model — and lose only the link (`ON DELETE SET NULL`), which is all
   /// that is kept and all undo sets back. A test holds this list against the foreign keys of
@@ -916,7 +1145,7 @@ extension CoreKit.Category: PlanningRow {
     ("scheduled_payments", "category_id"), ("expected_income", "category_id"),
     ("budgets", "category_id"), ("templates", "category_id"),
     ("import_mappings", "target_category_id"), ("category_feedback", "predicted_category_id"),
-    ("category_feedback", "chosen_category_id"),
+    ("category_feedback", "chosen_category_id"), ("cashback_rules", "category_id"),
   ]
 }
 
@@ -927,6 +1156,12 @@ extension Event: PlanningRow {
   static func refuseDeletion(of id: UUID, db: Database) throws {
     try refuseIfOperations(
       "SELECT 1 FROM transaction_parts WHERE event_id = :id", point: id, db: db)
+  }
+
+  /// The scheduled payments that belong to it let go of it (`ON DELETE SET NULL`); they are
+  /// kept whole, so ⌘Z ties them back.
+  static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
+    try journal.keepRows(ScheduledPayment.self, where: "event_id", is: id, db: db)
   }
 }
 
@@ -1037,10 +1272,41 @@ extension PaymentMethod: PlanningRow {
       """, point: id, db: db)
   }
 
-  /// The balances counted on it go with it (`ON DELETE CASCADE`).
+  /// The balances counted on it, its cards and the cashback rules on it and on its cards go
+  /// with it (`ON DELETE CASCADE`); an income expected on it lets go of it (`ON DELETE SET
+  /// NULL`). All of them are kept whole, so ⌘Z brings them back. None of them makes the account
+  /// used.
   static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
     try journal.keepRows(ReconciledBalance.self, where: "payment_method_id", is: id, db: db)
+    try journal.keepRows(PaymentCard.self, where: "payment_method_id", is: id, db: db)
+    try journal.keepRows(CashbackRule.self, where: "payment_method_id", is: id, db: db)
+    try journal.keepRows(ExpectedIncome.self, where: "payment_method_id", is: id, db: db)
   }
+}
+
+extension PaymentCard: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.cards }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.cards }
+
+  /// A card that operations — deleted ones included — or scheduled payments name is archived,
+  /// never deleted.
+  static func refuseDeletion(of id: UUID, db: Database) throws {
+    try refuseIfOperations(
+      """
+      SELECT 1 FROM transactions WHERE card_id = :id
+      UNION ALL SELECT 1 FROM scheduled_payments WHERE card_id = :id
+      """, point: id, db: db)
+  }
+
+  /// Its cashback rules go with it (`ON DELETE CASCADE`), kept whole for ⌘Z.
+  static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
+    try journal.keepRows(CashbackRule.self, where: "card_id", is: id, db: db)
+  }
+}
+
+extension CashbackRule: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.cashbackRules }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.cashbackRules }
 }
 
 extension Transfer: PlanningRow {

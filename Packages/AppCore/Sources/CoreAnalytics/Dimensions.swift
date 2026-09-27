@@ -39,7 +39,9 @@ public struct PlacesReport: Hashable, Sendable {
     public var mySpending: AmountE4
     /// Expense operations at the place in the period.
     public var purchases: Int
-    /// Σ of the whole receipts of those operations ÷ their number; `nil` without purchases.
+    /// Σ of the whole receipts of those operations, less what refunds took back from them, ÷
+    /// their number; `nil` without purchases. A jacket of 10,000 with 4,000 of it returned was
+    /// a check of 6,000.
     public var averageReceipt: AmountE4?
     /// The first day any operation happened at the place, over the whole history.
     public var firstDay: DateOnly
@@ -74,7 +76,7 @@ public struct PlacesReport: Hashable, Sendable {
       guard let placeId = row.placeId, row.refundOfPartId == nil else { continue }
       spending[placeId, default: .zero] += row.contribution
       if row.kind == .expense {
-        receipts[placeId, default: .zero] += row.amountRubE4
+        receipts[placeId, default: .zero] += row.amountRubE4 - row.refundedRubE4
         purchases[placeId, default: []].insert(row.transactionId)
       }
     }
@@ -165,14 +167,18 @@ public struct EventsReport: Hashable, Sendable {
 /// on its day, whatever method it came back to; a refund of no purchase lowers the turnover of
 /// its own day and method. Cashback is income in the cashback category (and its subcategories)
 /// that came to that method, by the month it is for. The share is cashback ÷ turnover, and
-/// there is none when the turnover is not positive.
+/// there is none when the turnover is not positive. Next to it stands the cashback the cards'
+/// rules promise for the purchases of the period (`CashbackReport`) — only an expectation.
 public struct PaymentMethodsReport: Hashable, Sendable {
   public struct Method: Hashable, Sendable {
     /// `.paymentMethod(id)` or `.noPaymentMethod`.
     public var key: ReportKey
     public var mySpending: AmountE4
     public var turnover: AmountE4
+    /// Received: income in the cashback category.
     public var cashback: AmountE4
+    /// Expected by the rules of the account's cards, in rubles; never income.
+    public var expectedCashback: AmountE4 = .zero
     /// Basis points of the turnover.
     public var cashbackShare: Int? { Shares.ratio(cashback, of: turnover) }
   }
@@ -204,11 +210,16 @@ public struct PaymentMethodsReport: Hashable, Sendable {
         cashback[key(row), default: .zero] += row.amountRubE4
       }
     }
+    var expected: [ReportKey: AmountE4] = [:]
+    for cell in CashbackReport(ledger: ledger, period: period).cells {
+      let key = cell.holder.accountId.map(ReportKey.paymentMethod) ?? .noPaymentMethod
+      expected[key, default: .zero] += cell.expectedRub
+    }
     let keys = Set(spending.keys).union(turnover.keys).union(cashback.keys)
     methods = keys.map { key in
       Method(
         key: key, mySpending: spending[key] ?? .zero, turnover: turnover[key] ?? .zero,
-        cashback: cashback[key] ?? .zero)
+        cashback: cashback[key] ?? .zero, expectedCashback: expected[key] ?? .zero)
     }
     .filter { !$0.mySpending.isZero || !$0.turnover.isZero || !$0.cashback.isZero }
     .sorted { left, right in

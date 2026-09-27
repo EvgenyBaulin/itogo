@@ -216,7 +216,10 @@ struct FreeMoneyMovementsPropertyTests {
         SubscriptionMath.rubles(
           book.expected($0), in: $0.currency, rubPerUnit: book.fx.rubPerUnit)
       })
-    #expect(snapshot.freeMoney.main == model, "seed \(seed)")
+    #expect(snapshot.freeMoney.moneyNow == model, "seed \(seed)")
+    // What can be spent now is the money now less what the goals hold.
+    #expect(
+      snapshot.freeMoney.main == model - snapshot.freeMoney.goalSavings, "seed \(seed)")
     #expect(
       snapshot.freeMoney.excluded.first?.totalRub
         == SubscriptionMath.rubles(
@@ -243,7 +246,7 @@ struct FreeMoneyMovementsPropertyTests {
         ?? .zero
     }
     book.fx.count(counts, at: Fx.now)
-    #expect(book.fx.snapshot().freeMoney.main == total, "seed \(seed)")
+    #expect(book.fx.snapshot().freeMoney.moneyNow == total, "seed \(seed)")
   }
 
   /// The random books reach every kind of movement.

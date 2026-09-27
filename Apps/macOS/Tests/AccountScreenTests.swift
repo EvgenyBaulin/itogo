@@ -440,6 +440,121 @@ final class AccountScreenTests: XCTestCase {
     await environment.close()
   }
 
+  // MARK: Cards, cashback, payments
+
+  /// The history names the card beside an operation only on an account with more than one
+  /// card — archived ones counted —: one card alone says nothing its account does not.
+  func testTheHistoryNamesTheCardOnlyWhereThereAreSeveral() {
+    let black = PaymentCard(accountId: tbank.id, name: "Black")
+    let old = PaymentCard(accountId: tbank.id, name: "Old", archived: true)
+    let only = PaymentCard(accountId: sber.id, name: "Сбер")
+    let cards = [black, old, only]
+    XCTAssertEqual(
+      AccountHistory.cardNames(of: [tbank.id, sber.id], cards: cards),
+      [black.id: "Black", old.id: "Old"])
+    XCTAssertEqual(AccountHistory.cardNames(of: [sber.id], cards: cards), [:])
+  }
+
+  /// The screen of «Т-Банк» over a real database: under its balances and forecast, «Карты»,
+  /// «Кэшбэк · месяц» — 10 % of a coffee of 350 on Black is 35.00 expected, 20 received — and
+  /// «Платежи и подписки» with the payment paid by Black, not Сбер's; laid out in a window, every
+  /// block gets the dependencies.
+  func testThePaymentsAndCashbackBlocksShowWhatTheAccountHas() async throws {
+    self.executionTimeAllowance = 240
+    let missingBefore = AppDependencies.missingReaders
+    AppDependencies.missingReaders = []
+    defer { AppDependencies.missingReaders = missingBefore }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("itogo-account-blocks-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let dataDirectoryBefore = ProcessInfo.processInfo.environment["ITOGO_DATA_DIR"]
+    setenv("ITOGO_DATA_DIR", directory.path, 1)
+    let environment = AppEnvironment()
+    await environment.start(preparing: {
+      try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
+    })
+    let store = TransactionsStore()
+    store.attach(
+      try XCTUnwrap(environment.transactions), references: environment.references,
+      planning: environment.planning)
+    let compute = ComputeStore(calendar: .system, rebuildsInline: true)
+    defer {
+      if let dataDirectoryBefore {
+        setenv("ITOGO_DATA_DIR", dataDirectoryBefore, 1)
+      } else {
+        unsetenv("ITOGO_DATA_DIR")
+      }
+      try? FileManager.default.removeItem(at: directory)
+    }
+
+    let main = PaymentMethod(name: "Сбер", kind: .card, currency: .rub, isDefault: true)
+    let tBank = PaymentMethod(name: "Т-Банк", kind: .card, currency: .rub)
+    let black = PaymentCard(accountId: tBank.id, name: "Black")
+    let virtual = PaymentCard(accountId: tBank.id, name: "Virtual")
+    let cafes = CoreKit.Category(kind: .expense, name: "Кафе")
+    let cashback = CoreKit.Category(kind: .income, name: "Кэшбэк")
+    let today = environment.today
+    let music = ScheduledPayment(
+      name: "Музыка", amountE4: AmountE4(whole: 299), currency: .rub,
+      paymentMethodId: tBank.id, nextDate: today, cardId: black.id)
+    let gym = ScheduledPayment(
+      name: "Спортзал", amountE4: AmountE4(whole: 3_000), currency: .rub,
+      paymentMethodId: main.id, nextDate: today)
+    XCTAssertTrue(
+      store.apply(
+        PlanningChange(
+          upsert: PlanningRows(
+            categories: [cafes, cashback], scheduled: [music, gym],
+            paymentMethods: [main, tBank], cards: [black, virtual],
+            cashbackRules: [
+              CashbackRule(
+                accountId: tBank.id, cardId: black.id, percent: CashbackPercent(e4: 100_000)!)
+            ]))))
+    try XCTUnwrap(environment.settings).set(
+      AnalyticsSettings.cashbackCategoryKey, to: cashback.id.uuidString)
+    let at = environment.calendar.noon(of: today)
+    func operation(
+      _ kind: TransactionKind, _ category: UUID, _ amount: Int64
+    ) throws -> TransactionEntry {
+      var draft = TransactionDraft(
+        kind: kind, occurredAt: at, amount: AmountE4(whole: amount), paymentMethodId: tBank.id)
+      draft.cardId = black.id
+      draft.normalizeSinglePart()
+      draft.parts[0].categoryId = category
+      return try draft.materialize(now: at)
+    }
+    try XCTUnwrap(environment.transactions).insert([
+      operation(.expense, cafes.id, 350), operation(.income, cashback.id, 20),
+    ])
+
+    let dataset = try await DatasetRepository(writer: try XCTUnwrap(environment.stack).writer)
+      .load(version: 0)
+    let snapshot = DataSnapshot.build(
+      dataset: dataset, calendar: environment.calendar, today: today,
+      context: SnapshotContext(rubPerUnit: [:], localeIdentifier: "ru"),
+      version: DataVersion(load: 1))
+    compute.applyLight(snapshot)
+
+    let payments = AccountPaymentsModel(
+      accountId: tBank.id, statuses: snapshot.planning.scheduled, cards: dataset.cards,
+      mainAccountId: main.id)
+    XCTAssertEqual(payments.rows.map(\.status.payment.name), ["Музыка"])
+    XCTAssertEqual(payments.rows.first?.cardName, "Black")
+    let cashbackLines = AccountCashbackModel.build(
+      month: today.monthKey, accountId: tBank.id, ledger: snapshot.ledger
+    ).lines
+    let line = try XCTUnwrap(cashbackLines.first { $0.cardId == black.id })
+    XCTAssertEqual(line.expected, [Money(amount: AmountE4(whole: 35), currency: .rub)])
+    XCTAssertEqual(line.received, [Money(amount: AmountE4(whole: 20), currency: .rub)])
+
+    let deps = AppDependencies(environment: environment, store: store, compute: compute)
+    await show(
+      AccountScreen(accountId: tBank.id, actions: OperationActions()).appDependencies(deps),
+      width: 820, height: 900)
+    XCTAssertEqual(AppDependencies.missingReaders, [], "a block went without the dependencies")
+    await environment.close()
+  }
+
   /// The window opened on the screen of an account tells the entry line which account a new
   /// operation goes to; closed, it tells nothing.
   func testTheScreenOfAnAccountFocusesTheEntryLineOnIt() async {

@@ -140,9 +140,10 @@ struct PlanningSnapshotTests {
       loansSubcategoryId: bankLoan)
   }
 
+  /// Taken on 10 August: its first due is 25 August, which the payment of that day pays.
   var borrowed: DebtEntry {
     DebtEntry(
-      id: Fx.id(51), debtId: loan, date: Fx.day("2026-01-10"), amountE4: Fx.rub("120000"),
+      id: Fx.id(51), debtId: loan, date: Fx.day("2026-08-10"), amountE4: Fx.rub("120000"),
       kind: .borrowed)
   }
 
@@ -298,8 +299,9 @@ struct PlanningSnapshotTests {
   }
 
   /// Received this month 100 000 + 10 000; the website still waits for 20 000 on the 25th,
-  /// so the estimate is 130 000. The median of July (0) and August (90 000) is 45 000 and
-  /// is not used: an expectation is due this month.
+  /// so the estimate is 130 000. The median of August alone is 90 000 — the book began on 20
+  /// July, so July is part of a month and no history of income — and is not used: an
+  /// expectation is due this month.
   @Test func expectedIncomeAndTheIncomeOfTheMonth() {
     let planning = snapshot()
     let occurrence = ExpectedOccurrence(
@@ -325,7 +327,7 @@ struct PlanningSnapshotTests {
       planning.income
         == MonthIncomeEstimate(
           month: MonthKey(year: 2026, month: 9), received: Fx.rub("110000"),
-          expectedRemaining: Fx.rub("20000"), median3: Fx.rub("45000"), monthsInMedian: 2,
+          expectedRemaining: Fx.rub("20000"), median3: Fx.rub("90000"), monthsInMedian: 1,
           value: Fx.rub("130000"), source: .expectations, lowData: false))
   }
 
@@ -420,14 +422,18 @@ struct PlanningSnapshotTests {
     #expect(planning.events == EventsPlanning(active: [], upcoming: [plan], withBudget: [plan]))
   }
 
-  /// 120 000 borrowed, 5 000 paid back: 115 000 owed, 5 000 a month, next on the 25th.
+  /// 120 000 borrowed, 5 000 paid back: 115 000 owed, 5 000 a month; the payment paid the
+  /// first due, 25 August, so the next is on the 25th.
   @Test func debts() {
     let planning = snapshot()
     let line = DebtLine(
       debt: loanDebt, balance: Fx.rub("115000"), balanceRub: Fx.rub("115000"),
       groups: [DebtGroupTotal(groupName: nil, totalE4: Fx.rub("115000"), count: 2)],
       nextPayment: Fx.day("2026-09-25"), paidThisMonth: false,
-      entries: [paidInAugust, borrowed])
+      entries: [paidInAugust, borrowed],
+      dues: DebtDueState(
+        debtId: loan, firstDue: Fx.day("2026-08-25"), paidCount: 1, owes: true,
+        paymentDay: 25))
     #expect(
       planning.debts
         == DebtsOverview(
@@ -538,7 +544,8 @@ struct PlanningSnapshotTests {
   /// * Cleaning, weekly since 4 May and never paid: only its first 12 dates are listed.
   /// * Rent on the 25th was paid by an operation that did not move `next_date`: not due.
   /// * The card debt was paid in September, so its payment on 2 October is next.
-  /// * The friend was paid for September and, ahead, for October: nothing is due.
+  /// * The friend was paid for September; the payment for October is dated 1 October and pays
+  ///   nothing before its day, so 1 October is still on the card.
   /// * The mortgage has no monthly payment, a debt owed to me and a closed one are not mine
   ///   to pay.
   @Test func upcomingSkipsWhatIsPaidAndCapsALongOverdueRun() {
@@ -589,7 +596,11 @@ struct PlanningSnapshotTests {
     #expect(cleanings.first?.due == Fx.day("2026-05-04"))
     #expect(cleanings.last?.due == Fx.day("2026-07-20"))
     #expect(cleanings.allSatisfy { $0.isOverdue && $0.amount == Fx.rub("1000") })
-    #expect(planning.upcoming.count == 13)
+    #expect(planning.upcoming.count == 14)
+    #expect(
+      planning.upcoming.filter { $0.kind == .debt }.map(\.due) == [
+        Fx.day("2026-10-01"), Fx.day("2026-10-02"),
+      ])
     #expect(
       planning.upcoming.last
         == UpcomingPayment(

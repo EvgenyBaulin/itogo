@@ -77,29 +77,35 @@ struct FormulaPropertyTests {
     }
   }
 
-  /// An amount written the canonical way with `k` behind it — «2.5k», «1,234.5678к» — is a
-  /// thousand times the number, to the unit.
+  /// An amount in thousands with `k` behind it — «2.5k», «1234.5678к» — is a thousand times
+  /// the number, to the unit, and so is the way the app writes it back: «1,234.5678к», and
+  /// «1234к» for a whole number, whose single comma of thousands would read as a fraction in
+  /// front of `k`.
   @Test("An amount in thousands with k or к comes back to the unit")
   func thousandsWithKComeBack() throws {
     var random = FormulaDice(seed: 2_500)
     for _ in 0..<20_000 {
       let raw = random.raw(limit: AmountE4.inputLimit.raw)
       let amount = AmountE4(raw: raw)
-      let thousands = NumberText.plain(amount.decimal / 1_000, grouping: true)
+      let thousands = NumberText.plain(amount.decimal / 1_000, grouping: false)
       for suffix in ["k", "K", "\u{043A}", "\u{041A}"] {
         let text = thousands + suffix
         #expect(try ExpressionEvaluator.evaluate(text) == amount.decimal, "«\(text)»")
+        let canonical = try #require(ExpressionEvaluator.canonical(text))
+        #expect(
+          try ExpressionEvaluator.evaluate(canonical) == amount.decimal,
+          "«\(text)» → «\(canonical)»")
       }
     }
   }
 
   /// The same, typed the Russian way — spaces between the thousands, a comma before the
-  /// fraction: «2,5к» is 2 500. The one exception is the rule's own: one to three digits, a
-  /// comma and exactly three digits are thousands, so «1,500к» is a million and a half.
-  @Test("Thousands with к typed the Russian way, save for the comma of thousands")
+  /// fraction: «2,5к» is 2 500. In front of `к` a lone comma is always the decimal one, so
+  /// «1,500к» is 1 500 as well, never a million and a half.
+  @Test("Thousands with к typed the Russian way")
   func thousandsWithKTypedTheRussianWay() throws {
     var random = FormulaDice(seed: 2_501)
-    var trapped = 0
+    var threeAfterTheComma = 0
     for _ in 0..<20_000 {
       let raw = random.raw(limit: AmountE4.inputLimit.raw)
       // The amount in thousands has seven fraction digits: stored units are 1e-4 of a whole.
@@ -111,16 +117,10 @@ struct FormulaPropertyTests {
       let sign = raw < 0 ? "-" : ""
       let text =
         sign + spaced(whole) + (fraction.isEmpty ? "" : "," + fraction) + "\u{043A}"
-      let value = try ExpressionEvaluator.evaluate(text)
-      if fraction.count == 3 && whole.count <= 3 && whole != "0" {
-        trapped += 1
-        let asThousands = Decimal(string: sign + whole + fraction)! * 1_000
-        #expect(value == asThousands, "«\(text)»")
-      } else {
-        #expect(value == AmountE4(raw: raw).decimal, "«\(text)»")
-      }
+      if fraction.count == 3 && whole.count <= 3 && whole != "0" { threeAfterTheComma += 1 }
+      #expect(try ExpressionEvaluator.evaluate(text) == AmountE4(raw: raw).decimal, "«\(text)»")
     }
-    #expect(trapped > 0)
+    #expect(threeAfterTheComma > 0)
   }
 
   private func outcome(_ text: String) -> String {
@@ -302,11 +302,15 @@ private struct FormulaWriter {
         fractionText.isEmpty
         ? wholeText : grouped(wholeText, ".") + "," + fractionText
     }
+    // In front of k a lone comma is the decimal one: «1,500k» is 1.500 thousand — the whole
+    // number itself, not a thousand times it.
+    let loneCommaBeforeK =
+      thousands && fractionText.isEmpty && text.filter { $0 == "," }.count == 1
     if thousands { text += random.pick(["k", "K", "\u{043A}", "\u{041A}"]) }
     var scale: Int128 = 1
     for _ in 0..<fractionDigits { scale *= 10 }
     var numerator = Int128(whole) * scale + Int128(fraction)
-    if thousands { numerator *= 1_000 }
+    if thousands && !loneCommaBeforeK { numerator *= 1_000 }
     return Written(text: text, value: .value(Ratio(numerator, scale)!))
   }
 

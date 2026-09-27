@@ -8,7 +8,8 @@ import Foundation
 ///   is dropped together with its subcategory — it would filter everything out, and the
 ///   picker could no longer show it;
 /// * another category drops the subcategory, exactly as the ↓ panel does;
-/// * a value archived after it was chosen is dropped (`keep(within:)`);
+/// * a value archived after it was chosen is dropped (`keep(within:)`) — but a place, which the
+///   filter goes on offering from the archive, is kept;
 /// * «Reset» brings everything back, the search included.
 struct TransactionFilters: Hashable, Sendable {
   enum PeriodChoice: String, CaseIterable, Hashable, Sendable {
@@ -40,6 +41,8 @@ struct TransactionFilters: Hashable, Sendable {
   var eventId: UUID?
   /// The account: its operations, and the transfers from it or to it.
   var paymentMethodId: UUID?
+  /// A card of the account: only the operations it paid. No transfer is paid by a card.
+  var cardId: UUID?
   var status: ReimbursementStatus?
   var search = ""
 
@@ -67,6 +70,17 @@ struct TransactionFilters: Hashable, Sendable {
     subcategoryId = nil
   }
 
+  /// The account picker's choice: a card, or an account.
+  var accountOrCard: UUID? { cardId ?? paymentMethodId }
+
+  /// Picks an account — every operation of it and its cards — or one card, which brings its
+  /// account.
+  mutating func setAccountOrCard(_ id: UUID?, cards: [PaymentCard]) {
+    let resolved = CardRules.resolve(selection: id, cards: cards)
+    paymentMethodId = resolved.accountId
+    cardId = resolved.cardId
+  }
+
   /// Keeps only the values `choices` still offers. One chosen here and archived since — in
   /// Settings, or gone with a restore — is not offered any more, so its picker shows «Any»:
   /// kept, it went on filtering the table with nothing on screen to say so.
@@ -92,6 +106,14 @@ struct TransactionFilters: Hashable, Sendable {
       !choices.paymentMethods.contains(where: { $0.id == paymentMethodId })
     {
       self.paymentMethodId = nil
+      cardId = nil
+    }
+    // A card archived since, or one of another account, is no longer offered: the account
+    // alone stays.
+    if let cardId,
+      !choices.cards.contains(where: { $0.id == cardId && $0.accountId == paymentMethodId })
+    {
+      self.cardId = nil
     }
   }
 
@@ -133,7 +155,8 @@ struct TransactionFilters: Hashable, Sendable {
       period: period(today: today), kind: kind, categoryId: categoryId,
       subcategoryId: subcategoryId, quality: quality, forWhom: forWhom, personId: personId,
       placeId: placeId, eventId: eventId, paymentMethodId: paymentMethodId,
-      reimbursementStatus: status, text: search.trimmingCharacters(in: .whitespaces))
+      reimbursementStatus: status, text: search.trimmingCharacters(in: .whitespaces),
+      cardId: cardId)
   }
 
   /// Top-level categories the category filter offers: those of the kind the type filter
@@ -148,15 +171,21 @@ struct TransactionFilters: Hashable, Sendable {
   }
 }
 
-/// The live values the filters offer, taken from the data the table shows whenever it
-/// changes: archived ones are never offered, though an operation filed under
-/// an archived subcategory is still found by its live parent.
+/// The values the filters offer, taken from the data the table shows whenever it changes.
+/// Archived categories, people, events, accounts and cards are not offered, though an operation filed
+/// under an archived subcategory is still found by its live parent. Places in the archive are:
+/// their operations keep them, and the table is where the owner finds those — the live places
+/// first, then the archived ones (`archivedPlaceIds`).
 struct FilterChoices: Sendable {
   var categories: [CoreKit.Category] = []
   var people: [Person] = []
   var places: [Place] = []
   var events: [Event] = []
   var paymentMethods: [PaymentMethod] = []
+  /// The live cards of the accounts offered.
+  var cards: [PaymentCard] = []
+  /// The places of `places` that are in the archive, named «(архив)» by the picker.
+  var archivedPlaceIds: Set<UUID> = []
 
   init() {}
 
@@ -164,11 +193,24 @@ struct FilterChoices: Sendable {
   init(_ dataset: Dataset, locale: Locale = Locale(identifier: "en")) {
     categories = dataset.categories.filter { !$0.archived }
     people = dataset.people.filter { !$0.archived }.sorted { $0.name < $1.name }
-    places = dataset.places.filter { !$0.archived }.sorted { $0.name < $1.name }
+    let archivedPlaces = dataset.places.filter(\.archived).sorted { $0.name < $1.name }
+    places =
+      dataset.places.filter { !$0.archived }.sorted { $0.name < $1.name } + archivedPlaces
+    archivedPlaceIds = Set(archivedPlaces.map(\.id))
     // The latest first: the event one looks for is usually the last one.
     events = dataset.events.filter { !$0.archived }.sorted { $0.startDate > $1.startDate }
     // The order of every list of accounts: the main one first, then the owner's order.
     paymentMethods = AccountRules.ordered(dataset.paymentMethods, locale: locale)
+    let offered = Set(paymentMethods.map(\.id))
+    cards = dataset.cards.filter { !$0.archived && offered.contains($0.accountId) }
+    self.locale = locale
+  }
+
+  private var locale = Locale(identifier: "en")
+
+  /// The account filter's choices: each account followed by its cards.
+  var accountItems: [AccountCardChoices.Item] {
+    AccountCardChoices.items(accounts: paymentMethods, cards: cards, locale: locale)
   }
 
   func topLevel(for kind: TransactionKind?) -> [CoreKit.Category] {

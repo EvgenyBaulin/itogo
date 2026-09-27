@@ -388,6 +388,49 @@ final class SettingsAccessibilityTests: XCTestCase {
     XCTAssertEqual(try references.templates().first { $0.id == taxi.id }?.archived, false)
   }
 
+  /// Settings → Шаблоны: the «…» of a template names the template it acts on — «Действия с
+  /// «кофе»» —, the live rows and the archived ones, in Russian and in English. It said
+  /// «Действия с шаблоном» on every row, so VoiceOver could not tell the rows apart.
+  func testTemplateRowMenusNameTheirRow() throws {
+    let references = try XCTUnwrap(environment.references)
+    try references.save(Template(text: "кофе", useCount: 7))
+    try references.save(Template(text: "такси", useCount: 3, archived: true))
+    let before = environment.language.choice
+    defer { environment.language.choice = before }
+    for choice in [AppLanguage.Choice.russian, .english] {
+      environment.language.choice = choice
+      let deps = AppDependencies(
+        environment: environment, store: TransactionsStore(),
+        compute: ComputeStore(calendar: .system))
+      let window = show(
+        TemplatesSettingsView().appDependencies(deps), size: CGSize(width: 620, height: 420))
+      let showArchive = environment.language("templates.showArchive", table: "Settings")
+      var box: NSObject?
+      waitFor {
+        box = Self.elements(in: window, role: "AXCheckBox").first {
+          Self.spoken($0).contains(showArchive)
+        }
+        return box != nil
+      }
+      _ = (try XCTUnwrap(box, "no «\(showArchive)»") as AnyObject).accessibilityPerformPress?()
+      let live = SettingsRowMenu.label("кофе", environment)
+      let archived = SettingsRowMenu.label("такси", environment)
+      XCTAssertNotEqual(live, "references.rowMenu", "\(choice.rawValue)")
+      XCTAssertTrue(live.contains("кофе"), live)
+      var heard: [String] = []
+      waitFor {
+        heard = Self.elements(inRowsOf: window) { _ in true }.map(Self.spoken)
+        return heard.contains { $0.contains(live) } && heard.contains { $0.contains(archived) }
+      }
+      XCTAssertTrue(
+        heard.contains { $0.contains(live) }, "\(choice.rawValue): no «\(live)»: \(heard)")
+      XCTAssertTrue(
+        heard.contains { $0.contains(archived) },
+        "\(choice.rawValue): no «\(archived)»: \(heard)")
+      window.close()
+    }
+  }
+
   // MARK: Helpers
 
   /// The texts of one element as VoiceOver can read them, each on its own.

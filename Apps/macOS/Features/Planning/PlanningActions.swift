@@ -19,7 +19,7 @@ struct PlanningActions {
   }
 
   var tree: CategoryTree? { snapshot?.ledger.tree }
-  private var rubPerUnit: [CurrencyCode: Decimal] { snapshot?.context.rubPerUnit ?? [:] }
+  var rubPerUnit: [CurrencyCode: Decimal] { snapshot?.context.rubPerUnit ?? [:] }
 
   /// A draft of the core made into an operation: the rate of its day from the cache (the
   /// pipeline refines a provisional one later), the rubles of every part, and the link to
@@ -111,6 +111,73 @@ struct PlanningActions {
       PlanningChange(upsert: rows, rewritten: matchedOperations(of: payment, before: due)))
   }
 
+  /// «Уже списано до сверки»: the bank took the money of `due` before a count, so the count
+  /// holds it gone and the due closes without an operation — `next_date` moves past it as
+  /// «Пропустить» moves it, the ordinary operations that paid the dates before it keyed to
+  /// them. One write, one step of ⌘Z.
+  @discardableResult
+  func settle(payment: ScheduledPayment, due: DateOnly) -> Bool {
+    var rows = PlanningRows.empty
+    rows.scheduled = [ScheduledRules.settledByCount(payment, due: due)]
+    let pairs = [LogPair("kind", .token("scheduled")), LogPair("payment", .id(payment.id))]
+    guard
+      apply(
+        PlanningChange(upsert: rows, rewritten: matchedOperations(of: payment, before: due)))
+    else {
+      AppLog.error("planning.due.notSettled", .db, "a due date was not closed", pairs)
+      return false
+    }
+    AppLog.info("planning.due.settled", .db, "a due date was closed as taken before a count", pairs)
+    return true
+  }
+
+  /// The event a due date of `payment` belongs to (`ScheduledRules.event(of:due:events:)`):
+  /// the operation that pays it carries the event.
+  func event(of payment: ScheduledPayment, due: DateOnly) -> UUID? {
+    ScheduledRules.event(of: payment, due: due, events: snapshot?.dataset.events ?? [])
+  }
+
+  /// What «Провести» of a due date pays.
+  enum DuePayer {
+    /// A scheduled payment, for `amount` in its currency.
+    case scheduled(ScheduledPayment, amount: AmountE4)
+    /// The monthly payment of a debt.
+    case debt(Debt)
+  }
+
+  /// Which question «Провести» of `due` asks before it writes at `moment`, saved at
+  /// `savedAt`: «Деньги за «X» ушли до сверки …?» when the moment falls before a later count
+  /// of the balance it moves — for a scheduled payment the balances its operation moves, for a
+  /// debt the one of its last payment (`DueKeys`) —, else «Это было до сверки в 14:05?» about
+  /// the counts of its own day, the answers remembered for them applied.
+  func countQuestion(
+    paying payer: DuePayer, due: DateOnly, on moment: Date, savedAt: Date = Date()
+  ) -> DueCountAsk {
+    guard let snapshot else { return .none }
+    let mainId = snapshot.dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id
+    let keys: [BalanceKey]
+    switch payer {
+    case .scheduled(let payment, let amount):
+      guard
+        let entry = try? markAsPaidEntry(
+          payment, due: due, amount: amount, on: moment, account: payment.paymentMethodId,
+          charged: nil, updatePrice: false, rate: nil
+        ).entry
+      else { return .none }
+      keys = AccountReconciliation.movedKeys(of: entry, mainId: mainId, tree: snapshot.ledger.tree)
+    case .debt(let debt):
+      keys =
+        DueKeys.key(
+          of: debt, ledger: snapshot.ledger, journal: snapshot.dataset.planning.debtEntries,
+          mainId: mainId
+        ).map { [$0] } ?? []
+    }
+    return AccountReconciliation.dueQuestion(
+      due: due, occurredAt: moment, savedAt: savedAt, keys: keys,
+      balances: snapshot.planning.accounts.balances, calendar: environment.calendar,
+      remembered: environment.rememberedCountAnswers())
+  }
+
   /// The ordinary operations that pay the due dates of `payment` from its `next_date` up to
   /// `due` by matching them, each keyed to its due date — as «Привязать» would — in the write
   /// that moves the payment past `due`. Once `next_date` is past them nothing matches them any
@@ -129,19 +196,23 @@ struct PlanningActions {
         guard let operationId = matches.operation(for: payment.id, earlier),
           let entry = snapshot.ledger.entry(operationId)
         else { return nil }
-        return ScheduledMatching.bind(entry, to: payment, due: earlier).operation
+        return ScheduledMatching.bind(
+          entry, to: payment, due: earlier, eventId: event(of: payment, due: earlier)
+        ).operation
       }
   }
 
   /// «Привязать»: the ordinary operation that pays `due` of `payment` by matching it is keyed
   /// to that due date for good (`sched:<payment>:<due>`), as «Провести» would have written it;
-  /// the payment moves past the due date when it was its next one (`ScheduledMatching.bind`).
-  /// One write, one step of ⌘Z.
+  /// the payment moves past the due date when it was its next one (`ScheduledMatching.bind`);
+  /// a due that belongs to an event puts the event on the parts that carry none. One write,
+  /// one step of ⌘Z.
   @discardableResult
   func bind(_ operationId: UUID, to payment: ScheduledPayment, due: DateOnly) -> Bool {
     guard let snapshot, let entry = snapshot.ledger.entry(operationId) else { return false }
     let bound = ScheduledMatching.bind(
-      entry, to: payment, due: due, matches: snapshot.planning.matches)
+      entry, to: payment, due: due, matches: snapshot.planning.matches,
+      eventId: event(of: payment, due: due))
     var rows = PlanningRows.empty
     if bound.payment != payment { rows.scheduled = [bound.payment] }
     return apply(PlanningChange(upsert: rows, rewritten: [bound.operation]))
@@ -201,42 +272,6 @@ struct PlanningActions {
   func delete(_ payment: ScheduledPayment) -> Bool {
     var ids = PlanningRowIDs.empty
     ids.scheduled = [payment.id]
-    return apply(PlanningChange(delete: ids))
-  }
-
-  // MARK: Limits
-
-  func issue(of budget: Budget) -> BudgetIssue? {
-    guard let tree else { return nil }
-    return LimitRules.validate(
-      budget, tree: tree, existing: snapshot?.dataset.planning.budgets ?? [])
-  }
-
-  /// The same check for a form, which has the pipeline but not the whole set of dependencies.
-  static func issue(of budget: Budget, compute: ComputeStore) -> BudgetIssue? {
-    guard let snapshot = compute.snapshot else { return nil }
-    return LimitRules.validate(
-      budget, tree: snapshot.ledger.tree, existing: snapshot.dataset.planning.budgets)
-  }
-
-  @discardableResult
-  func save(_ budget: Budget) -> Bool {
-    guard issue(of: budget) == nil else { return false }
-    // The row as the database has it now: the screen may not have caught up with the last edit.
-    let stored =
-      (try? environment.planning?.budgets()) ?? snapshot?.dataset.planning.budgets ?? []
-    var rows = PlanningRows.empty
-    rows.budgets = [
-      LimitRules.saving(
-        budget, over: stored.first { $0.id == budget.id }, in: environment.today.monthKey)
-    ]
-    return apply(PlanningChange(upsert: rows))
-  }
-
-  @discardableResult
-  func delete(_ budget: Budget) -> Bool {
-    var ids = PlanningRowIDs.empty
-    ids.budgets = [budget.id]
     return apply(PlanningChange(delete: ids))
   }
 
@@ -381,162 +416,6 @@ struct PlanningActions {
       ExpectedIncomeLink(expectedIncomeId: expectation.id, transactionId: transactionId)
     ]
     return apply(PlanningChange(upsert: rows))
-  }
-
-  // MARK: Reconciliation
-
-  /// Why saving the reconciliation sheet wrote nothing: a key of the Planning table.
-  enum ReconcileFailure: String, Equatable {
-    /// The write was refused; nothing was saved.
-    case notSaved = "reconcile.notSaved"
-    /// A difference asked for could not be written, so nothing was.
-    case notRecorded = "reconcile.notRecorded"
-    /// A difference in a currency without a rate today cannot be written in rubles.
-    case rateMissing = "reconcile.rateMissing"
-    /// No balance was counted.
-    case nothingCounted = "reconcile.nothingCounted"
-    /// A difference on an archived account or in a currency the account does not hold has no
-    /// account to be written on.
-    case notHeld = "reconcile.cannotRecord"
-  }
-
-  /// Saves the reconciliation sheet at `t0`: a counted balance for every account and currency
-  /// in `counted`, and with `recordDifference` every difference as an operation in «Сверка» on
-  /// its account, in its currency (`AccountReconciliation.record`) — all in one write and one
-  /// step of ⌘Z. A balance counted for the first time is its starting point: nothing is
-  /// compared and nothing else is written. Nil when it landed.
-  ///
-  /// `t0` is the moment the sheet counted the expected balances for, not the later instant of
-  /// saving: an operation entered in between — through «Найти пропущенные…» while the sheet
-  /// stood open — comes with new data and moves the sheet's moment, so it is either inside the
-  /// expected balance or after the count, never written again as the difference.
-  ///
-  /// The «Сверка» categories themselves are outside that write: they are made the first time a
-  /// difference is recorded, through the reference book, so ⌘Z takes the operations back and
-  /// leaves the categories standing — the owner's categories now, to rename or to delete; the
-  /// next difference makes them again.
-  @discardableResult
-  func reconcile(
-    counted: [BalanceKey: AmountE4], rows: [ReconcileRow], recordDifference: Bool, at t0: Date
-  ) -> ReconcileFailure? {
-    // The journal gets the shape of it, never an amount: how many balances were counted and
-    // compared, whether the differences were asked for.
-    let compared = rows.filter { $0.expected != nil && counted[$0.key] != nil }.count
-    let shape = [
-      LogPair("balances", .count(counted.count)), LogPair("compared", .count(compared)),
-      LogPair("record", .flag(recordDifference)),
-    ]
-    AppLog.info("reconcile.started", .db, "a reconciliation is being saved", shape)
-    let differs = rows.contains { row in
-      guard let expected = row.expected, let actual = counted[row.key] else { return false }
-      return actual != expected
-    }
-    let writes = recordDifference && differs
-    // The categories are looked up only when an operation is written: a count without a
-    // difference to record makes nothing — nor one whose difference cannot be written.
-    var categories: (expense: UUID, income: UUID)?
-    if writes {
-      guard ReconcileSheet.differencesNotHeld(rows: rows, counted: counted).isEmpty else {
-        AppLog.error(
-          "reconcile.failed", .db, "a difference has no account to be written on; nothing saved",
-          shape)
-        return .notHeld
-      }
-      guard
-        ReconcileSheet.differencesWithoutRate(rows: rows, counted: counted, rubPerUnit: rubPerUnit)
-          .isEmpty
-      else {
-        AppLog.error(
-          "reconcile.failed", .db, "a difference has no rate today; nothing was saved", shape)
-        return .rateMissing
-      }
-      categories = reconciliationCategories()
-      guard categories != nil else {
-        AppLog.error(
-          "reconcile.failed", .db, "the difference could not be written; nothing was saved",
-          shape)
-        return .notRecorded
-      }
-    }
-    let record = AccountReconciliation.record(
-      counted: counted, rows: rows, writeDifference: writes, kind: .accounts, at: t0,
-      calendar: environment.calendar, tree: tree ?? CategoryTree(),
-      categories: categories ?? (UUID(), UUID()), rubPerUnit: rubPerUnit, makeId: { UUID() })
-    guard !record.balances.isEmpty else { return .nothingCounted }
-    // A difference asked for and not written fails the whole reconciliation: saved without
-    // it, the sheet would close as if the operation were there.
-    guard record.withoutRate.isEmpty else {
-      AppLog.error(
-        "reconcile.failed", .db, "a difference has no rate today; nothing was saved",
-        shape + [LogPair("withoutRate", .count(record.withoutRate.count))])
-      return .rateMissing
-    }
-    var written = PlanningRows.empty
-    written.reconciliations = [record.reconciliation]
-    written.reconciledBalances = record.balances
-    guard apply(PlanningChange(created: record.differences, upsert: written)) else {
-      AppLog.error("reconcile.failed", .db, "the reconciliation was not saved", shape)
-      return writes ? .notRecorded : .notSaved
-    }
-    AppLog.info(
-      "reconcile.saved", .db, "the reconciliation was saved",
-      [
-        LogPair("reconciliation", .id(record.reconciliation.id)),
-        LogPair("balances", .count(record.balances.count)),
-        LogPair("operations", .count(record.differences.count)),
-      ])
-    return nil
-  }
-
-  /// Where the difference of a reconciliation goes: «Сверка», a category of its own, one for
-  /// expenses and one for income.
-  ///
-  /// What a reconciliation records is not a purchase the owner failed to place — it is the
-  /// books catching up with the money, and it belongs in a line of its own rather than mixed
-  /// into «Не помню». The two categories are ordinary ones: they are made the first time a
-  /// difference is recorded, in the language the interface is in, and remembered by id in the
-  /// settings, exactly as the cashback category is. Renamed by the owner, they keep working;
-  /// deleted, they are made again.
-  func reconciliationCategories() -> (expense: UUID, income: UUID)? {
-    guard let references = environment.references, let settings = environment.settings else {
-      return nil
-    }
-    // Archived rows included: «Сверка» is an ordinary category, so the owner can put it in
-    // the archive — and a category the app still writes into must not stay there. Found
-    // archived, it is brought back rather than made a second time.
-    let existing = (try? references.categories(includeArchived: true)) ?? []
-    func pick(_ key: String, _ kind: CategoryKind) -> UUID? {
-      guard let text = (try? settings.string(key)) ?? nil, let id = UUID(uuidString: text),
-        var found = existing.first(where: { $0.id == id }), found.kind == kind
-      else { return nil }
-      guard found.archived else { return found.id }
-      found.archived = false
-      guard (try? references.save(found)) != nil else { return nil }
-      return found.id
-    }
-    func make(_ key: String, _ kind: CategoryKind) -> UUID? {
-      let name = environment.language("categories.reconciliation", table: "Settings")
-      let sort =
-        (existing.filter { $0.kind == kind && $0.parentId == nil }.map(\.sort).max() ?? 0)
-        + 1
-      let category = CoreKit.Category(
-        parentId: nil, kind: kind, name: name, sort: sort,
-        quality: kind == .expense ? .neutral : nil)
-      guard (try? references.save(category)) != nil,
-        (try? settings.set(key, to: category.id.uuidString)) != nil
-      else { return nil }
-      return category.id
-    }
-    let expense =
-      pick(PlanningSettings.reconcileExpenseCategoryKey, .expense)
-      ?? make(PlanningSettings.reconcileExpenseCategoryKey, .expense)
-    let income =
-      pick(PlanningSettings.reconcileIncomeCategoryKey, .income)
-      ?? make(PlanningSettings.reconcileIncomeCategoryKey, .income)
-    guard let expense, let income else { return nil }
-    environment.refreshVocabulary()
-    environment.scheduleBackup()
-    return (expense, income)
   }
 
   // MARK: Reminders

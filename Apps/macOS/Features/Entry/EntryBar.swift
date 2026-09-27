@@ -1,4 +1,5 @@
 import AppCore
+import AppKit
 import SwiftUI
 
 /// The column the entry bar floats in. It is 560 to 720 pt wide but never wider
@@ -81,7 +82,10 @@ struct EntryBar<Accessory: View>: View {
 
   @State private var text = ""
   @State private var showsDetails = false
-  @State private var errorKey: String?
+  /// The caption above the line: why it was not saved, or what the panel asks for.
+  @State private var message: EntryLineMessage?
+  /// One keystroke of Return saves once, however many ways AppKit hands it over.
+  @State private var returnGate = EntrySaving.ReturnGate()
   @State private var model: EntryDraftModel?
   /// Money back from a person, waiting in its confirmation.
   @State private var moneyBack: MoneyBackPrefill?
@@ -136,6 +140,9 @@ struct EntryBar<Accessory: View>: View {
             // Esc closes the panel and keeps the draft. With the panel closed it is not
             // ours, so it goes on to whatever else wants it.
             .onKeyPress(.escape) { press(.escape) }
+            // Tab with the panel open goes to the first field of the owner's order, Shift-Tab
+            // to the last; with the panel closed Tab is the window's, as before.
+            .onKeyPress(keys: [.tab, PanelTabOrder.backTab]) { key in tab(key) }
 
             Button(action: toggleDetails) {
               Image(systemName: showsDetails ? "chevron.up" : "chevron.down")
@@ -165,9 +172,10 @@ struct EntryBar<Accessory: View>: View {
 
             Button(environment.language("entry.save", table: "Entry"), action: save)
               .buttonStyle(.glassProminent)
-              .disabled(
-                !EntrySaving.isOffered(
-                  line: text, showsDetails: showsDetails, draftCanSave: model?.canSave ?? false))
+              // While the panel is open Return saves wherever the focus is — a menu, the date,
+              // a checkbox — as Enter in the line does. An open menu takes Return itself.
+              .keyboardShortcut(showsDetails ? .defaultAction : nil)
+              .disabled(!EntrySaving.isOffered(line: text, showsDetails: showsDetails))
           }
         }
         .glassEffectID("capsule", in: glass)
@@ -260,18 +268,22 @@ struct EntryBar<Accessory: View>: View {
         .handingOver(dependencies)
       }
     }
-    // The answer dates the operation before or after the count, and the save goes on.
-    .beforeTheCountQuestion($countQuestion) { count, wasBefore in
+    // The answers date the operation before or after each count of its day, and the save
+    // goes on at the moment they give.
+    .beforeTheCountQuestions($countQuestion) { moment in
       guard let model else { return }
-      model.answerCount(count, wasBefore: wasBefore)
+      model.stampCount(moment)
       commit(model)
     }
   }
 
   /// Money back of a person who owes nothing is income; of one who owes on a debt, that debt's
-  /// repayment. The line saves it that way at once, as the confirmation held it — except a
-  /// repayment in another currency than the debt's, which the line cannot write: the payment
-  /// form of the debt opens instead, on the account the money came to.
+  /// repayment. The line saves it that way at once, as the confirmation held it: a repayment of
+  /// a debt kept in another currency comes already in the debt's currency, at the rate the
+  /// confirmation showed, with the money as the account received it — and like every repayment
+  /// it closes the debt once covered, the rest income in «Доплаты» (`EntrySave`). Only money the
+  /// confirmation could not convert — an account that holds the debt's currency — opens the
+  /// payment form of the debt instead, on the account the money came to.
   private func recordMoneyBack(
     _ route: EntryDraftModel.MoneyBackInstead, from sheet: TransactionDraft
   ) {
@@ -289,7 +301,8 @@ struct EntryBar<Accessory: View>: View {
       route, from: sheet,
       fromNote: { environment.language.format("moneyBack.fromNote", table: "Entry", $0) },
       today: environment.today)
-    Task { @MainActor in commit(model) }
+    // The owner has just confirmed a form: nothing more is asked about the category.
+    Task { @MainActor in commit(model, askingForGaps: false) }
   }
 
   /// Hangs a view over the top edge of whatever it is put on, one `spacing` clear of it, and
@@ -333,11 +346,23 @@ struct EntryBar<Accessory: View>: View {
 
   @ViewBuilder
   private var caption: some View {
-    if let errorKey {
-      Text(verbatim: environment.language(errorKey, table: "Entry"))
+    if let message, message.isError {
+      Text(verbatim: message.text(environment))
         .font(.caption)
         .foregroundStyle(.red)
         .padding(.horizontal, 14)
+        .accessibilityIdentifier("entry.caption")
+    } else if let message {
+      // A question, not an error: a symbol and words, in the secondary colour.
+      Label {
+        Text(verbatim: message.text(environment))
+      } icon: {
+        Image(systemName: "exclamationmark.circle")
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 14)
+      .accessibilityIdentifier("entry.caption")
     } else if let preview {
       // "Результат виден сразу": the amount a formula comes to, before Enter.
       Text(verbatim: preview)
@@ -381,7 +406,7 @@ struct EntryBar<Accessory: View>: View {
   /// (`TransactionsRootView.takeSearchFocus`): a click on a toolbar can move the first
   /// responder on its way in, after the action has already run.
   private func startNewOperation() {
-    errorKey = nil
+    message = nil
     prepareModel()
     if !showsDetails { withAnimation(.snappy) { showsDetails = true } }
     focused = true
@@ -391,7 +416,22 @@ struct EntryBar<Accessory: View>: View {
     }
   }
 
+  /// Tab and Shift-Tab of the line: into the panel while it is open.
+  private func tab(_ key: KeyPress) -> KeyPress.Result {
+    guard showsDetails, let model else { return .ignored }
+    let backwards = key.key == PanelTabOrder.backTab || key.modifiers.contains(.shift)
+    model.focusRequest = backwards ? .last : .first
+    return .handled
+  }
+
   private func press(_ key: DetailsPanelKey) -> KeyPress.Result {
+    // While Enter's stop for a category stands, ↓ and ↑ choose in the menu it asked for: the
+    // panel is open already, and without «Навигация с клавиатуры» the focus never reaches a menu.
+    if showsDetails, key != .escape, let model,
+      model.stepTheAskedMenu(by: key == .down ? 1 : -1, today: environment.today)
+    {
+      return .handled
+    }
     let outcome = key.outcome(showing: showsDetails)
     guard outcome.handled else { return .ignored }
     if outcome.showing {
@@ -439,6 +479,13 @@ struct EntryBar<Accessory: View>: View {
   }
 
   private func save() {
+    // Return may reach the save twice — the field's own action and the default button — and a
+    // held Return repeats: one keystroke is one save.
+    let event = NSApp.currentEvent
+    let isRepeat = event?.type == .keyDown && event?.isARepeat == true
+    guard returnGate.admits(now: ProcessInfo.processInfo.systemUptime, isRepeat: isRepeat) else {
+      return
+    }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     prepareModel()
     guard let model else { return }
@@ -447,7 +494,7 @@ struct EntryBar<Accessory: View>: View {
     if trimmed.isEmpty {
       guard showsDetails else { return }
       if let refusal = model.saveRefusalKey {
-        errorKey = refusal
+        message = .error(refusal)
         return
       }
       commit(model)
@@ -455,25 +502,223 @@ struct EntryBar<Accessory: View>: View {
     }
 
     let parsed = interpreter.interpret(trimmed, today: environment.today, kind: model.draft.kind)
-    guard let amount = parsed.amount else {
-      errorKey = parsed.missingAmountErrorKey
+    // A day the calendar does not have is what was typed wrong: said before anything else.
+    if let problem = parsed.dateProblem {
+      message = .date(problem)
+      return
+    }
+    // A line of words alone, with the panel open over an amount, saves that amount: Return saves
+    // what the panel shows. A number in the line that does not read is refused all the same.
+    let takesThePanelAmount =
+      parsed.amount == nil && parsed.amountProblem == nil && showsDetails
+      && model.draft.amount.raw > 0
+    guard parsed.amount != nil || takesThePanelAmount else {
+      message = .error(parsed.missingAmountErrorKey)
       return
     }
 
     do {
-      model.apply(parsed, amount: try AmountE4(decimal: amount), today: environment.today)
+      let amount = try parsed.amount.map { try AmountE4(decimal: $0) } ?? model.draft.amount
+      model.apply(parsed, amount: amount, today: environment.today, text: trimmed)
       if let refusal = model.saveRefusalKey {
-        errorKey = refusal
+        message = .error(refusal)
         return
       }
       commit(model)
     } catch CoreError.divisionByZero {
-      errorKey = "entry.error.divisionByZero"
+      message = .error("entry.error.divisionByZero")
     } catch CoreError.amountOutOfRange {
-      errorKey = "entry.error.amountTooLarge"
+      message = .error("entry.error.amountTooLarge")
     } catch {
-      errorKey = "entry.error.badExpression"
+      message = .error("entry.error.badExpression")
     }
+  }
+
+  private func templateLine(for template: Template) -> String {
+    prepareModel()
+    return Templates.line(
+      for: template, categories: (model?.categories ?? []) + (model?.archivedCategories ?? []),
+      in: environment, model: model)
+  }
+
+  /// Nothing the owner typed is thrown away unless the operation really reached the
+  /// database: a failed write used to look exactly like a successful one — the line cleared
+  /// itself, the panel closed, and there was no operation.
+  ///
+  /// `askingForGaps`: a line that did not say the category — or whose subcategory the model
+  /// left open — stops once and opens the panel on that field (`gapToAsk`); false where the
+  /// owner has just confirmed a form.
+  private func commit(_ model: EntryDraftModel, askingForGaps: Bool = true) {
+    // A date nobody chose is now, not when the draft was made; first, so the
+    // rate is the one of the day the operation lands on.
+    model.takeTheMomentOfSaving()
+    // Asked again on every way into the save — after the picker of purchases, after the
+    // question about the count, after the confirmation of money back: what they changed may
+    // stop it (a purchase whose account needs «Списано со счёта» typed). The panel opens on
+    // a reason it shows.
+    if let refusal = model.saveRefusalKey {
+      message = .error(refusal)
+      if model.shownRefusalKey != nil, !showsDetails {
+        withAnimation(.snappy) { showsDetails = true }
+      }
+      return
+    }
+    // A refund first says which purchase it takes money back from — or that it has none.
+    if model.needsRefundPurchase {
+      message = nil
+      refundRequest = RefundPickerRequest(savesAfterChoice: true)
+      return
+    }
+    // The line did not say where the money goes: nothing is saved yet, the panel opens on the
+    // field, marked, and the next Return saves the operation as it stands then.
+    if askingForGaps, let gap = model.gapToAsk() {
+      message = .gap(gap)
+      model.focusRequest = .control(gap == .category ? .category : .subcategory)
+      if !showsDetails { withAnimation(.snappy) { showsDetails = true } }
+      AppLog.info(
+        "entry.gapAsked", .ui, "Enter asked for a field before saving",
+        [LogPair("field", .token(gap.rawValue))])
+      return
+    }
+    // Dated on the day of counts of its balances and saved after them: whether its money was
+    // already counted is asked about each count of the day, oldest first, before anything is
+    // written. An answer remembered for a count («Больше не спрашивать для этой сверки») is used
+    // without a question.
+    switch model.countAsk(
+      savedAt: Date(), balances: compute.snapshot?.planning.accounts.balances ?? .empty,
+      remembered: environment.rememberedCountAnswers())
+    {
+    case .none:
+      break
+    case .answered(let stamp):
+      model.stampCount(stamp)
+    case .ask(let questions):
+      countQuestion = BeforeTheCountQuestion(
+        count: questions.count, reconciliation: questions.reconciliation, questions: questions)
+      return
+    }
+    // Money back from a person closes parts, and which ones the confirmation shows: nothing
+    // is written here. Its rate and what the account received are worked out there.
+    if model.recordsThroughReimbursementSheet {
+      message = nil
+      // Laid as a save lays it, which also asks the bank for the rate of the day when the cache
+      // has none yet: the confirmation works it out again once it came.
+      var money = model.draftForSaving
+      environment.applyRate(to: &money)
+      moneyBack = MoneyBackPrefill(draft: money)
+      return
+    }
+    do {
+      guard let written = try EntrySave.write(model, environment: environment, store: store)
+      else {
+        message = .error("entry.error.notSaved")
+        return
+      }
+      CategoryLearning.saved(
+        written.entry, choice: model.categoryChoice(), environment: environment)
+      if written.openedCredit != nil || written.paidDebt != nil { model.reload() }
+      // A debt opened by this purchase is a name the line should know next time.
+      if written.openedCredit?.isNew == true { environment.refreshVocabulary() }
+      templates.remember(model.draft, categories: model.categories + model.archivedCategories)
+      finishSaving(model)
+    } catch {
+      message = .error(EntryCommit.errorKey(of: error))
+    }
+  }
+
+  /// The operation went in — here, or in the reimbursement sheet: the line, the panel and the
+  /// draft start over.
+  private func finishSaving(_ model: EntryDraftModel) {
+    model.reset()
+    // A rating just given by hand is history now (rule 2 of the qualities): the next
+    // operation described the same way should find it.
+    model.reload()
+    text = ""
+    message = nil
+    withAnimation(.snappy) { showsDetails = false }
+    // The field of the panel that had the focus — Return in it, or «Save» clicked while it
+    // was being typed in — goes with the panel: without this the window kept no first
+    // responder and the next line was typed into nothing. `closeDetails` does the same.
+    focused = true
+  }
+}
+
+extension Notification.Name {
+  static let focusEntryLine = Notification.Name("io.github.EvgenyBaulin.itogo.focusEntryLine")
+}
+
+/// The write of the entry line, once nothing is left to ask: the rate of the day, what the
+/// account was charged, the operation and everything it moves — a debt opened for it, the line of
+/// a debt it pays, the income over a debt owed to me, the link to an expected income — in one
+/// write, so one ⌘Z takes all of it back.
+@MainActor
+enum EntrySave {
+  /// What went in.
+  struct Written {
+    var entry: TransactionEntry
+    /// The debt a purchase on credit opened or joined.
+    var openedCredit: (debt: Debt, isNew: Bool)?
+    /// The debt the operation pays or grows.
+    var paidDebt: Debt?
+  }
+
+  /// Writes the draft of `model`. `nil` when the database did not take the write; a throw
+  /// when the draft cannot be written as it is (`EntryCommit.errorKey` words it).
+  static func write(
+    _ model: EntryDraftModel, environment: AppEnvironment, store: TransactionsStore
+  ) throws -> Written? {
+    // A refund of a purchase keeps the purchase's rate: `applyRate` leaves it alone.
+    environment.applyRate(to: &model.draft)
+    // «Списано со счёта» follows the rate the save has just laid.
+    model.refreshCharge()
+    // The conversion is tried before anything is written, so a missing rate cannot leave
+    // a debt behind that nothing bought. A refund of a purchase is in the purchase's rubles,
+    // checked against what is left of it now.
+    let convert =
+      model.refundTarget == nil
+      ? environment.rublesConverter(for: model.draft)
+      : try model.refundRubles(index: model.refundIndexNow())
+    _ = try convert(model.draft.amount)
+    let credit = openCreditIfNeeded(model, environment: environment)
+    // What the kind has no field for stays out of what is written.
+    let entry = try model.draftForSaving.materialize(rublesConverter: convert)
+    let paidDebt = model.debtPaid(by: entry)
+    let repayment = repaymentSetting(of: paidDebt, by: entry, environment: environment)
+    let saved: Bool
+    if let change = try EntryCommit.change(
+      entry: entry, openedCredit: credit?.debt, creditIsNew: credit?.isNew ?? false,
+      paidDebt: paidDebt, expectedIncomeId: model.expectedIncomeId,
+      day: environment.calendar.day(of: model.draft.occurredAt),
+      paidDebtBalance: repayment?.balance, surplus: repayment?.surplus)
+    {
+      saved = store.apply(change)
+    } else {
+      saved = store.save(entry)
+    }
+    guard saved else { return nil }
+    return Written(entry: entry, openedCredit: credit, paidDebt: paidDebt)
+  }
+
+  /// Money given back on a debt owed to me follows the one rule of repayments
+  /// (`DebtRules.repayment`), as the debt's own form and the money-back sheet do: the journal
+  /// takes what is left of the debt as it is read now, the debt closes once it is covered, and
+  /// what came back above it is income in «Доплаты» — without that category the save is refused.
+  /// Only money back: an income that names such a debt is income already, all of it, and a
+  /// surplus written beside it would count its money twice — it pays the debt as it always did.
+  static func repaymentSetting(
+    of debt: Debt?, by entry: TransactionEntry, environment: AppEnvironment
+  ) -> (balance: AmountE4, surplus: EntryCommit.SurplusSetting)? {
+    guard let debt, debt.direction == .owedToMe, entry.transaction.kind == .reimbursement,
+      let references = environment.references,
+      let journal = try? references.debtEntries(debtId: debt.id)
+    else { return nil }
+    let surcharges = (try? references.category(systemRole: .surcharges, kind: .income))?.id
+    return (
+      DebtRules.balance(entries: journal),
+      EntryCommit.SurplusSetting(
+        categoryId: surcharges,
+        note: environment.language("reimbursement.surplus", table: "Entry"))
+    )
   }
 
   /// "On credit" means the expense is recorded once, now, and the debt grows by the same
@@ -483,7 +728,9 @@ struct EntryBar<Accessory: View>: View {
   /// an income or a refund is refused before this (`saveRefusalKey`), and is handed on all the
   /// same should it get here: `EntryCommit` refuses it with a reason rather than saving the
   /// operation without the debt the owner asked for, or with one nothing bought.
-  private func openCreditIfNeeded(_ model: EntryDraftModel) -> (debt: Debt, isNew: Bool)? {
+  private static func openCreditIfNeeded(
+    _ model: EntryDraftModel, environment: AppEnvironment
+  ) -> (debt: Debt, isNew: Bool)? {
     guard let plan = model.creditPlan else { return nil }
 
     if let chosen = plan.debtId, let existing = model.debts.first(where: { $0.id == chosen }) {
@@ -506,135 +753,38 @@ struct EntryBar<Accessory: View>: View {
     model.draft.creditDebtId = debt.id
     return (debt, true)
   }
-
-  private func templateLine(for template: Template) -> String {
-    prepareModel()
-    return Templates.line(
-      for: template, categories: (model?.categories ?? []) + (model?.archivedCategories ?? []),
-      in: environment, model: model)
-  }
-
-  /// Nothing the owner typed is thrown away unless the operation really reached the
-  /// database: a failed write used to look exactly like a successful one — the line cleared
-  /// itself, the panel closed, and there was no operation.
-  private func commit(_ model: EntryDraftModel) {
-    // A date nobody chose is now, not when the draft was made; first, so the
-    // rate is the one of the day the operation lands on.
-    model.takeTheMomentOfSaving()
-    // Asked again on every way into the save — after the picker of purchases, after the
-    // question about the count, after the confirmation of money back: what they changed may
-    // stop it (a purchase whose account needs «Списано со счёта» typed). The panel opens on
-    // a reason it shows.
-    if let refusal = model.saveRefusalKey {
-      errorKey = refusal
-      if model.shownRefusalKey != nil, !showsDetails {
-        withAnimation(.snappy) { showsDetails = true }
-      }
-      return
-    }
-    // A refund first says which purchase it takes money back from — or that it has none.
-    if model.needsRefundPurchase {
-      errorKey = nil
-      refundRequest = RefundPickerRequest(savesAfterChoice: true)
-      return
-    }
-    // Dated on the day of the latest count of its account and saved after it: whether its
-    // money was already counted is asked before anything is written.
-    if let count = model.countToAskAbout(
-      savedAt: Date(), balances: compute.snapshot?.planning.accounts.balances ?? .empty)
-    {
-      countQuestion = BeforeTheCountQuestion(count: count)
-      return
-    }
-    // Money back from a person closes parts, and which ones the confirmation shows: nothing
-    // is written here. Its rate and what the account received are worked out there.
-    if model.recordsThroughReimbursementSheet {
-      errorKey = nil
-      // Laid as a save lays it, which also asks the bank for the rate of the day when the cache
-      // has none yet: the confirmation works it out again once it came.
-      var money = model.draftForSaving
-      environment.applyRate(to: &money)
-      moneyBack = MoneyBackPrefill(draft: money)
-      return
-    }
-    do {
-      // A refund of a purchase keeps the purchase's rate: `applyRate` leaves it alone.
-      environment.applyRate(to: &model.draft)
-      // «Списано со счёта» follows the rate the save has just laid.
-      model.refreshCharge()
-      // The conversion is tried before anything is written, so a missing rate cannot leave
-      // a debt behind that nothing bought. A refund of a purchase is in the purchase's rubles,
-      // checked against what is left of it now.
-      let convert =
-        model.refundTarget == nil
-        ? environment.rublesConverter(for: model.draft)
-        : try model.refundRubles(index: model.refundIndexNow())
-      _ = try convert(model.draft.amount)
-      let credit = openCreditIfNeeded(model)
-      // What the kind has no field for stays out of what is written.
-      let entry = try model.draftForSaving.materialize(rublesConverter: convert)
-      // The operation and what it moves — a debt opened for it, the line of a debt payment,
-      // the link to an expected income — land in one write: one ⌘Z takes all of it back.
-      let paidDebt = model.debtPaid(by: entry)
-      let saved: Bool
-      if let change = try EntryCommit.change(
-        entry: entry, openedCredit: credit?.debt, creditIsNew: credit?.isNew ?? false,
-        paidDebt: paidDebt, expectedIncomeId: model.expectedIncomeId,
-        day: environment.calendar.day(of: model.draft.occurredAt))
-      {
-        saved = store.apply(change)
-      } else {
-        saved = store.save(entry)
-      }
-      guard saved else {
-        errorKey = "entry.error.notSaved"
-        return
-      }
-      CategoryLearning.saved(entry, choice: model.categoryChoice(), environment: environment)
-      if credit != nil || paidDebt != nil { model.reload() }
-      // A debt opened by this purchase is a name the line should know next time.
-      if credit?.isNew == true { environment.refreshVocabulary() }
-      templates.remember(model.draft, categories: model.categories + model.archivedCategories)
-      finishSaving(model)
-    } catch {
-      errorKey = EntryCommit.errorKey(of: error)
-    }
-  }
-
-  /// The operation went in — here, or in the reimbursement sheet: the line, the panel and the
-  /// draft start over.
-  private func finishSaving(_ model: EntryDraftModel) {
-    model.reset()
-    // A rating just given by hand is history now (rule 2 of the qualities): the next
-    // operation described the same way should find it.
-    model.reload()
-    text = ""
-    errorKey = nil
-    withAnimation(.snappy) { showsDetails = false }
-    // The field of the panel that had the focus — Return in it, or «Save» clicked while it
-    // was being typed in — goes with the panel: without this the window kept no first
-    // responder and the next line was typed into nothing. `closeDetails` does the same.
-    focused = true
-  }
-}
-
-extension Notification.Name {
-  static let focusEntryLine = Notification.Name("io.github.EvgenyBaulin.itogo.focusEntryLine")
 }
 
 /// What a key of the entry line does to the ↓ panel, apart from the view so a test reads it
 /// without a window: ↓ opens it, ↑ and Esc close it (the draft stays), and with the panel
 /// closed ↑ and Esc are not ours and go on to whatever else wants them. The × of the panel
 /// and Esc inside it close it the same way (`closeDetails`).
-/// When the bar saves («Сохранение — Enter»): a line to read, or — the line
-/// empty — the ↓ panel open over a draft that can be saved. «Save» is active exactly then, and
-/// Return in the line or in a field of the panel saves the same way (`EntryBar.save`). A
-/// panel-only operation used to be saved only by Return in the empty line, which nothing on
-/// screen suggested: «Save» was grey and Return in the panel did nothing.
+/// When the bar saves («Сохранение — Enter»): a line to read, or the ↓ panel open. «Save» is
+/// active exactly then, and Return — in the line, or anywhere in the open panel — saves the
+/// same way (`EntryBar.save`), with the save or with the reason there is none: a Return that
+/// does nothing is what the owner reported.
 enum EntrySaving {
-  static func isOffered(line: String, showsDetails: Bool, draftCanSave: Bool) -> Bool {
-    !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      || (showsDetails && draftCanSave)
+  static func isOffered(line: String, showsDetails: Bool) -> Bool {
+    showsDetails || !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  /// One keystroke, one save. AppKit may hand one Return both to a text field's action and to
+  /// the default button, and a held Return repeats; a refused save must still be retried by the
+  /// next Return, so a flag cannot do this.
+  struct ReturnGate {
+    /// Seconds within which a second request is the same keystroke handed over twice. A person
+    /// presses Return again no sooner than a fifth of a second later.
+    static let window: TimeInterval = 0.15
+    private(set) var lastAdmitted: TimeInterval?
+
+    /// `now`: `ProcessInfo.processInfo.systemUptime`; `isRepeat`: the key event is an
+    /// auto-repeat of a held key (false for a click, or a save asked by code).
+    mutating func admits(now: TimeInterval, isRepeat: Bool) -> Bool {
+      guard !isRepeat else { return false }
+      if let lastAdmitted, now - lastAdmitted < Self.window, now >= lastAdmitted { return false }
+      lastAdmitted = now
+      return true
+    }
   }
 }
 

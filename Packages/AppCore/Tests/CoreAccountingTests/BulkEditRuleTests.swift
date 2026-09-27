@@ -392,6 +392,44 @@ struct BulkEditRuleTests {
     #expect(result.skipped == [BulkSkip(transactionId: id(1), reason: .creditPurchase)])
   }
 
+  /// Its debt deleted and never paid, a purchase on credit goes like any other purchase.
+  @Test func aCreditPurchaseOfADeletedDebtCanBeDeleted() {
+    let laptop = entry(
+      id(1), creditDebtId: id(201),
+      parts: [part(id(11), amount: money(90000), category: categories.groceries)])
+    let result = BulkEditRule.deletion(of: [laptop], deletedDebts: [id(201)])
+    #expect(result.changedIds == [id(1)])
+    #expect(result.skipped.isEmpty)
+    // Another debt deleted says nothing about this one.
+    #expect(
+      BulkEditRule.deletion(of: [laptop], deletedDebts: [id(202)]).skipped
+        == [BulkSkip(transactionId: id(1), reason: .creditPurchase)])
+  }
+
+  /// «Телефон» 60,000 ₽ on credit, 3 × 5,000 ₽ paid, the debt deleted: the payments were never
+  /// spending, so the purchase stays — spending stays 60,000 ₽ and the 15,000 ₽ that left the
+  /// card stay in a figure.
+  @Test func aPaidCreditPurchaseOfADeletedDebtStays() {
+    let phone = entry(
+      id(1), creditDebtId: id(201),
+      parts: [part(id(11), amount: money(60000), category: categories.groceries)])
+    let payments = (2...4).map { number in
+      entry(
+        id(number), debtId: id(201),
+        parts: [part(id(number * 10), amount: money(5000), category: categories.groceries)])
+    }
+    let paid = DebtRules.paidDebts(entries: payments, journal: [])
+    #expect(paid == [id(201)])
+    let result = BulkEditRule.deletion(of: [phone], deletedDebts: [id(201)], paidDebts: paid)
+    #expect(result.changedIds.isEmpty)
+    #expect(result.skipped == [BulkSkip(transactionId: id(1), reason: .creditPurchasePaid)])
+    let debt = Debt(
+      id: id(201), direction: .iOwe, type: .installment, name: "Phone",
+      paymentsAreExpenses: false, origin: .purchase, deletedAt: moment("2026-09-27"))
+    #expect(
+      MyExpensesRule.total(entries: [phone] + payments, debts: [id(201): debt]) == money(60000))
+  }
+
   /// A purchase a reimbursement closed a part of stays while that reimbursement is there:
   /// gone, it would leave the reimbursement closing nothing and its shortfall counted as my
   /// spending on nothing. A part still waiting, or written off, stops nothing.
@@ -564,6 +602,69 @@ struct BulkEditRuleTests {
     #expect(reverted.transaction.accountAmountE4 == nil)
   }
 
+  // MARK: The card and the cashback typed for an operation
+
+  let otherRubleCard = PaymentMethod(id: id(85), name: "Other card", currency: .rub)
+
+  /// 1 000 rubles of groceries paid with card 700 of the ruble card, with 35 rubles of cashback
+  /// typed for it.
+  func cardPurchase(_ number: Int) -> TransactionEntry {
+    var purchase = entry(
+      id(number),
+      parts: [part(id(number * 10), amount: money(1000), category: categories.groceries)])
+    purchase.transaction.paymentMethodId = id(82)
+    purchase.transaction.cardId = id(700)
+    purchase.transaction.cashback = Money(amount: money(35), currency: .rub)
+    return purchase
+  }
+
+  func cardPlan(_ edit: BulkEdit, _ entries: [TransactionEntry]) -> BulkEditPlan {
+    BulkEditRule.plan(
+      edit, entries: entries, tree: categories.tree,
+      accounts: [rubleCard, dollarCash, tengeCard, otherRubleCard], rates: rates, calendar: .utc)
+  }
+
+  /// A card always belongs to its own account: moved to another one, the operation names no
+  /// card. The cashback typed in rubles stays, since rubles still move on the new account.
+  @Test func movingToAnotherAccountDropsTheCard() throws {
+    let moved = try #require(cardPlan(.paymentMethod(id(85)), [cardPurchase(1)]).changed.first)
+    #expect(moved.transaction.paymentMethodId == id(85))
+    #expect(moved.transaction.cardId == nil)
+    #expect(moved.transaction.cashback == Money(amount: money(35), currency: .rub))
+  }
+
+  /// Moved to the account it is already on, nothing changes, the card included.
+  @Test func sameAccountKeepsTheCard() {
+    let purchase = cardPurchase(1)
+    let outcome = BulkEditRule.apply(
+      .paymentMethod(id(82)), to: purchase, tree: categories.tree,
+      accounts: [rubleCard, dollarCash, tengeCard, otherRubleCard], rates: rates, calendar: .utc)
+    #expect(outcome == .unchanged)
+    let plan = cardPlan(.paymentMethod(id(82)), [purchase])
+    #expect(plan.changed.isEmpty)
+  }
+
+  /// The cashback was typed in the money that moved on the old account; on an account charged
+  /// in dollars it says nothing about the operation any more.
+  @Test func movingDropsAnOverrideInTheOldCurrency() throws {
+    let moved = try #require(cardPlan(.paymentMethod(id(83)), [cardPurchase(1)]).changed.first)
+    #expect(moved.transaction.accountCurrency == .usd)
+    #expect(moved.transaction.cardId == nil)
+    #expect(moved.transaction.cashback == nil)
+  }
+
+  /// ⌘Z of a move puts the purchase back on its account with its card and its cashback.
+  @Test func revertBringsBackTheCardAndTheCashback() throws {
+    let before = cardPurchase(1)
+    let moved = try #require(cardPlan(.paymentMethod(id(83)), [before]).changed.first)
+    let reverted = BulkEditRule.revert(moved, to: before)
+    #expect(reverted.transaction.paymentMethodId == id(82))
+    #expect(reverted.transaction.cardId == id(700))
+    #expect(reverted.transaction.cashback == Money(amount: money(35), currency: .rub))
+    #expect(reverted.transaction.accountCurrency == nil)
+    #expect(reverted == before)
+  }
+
   /// A purchase refunds take back from stays while they are there, unless they go with it.
   @Test func aPurchaseWithRefundsIsNotDeletedFromUnderThem() {
     let purchase = groceries(1, amount: 600)
@@ -585,5 +686,37 @@ struct BulkEditRuleTests {
       BulkSkip(transactionId: id(3), reason: .systemCategory),
     ]
     #expect(BulkEditPlan.reasons(of: skips) == [.otherKind, .systemCategory])
+  }
+}
+
+extension BulkEditRuleTests {
+  /// The difference a count recorded: a bulk change keeps it on its account and out of «Цели»
+  /// and the categories of the app, and still gives it a category, a rating, a place or an
+  /// event of the owner's.
+  @Test func aDifferenceKeepsItsAccountAndStaysOutOfTheAppsCategories() {
+    var lost = groceries(1, amount: 8_000)
+    lost.transaction.externalId =
+      OperationLink.reconciledBalance(
+        reconciliation: id(6), balance: id(7)
+      ).externalId
+    let plain = groceries(2)
+    let other = PaymentMethod(id: id(301), name: "Cash", kind: .cash, currency: .rub)
+
+    let moved = BulkEditRule.plan(
+      .paymentMethod(other.id), entries: [lost, plain], tree: categories.tree,
+      accounts: [other])
+    #expect(moved.changedIds == [id(2)])
+    #expect(moved.skipped == [BulkSkip(transactionId: id(1), reason: .reconciliationDifference)])
+
+    for target in [categories.goalsTrip, categories.loans] {
+      let filed = plan(.category(target), [lost])
+      #expect(filed.skipped == [BulkSkip(transactionId: id(1), reason: .reconciliationDifference)])
+    }
+    let refiled = plan(.refile(from: [categories.groceries], to: categories.goals), [lost])
+    #expect(refiled.skipped == [BulkSkip(transactionId: id(1), reason: .reconciliationDifference)])
+
+    #expect(plan(.category(categories.education), [lost]).changedIds == [id(1)])
+    #expect(plan(.quality(.bad), [lost]).changedIds == [id(1)])
+    #expect(plan(.place(id(600)), [lost]).changedIds == [id(1)])
   }
 }

@@ -124,12 +124,12 @@ struct NewRecordForm {
 
   /// A new start takes the end along when it passes it, and an end never comes before the
   /// start: the rule the reference book of events keeps.
-  mutating func setStart(_ day: DateOnly) { move(\.startDate, to: day) }
-  mutating func setEnd(_ day: DateOnly) { move(\.endDate, to: day) }
+  mutating func setStart(_ day: DateOnly) { take(days.startingOn(day)) }
+  mutating func setEnd(_ day: DateOnly) { take(days.endingOn(day)) }
 
-  private mutating func move(_ key: WritableKeyPath<Event, DateOnly>, to day: DateOnly) {
-    let moved = ReferenceBooksView.event(
-      Event(name: name, startDate: start, endDate: end), setting: key, to: day)
+  private var days: Event { Event(name: name, startDate: start, endDate: end) }
+
+  private mutating func take(_ moved: Event) {
     start = moved.startDate
     end = moved.endDate
   }
@@ -137,7 +137,8 @@ struct NewRecordForm {
   /// Why «Save» would add nothing, as the key of the words that say so (table «Entry»); nil
   /// when it would. A name has to say something. A person, a place or a payment method whose
   /// name or alias is already another's is refused, as the reference books refuse it: the
-  /// entry line could not tell the two apart. A category is taken by one of the same kind
+  /// entry line could not tell the two apart; a payment method also by the name of another
+  /// account's live card. A category is taken by one of the same kind
   /// under the same parent. Events may share a name: a yearly event is made again every year.
   func refusalKey(in model: EntryDraftModel) -> String? {
     let name = trimmedName
@@ -154,8 +155,10 @@ struct NewRecordForm {
     case .place:
       taken = !ReferenceBooksView.canAdd(name, to: .places, people: [], places: model.places)
     case .paymentMethod:
-      taken = ReferenceNames.isTaken(
-        name, among: model.paymentMethods.filter { !$0.archived }.map(ReferenceNames.spellings))
+      taken =
+        ReferenceNames.isTaken(
+          name, among: model.paymentMethods.filter { !$0.archived }.map(ReferenceNames.spellings))
+        || Self.cardOfLiveAccount(named: name, in: model) != nil
     case .event:
       taken = false
     }
@@ -164,6 +167,19 @@ struct NewRecordForm {
     case .category, .subcategory: return "entry.add.categoryTaken"
     default: return "entry.add.nameTaken"
     }
+  }
+
+  /// A live card of a live account the entry line reads `name` as. An account called so would
+  /// take that card's purchases, and the card it starts with would give the line two cards of
+  /// one name, of which it reads neither. The cards of an archived account are left to «Save»:
+  /// the name may be the one that brings that very account back.
+  private static func cardOfLiveAccount(
+    named name: String, in model: EntryDraftModel
+  ) -> PaymentCard? {
+    let live = Set(model.paymentMethods.filter { !$0.archived }.map(\.id))
+    // No account has the tag's id, so every live card of a live account is another's.
+    return CardRules.cardTaking(
+      name, except: AddFromPicker.tag, cards: model.cards.filter { live.contains($0.accountId) })
   }
 
   private static func isTaken(
@@ -383,7 +399,18 @@ struct NewRecordForm {
     let account = NewReference.paymentMethod(
       named: name, kind: paymentKind, currency: context.defaultCurrency,
       among: all.filter { !$0.archived })
-    guard AppEnvironment.attempt("references.add", on: references, { try $0.save(account) }) else {
+    // A live card of an account in the archive keeps its name as well: the line reads it again
+    // the day its account comes back.
+    guard CardRules.cardTaking(name, except: account.id, cards: model.cards) == nil else {
+      return .failure(.key("entry.add.nameTaken"))
+    }
+    // A card or a bank account is paid from with a card: it comes with one named like it, in
+    // the same write.
+    guard
+      AppEnvironment.attempt(
+        "references.add", on: references,
+        { try $0.save(account, startingCard: CardRules.startingCard(for: account)) })
+    else {
       return .failure(.key(failureKey))
     }
     model.reload()

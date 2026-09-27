@@ -23,8 +23,9 @@ struct MigrationTests {
   @Test func schemaCreatesEveryTableTheSpecificationLists() throws {
     let stack = try TestSupport.makeStack()
     let expected = [
-      "account_groups", "anomaly_dismissals", "budgets", "categories", "category_feedback",
-      "currencies", "debt_entries", "debts", "events", "expected_income",
+      "account_groups", "anomaly_dismissals", "budgets", "cards", "cashback_rules",
+      "categories", "category_feedback", "currencies", "debt_entries", "debts", "events",
+      "expected_income",
       "expected_income_links", "goals", "import_batches", "import_mappings", "ml_models",
       "payment_methods", "people", "places", "rates", "reconciliation_balances",
       "reconciliations", "reimbursement_links", "scheduled_payments", "settings",
@@ -144,8 +145,8 @@ extension MigrationTests {
     try stack.writer.read { db in
       #expect(try db.columns(in: "budgets").map(\.name).last == "start_month")
       #expect(
-        try db.columns(in: "reconciliations").map(\.name).suffix(3)
-          == ["reconciled_at", "breakdown", "kind"])
+        try db.columns(in: "reconciliations").map(\.name).suffix(4)
+          == ["reconciled_at", "breakdown", "kind", "origin"])
       // An index on expressions, which `db.indexes(on:)` leaves out: asked of SQLite itself.
       let unique = try Bool.fetchOne(
         db,
@@ -267,8 +268,8 @@ extension MigrationTests {
     #expect(before["payment_methods"]?.columns.contains("other_currencies") == false)
 
     let stack = try DatabaseStack(url: url, schema: TestSupport.schemaSource)
-    #expect(try stack.appliedMigrations().last == "0004_accounts")
-    #expect(stack.applied.applied == 1)
+    #expect(try stack.appliedMigrations().last == "0005_cards")
+    #expect(stack.applied.applied == 2)
 
     // The two values the update may change are the flag of the main account and the account
     // of an operation that had none; they are checked on their own below.

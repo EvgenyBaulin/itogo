@@ -4,7 +4,8 @@ import Foundation
 import GRDB
 
 // The tables of the planning and the debts (`Schema/0001_initial.sql`,
-// `Schema/0002_planning.sql`), mapped by hand like every other record (`RowMapping`).
+// `Schema/0002_planning.sql`, `Schema/0005_cards.sql`), mapped by hand like every other record
+// (`RowMapping`).
 
 extension ScheduledPayment: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "scheduled_payments"
@@ -33,7 +34,9 @@ extension ScheduledPayment: @retroactive FetchableRecord, @retroactive Persistab
       trialEnd: RowMapping.day(row, "trial_end"),
       cancelURL: row["cancel_url"],
       remindDaysBefore: try RowMapping.optionalInteger(row, "remind_days_before"),
-      active: try RowMapping.flag(row, "active", fallback: true))
+      active: try RowMapping.flag(row, "active", fallback: true),
+      cardId: RowMapping.optionalUUID(row, "card_id"),
+      eventId: RowMapping.optionalUUID(row, "event_id"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -60,6 +63,8 @@ extension ScheduledPayment: @retroactive FetchableRecord, @retroactive Persistab
     container["cancel_url"] = cancelURL
     container["remind_days_before"] = remindDaysBefore
     container["active"] = active
+    container["card_id"] = cardId?.uuidString
+    container["event_id"] = eventId?.uuidString
   }
 }
 
@@ -98,7 +103,8 @@ extension ExpectedIncome: @retroactive FetchableRecord, @retroactive Persistable
       freq: (row["freq"] as String?).flatMap(Frequency.init(rawValue:)),
       day: try RowMapping.optionalInteger(row, "day"),
       partsExpected: try RowMapping.optionalInteger(row, "parts_expected") ?? 1,
-      closed: try RowMapping.flag(row, "closed", fallback: false))
+      closed: try RowMapping.flag(row, "closed", fallback: false),
+      paymentMethodId: RowMapping.optionalUUID(row, "payment_method_id"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -114,6 +120,7 @@ extension ExpectedIncome: @retroactive FetchableRecord, @retroactive Persistable
     container["day"] = day
     container["parts_expected"] = partsExpected
     container["closed"] = closed
+    container["payment_method_id"] = paymentMethodId?.uuidString
   }
 }
 
@@ -162,7 +169,8 @@ extension Budget: @retroactive FetchableRecord, @retroactive PersistableRecord {
 /// `reconciled_at` is an instant like `created_at` of an operation, written the same way
 /// (`StoredInstant`) — UTC text `YYYY-MM-DD HH:MM:SS.SSS`. The breakdown is one JSON text,
 /// spelled by `ReconciliationBreakdown` so the database and the export files agree; NULL when
-/// there is none. A `kind` this build does not know reads as a total, which anchors nothing.
+/// there is none. A `kind` this build does not know reads as a total, which anchors nothing; an
+/// `origin` it does not know reads as none.
 extension Reconciliation: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "reconciliations"
 
@@ -176,7 +184,8 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
       differenceE4: try RowMapping.optionalAmount(row, "difference_e4"),
       transactionId: RowMapping.optionalUUID(row, "transaction_id"),
       breakdown: ReconciliationBreakdown.amounts(fromJSON: row["breakdown"]),
-      kind: ReconciliationKind(rawValue: row["kind"] ?? "total") ?? .total)
+      kind: ReconciliationKind(rawValue: row["kind"] ?? "total") ?? .total,
+      origin: (row["origin"] as String?).flatMap(ReconciliationOrigin.init(rawValue:)))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -189,6 +198,7 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
     container["transaction_id"] = transactionId?.uuidString
     container["breakdown"] = ReconciliationBreakdown.json(breakdown)
     container["kind"] = kind.rawValue
+    container["origin"] = origin?.rawValue
   }
 }
 
@@ -196,14 +206,23 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
 
 /// `PlanningSettings` as rows of `settings`: numbers in decimal digits, switches as `1`/`0`
 /// like the other switches of the table, the dismissed reminders one id per line, and so the
-/// operations said not to pay a due date. How many limits to show is a number or `all`.
+/// operations said not to pay a due date and the counts kept as real differences. How many
+/// limits to show is a number or `all`; how goal money is valued is `today` or `deposits`; the
+/// answers about counts are `<id> before` or `<id> after` per line (`countAnswers(from:)`).
 extension PlanningSettings {
-  /// Every key the planning settings live under.
+  /// Every key the planning settings live under, and write.
   public static let storageKeys = [
     reconcileEveryDaysKey, savingsTargetKey, reserveGoalPlanKey,
     reconcileIncludesGoalSavingsKey, dismissedRemindersKey, limitsTopNKey,
-    scheduledMatchRejectionsKey,
+    scheduledMatchRejectionsKey, goalSavingsValuationKey, firstCountKeptKey,
+    beforeCountAnswersKey,
   ]
+
+  /// Every key the planning settings are read from: their own, and the categories of the
+  /// reconciliation, which the reconciliation writes and these settings never do — a screen of
+  /// settings writing them back from what it read could undo a choice made meanwhile.
+  public static let readKeys =
+    storageKeys + [reconcileExpenseCategoryKey, reconcileIncomeCategoryKey]
 
   /// The settings the rows give. A key that is missing, or whose value does not read — or
   /// makes no sense, like a reminder every 0 days or a negative savings target — keeps its
@@ -222,16 +241,26 @@ extension PlanningSettings {
       dismissedReminders: Set(RowMapping.split(values[Self.dismissedRemindersKey] ?? "")),
       limitsTopN: Self.limitsTopN(values[Self.limitsTopNKey], default: defaults.limitsTopN),
       scheduledMatchRejections: Set(
-        RowMapping.split(values[Self.scheduledMatchRejectionsKey] ?? "")))
+        RowMapping.split(values[Self.scheduledMatchRejectionsKey] ?? "")),
+      goalSavingsValuation: values[Self.goalSavingsValuationKey]
+        .flatMap { GoalSavingsValuation(rawValue: $0.trimmingCharacters(in: .whitespaces)) }
+        ?? defaults.goalSavingsValuation,
+      firstCountKept: Set(
+        RowMapping.split(values[Self.firstCountKeptKey] ?? "").compactMap(Self.id)),
+      beforeCountAnswers: Self.countAnswers(from: values[Self.beforeCountAnswersKey]),
+      reconcileExpenseCategoryId: values[Self.reconcileExpenseCategoryKey].flatMap(Self.id),
+      reconcileIncomeCategoryId: values[Self.reconcileIncomeCategoryKey].flatMap(Self.id))
   }
 
   /// The rows to write, ready for `PlanningChange.settings`. No dismissed reminder deletes
-  /// the key (`nil`): the table keeps no empty values. The ids are sorted, so the same set is
-  /// always the same text.
+  /// the key (`nil`): the table keeps no empty values, and so does no count kept and no answer.
+  /// The ids are sorted, so the same set is always the same text. The categories of the
+  /// reconciliation are never among them (`readKeys`).
   public var storedValues: [String: String?] {
     let dismissed = dismissedReminders.map(Self.singleLine).filter { !$0.isEmpty }.sorted()
     let rejections = scheduledMatchRejections.map(Self.singleLine).filter { !$0.isEmpty }
       .sorted()
+    let kept = firstCountKept.map(\.uuidString).sorted()
     return [
       Self.reconcileEveryDaysKey: String(reconcileEveryDays),
       Self.savingsTargetKey: String(savingsTargetBp),
@@ -241,7 +270,15 @@ extension PlanningSettings {
       Self.limitsTopNKey: limitsTopN.map { String($0) } ?? Self.allLimits,
       Self.scheduledMatchRejectionsKey: rejections.isEmpty
         ? nil : rejections.joined(separator: "\n"),
+      Self.goalSavingsValuationKey: goalSavingsValuation.rawValue,
+      Self.firstCountKeptKey: kept.isEmpty ? nil : kept.joined(separator: "\n"),
+      Self.beforeCountAnswersKey: Self.countAnswersText(beforeCountAnswers),
     ]
+  }
+
+  /// An id written by the app or by a person: spaces around it are no part of it.
+  private static func id(_ text: String) -> UUID? {
+    UUID(uuidString: text.trimmingCharacters(in: .whitespaces))
   }
 
   /// The value of `limitsTopNKey` that shows every limit.

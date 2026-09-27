@@ -192,7 +192,7 @@ final class ReportFileNameTests: XCTestCase {
       "itogo-expenses-by-category-2026-09-by-for-whom.csv")
     XCTAssertEqual(
       name(.expensesByCategory, september, .paymentMethod),
-      "itogo-expenses-by-category-2026-09-by-payment-method.csv")
+      "itogo-expenses-by-category-2026-09-by-account.csv")
     // Tables without grouping never name one, whatever was chosen.
     XCTAssertEqual(
       name(.incomeByCategory, september, .event), "itogo-income-by-category-2026-09.csv")

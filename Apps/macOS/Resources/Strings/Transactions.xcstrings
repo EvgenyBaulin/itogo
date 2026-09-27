@@ -415,6 +415,23 @@
         }
       }
     },
+    "bulk.reason.creditPurchasePaid": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalments were already paid on it — delete them first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По покупке уже платили — сначала удалите платежи."
+          }
+        }
+      }
+    },
     "bulk.reason.debtPayment": {
       "extractionState": "manual",
       "localizations": {
@@ -581,6 +598,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "куплено за другого"
+          }
+        }
+      }
+    },
+    "bulk.reason.reconciliationDifference": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "it is a reconciliation difference: its account comes from the count, and it never goes to Goals or a category of the app"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "это разница сверки: счёт у неё от сверки, а в «Цели» и системные категории она не переносится"
           }
         }
       }
@@ -755,6 +789,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "⌘Z вернёт всё обратно."
+          }
+        }
+      }
+    },
+    "editor.reconcileDifference.locked": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is a reconciliation difference: its amount, type, account, currency and date follow by themselves when you add or fix operations before the count. Delete it, and this count's difference will no longer be recorded."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это разница сверки: сумма, тип, счёт, валюта и дата меняются сами, когда вы добавляете или правите операции до сверки. Удалите её — и разница этой сверки больше не будет записываться."
           }
         }
       }
@@ -1288,6 +1339,23 @@
         }
       }
     },
+    "store.failure.planOutdated": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some of these operations changed elsewhere while you were choosing where the money goes, so the transfer no longer matches them. Nothing changed: select the operations and make the change again."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пока вы выбирали, куда перевести деньги, часть этих операций изменилась в другом месте, и перевод им больше не соответствует. Ничего не изменилось: выделите операции и повторите изменение."
+          }
+        }
+      }
+    },
     "store.failure.undo": {
       "extractionState": "manual",
       "localizations": {
@@ -1794,6 +1862,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "По этой части покупки оформлен возврат — сначала удалите возврат."
+          }
+        }
+      }
+    },
+    "transactions.error.settlingRefused": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The transfer that keeps the archived account at zero cannot be written: the other account is in the archive now or does not hold the currency. Nothing was saved."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перевод, который держит счёт в архиве на нуле, записать нельзя: другой счёт теперь в архиве или не держит эту валюту. Ничего не сохранено."
           }
         }
       }

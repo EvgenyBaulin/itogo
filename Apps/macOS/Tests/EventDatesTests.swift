@@ -4,8 +4,9 @@ import XCTest
 @testable import Itogo
 
 /// The dates of an event in Settings → Reference books (`events` — даты
-/// начала и конца). An event whose end came before its start covered no day at all: no
-/// operation could be filed under it, and it showed nothing.
+/// начала и конца), in Planning and in «Добавить…» — one rule of the core for all three
+/// (`Event.startingOn/endingOn`). An event whose end came before its start covered no day at
+/// all: no operation could be filed under it, and it showed nothing.
 @MainActor
 final class EventDatesTests: XCTestCase {
   private let trip = Event(
@@ -14,8 +15,7 @@ final class EventDatesTests: XCTestCase {
     endDate: DateOnly(year: 2026, month: 7, day: 20))
 
   func testMovingTheStartPastTheEndTakesTheEndAlongWithTheSameLength() {
-    let moved = ReferenceBooksView.event(
-      trip, setting: \.startDate, to: DateOnly(year: 2026, month: 8, day: 1))
+    let moved = trip.startingOn(DateOnly(year: 2026, month: 8, day: 1))
 
     XCTAssertEqual(moved.startDate, DateOnly(year: 2026, month: 8, day: 1))
     XCTAssertEqual(
@@ -25,8 +25,7 @@ final class EventDatesTests: XCTestCase {
   }
 
   func testTheEndIsNeverSetBeforeTheStart() {
-    let moved = ReferenceBooksView.event(
-      trip, setting: \.endDate, to: DateOnly(year: 2026, month: 7, day: 1))
+    let moved = trip.endingOn(DateOnly(year: 2026, month: 7, day: 1))
 
     XCTAssertEqual(moved.startDate, trip.startDate)
     XCTAssertEqual(
@@ -35,17 +34,15 @@ final class EventDatesTests: XCTestCase {
   }
 
   func testDatesInOrderAreTakenAsTheyAre() {
-    let earlier = ReferenceBooksView.event(
-      trip, setting: \.startDate, to: DateOnly(year: 2026, month: 7, day: 5))
+    let earlier = trip.startingOn(DateOnly(year: 2026, month: 7, day: 5))
     XCTAssertEqual(earlier.startDate, DateOnly(year: 2026, month: 7, day: 5))
     XCTAssertEqual(earlier.endDate, trip.endDate)
 
-    let longer = ReferenceBooksView.event(
-      trip, setting: \.endDate, to: DateOnly(year: 2026, month: 7, day: 25))
+    let longer = trip.endingOn(DateOnly(year: 2026, month: 7, day: 25))
     XCTAssertEqual(longer.startDate, trip.startDate)
     XCTAssertEqual(longer.endDate, DateOnly(year: 2026, month: 7, day: 25))
 
-    let oneDay = ReferenceBooksView.event(trip, setting: \.endDate, to: trip.startDate)
+    let oneDay = trip.endingOn(trip.startDate)
     XCTAssertEqual(oneDay.endDate, trip.startDate)
   }
 }

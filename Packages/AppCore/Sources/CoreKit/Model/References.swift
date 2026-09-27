@@ -205,11 +205,14 @@ public struct Goal: Identifiable, Hashable, Sendable, Codable {
   public var archived: Bool
   /// The currency of the target, the plan and the progress.
   public var currency: CurrencyCode
+  /// The month the monthly plan counts from: money put in before it is not paid ahead of the
+  /// plan. `nil` — from the month of the first contribution.
+  public var planStartMonth: MonthKey?
 
   public init(
     id: UUID = UUID(), name: String, targetE4: AmountE4, targetDate: DateOnly? = nil,
     monthlyPlanE4: AmountE4? = nil, subcategoryId: UUID? = nil, archived: Bool = false,
-    currency: CurrencyCode = .rub
+    currency: CurrencyCode = .rub, planStartMonth: MonthKey? = nil
   ) {
     self.id = id
     self.name = name
@@ -219,6 +222,7 @@ public struct Goal: Identifiable, Hashable, Sendable, Codable {
     self.subcategoryId = subcategoryId
     self.archived = archived
     self.currency = currency
+    self.planStartMonth = planStartMonth
   }
 }
 
@@ -239,13 +243,17 @@ public struct Debt: Identifiable, Hashable, Sendable, Codable {
   public var note: String?
   public var closed: Bool
   public var loansSubcategoryId: UUID?
+  /// When the debt was deleted; `nil` — it is not. A deleted debt leaves every list and figure
+  /// of the debts, while the operations that point at it count as they did and the money of its
+  /// journal stays on the accounts.
+  public var deletedAt: Date?
 
   public init(
     id: UUID = UUID(), direction: DebtDirection, type: DebtType, name: String,
     personId: UUID? = nil, currency: CurrencyCode = .rub, interestRate: Decimal? = nil,
     monthlyPaymentE4: AmountE4? = nil, paymentDay: Int? = nil, remindDaysBefore: Int? = nil,
     paymentsAreExpenses: Bool = true, origin: DebtOrigin = .existing, note: String? = nil,
-    closed: Bool = false, loansSubcategoryId: UUID? = nil
+    closed: Bool = false, loansSubcategoryId: UUID? = nil, deletedAt: Date? = nil
   ) {
     self.id = id
     self.direction = direction
@@ -262,7 +270,10 @@ public struct Debt: Identifiable, Hashable, Sendable, Codable {
     self.note = note
     self.closed = closed
     self.loansSubcategoryId = loansSubcategoryId
+    self.deletedAt = deletedAt
   }
+
+  public var isDeleted: Bool { deletedAt != nil }
 }
 
 /// One line of a debt journal. `amountE4` is signed: plus grows the debt, minus reduces it.

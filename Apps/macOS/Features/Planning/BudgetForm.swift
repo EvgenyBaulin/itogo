@@ -17,6 +17,7 @@ struct BudgetForm: View {
 
   var body: some View {
     let choices = PlanningChoices(compute, environment)
+    let issue = PlanningActions.issue(of: normalized, compute: compute, environment: environment)
     VStack(alignment: .leading) {
       Text(verbatim: t(original == nil ? "form.limit.new" : "form.limit.edit")).font(.headline)
       Form {
@@ -30,7 +31,7 @@ struct BudgetForm: View {
         case .category:
           Picker(t("form.category"), selection: $budget.categoryId) {
             Text(verbatim: "—").tag(UUID?.none)
-            ForEach(choices.options(.expense, acceptingLimits: true)) {
+            ForEach(limitOptions(choices)) {
               Text(verbatim: choices.label($0)).tag(Optional($0.id))
             }
           }
@@ -53,7 +54,7 @@ struct BudgetForm: View {
           // switched on, starts it again this month (`LimitRules.saving`).
           Text(verbatim: t("form.limit.rolloverHint"))
         }
-        if let issue = PlanningActions.issue(of: normalized, compute: compute) {
+        if let issue {
           Text(verbatim: t("limit.issue.\(issue.rawValue)")).font(.caption).foregroundStyle(
             .secondary)
         }
@@ -61,7 +62,7 @@ struct BudgetForm: View {
       .formStyle(.grouped)
       FormButtons(
         title: environment.language("action.save"),
-        enabled: PlanningActions.issue(of: normalized, compute: compute) == nil
+        enabled: issue == nil
       ) {
         guard let dependencies else { return false }
         return PlanningActions(dependencies).save(normalized)
@@ -73,6 +74,18 @@ struct BudgetForm: View {
       guard !loaded else { return }
       loaded = true
       budget = original ?? Budget(scope: .category, amountE4: .zero)
+    }
+  }
+
+  /// The categories a limit may be put on: those that take one, without «Сверка» and what is
+  /// under it. A limit 1.1 stored there keeps its category in the menu, so the form of that
+  /// limit still shows what it is on (and says why it cannot be saved).
+  private func limitOptions(_ choices: PlanningChoices) -> [CoreKit.Category] {
+    let limitless = LimitWrites.limitless(environment, compute.snapshot)
+    let tree = compute.snapshot?.ledger.tree ?? CategoryTree()
+    return choices.options(.expense, acceptingLimits: true).filter {
+      $0.id == original?.categoryId
+        || !LimitRules.isLimitless($0.id, tree: tree, limitless: limitless)
     }
   }
 

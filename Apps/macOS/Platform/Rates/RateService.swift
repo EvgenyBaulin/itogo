@@ -59,6 +59,9 @@ public actor RateService {
   private let today: @Sendable () -> DateOnly
   /// Stamps `fetched_at` on what arrives.
   private let clock: any CoreKit.Clock
+  /// The note of the income a refinement writes when money that came back now covers a part
+  /// with some over — «Излишек возврата» in the interface language of the moment.
+  private let surplusNote: @Sendable () -> String?
   /// Days being asked about right now.
   private var inFlight: Set<String> = []
   /// The requests on their way, for `close()` to cancel.
@@ -84,7 +87,8 @@ public actor RateService {
     client: any RatesFetching = CBRClient(), calendar: CalendarContext = .system,
     policy: Policy = Policy(),
     today: @escaping @Sendable () -> DateOnly = { CalendarContext.moscow.day(of: Date()) },
-    clock: any CoreKit.Clock = SystemClock()
+    clock: any CoreKit.Clock = SystemClock(),
+    surplusNote: @escaping @Sendable () -> String? = { nil }
   ) {
     self.repository = repository
     self.transactions = transactions
@@ -93,6 +97,7 @@ public actor RateService {
     self.policy = policy
     self.today = today
     self.clock = clock
+    self.surplusNote = surplusNote
   }
 
   /// Rate for one day, taken from the cache when it is there. Returns nil when the day is
@@ -367,11 +372,14 @@ public actor RateService {
     try repository.save(incoming)
   }
 
-  /// Writes what the table can refine now and returns how many operations took it.
+  /// Writes what the table can refine now and returns how many operations took it. How much
+  /// the money back of the refined parts was balanced again goes to the journal.
   private func apply(_ table: RateTable, to usages: [RateTable.RateUsage]) throws -> Int {
     guard let transactions else { return 0 }
     let refinements = RateTable.refinement(for: usages, with: table)
     guard !refinements.isEmpty else { return 0 }
-    return try transactions.applyRefinements(refinements, of: usages, calendar: calendar)
+    return try transactions.applyRefinements(
+      refinements, of: usages, calendar: calendar, surplusNote: surplusNote(),
+      settled: { $0.log() })
   }
 }

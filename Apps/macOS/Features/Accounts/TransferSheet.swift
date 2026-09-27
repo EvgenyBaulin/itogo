@@ -5,15 +5,23 @@ import SwiftUI
 /// same account, an exchange. The amount sent, and the amount received when the currencies
 /// differ, as the bank shows them, with the rate they imply; an optional fee, written as an
 /// expense in «Комиссии» from the account the money left; the day and a comment. Saving is one
-/// step of ⌘Z with the fee.
+/// step of ⌘Z with the fee. When «Комиссии» is in the archive, the first fee brings it back —
+/// with its parent when that is archived too — and says so under the fee.
 ///
 /// A transfer dated on the day of a count of a balance it moves, saved after that count, asks
 /// whether it happened before it: «Да» puts it just before the count, inside the balance
 /// counted; «Нет» after it — or, when the day holds a later count of the other balance, asks
-/// about that one too.
+/// about that one too. «Больше не спрашивать для этой сверки» keeps the answer for that
+/// count's reconciliation, and what saves next that day is dated by it silently. A time the
+/// owner chose («Время») is never asked about: it says itself where the transfer was.
+///
+/// An edit of a transfer of an account in the archive keeps that account at zero: money the
+/// edit would leave on it, or take off it, is moved to or from a live account by a transfer
+/// asked for first (`ArchivedMoneySheet`), written in the same step.
 struct TransferSheet: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.store) private var store
+  @Environment(\.dependencies) private var dependencies
 
   @State private var form: TransferForm
   /// Called once the sheet is done with: whether a transfer was written.
@@ -24,6 +32,21 @@ struct TransferSheet: View {
   @State private var failed = false
   @State private var question: CountQuestion?
   @State private var isSaving = false
+  /// «Больше не спрашивать для этой сверки», ticked for the question on screen.
+  @State private var dontAsk = false
+  /// What the edit would leave on an archived account, waiting for where it goes.
+  @State private var leftovers: Leftovers?
+  /// The category of fees a new fee would bring back from the archive, read when the sheet
+  /// opens.
+  @State private var feeComingBack: FeeCategoryComingBack?
+
+  /// The money an edit would leave on an archived account, and the write it waits for.
+  struct Leftovers: Identifiable {
+    let check: ArchivedMoneyCheck
+    let occurredAt: Date
+    let books: AccountBooks
+    let id = UUID()
+  }
 
   /// «Это было до сверки в 14:05?», asked before the transfer is written.
   struct CountQuestion: Identifiable {
@@ -55,6 +78,15 @@ struct TransferSheet: View {
 
   private func account(_ id: UUID?) -> PaymentMethod? {
     accounts.first { $0.id == id }
+  }
+
+  /// Whether saving writes a fee that is not there yet — the one that looks for its category.
+  /// An edit keeps the category of the fee it has.
+  private var writesANewFee: Bool {
+    guard form.fee.raw > 0 else { return false }
+    guard let previous = form.previous else { return true }
+    guard let books else { return false }
+    return TransferActions.fee(of: previous.id, in: books.dataset.entries) == nil
   }
 
   var body: some View {
@@ -101,9 +133,23 @@ struct TransferSheet: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+          if let feeComingBack, writesANewFee {
+            Label {
+              Text(verbatim: TransferText.feeComingBack(feeComingBack, environment))
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+              Image(systemName: "archivebox")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
           DatePicker(selection: dayBinding, displayedComponents: .date) {
             Text(verbatim: t("transfer.sheet.date"))
           }
+          DatePicker(selection: timeBinding, displayedComponents: .hourAndMinute) {
+            Text(verbatim: t("transfer.sheet.time"))
+          }
+          .environment(\.locale, environment.language.locale)
           TextField(text: $form.note) {
             Text(verbatim: t("transfer.sheet.note"))
           }
@@ -134,16 +180,48 @@ struct TransferSheet: View {
     }
     .padding(20)
     .frame(width: 460, height: 640)
-    .task { books = await transfers.books() }
+    .task {
+      books = await transfers.books()
+      feeComingBack = transfers.feeCategoryComingBack()
+    }
     .onChange(of: form) { _, _ in refusal = nil }
-    .confirmationDialog(
+    // A count whose answer would not be kept (`CountQuestions.remembers`) is asked without
+    // «Больше не спрашивать»; one whose answer would, with it.
+    .background { countDialog(on: Color.clear, remembering: false) }
+    .background {
+      countDialog(on: Color.clear, remembering: true)
+        .dialogSuppressionToggle(
+          Text(verbatim: t("transfer.beforeCount.dontAsk")), isSuppressed: $dontAsk)
+    }
+    .onChange(of: question?.id) { _, _ in dontAsk = false }
+    .sheet(item: $leftovers) { asked in
+      ArchivedMoneySheet(
+        check: asked.check,
+        confirm: { settling in
+          leftovers = nil
+          write(occurredAt: asked.occurredAt, books: asked.books, settling: settling)
+        },
+        cancel: {
+          leftovers = nil
+          isSaving = false
+        }
+      )
+      .handingOver(dependencies)
+    }
+    .refusedWriteAlert($failed, environment)
+  }
+
+  /// «Это было до сверки в 14:05?» over `host`, shown while the question offers the checkbox
+  /// (`remembering`) or not.
+  private func countDialog<Host: View>(on host: Host, remembering: Bool) -> some View {
+    host.confirmationDialog(
       question.map {
         environment.format(
           "transfer.beforeCount.title", table: AccountText.table,
           environment.dates.time($0.count))
       } ?? "",
       isPresented: Binding(
-        get: { question != nil },
+        get: { question.map { $0.questions.remembers == remembering } ?? false },
         set: {
           // Dismissed without an answer — Esc, a click outside — nothing is written, and the
           // sheet can be saved again.
@@ -160,7 +238,6 @@ struct TransferSheet: View {
     } message: { _ in
       Text(verbatim: t("transfer.beforeCount.message"))
     }
-    .refusedWriteAlert($failed, environment)
   }
 
   // MARK: Fields
@@ -228,6 +305,14 @@ struct TransferSheet: View {
       set: { form.day = environment.calendar.day(of: $0) })
   }
 
+  /// The time of the transfer: until the owner picks one, the moment it would get — now for
+  /// today, noon for another day, its own for an edit that keeps the day.
+  private var timeBinding: Binding<Date> {
+    Binding(
+      get: { form.occurredAt(now: environment.now(), calendar: environment.calendar) },
+      set: { form.time = environment.calendar.timeOfDay($0) })
+  }
+
   /// «Курс обмена: 1 € = 98.5 ₽».
   private var rateLine: String? {
     guard let from = form.fromCurrency, let to = form.toCurrency,
@@ -260,8 +345,7 @@ struct TransferSheet: View {
       }
       self.books = books
       let now = environment.now()
-      let calendar = environment.calendar
-      let occurredAt = form.occurredAt(now: now, calendar: calendar)
+      let occurredAt = form.occurredAt(now: now, calendar: environment.calendar)
       // What is wrong is said before anything is asked.
       if case .failure(let reason) = transfers.change(
         for: form, occurredAt: occurredAt, books: books)
@@ -270,28 +354,38 @@ struct TransferSheet: View {
         isSaving = false
         return
       }
-      if let transfer = form.transfer(
-        id: form.previous?.id ?? UUID(), occurredAt: occurredAt, now: now),
-        form.asksAboutTheCount(transfer, calendar: calendar)
-      {
-        let counts = TransferActions.countMoments(
-          for: transfer, savedAt: now, balances: books.balances, calendar: calendar)
-        if !counts.isEmpty {
-          question = CountQuestion(
-            questions: CountQuestions(
-              counts: counts, occurredAt: occurredAt, calendar: calendar),
-            books: books)
-          return
-        }
+      switch transfers.countStep(for: form, occurredAt: occurredAt, books: books, now: now) {
+      case .none:
+        proceed(occurredAt: occurredAt, books: books)
+      case .answered(let stamp):
+        proceed(occurredAt: stamp, books: books)
+      case .ask(let questions):
+        question = CountQuestion(questions: questions, books: books)
       }
-      write(occurredAt: occurredAt, books: books)
     }
   }
 
+  /// The write, once the moment is known — after asking where money an edit leaves on an
+  /// archived account goes, when it leaves some.
+  private func proceed(occurredAt: Date, books: AccountBooks) {
+    if case .success(let change) = transfers.change(
+      for: form, occurredAt: occurredAt, books: books)
+    {
+      let check = TransferActions.leftovers(of: change, books: books)
+      if !check.leftovers.isEmpty {
+        leftovers = Leftovers(check: check, occurredAt: occurredAt, books: books)
+        return
+      }
+    }
+    write(occurredAt: occurredAt, books: books)
+  }
+
   private func answer(_ question: CountQuestion, wasBefore: Bool) {
-    switch question.questions.answer(wasBefore: wasBefore) {
+    let remember = dontAsk
+    dontAsk = false
+    switch transfers.answer(question.questions, wasBefore: wasBefore, remember: remember) {
     case .stamp(let moment):
-      write(occurredAt: moment, books: question.books)
+      proceed(occurredAt: moment, books: question.books)
     case .ask(let next):
       // The next count is asked as a dialog of its own, once this one has gone; meanwhile
       // nothing can be saved.
@@ -304,9 +398,9 @@ struct TransferSheet: View {
     }
   }
 
-  private func write(occurredAt: Date, books: AccountBooks) {
+  private func write(occurredAt: Date, books: AccountBooks, settling: [Transfer] = []) {
     defer { isSaving = false }
-    switch transfers.save(form, occurredAt: occurredAt, books: books) {
+    switch transfers.save(form, occurredAt: occurredAt, books: books, settling: settling) {
     case .done: finish(true)
     case .refused(let reason): refusal = reason
     case .failed: failed = true

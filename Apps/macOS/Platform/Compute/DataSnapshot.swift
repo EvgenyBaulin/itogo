@@ -55,6 +55,9 @@ struct SnapshotContext: Hashable, Sendable {
     }
     currencies.formUnion(dataset.planning.expected.map(\.currency))
     currencies.formUnion(dataset.transfers.flatMap { [$0.fromCurrency, $0.toCurrency] })
+    // The default currency always: what «≈ N» of an amount in another currency is written in,
+    // even when the enabled currencies could not be read.
+    currencies.insert(dataset.accountSettings.defaultCurrency)
     // By day: what the goals count their contributions at, and what a leg is prefilled with.
     var byDay = Set(extra)
     byDay.formUnion(dataset.goals.map(\.currency))
@@ -118,6 +121,10 @@ struct DataSnapshot: Sendable {
   /// money on the accounts, built from the same ledger off the main thread. Its `planned` is
   /// the one figure of planned payments the cards and the forecast show.
   let planning: PlanningSnapshot
+  /// What is known about every balance through the end of the month, built from the same
+  /// ledger and planning: the forecast step's remainder laid over it gives each account's
+  /// balance at the end of the month (`accountPlan.forecast(remainder:)`).
+  let accountPlan: AccountMonthPlan
   let owed: OwedSummary
   /// The days of the previous and the current month, and any later — Overview lists these.
   let recentGroups: [TransactionsStore.DayGroup]
@@ -156,12 +163,14 @@ struct DataSnapshot: Sendable {
     let groups = TransactionsStore.group(
       ids.compactMap { ledger.entry($0) }, calendar: calendar, debts: dataset.debtsById,
       transfers: transfers, refunds: ledger.refundIndex)
+    let planning = PlanningSnapshot.build(
+      ledger: ledger, today: today, now: now, rubPerUnit: context.rubPerUnit,
+      dayRates: context.dayRates, localeIdentifier: context.localeIdentifier)
     return DataSnapshot(
       ledger: ledger,
       summary: summary,
-      planning: PlanningSnapshot.build(
-        ledger: ledger, today: today, now: now, rubPerUnit: context.rubPerUnit,
-        dayRates: context.dayRates, localeIdentifier: context.localeIdentifier),
+      planning: planning,
+      accountPlan: AccountMonthPlan.build(ledger: ledger, planning: planning),
       owed: OwedSummary(summary),
       recentGroups: groups,
       recentIds: seen,

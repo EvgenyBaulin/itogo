@@ -14,8 +14,11 @@ struct ScheduledPaymentForm: View {
   @Environment(\.dependencies) private var dependencies
   /// The payment edited — saved over it, with a price edit — or nil for a new one.
   let original: ScheduledPayment?
-  /// What the form starts with: `original`, or a new payment filled in from a candidate.
+  /// What the form starts with: `original`, or a new payment filled in from a candidate or
+  /// from an account's screen.
   let start: ScheduledPayment?
+  /// The currency of `start` is the owner's; false when it only follows the start's account.
+  var startCurrencyChosen = true
   /// The payment and the choices of its schedule: «How often» as a preset, «Once», or
   /// «Other…» with the unit and interval shown for editing; the last-day switch; the end and
   /// the trial.
@@ -58,7 +61,36 @@ struct ScheduledPaymentForm: View {
           }
         }
         AccountPicker(
-          title: t("form.method"), accounts: choices.methods, selection: accountBinding)
+          title: t("form.method"), accounts: choices.methods, cards: cards,
+          selection: accountBinding)
+        if let archived = Self.archivedAccount(
+          of: draft.payment, among: compute.snapshot?.dataset.paymentMethods ?? [])
+        {
+          Label {
+            Text(
+              verbatim: environment.format(
+                "form.accountArchived", table: "Planning", archived.name))
+          } icon: {
+            Image(systemName: "archivebox")
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        }
+        Picker(t("form.event"), selection: $draft.payment.eventId) {
+          Text(verbatim: t("form.event.none")).tag(UUID?.none)
+          ForEach(choices.events(keeping: draft.payment.eventId, today: environment.today)) {
+            event in
+            Text(verbatim: Self.eventName(event, today: environment.today, environment))
+              .tag(Optional(event.id))
+          }
+        }
+        if draft.payment.eventId != nil {
+          Text(verbatim: t("form.event.hint"))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         Picker(t("form.freq"), selection: presetBinding) {
           ForEach(FrequencyPreset.allCases, id: \.self) { preset in
             if preset == .once || preset == .other { Divider() }
@@ -190,8 +222,9 @@ struct ScheduledPaymentForm: View {
         ?? Self.newPayment(defaultCurrency: environment.defaultCurrency, today: environment.today)
       if opened.remindDaysBefore == nil { opened.remindDaysBefore = 3 }
       draft = ScheduledPaymentDraft(opening: opened)
-      // A payment saved, or one a candidate filled in, has its currency already.
-      currencyChosen = start != nil
+      // A payment saved, or one a candidate filled in, has its currency already; one started
+      // from an account's screen has the account's, which another account picked moves.
+      currencyChosen = start != nil && startCurrencyChosen
     }
   }
 
@@ -236,10 +269,39 @@ struct ScheduledPaymentForm: View {
     return payment
   }
 
+  /// The account the payment names when it is archived: the payment is paid from — and comes
+  /// off — the main account until another is picked, and the form says so.
+  static func archivedAccount(
+    of payment: ScheduledPayment, among accounts: [PaymentMethod]
+  ) -> PaymentMethod? {
+    guard let id = payment.paymentMethodId,
+      let account = accounts.first(where: { $0.id == id }), account.archived
+    else { return nil }
+    return account
+  }
+
+  /// An event as the picker names it: archived or over, it says it is in the archive.
+  static func eventName(_ event: Event, today: DateOnly, _ environment: AppEnvironment) -> String {
+    event.archived || event.endDate < today
+      ? environment.format("common.archivedName", event.name) : event.name
+  }
+
   /// The account the field shows for a payment on `id`: that account while it is live, else
   /// the main one — the account «Провести» pays from — never an empty field.
   static func shownAccount(_ id: UUID?, among accounts: [PaymentMethod]) -> UUID? {
     FormAccounts.account(id, among: accounts)?.id
+  }
+
+  /// What the account field shows for `payment`: its card while the card is live and of the
+  /// account shown, else the account (`shownAccount`).
+  static func shownChoice(
+    _ payment: ScheduledPayment, among accounts: [PaymentMethod], cards: [PaymentCard]
+  ) -> UUID? {
+    let account = shownAccount(payment.paymentMethodId, among: accounts)
+    guard let cardId = payment.cardId,
+      cards.contains(where: { $0.id == cardId && !$0.archived && $0.accountId == account })
+    else { return account }
+    return cardId
   }
 
   /// The payment once «Возвращает» is put in `currency`: a figure typed is worked out in it at
@@ -336,20 +398,40 @@ struct ScheduledPaymentForm: View {
       set: { draft.payment = Self.returning(draft.payment, in: $0, rubPerUnit: rubPerUnit) })
   }
 
+  /// Every card: the picker offers the live ones under their accounts.
+  private var cards: [PaymentCard] { compute.snapshot?.dataset.cards ?? [] }
+
   /// A payment on no account, or on an archived one, shows the main one, which is the account it
-  /// is paid from; only a pick writes an account.
+  /// is paid from; only a pick writes an account. A live card it names is shown; picking a card
+  /// picks its account, picking an account drops the card.
   private var accountBinding: Binding<UUID?> {
     Binding(
       get: {
-        Self.shownAccount(
-          draft.payment.paymentMethodId, among: PlanningChoices(compute, environment).methods)
+        Self.shownChoice(
+          draft.payment, among: PlanningChoices(compute, environment).methods, cards: cards)
       },
       set: { id in
-        let account = PlanningChoices(compute, environment).methods.first { $0.id == id }
-        draft.payment = Self.picking(
-          account, for: draft.payment, currencyChosen: currencyChosen,
+        draft.payment = Self.choosing(
+          id, for: draft.payment, methods: PlanningChoices(compute, environment).methods,
+          cards: cards, currencyChosen: currencyChosen,
           defaultCurrency: environment.defaultCurrency)
       })
+  }
+
+  /// The payment once the account row's `selection` is picked — the id of an account or of a
+  /// card among `methods` and `cards`: a card brings its account and is written; an account
+  /// drops the card; no pick leaves neither. The currency follows the account as `picking`
+  /// says.
+  static func choosing(
+    _ selection: UUID?, for payment: ScheduledPayment, methods: [PaymentMethod],
+    cards: [PaymentCard], currencyChosen: Bool, defaultCurrency: CurrencyCode
+  ) -> ScheduledPayment {
+    let resolved = CardRules.resolve(selection: selection, cards: cards)
+    let account = methods.first { $0.id == resolved.accountId }
+    var payment = picking(
+      account, for: payment, currencyChosen: currencyChosen, defaultCurrency: defaultCurrency)
+    payment.cardId = account == nil ? nil : resolved.cardId
+    return payment
   }
 
   private var presetBinding: Binding<FrequencyPreset> {
@@ -439,7 +521,7 @@ struct MarkAsPaidForm: View {
         }
         AccountPicker(
           title: environment.language("entry.account.from", table: "Entry"),
-          accounts: choices.methods, selection: $method)
+          accounts: choices.methods, cards: cards, selection: $method)
         ChargeRow(charge: $charge)
         if payment.kind == .subscription, amount != status.amountNext {
           Toggle(t("form.updatePrice"), isOn: $updatePrice)
@@ -464,14 +546,13 @@ struct MarkAsPaidForm: View {
           amount: amount, needsRate: needsRate, rate: rate, charged: charge.typedFigure,
           chargeComplete: charge.isComplete),
         failure: { failure(payment.currency) },
-        countToAsk: { countToAsk(payment) }
-      ) { answer in
+        ask: { question(payment) }, moment: { date }, name: payment.name
+      ) { moment in
         guard let dependencies else { return false }
-        let paidAt =
-          answer.map { FormAccounts.stamped(date, $0, calendar: environment.calendar) } ?? date
         return PlanningActions(dependencies).markAsPaid(
-          payment, due: status.nextDue, amount: amount, on: paidAt, account: method,
-          charged: charge.typedFigure, updatePrice: updatePrice, rate: needsRate ? rate : nil)
+          payment, due: status.nextDue, amount: amount, on: moment ?? date, account: account,
+          charged: charge.typedFigure, updatePrice: updatePrice, rate: needsRate ? rate : nil,
+          card: .chosen(card))
       }
     }
     .padding(20)
@@ -480,7 +561,7 @@ struct MarkAsPaidForm: View {
     .onChange(of: date, initial: true) {
       needsRate = !environment.knowsRate(status.payment.currency, on: date)
     }
-    .onChange(of: ChargeInputs(amount: amount, date: date, account: method, rate: rateText)) {
+    .onChange(of: ChargeInputs(amount: amount, date: date, account: account, rate: rateText)) {
       refreshCharge()
     }
     .onAppear {
@@ -488,11 +569,29 @@ struct MarkAsPaidForm: View {
       loaded = true
       rates = (try? environment.rates?.table()) ?? RateTable()
       amount = status.amountNext
-      method = FormAccounts.account(payment.paymentMethodId, among: choices.methods)?.id
+      method = Self.startingChoice(payment, among: choices.methods, cards: cards)
       date = PlanningActions.paidAt(
         due: status.nextDue, today: environment.today, calendar: environment.calendar)
       refreshCharge()
     }
+  }
+
+  /// Every card: the picker offers the live ones under their accounts.
+  private var cards: [PaymentCard] { compute.snapshot?.dataset.cards ?? [] }
+
+  /// The account the operation goes on: the one picked, or the account of the card picked.
+  private var account: UUID? { CardRules.resolve(selection: method, cards: cards).accountId }
+
+  /// The card picked, if any.
+  private var card: UUID? { CardRules.resolve(selection: method, cards: cards).cardId }
+
+  /// What the account field of «Провести» starts on: the payment's card while it is live and of
+  /// the account the payment is paid from, else that account — the main one when its own is
+  /// gone or archived. A card in the archive is left off: the account pays alone.
+  static func startingChoice(
+    _ payment: ScheduledPayment, among accounts: [PaymentMethod], cards: [PaymentCard]
+  ) -> UUID? {
+    ScheduledPaymentForm.shownChoice(payment, among: accounts, cards: cards)
   }
 
   /// Whether «Провести» can write: an amount, «Списано со счёта» when the account needs it, and
@@ -514,21 +613,24 @@ struct MarkAsPaidForm: View {
     charge.refresh(
       FormAccounts.charge(
         amount: amount, currency: status.payment.currency, at: date,
-        rate: needsRate ? rate : nil, account: FormAccounts.account(method, among: accounts),
+        rate: needsRate ? rate : nil, account: FormAccounts.account(account, among: accounts),
         table: rates, calendar: environment.calendar))
   }
 
-  /// The count «Провести» asks about: the operation it would write, on the day of the latest
-  /// count of the balance it moves, saved after that count.
-  private func countToAsk(_ payment: ScheduledPayment) -> Date? {
+  /// What «Провести» asks before it writes: about a later count when the chosen moment lies
+  /// before it and the due is earlier than its day, else about the counts of the operation's
+  /// own day — the operation it would write, saved now.
+  private func question(_ payment: ScheduledPayment) -> DueCountAsk {
     guard let dependencies,
       let entry = try? PlanningActions(dependencies).markAsPaidEntry(
-        payment, due: status.nextDue, amount: amount, on: date, account: method,
-        charged: charge.typedFigure, updatePrice: updatePrice, rate: needsRate ? rate : nil
+        payment, due: status.nextDue, amount: amount, on: date, account: account,
+        charged: charge.typedFigure, updatePrice: updatePrice, rate: needsRate ? rate : nil,
+        card: .chosen(card)
       ).entry
-    else { return nil }
-    return FormAccounts.countToAsk(
-      about: entry, savedAt: Date(), snapshot: compute.snapshot, calendar: environment.calendar)
+    else { return .none }
+    return FormAccounts.dueQuestion(
+      about: entry, due: status.nextDue, savedAt: Date(), snapshot: compute.snapshot,
+      calendar: environment.calendar, remembered: environment.rememberedCountAnswers())
   }
 
   private func failure(_ currency: CurrencyCode) -> String {
@@ -553,6 +655,13 @@ private struct ChargeInputs: Equatable {
 
 // MARK: - «Провести» on an account
 
+/// The card «Провести» writes: the payment's own while it is live and of the account paid from
+/// (a reminder's «Провести»), or the one picked in the form — none for the account alone.
+enum MarkAsPaidCard: Equatable {
+  case payments
+  case chosen(UUID?)
+}
+
 extension PlanningActions {
   /// The operation «Провести» writes for `due` of `payment`, with the plan it comes from: on
   /// `account` — the one chosen while it is live, else the main account — and, when that
@@ -561,7 +670,7 @@ extension PlanningActions {
   /// with (`FormAccounts.lay`).
   func markAsPaidEntry(
     _ payment: ScheduledPayment, due: DateOnly, amount: AmountE4, on day: Date, account: UUID?,
-    charged: Money?, updatePrice: Bool, rate: Decimal?
+    charged: Money?, updatePrice: Bool, rate: Decimal?, card: MarkAsPaidCard = .payments
   ) throws -> (entry: TransactionEntry, plan: MarkAsPaidPlan) {
     let history = ManualQualityHistory(
       entries: (try? environment.transactions?.entriesRatedByHand()) ?? [])
@@ -569,11 +678,19 @@ extension PlanningActions {
       payment, due: due, amount: amount, occurredAt: day, paidAt: rate,
       rubPerUnit: snapshot?.context.rubPerUnit ?? [:], updatePrice: updatePrice,
       prices: snapshot?.dataset.planning.prices ?? [], categories: tree ?? CategoryTree(),
-      history: history)
+      history: history, eventId: event(of: payment, due: due),
+      cards: snapshot?.dataset.cards ?? [])
     var draft = plan.draft
     // A rate by hand is the rate of the day it was typed for, like one in the entry line.
     if draft.rateSource == .manual { draft.rateDate = environment.calendar.day(of: day) }
     try FormAccounts.lay(on: &draft, account: account, charged: charged, actions: self)
+    if case .chosen(let chosen) = card { draft.cardId = chosen }
+    // The payment's card goes with its own account only: paid from another, it is left off.
+    if let card = draft.cardId,
+      snapshot?.dataset.cards.first(where: { $0.id == card })?.accountId != draft.paymentMethodId
+    {
+      draft.cardId = nil
+    }
     // Without any rate the ruble figure gives one (`materialize`): the rate of this day.
     if draft.currency != .rub, draft.rate == nil, draft.accountCurrency == .rub {
       draft.rateDate = environment.calendar.day(of: day)
@@ -606,12 +723,12 @@ extension PlanningActions {
   @discardableResult
   func markAsPaid(
     _ payment: ScheduledPayment, due: DateOnly, amount: AmountE4, on day: Date, account: UUID?,
-    charged: Money?, updatePrice: Bool, rate: Decimal? = nil
+    charged: Money?, updatePrice: Bool, rate: Decimal? = nil, card: MarkAsPaidCard = .payments
   ) -> Bool {
     guard
       let made = try? markAsPaidEntry(
         payment, due: due, amount: amount, on: day, account: account, charged: charged,
-        updatePrice: updatePrice, rate: rate)
+        updatePrice: updatePrice, rate: rate, card: card)
     else { return false }
     var rows = PlanningRows.empty
     rows.scheduled = [made.plan.payment]
@@ -638,7 +755,9 @@ extension PlanningActions {
         guard let operationId = matches.operation(for: payment.id, earlier),
           let entry = snapshot.ledger.entry(operationId)
         else { return nil }
-        return ScheduledMatching.bind(entry, to: payment, due: earlier).operation
+        return ScheduledMatching.bind(
+          entry, to: payment, due: earlier, eventId: event(of: payment, due: earlier)
+        ).operation
       }
   }
 }
@@ -864,6 +983,49 @@ enum FormAccounts {
       balances: snapshot.planning.accounts.balances, calendar: calendar)
   }
 
+  /// What saving `entry` at `savedAt` asks about the counts of its day: every count of a
+  /// balance it moves made that day before it was saved, oldest first, the answers remembered
+  /// for their reconciliations applied (`AccountReconciliation.countToAsk`).
+  static func countAsk(
+    about entry: TransactionEntry, savedAt: Date, snapshot: DataSnapshot?,
+    calendar: CalendarContext, remembered: [UUID: Bool]
+  ) -> CountAsk {
+    guard let snapshot else { return .none }
+    let keys = AccountReconciliation.movedKeys(
+      of: entry, mainId: mainId(snapshot), tree: snapshot.ledger.tree)
+    return AccountReconciliation.countToAsk(
+      occurredAt: entry.transaction.occurredAt, savedAt: savedAt, keys: keys,
+      balances: snapshot.planning.accounts.balances, calendar: calendar, remembered: remembered)
+  }
+
+  /// The same for a line of a debt journal that moves money by itself.
+  static func countAsk(
+    about line: DebtEntry, of debt: Debt, savedAt: Date, snapshot: DataSnapshot?,
+    calendar: CalendarContext, remembered: [UUID: Bool]
+  ) -> CountAsk {
+    guard let snapshot, let moment = line.occurredAt else { return .none }
+    let keys = AccountReconciliation.movedKeys(
+      of: line, debt: debt, mainId: mainId(snapshot), calendar: calendar)
+    return AccountReconciliation.countToAsk(
+      occurredAt: moment, savedAt: savedAt, keys: keys,
+      balances: snapshot.planning.accounts.balances, calendar: calendar, remembered: remembered)
+  }
+
+  /// What paying `due` with `entry` asks: «Деньги за «X» ушли до сверки …?» when the
+  /// operation's moment lies before a later count of a balance it moves (the due on an earlier
+  /// day), else the questions of its own day (`countAsk`).
+  static func dueQuestion(
+    about entry: TransactionEntry, due: DateOnly, savedAt: Date, snapshot: DataSnapshot?,
+    calendar: CalendarContext, remembered: [UUID: Bool]
+  ) -> DueCountAsk {
+    guard let snapshot else { return .none }
+    let keys = AccountReconciliation.movedKeys(
+      of: entry, mainId: mainId(snapshot), tree: snapshot.ledger.tree)
+    return AccountReconciliation.dueQuestion(
+      due: due, occurredAt: entry.transaction.occurredAt, savedAt: savedAt, keys: keys,
+      balances: snapshot.planning.accounts.balances, calendar: calendar, remembered: remembered)
+  }
+
   /// The moment the answer dates the operation with: «Да» — a second before the count, unless
   /// it is dated before it already; «Нет» — after the count. Neither leaves the day of the
   /// count in the owner's `calendar`: the day decides the month the money is spent in.
@@ -886,10 +1048,14 @@ struct AccountPicker: View {
   @Dependency(\.environment) private var environment
   let title: String
   let accounts: [PaymentMethod]
+  /// The cards offered under their accounts, «Т-Банк · Black»; none — the accounts alone.
+  var cards: [PaymentCard] = []
   @Binding var selection: UUID?
 
   var body: some View {
-    let offered = FormAccounts.offered(accounts, locale: environment.language.locale)
+    let locale = environment.language.locale
+    let offered = AccountCardChoices.items(
+      accounts: FormAccounts.offered(accounts, locale: locale), cards: cards, locale: locale)
     Picker(title, selection: $selection) {
       if offered.isEmpty || !offered.contains(where: { $0.id == selection }) {
         Text(verbatim: "—").tag(UUID?.none)
@@ -949,28 +1115,41 @@ struct ChargeRow: View {
 
 /// «Cancel» and the main action of a form that writes money on an account. Before the write it
 /// asks «Это было до сверки в 14:05?» when the operation is dated on the day of the latest
-/// count of a balance it moves and saved after that count; the answer goes to `save`, which
-/// dates the operation by it. The sheet closes only over a write that landed.
+/// count of a balance it moves and saved after that count, or «Деньги за «X» ушли до сверки
+/// …?» when a due of an earlier day is paid before a later count; the answer goes to `save`,
+/// which dates the operation by it. The sheet closes only over a write that landed.
 struct CountingFormButtons: View {
   @Dependency(\.environment) private var environment
   @Environment(\.dismiss) private var dismiss
   let title: String
   let enabled: Bool
   let failure: () -> String
-  let countToAsk: () -> Date?
-  let save: (_ answer: (count: Date, wasBefore: Bool)?) -> Bool
+  /// What the save asks before it writes (`FormAccounts.dueQuestion`).
+  let ask: () -> DueCountAsk
+  /// The moment the form would write at: «Да» of the dated question keeps it while it is
+  /// before the count.
+  let moment: () -> Date
+  /// The payment or debt the dated question names.
+  let name: String?
+  /// Writes at the moment the answers give; `nil` — at the form's own.
+  let save: (_ at: Date?) -> Bool
+  /// «Это было до сверки в 14:05?» about every count of the day, in turn.
   @State private var question: BeforeTheCountQuestion?
+  /// «Деньги за «X» ушли до сверки …?».
+  @State private var dated: BeforeTheCountQuestion?
   @State private var failed: String?
 
   init(
     title: String, enabled: Bool, failure: @escaping () -> String,
-    countToAsk: @escaping () -> Date?,
-    save: @escaping (_ answer: (count: Date, wasBefore: Bool)?) -> Bool
+    ask: @escaping () -> DueCountAsk, moment: @escaping () -> Date, name: String? = nil,
+    save: @escaping (_ at: Date?) -> Bool
   ) {
     self.title = title
     self.enabled = enabled
     self.failure = failure
-    self.countToAsk = countToAsk
+    self.ask = ask
+    self.moment = moment
+    self.name = name
     self.save = save
   }
 
@@ -987,25 +1166,40 @@ struct CountingFormButtons: View {
         Button(environment.language("action.cancel")) { dismiss() }
           .keyboardShortcut(.cancelAction)
         Button(title) {
-          if let count = countToAsk() {
-            question = BeforeTheCountQuestion(count: count)
-          } else {
+          switch ask() {
+          case .none, .sameDay(.none):
             finish(nil)
+          case .sameDay(.answered(let stamp)):
+            finish(stamp)
+          case .sameDay(.ask(let questions)):
+            question = BeforeTheCountQuestion(
+              count: questions.count, reconciliation: questions.reconciliation,
+              questions: questions)
+          case .dueBefore(let count, let due, let reconciliation):
+            dated = BeforeTheCountQuestion(
+              count: count, reconciliation: reconciliation, due: due, name: name)
+          case .dueAnswered(let stamp):
+            // Answered for this count's reconciliation already: saved at that moment, unasked.
+            finish(stamp)
           }
         }
         .keyboardShortcut(.defaultAction)
         .buttonStyle(.borderedProminent)
         .disabled(!enabled)
       }
+      // One dialog per view: the dated question hangs on the row of buttons.
+      .beforeTheCountQuestion($dated) { count, wasBefore in
+        finish(
+          AccountReconciliation.dueAnswer(
+            count: count, occurredAt: moment(), wasBefore: wasBefore, now: Date()))
+      }
     }
     .padding(.top, 8)
-    .beforeTheCountQuestion($question) { count, wasBefore in
-      finish((count, wasBefore))
-    }
+    .beforeTheCountQuestions($question) { finish($0) }
   }
 
-  private func finish(_ answer: (count: Date, wasBefore: Bool)?) {
-    if save(answer) {
+  private func finish(_ moment: Date?) {
+    if save(moment) {
       dismiss()
     } else {
       let reason = failure()

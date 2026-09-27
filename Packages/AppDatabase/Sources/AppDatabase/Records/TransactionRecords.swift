@@ -2,6 +2,8 @@ import CoreKit
 import Foundation
 import GRDB
 
+/// The cashback typed for an operation is two columns, `cashback_currency` and `cashback_e4`:
+/// both or neither. One without the other — only a hand edit leaves it — reads as none.
 extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "transactions"
 
@@ -30,7 +32,16 @@ extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive Persis
       externalId: row["external_id"],
       createdAt: try RowMapping.instant(row, "created_at"),
       updatedAt: try RowMapping.instant(row, "updated_at"),
-      deletedAt: try RowMapping.optionalInstant(row, "deleted_at"))
+      deletedAt: try RowMapping.optionalInstant(row, "deleted_at"),
+      cardId: RowMapping.optionalUUID(row, "card_id"),
+      cashback: try Self.cashback(row))
+  }
+
+  private static func cashback(_ row: Row) throws -> Money? {
+    guard let currency = RowMapping.currency(row, "cashback_currency"),
+      let amount = try RowMapping.optionalAmount(row, "cashback_e4")
+    else { return nil }
+    return Money(amount: amount, currency: currency)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -58,6 +69,9 @@ extension CoreKit.Transaction: @retroactive FetchableRecord, @retroactive Persis
     container["created_at"] = StoredInstant.databaseValue(createdAt)
     container["updated_at"] = StoredInstant.databaseValue(updatedAt)
     container["deleted_at"] = StoredInstant.databaseValue(deletedAt)
+    container["card_id"] = cardId?.uuidString
+    container["cashback_currency"] = cashback?.currency.code
+    container["cashback_e4"] = cashback?.amount.raw
   }
 }
 
@@ -126,6 +140,7 @@ extension ReimbursementLink: @retroactive FetchableRecord, @retroactive Persista
   }
 }
 
+/// `deleted_at` is an instant, written the way the one of an operation is (`StoredInstant`).
 extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "debts"
 
@@ -145,7 +160,8 @@ extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
       origin: DebtOrigin(rawValue: row["origin"] ?? "existing") ?? .existing,
       note: row["note"],
       closed: try RowMapping.flag(row, "closed", fallback: false),
-      loansSubcategoryId: RowMapping.optionalUUID(row, "loans_subcategory_id"))
+      loansSubcategoryId: RowMapping.optionalUUID(row, "loans_subcategory_id"),
+      deletedAt: try RowMapping.optionalInstant(row, "deleted_at"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -164,6 +180,7 @@ extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
     container["note"] = note
     container["closed"] = closed
     container["loans_subcategory_id"] = loansSubcategoryId?.uuidString
+    container["deleted_at"] = StoredInstant.databaseValue(deletedAt)
   }
 }
 

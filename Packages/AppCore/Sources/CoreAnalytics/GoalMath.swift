@@ -65,36 +65,139 @@ public enum GoalMath {
   }
 
   /// What the monthly plan of each live goal still asks in `month`, in the goal's currency:
-  /// max(0, plan − net contributions of the month), never more than the plan itself and never
-  /// more than the goal still needs, max(0, target − saved). A reached goal asks nothing, and a
-  /// withdrawal of earlier months' savings is no plan of this month. Goals without a plan, or
-  /// with nothing left to ask, are not in the map. A row without a rate adds nothing.
+  /// `GoalPlanState.restThisMonth` — what is left of this month's plan once what went in above
+  /// the plans of the months before is counted towards it, never more than the plan itself and
+  /// never more than the goal still needs, max(0, target − saved). A reached goal asks nothing,
+  /// and a withdrawal of earlier months' savings is no plan of this month. Goals without a
+  /// plan, or with nothing left to ask, are not in the map. A row without a rate adds nothing.
   public static func planLeft(
     goals: [Goal], rows: [LedgerRow], month: MonthKey, rates: DayRates
   ) -> [UUID: AmountE4] {
+    planStates(goals: goals, rows: rows, month: month, rates: rates).compactMapValues { state in
+      state.restThisMonth.raw > 0 ? state.restThisMonth : nil
+    }
+  }
+
+  /// Where the monthly plan of a goal stands in `month` (`GoalPlanState`); `nil` for an
+  /// archived goal and for one without a plan above zero.
+  public static func planState(
+    goal: Goal, rows: [LedgerRow], month: MonthKey, rates: DayRates
+  ) -> GoalPlanState? {
+    planStates(goals: [goal], rows: rows, month: month, rates: rates)[goal.id]
+  }
+
+  /// `planState` of every live goal with a plan, the rows read once.
+  ///
+  /// The plan counts from `goal.planStartMonth`, else from the month of the goal's first
+  /// contribution, else from `month`. Every month from there to the one before `month` adds
+  /// what went in above its plan to a credit and takes what fell short of it from the credit —
+  /// never below zero: a month below plan is not held back later. This month's plan asks what
+  /// the credit and this month's contributions do not cover; what they give beyond it is the
+  /// credit for the months after this one.
+  public static func planStates(
+    goals: [Goal], rows: [LedgerRow], month: MonthKey, rates: DayRates
+  ) -> [UUID: GoalPlanState] {
     let planned = goals.filter { goal in
       guard !goal.archived, let plan = goal.monthlyPlanE4 else { return false }
       return plan.raw > 0
     }
     guard !planned.isEmpty else { return [:] }
     var saved = Array(repeating: AmountE4.zero, count: planned.count)
-    var thisMonth = Array(repeating: AmountE4.zero, count: planned.count)
+    var byMonth = Array(repeating: [MonthKey: AmountE4](), count: planned.count)
+    var firstMonth = [MonthKey?](repeating: nil, count: planned.count)
     for row in rows where row.kind == .expense || row.kind == .refund {
       for (index, goal) in planned.enumerated() {
         guard let amount = contribution(of: row, to: goal, rates: rates), !amount.isZero else {
           continue
         }
         saved[index] += amount
-        if row.day.monthKey == month { thisMonth[index] += amount }
+        byMonth[index][row.day.monthKey, default: .zero] += amount
+        if firstMonth[index] == nil { firstMonth[index] = row.day.monthKey }
+      }
+    }
+    var result: [UUID: GoalPlanState] = [:]
+    for (index, goal) in planned.enumerated() {
+      let plan = goal.monthlyPlanE4 ?? .zero
+      let start = goal.planStartMonth ?? firstMonth[index] ?? month
+      var credit = AmountE4.zero
+      if start < month {
+        for current in MonthKey.range(start, through: month.previous) {
+          credit = max(.zero, credit + (byMonth[index][current] ?? .zero) - plan)
+        }
+      }
+      let thisMonth = byMonth[index][month] ?? .zero
+      let needed = max(.zero, goal.targetE4 - saved[index])
+      let rest = min(plan, max(.zero, plan - credit - thisMonth), needed)
+      result[goal.id] = GoalPlanState(
+        creditIn: credit, thisMonth: thisMonth, restThisMonth: rest,
+        creditOut: max(.zero, credit + thisMonth - plan))
+    }
+    return result
+  }
+
+  /// What is saved in each goal counted in the rubles its contributions cost, at the rate of
+  /// their own day — «по курсу взносов», for the owner who keeps a foreign goal's money in
+  /// rubles. A running average cost: a contribution adds its units and its rubles; a
+  /// withdrawal takes rubles in proportion to the units it takes, so money in equals money out
+  /// and nothing is ever left negative. A row without a rate for the goal's currency is left
+  /// out, as it is of `saved`. A ruble goal is its rubles either way. Goals with nothing saved
+  /// are not in the map.
+  public static func savedRubAtContributions(
+    goals: [Goal], rows: [LedgerRow], rates: DayRates
+  ) -> [UUID: AmountE4] {
+    let live = goals.filter { !$0.archived }
+    guard !live.isEmpty else { return [:] }
+    var units = Array(repeating: AmountE4.zero, count: live.count)
+    var rubles = Array(repeating: AmountE4.zero, count: live.count)
+    for row in rows where row.kind == .expense || row.kind == .refund {
+      for (index, goal) in live.enumerated() {
+        guard let amount = contribution(of: row, to: goal, rates: rates), !amount.isZero else {
+          continue
+        }
+        if amount.raw > 0 {
+          units[index] += amount
+          rubles[index] += row.amountRubE4
+        } else {
+          if units[index].raw > 0 {
+            let taken = min(amount.magnitude, units[index])
+            rubles[index] =
+              rubles[index]
+              - AmountE4.rounded(rubles[index].decimal * taken.decimal / units[index].decimal)
+          }
+          units[index] += amount
+          if units[index].raw <= 0 {
+            units[index] = .zero
+            rubles[index] = .zero
+          }
+        }
       }
     }
     var result: [UUID: AmountE4] = [:]
-    for (index, goal) in planned.enumerated() {
-      let plan = goal.monthlyPlanE4 ?? .zero
-      let left = min(
-        max(.zero, plan - thisMonth[index]), plan, max(.zero, goal.targetE4 - saved[index]))
-      if left.raw > 0 { result[goal.id] = left }
+    for (index, goal) in live.enumerated() where units[index].raw > 0 {
+      result[goal.id] = rubles[index]
     }
     return result
+  }
+}
+
+/// Where the monthly plan of a goal stands in one month, in the goal's currency.
+public struct GoalPlanState: Hashable, Sendable {
+  /// Paid in above the plans of the months before this one, since the plan started.
+  public var creditIn: AmountE4
+  /// Net contributions of this month (a withdrawal makes it negative).
+  public var thisMonth: AmountE4
+  /// What this month's plan still asks: min(plan, max(0, plan − creditIn − thisMonth)), never
+  /// more than the goal still needs.
+  public var restThisMonth: AmountE4
+  /// Credit left for the months after this one: max(0, creditIn + thisMonth − plan).
+  public var creditOut: AmountE4
+
+  public init(
+    creditIn: AmountE4, thisMonth: AmountE4, restThisMonth: AmountE4, creditOut: AmountE4
+  ) {
+    self.creditIn = creditIn
+    self.thisMonth = thisMonth
+    self.restThisMonth = restThisMonth
+    self.creditOut = creditOut
   }
 }

@@ -12,14 +12,21 @@ public struct DebtLine: Identifiable, Hashable, Sendable {
   public var balanceRub: AmountE4?
   /// Subtotals per group, in the order the groups first appear in the journal.
   public var groups: [DebtGroupTotal]
+  /// The earliest monthly due nothing paid yet (`DebtDueState.firstUnpaid`): it may lie in an
+  /// earlier month — overdue; `nil` for a closed debt, one without a payment day and one with
+  /// nothing left to pay.
   public var nextPayment: DateOnly?
+  /// This month's due is paid (`dues`).
   public var paidThisMonth: Bool
   /// The journal, newest first; lines without a date last.
   public var entries: [DebtEntry]
+  /// Which monthly dues are paid: each payment closes the earliest one still unpaid.
+  public var dues: DebtDueState
 
   public init(
     debt: Debt, balance: AmountE4, balanceRub: AmountE4?, groups: [DebtGroupTotal],
-    nextPayment: DateOnly?, paidThisMonth: Bool, entries: [DebtEntry]
+    nextPayment: DateOnly?, paidThisMonth: Bool, entries: [DebtEntry],
+    dues: DebtDueState? = nil
   ) {
     self.debt = debt
     self.balance = balance
@@ -28,6 +35,7 @@ public struct DebtLine: Identifiable, Hashable, Sendable {
     self.nextPayment = nextPayment
     self.paidThisMonth = paidThisMonth
     self.entries = entries
+    self.dues = dues ?? .none(of: debt.id)
   }
 
   public var id: UUID { debt.id }
@@ -144,34 +152,24 @@ public struct DebtsOverview: Hashable, Sendable {
   ) -> DebtsOverview {
     var journals: [UUID: [DebtEntry]] = [:]
     for entry in book.debtEntries { journals[entry.debtId, default: []].append(entry) }
-    let paidByOperation = DebtSchedule.debtsPaid(
-      in: today.monthKey, ledger: ledger, journal: book.debtEntries)
+    let debts = ledger.dataset.debts
+    let states = DebtDues.states(
+      debts: debts, ledger: ledger, journal: book.debtEntries, today: today)
 
     func line(_ debt: Debt) -> DebtLine {
       let journal = journals[debt.id] ?? []
-      let start = DebtSchedule.start(of: journal, calendar: ledger.calendar)
-      let paid = DebtSchedule.isPaid(
-        debt, for: today.monthKey, startsOn: start, calendar: ledger.calendar
-      ) { month in
-        DebtSchedule.isPaid(
-          debt.id, in: month,
-          paidByOperation: month == today.monthKey
-            ? paidByOperation
-            : DebtSchedule.debtsPaid(in: month, ledger: ledger, journal: book.debtEntries),
-          journal: journal)
-      }
+      let dues = states[debt.id] ?? .none(of: debt.id)
       let balance = DebtRules.balance(entries: journal)
+      let thisMonth = debt.paymentDay.map { DebtDueState.payday($0, in: today.monthKey) }
       return DebtLine(
         debt: debt, balance: balance,
         balanceRub: DebtRubles.convert(balance, from: debt.currency, rubPerUnit: rubPerUnit),
         groups: DebtRules.groupTotals(entries: journal),
-        nextPayment: DebtSchedule.nextPaymentDate(
-          of: debt, today: today, paidThisMonth: paid, calendar: ledger.calendar,
-          startsOn: start),
-        paidThisMonth: paid, entries: newestFirst(journal))
+        nextPayment: debt.closed ? nil : dues.firstUnpaid,
+        paidThisMonth: thisMonth.map(dues.isPaid) ?? false, entries: newestFirst(journal),
+        dues: dues)
     }
 
-    let debts = ledger.dataset.debts
     let open = debts.filter { !$0.closed }.map(line)
     let iOwe = open.filter { $0.debt.direction == .iOwe }.sorted(by: nearestPaymentFirst)
     let closed = debts.filter(\.closed).map(line).sorted(by: byName)

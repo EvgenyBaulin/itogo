@@ -21,6 +21,9 @@ final class TransactionEditorModel {
   var confirmation: BulkConfirmation?
   /// «Это было до сверки в 14:05?», waiting for the owner's answer before the save goes on.
   var countQuestion: BeforeTheCountQuestion?
+  /// What the edit would leave on an account in the archive, waiting for where it goes: the
+  /// save goes on with the transfers the owner picks (`save(…, settling:)`).
+  var archivedLeftovers: ArchivedMoneyCheck?
   /// The balances of the accounts as the window showing this editor has them now, read by a
   /// save that is handed none: «Save» in the questions the Transactions window asks when
   /// another operation is opened or the inspector is folded away. Set while the editor is
@@ -111,9 +114,17 @@ final class TransactionEditorModel {
   /// A refund taken back from a purchase keeps the purchase's rate, and the rubles it stores
   /// follow the purchase part (`RefundRules.rubles`): taking back the rest of the part stores
   /// the rest of its rubles exactly.
+  ///
+  /// Every count of that day is asked about in turn, oldest first; an answer kept with
+  /// «Больше не спрашивать для этой сверки» answers its count without a question.
+  ///
+  /// An edit that would leave money on an account in the archive, or take it below its count,
+  /// asks first where the money goes (`archivedLeftovers`); the save goes on with `settling`,
+  /// the transfers that keep that account at zero, written with the edit in one step of ⌘Z.
+  /// A comment, a category or any edit that moves no money is saved without asking.
   func save(
     store: TransactionsStore, environment: AppEnvironment, balances: AccountBalances? = nil,
-    now: Date = Date()
+    now: Date = Date(), settling: [Transfer]? = nil
   ) -> Bool {
     if let refusal = draft.saveRefusalKey {
       errorKey = refusal
@@ -123,12 +134,21 @@ final class TransactionEditorModel {
       errorKey = "entry.error.notSaved"
       return false
     }
-    if movesTheMoney(calendar: environment.calendar),
-      let count = draft.countToAskAbout(
-        savedAt: now, balances: balances ?? balancesNow?() ?? .empty)
-    {
-      countQuestion = BeforeTheCountQuestion(count: count)
-      return false
+    let balances = balances ?? balancesNow?() ?? .empty
+    if movesTheMoney(calendar: environment.calendar) {
+      switch draft.countAsk(
+        savedAt: now, balances: balances, remembered: environment.rememberedCountAnswers())
+      {
+      case .none:
+        break
+      case .answered(let stamp):
+        draft.stampCount(stamp)
+      case .ask(let questions):
+        countQuestion = BeforeTheCountQuestion(
+          count: questions.count, reconciliation: questions.reconciliation,
+          questions: questions)
+        return false
+      }
     }
     let takesBack = RefundRules.takesBack(draft.draft)
     // A refund carries the purchase's rate, never one of its own day.
@@ -145,7 +165,9 @@ final class TransactionEditorModel {
     }
     let updated: TransactionEntry
     do {
-      updated = try Self.edited(entry, with: draft.draft, rublesConverter: rublesConverter)
+      updated = try Self.edited(
+        entry, with: Self.cardAndCashbackOfItsKind(draft.draft, fields: draft.fields),
+        rublesConverter: rublesConverter)
     } catch MoneyConversionError.rateMissing {
       errorKey = "entry.error.rateMissing"
       return false
@@ -153,7 +175,15 @@ final class TransactionEditorModel {
       errorKey = "entry.error.notSaved"
       return false
     }
-    switch store.saveEdit(updated, calendar: environment.calendar) {
+    if settling == nil {
+      let check = store.archivedLeftovers(editing: entry, into: updated)
+      if !check.leftovers.isEmpty {
+        archivedLeftovers = check
+        return false
+      }
+    }
+    archivedLeftovers = nil
+    switch store.saveEdit(updated, calendar: environment.calendar, settling: settling ?? []) {
     case .saved:
       errorKey = nil
       CategoryLearning.saved(
@@ -179,6 +209,12 @@ final class TransactionEditorModel {
     case .chargeMissing:
       errorKey = "entry.error.chargeMissing"
       return false
+    case .settlingRefused:
+      errorKey = "transactions.error.settlingRefused"
+      return false
+    case .declinedDifference:
+      errorKey = "editor.reconcileDifference.locked"
+      return false
     case .refused:
       errorKey = "entry.error.noDependencies"
       return false
@@ -199,6 +235,14 @@ final class TransactionEditorModel {
   /// count, and the save that follows does not ask about that count again.
   func answerCount(_ count: Date, wasBefore: Bool) {
     draft.answerCount(count, wasBefore: wasBefore)
+    draft.stampCount(draft.draft.occurredAt)
+    countQuestion = nil
+  }
+
+  /// The moment the answers about the counts of the day gave: the operation is saved at it,
+  /// and the save that follows asks nothing more.
+  func stampCount(_ moment: Date) {
+    draft.stampCount(moment)
     countQuestion = nil
   }
 
@@ -237,6 +281,20 @@ final class TransactionEditorModel {
     return total
   }
 
+  /// The draft without the card and the cashback when its kind has no such field
+  /// (`KindFields`): money back names no card, and only a purchase has a cashback. A purchase
+  /// turned into money back in the editor would keep both out of sight otherwise — listed under
+  /// the card, and holding it from being deleted. What else a kind hides is kept as stored:
+  /// a place or an event income had before it lost them stays in the database.
+  nonisolated static func cardAndCashbackOfItsKind(
+    _ draft: TransactionDraft, fields: Set<OperationField>
+  ) -> TransactionDraft {
+    var draft = draft
+    if !fields.contains(.card) { draft.cardId = nil }
+    if !fields.contains(.cashback) { draft.cashback = nil }
+    return draft
+  }
+
   /// What the editor says when the store declines the edit.
   nonisolated static func errorKey(of refusal: EditRefusal) -> String {
     switch refusal {
@@ -272,15 +330,18 @@ final class TransactionEditorModel {
   }
 
   /// The String Catalog an error key of the editor is in: the refusals about refunds and money
-  /// back are the Transactions window's words, the rest the panel's.
+  /// back, and the words about a count's difference the panel shows too, are the Transactions
+  /// window's; the rest the panel's.
   nonisolated static func table(ofErrorKey key: String) -> String {
-    key.hasPrefix("transactions.") ? "Transactions" : "Entry"
+    key.hasPrefix("transactions.") || key.hasPrefix("editor.") ? "Transactions" : "Entry"
   }
 
   /// A purchase a live refund takes money back from stays, and the question says why.
   func requestDeletion(store: TransactionsStore) {
+    let owed = store.deletionDebts()
     confirmation = BulkConfirmation.deletion(
-      of: [entry], refunds: store.listing?.refundIndex ?? .empty, debts: store.debts)
+      of: [entry], refunds: store.listing?.refundIndex ?? .empty, debts: store.debts,
+      deletedDebts: owed.deleted, paidDebts: owed.paid)
   }
 
   /// The saved operation after the edit. Only what the panel edits changes: when the
@@ -317,6 +378,7 @@ struct TransactionEditor: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.store) private var store
   @Dependency(\.compute) private var compute
+  @Environment(\.dependencies) private var dependencies
 
   @Bindable var editor: TransactionEditorModel
   let style: Style
@@ -361,7 +423,7 @@ struct TransactionEditor: View {
         Spacer()
         Button(environment.language("action.cancel"), role: .cancel, action: close)
           .accessibilityIdentifier("editor.cancel")
-        Button(environment.language("action.save"), action: save)
+        Button(environment.language("action.save")) { save() }
           .buttonStyle(.borderedProminent)
           .disabled(!editor.canSave(in: store))
           .accessibilityIdentifier("editor.save")
@@ -375,10 +437,28 @@ struct TransactionEditor: View {
         editor.errorKey = "entry.error.notSaved"
       }
     }
-    // The answer dates the operation before or after the count, and the save goes on.
-    .beforeTheCountQuestion($editor.countQuestion) { count, wasBefore in
-      editor.answerCount(count, wasBefore: wasBefore)
+    // The answers date the operation among the counts of its day, and the save goes on.
+    .beforeTheCountQuestions($editor.countQuestion) { moment in
+      editor.stampCount(moment)
       save()
+    }
+    // Money the edit would leave on an archived account goes to a live one, in the same step.
+    .sheet(
+      isPresented: Binding(
+        get: { editor.archivedLeftovers != nil },
+        set: { if !$0 { editor.archivedLeftovers = nil } })
+    ) {
+      if let check = editor.archivedLeftovers {
+        ArchivedMoneySheet(
+          check: check,
+          confirm: { settling in
+            editor.archivedLeftovers = nil
+            save(settling: settling)
+          },
+          cancel: { editor.archivedLeftovers = nil }
+        )
+        .handingOver(dependencies)
+      }
     }
     // While it is on screen, a save made from a question of the window asks about a count by
     // the balances the window has. Folded away, the editor asks nothing it could not show.
@@ -389,9 +469,13 @@ struct TransactionEditor: View {
     .onDisappear { editor.balancesNow = nil }
   }
 
-  private func save() {
+  private func save(settling: [Transfer]? = nil) {
     let balances = compute.snapshot?.planning.accounts.balances ?? .empty
-    if editor.save(store: store, environment: environment, balances: balances) { close() }
+    if editor.save(
+      store: store, environment: environment, balances: balances, settling: settling)
+    {
+      close()
+    }
   }
 
   /// What a refund taken back from a purchase says here, as its row says it: on the purchase,

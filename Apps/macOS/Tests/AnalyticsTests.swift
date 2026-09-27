@@ -379,6 +379,110 @@ final class AnalyticsModelTests: XCTestCase {
     XCTAssertEqual(stack.paid, 1_000)
   }
 
+  /// «Прогноз» has a second card, the balances at the end of the month: the plan of the data
+  /// with the forecast's remainder over it, the total of the summary included; «Мало данных»
+  /// while no account was ever counted; and the measurement waits for it too.
+  func testTheForecastSectionBuildsTheBalancesBlock() throws {
+    let main = PaymentMethod(name: "Main", currency: .rub, isDefault: true)
+    let today = day(19)
+    let spent = entry(.expense, "3000", on: day(12))
+    var entries = [spent]
+    entries[0].transaction.paymentMethodId = main.id
+    let counted = CalendarContext.utc.startOfDay(day(10))
+    let reconciliation = Reconciliation(
+      date: day(10), reconciledAt: counted, actualTotalRubE4: .zero, kind: .accounts)
+    let count = ReconciledBalance(
+      reconciliationId: reconciliation.id, accountId: main.id, currency: .rub,
+      actualE4: money("50000"))
+    func plan(counts: Bool) -> (Ledger, AccountMonthPlan) {
+      let dataset = Dataset(
+        entries: entries, categories: [food, salary], paymentMethods: [main],
+        planning: counts
+          ? PlanningBook(reconciliations: [reconciliation], reconciledBalances: [count])
+          : .empty)
+      let ledger = Ledger(dataset: dataset, calendar: .utc)
+      let planning = PlanningSnapshot.build(
+        ledger: ledger, today: today, now: CalendarContext.utc.startOfDay(today),
+        rubPerUnit: [:])
+      return (ledger, AccountMonthPlan.build(ledger: ledger, planning: planning))
+    }
+    let remainder = MonthForecast.Remainder(
+      p10: money("1000"), middle: money("2000"), p90: money("4000"), lowData: false,
+      computedFor: today, daysLeft: 11, windowDays: 90)
+
+    let (ledger, countedPlan) = plan(counts: true)
+    let model = AnalyticsBuilder.model(
+      request(
+        .forecast, .month(september), today: today,
+        forecast: ForecastInputs(planned: .zero, remainder: remainder, accounts: countedPlan)),
+      ledger: ledger)
+    let forecast = try XCTUnwrap(model.forecast?.accounts.content)
+    XCTAssertEqual(
+      forecast.inSummaryTotalRub,
+      AccountForecast.Band(low: money("43000"), middle: money("45000"), high: money("46000")))
+    XCTAssertTrue(model.blockIDs.contains(AnalyticsBlock.accountBalances.rawValue))
+    XCTAssertEqual(model.blockIDs.count, 2)
+
+    let (bare, uncounted) = plan(counts: false)
+    let none = AnalyticsBuilder.model(
+      request(
+        .forecast, .month(september), today: today,
+        forecast: ForecastInputs(planned: .zero, remainder: remainder, accounts: uncounted)),
+      ledger: bare)
+    XCTAssertEqual(none.forecast?.accounts.reason, .noCountedBalance)
+  }
+
+  /// A tenge account counted on a first launch with no rate cached yet: the balances block does
+  /// not say no account was counted — it shows the account with «нет курса» and lists the
+  /// currency left out.
+  @MainActor
+  func testACountedAccountWithoutARateIsShownNotCalledUncounted() throws {
+    let tenge = CurrencyCode("KZT")
+    let kaspi = PaymentMethod(name: "Kaspi", currency: tenge, isDefault: true)
+    let today = day(19)
+    let reconciliation = Reconciliation(
+      date: day(10), reconciledAt: CalendarContext.utc.startOfDay(day(10)),
+      actualTotalRubE4: .zero, kind: .accounts)
+    let count = ReconciledBalance(
+      reconciliationId: reconciliation.id, accountId: kaspi.id, currency: tenge,
+      actualE4: money("150000"))
+    let dataset = Dataset(
+      categories: [food, salary], paymentMethods: [kaspi],
+      planning: PlanningBook(reconciliations: [reconciliation], reconciledBalances: [count]))
+    let ledger = Ledger(dataset: dataset, calendar: .utc)
+    let planning = PlanningSnapshot.build(
+      ledger: ledger, today: today, now: CalendarContext.utc.startOfDay(today), rubPerUnit: [:])
+    let plan = AccountMonthPlan.build(ledger: ledger, planning: planning)
+    let remainder = MonthForecast.Remainder(
+      p10: money("1000"), middle: money("2000"), p90: money("4000"), lowData: false,
+      computedFor: today, daysLeft: 11, windowDays: 90)
+
+    let model = AnalyticsBuilder.model(
+      request(
+        .forecast, .month(september), today: today,
+        forecast: ForecastInputs(planned: .zero, remainder: remainder, accounts: plan)),
+      ledger: ledger)
+    let forecast = try XCTUnwrap(
+      model.forecast?.accounts.content, "\(String(describing: model.forecast?.accounts.reason))")
+    XCTAssertEqual(forecast.sections.flatMap(\.lines).map(\.status), [.noRate(tenge)])
+    XCTAssertNil(forecast.inSummaryTotalRub)
+
+    let environment = AppEnvironment()
+    let before = environment.language.choice
+    environment.language.choice = .russian
+    defer { environment.language.choice = before }
+    let lines = AccountBalancesForecastText.rows(forecast, environment).compactMap { row in
+      if case .line(let line) = row.kind { return line }
+      return nil
+    }
+    XCTAssertEqual(lines.map(\.name), ["Kaspi"])
+    XCTAssertEqual(lines.first?.end, "нет курса")
+    XCTAssertTrue(
+      AccountBalancesForecastText.notes(forecast, environment).contains {
+        $0.symbol == "exclamationmark.circle" && $0.text == "Без курса, не учтено: KZT"
+      }, "\(AccountBalancesForecastText.notes(forecast, environment))")
+  }
+
   /// Every block of a section is awaited by the measurement; an event adds its own.
   func testTheMeasurementWaitsForEveryChartOfTheSection() {
     let ledger = ledger([entry(.expense, "100", on: day(3))])
@@ -1168,5 +1272,157 @@ final class AnalyticsRenderingTests: XCTestCase {
       }
     }
     probe.assertQuiet(about: quiet, comparedWith: before, "drawing every section")
+  }
+}
+
+/// «Оборот и кэшбэк» with the cards' rules, and «Кэшбэк по месяцам»: the expected cashback
+/// beside the received, a line per card under an account with several, and each month's
+/// difference received − expected worked out exactly and rounded once.
+final class AnalyticsCashbackTests: XCTestCase {
+  private let calendar = CalendarContext.utc
+  private let september = MonthKey(year: 2026, month: 9)
+  private let tBank = PaymentMethod(name: "Т-Банк", kind: .card, currency: .rub)
+  private let sber = PaymentMethod(name: "Сбер", kind: .card, currency: .rub, isDefault: true)
+  private let cafes = CoreKit.Category(kind: .expense, name: "Кафе")
+  private let cashback = CoreKit.Category(kind: .income, name: "Кэшбэк")
+  private lazy var black = PaymentCard(accountId: tBank.id, name: "Black")
+  private lazy var virtual = PaymentCard(accountId: tBank.id, name: "Virtual", sort: 1)
+
+  private func operation(
+    _ kind: TransactionKind, _ amount: String, card: UUID?, account: UUID? = nil, day: Int = 12,
+    period: MonthKey? = nil
+  ) -> TransactionEntry {
+    let at = calendar.noon(of: DateOnly(year: 2026, month: 9, day: day))
+    let transaction = Transaction(
+      kind: kind, occurredAt: at, amountE4: money(amount), paymentMethodId: account ?? tBank.id,
+      periodMonth: period, createdAt: at, updatedAt: at, cardId: card)
+    return TransactionEntry(
+      transaction: transaction,
+      parts: [
+        TransactionPart(
+          transactionId: transaction.id, categoryId: kind == .income ? cashback.id : cafes.id,
+          quality: kind == .income ? nil : .neutral,
+          qualitySource: kind == .income ? nil : .category, amountE4: money(amount))
+      ])
+  }
+
+  /// Black: 10 % on 350 → 35.00 and 1 % on 1,234.56 → 12.35; Virtual: 7 % on 1,000 → 70.00;
+  /// Сбер: 0.5 % on 60 → 0.30. Received: 25 on Black, by September.
+  private var ledger: Ledger {
+    let rules = [
+      CashbackRule(
+        accountId: tBank.id, cardId: black.id, categoryId: cafes.id, month: september,
+        percent: CashbackPercent(e4: 100_000)!),
+      CashbackRule(accountId: tBank.id, cardId: black.id, percent: CashbackPercent(e4: 10_000)!),
+      CashbackRule(
+        accountId: tBank.id, cardId: virtual.id, percent: CashbackPercent(e4: 70_000)!),
+      CashbackRule(accountId: sber.id, percent: CashbackPercent(e4: 5_000)!),
+    ]
+    let tea = CoreKit.Category(kind: .expense, name: "Аптека")
+    var pharmacy = operation(.expense, "1234.56", card: black.id, day: 14)
+    pharmacy.parts[0].categoryId = tea.id
+    return Ledger(
+      dataset: Dataset(
+        entries: [
+          operation(.expense, "350", card: black.id),
+          pharmacy,
+          operation(.expense, "1000", card: virtual.id, day: 15),
+          operation(.expense, "60", card: nil, account: sber.id, day: 16),
+          operation(.income, "25", card: black.id, day: 20, period: september),
+        ],
+        categories: [cafes, cashback, tea], paymentMethods: [sber, tBank],
+        settings: AnalyticsSettings(cashbackCategoryId: cashback.id), cards: [black, virtual],
+        cashbackRules: rules),
+      calendar: calendar)
+  }
+
+  func testTheMethodsTableHasExpectedAndReceived() throws {
+    let model = AnalyticsBuilder.paymentMethods(ledger: ledger, period: .month(september))
+    let rows = try XCTUnwrap(model.table.content)
+    let tRow = try XCTUnwrap(rows.first { $0.key == .paymentMethod(tBank.id) })
+    XCTAssertEqual(tRow.expectedCashback, 117, "35.00 + 12.35 + 70.00 = 117.35")
+    XCTAssertEqual(tRow.cashback, 25)
+    XCTAssertEqual(tRow.cards.map(\.cardId), [black.id, virtual.id])
+    XCTAssertEqual(tRow.cards.map(\.expected), [47, 70])
+    XCTAssertEqual(tRow.cards.map(\.received), [25, 0])
+    let sRow = try XCTUnwrap(rows.first { $0.key == .paymentMethod(sber.id) })
+    XCTAssertEqual(sRow.expectedCashback, 0, "0.30 is under a ruble")
+    XCTAssertTrue(sRow.cards.isEmpty, "one line: no card rows under it")
+  }
+
+  /// September of «Т-Банк»: expected 117.35, received 25 → −92.35, shown −92; every account:
+  /// 117.65 expected → −92.65, shown −93. Black alone: 47.35 against 25 → −22.35, −22.
+  func testCashbackMonthsDifferenceIsReceivedMinusExpected() throws {
+    let model = AnalyticsBuilder.paymentMethods(ledger: ledger, period: .month(september))
+    let months = try XCTUnwrap(model.cashbackMonths.content)
+    XCTAssertEqual(months.choices.first, .all)
+    XCTAssertTrue(months.choices.contains(.account(tBank.id)))
+    XCTAssertTrue(months.choices.contains(.card(black.id)))
+    XCTAssertEqual(months.cardAccounts[black.id], tBank.id)
+    let tMonth = try XCTUnwrap(months.months[.account(tBank.id)]?.first)
+    XCTAssertEqual(tMonth.month, september)
+    XCTAssertEqual([tMonth.expected, tMonth.received, tMonth.difference], [117, 25, -92])
+    let all = try XCTUnwrap(months.months[.all]?.first)
+    XCTAssertEqual([all.expected, all.received, all.difference], [118, 25, -93])
+    let card = try XCTUnwrap(months.months[.card(black.id)]?.first)
+    XCTAssertEqual([card.expected, card.received, card.difference], [47, 25, -22])
+  }
+
+  /// VoiceOver hears a line of either table once, from its first cell: the month or the name,
+  /// then every figure after the header of its column — which one is expected, which received
+  /// and which the difference. A share never worked out is not said.
+  @MainActor
+  func testCashbackLinesAreSpokenWithTheirHeaders() throws {
+    let environment = AppEnvironment()
+    environment.language.choice = .russian
+    let money = environment.money
+    let model = AnalyticsBuilder.paymentMethods(ledger: ledger, period: .month(september))
+    let all = try XCTUnwrap(model.cashbackMonths.content?.months[.all]?.first)
+    let month = AnalyticsText.cashbackMonthLine(all, environment)
+    XCTAssertEqual(month.first, environment.dates.monthTitle(september))
+    XCTAssertEqual(month.figures, [money.rubles(118), money.rubles(25), money.signedRubles(-93)])
+    XCTAssertEqual(
+      month.spoken,
+      "\(month.first), ожидаемый кэшбэк \(money.rubles(118)), полученный кэшбэк "
+        + "\(money.rubles(25)), разница \(money.signedRubles(-93))")
+
+    let names = AnalyticsNames(dataset: ledger.dataset)
+    let rows = try XCTUnwrap(model.table.content)
+    let tRow = try XCTUnwrap(rows.first { $0.key == .paymentMethod(tBank.id) })
+    let account = AnalyticsText.methodLine(tRow, names, environment)
+    XCTAssertEqual(account.first, "Т-Банк")
+    XCTAssertEqual(account.figures.count, 5)
+    XCTAssertEqual(account.figures[2], "≈\u{00A0}" + money.rubles(117))
+    XCTAssertTrue(account.spoken.hasPrefix("Т-Банк, мои траты "), account.spoken)
+    XCTAssertTrue(
+      account.spoken.contains(
+        ", ожидаемый кэшбэк ≈\u{00A0}\(money.rubles(117)), полученный кэшбэк \(money.rubles(25)), "
+          + "фактическая доля "), account.spoken)
+
+    let black = AnalyticsText.cardMethodLine(tRow.cards[0], names, environment)
+    XCTAssertEqual(black.first, "Black")
+    XCTAssertEqual(black.figures.count, 4, "a card has no share of its own")
+    XCTAssertTrue(black.spoken.hasPrefix("Black, мои траты "), black.spoken)
+    XCTAssertTrue(
+      black.spoken.hasSuffix(
+        ", ожидаемый кэшбэк ≈\u{00A0}\(money.rubles(47)), полученный кэшбэк \(money.rubles(25))"),
+      black.spoken)
+
+    var noShare = tRow
+    noShare.cashbackShare = nil
+    XCTAssertFalse(
+      AnalyticsText.methodLine(noShare, names, environment).spoken.contains("доля"),
+      "a share never worked out is said as a dash")
+  }
+
+  /// No rules and no cashback received: «Мало данных», saying where rules are set.
+  func testCashbackMonthsWithoutRulesSaySo() {
+    let bare = Ledger(
+      dataset: Dataset(
+        entries: [operation(.expense, "350", card: nil)], categories: [cafes, cashback],
+        paymentMethods: [tBank]),
+      calendar: calendar)
+    let model = AnalyticsBuilder.paymentMethods(ledger: bare, period: .month(september))
+    XCTAssertEqual(model.cashbackMonths.reason, .noCashbackRules)
   }
 }

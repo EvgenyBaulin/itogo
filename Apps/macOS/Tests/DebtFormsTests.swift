@@ -291,6 +291,42 @@ final class DebtFormsTests: XCTestCase {
     XCTAssertEqual(DebtRules.balance(entries: try journal(debt)), AmountE4(whole: 600))
   }
 
+  /// Igor owes 1,000 ₽ and gives 1,700 ₽ back: the journal takes 1,000 ₽ — no adjustment line —,
+  /// the debt closes, and the 700 ₽ over are income in «Доплаты» on the account the money came
+  /// to; one ⌘Z takes all three back.
+  func testPayOverTheBalanceOfADebtOwedToMeWritesSurcharges() async throws {
+    let debt = try await loan(direction: .owedToMe)
+    XCTAssertTrue(
+      actions.pay(
+        debt, amount: AmountE4(whole: 1_700), on: at(yesterday, 12), paymentMethodId: cash.id,
+        closing: false))
+    let lines = try journal(debt)
+    XCTAssertEqual(lines.filter { $0.kind == .payment }.map(\.amountE4), [AmountE4(whole: -1_000)])
+    XCTAssertEqual(lines.count, 2, "the opening and the payment, no adjustment")
+    XCTAssertEqual(DebtRules.balance(entries: lines), .zero)
+    XCTAssertEqual(
+      try XCTUnwrap(environment.references).debts(includeClosed: true).first { $0.id == debt.id }?
+        .closed, true)
+    let written = try entries()
+    let back = try XCTUnwrap(written.first { $0.transaction.kind == .reimbursement })
+    XCTAssertEqual(back.transaction.amountE4, AmountE4(whole: 1_700))
+    let surplus = try XCTUnwrap(written.first { $0.transaction.kind == .income })
+    XCTAssertEqual(surplus.transaction.amountE4, AmountE4(whole: 700))
+    XCTAssertEqual(surplus.transaction.paymentMethodId, cash.id)
+    XCTAssertEqual(
+      surplus.transaction.externalId, ReimbursementCompanions.surplusKey(of: back.id))
+    let surcharges = try XCTUnwrap(environment.references)
+      .category(systemRole: .surcharges, kind: .income)
+    XCTAssertEqual(surplus.parts.first?.categoryId, surcharges?.id)
+
+    store.undo()
+    XCTAssertTrue(try entries().isEmpty)
+    XCTAssertEqual(DebtRules.balance(entries: try journal(debt)), AmountE4(whole: 1_000))
+    XCTAssertEqual(
+      try XCTUnwrap(environment.references).debts(includeClosed: true).first { $0.id == debt.id }?
+        .closed, false)
+  }
+
   /// Money back in the debt's currency is saved by the line as it is; in another currency the
   /// line cannot write it — 5 $ on a ruble debt — and the payment of the debt opens instead,
   /// on the account it came to, the amount typed there in rubles.
@@ -316,5 +352,85 @@ final class DebtFormsTests: XCTestCase {
     XCTAssertEqual(back.transaction.kind, .reimbursement)
     XCTAssertEqual(back.transaction.paymentMethodId, cash.id)
     XCTAssertEqual(DebtRules.balance(entries: try journal(debt)), AmountE4(whole: 550))
+  }
+
+  /// «Мне должны» left at −700 ₽ by 1.1, and 500 ₽ paid on it: the form says nothing is left
+  /// and all 500 ₽ go to income, as the repayment writes them — not 1,200 ₽. 1,700 ₽ on 1,000 ₽
+  /// left: 1,000 ₽ and 700 ₽ over. A debt I owe says its balance as it is.
+  func testTheTextOverTheBalanceNeverCountsBelowZeroForADebtOwedToMe() {
+    let belowZero = DebtSheetView.overBalance(
+      AmountE4(whole: 500), balance: AmountE4(whole: -700), direction: .owedToMe)
+    XCTAssertEqual(belowZero.left, .zero)
+    XCTAssertEqual(belowZero.over, AmountE4(whole: 500))
+    let over = DebtSheetView.overBalance(
+      AmountE4(whole: 1_700), balance: AmountE4(whole: 1_000), direction: .owedToMe)
+    XCTAssertEqual(over.left, AmountE4(whole: 1_000))
+    XCTAssertEqual(over.over, AmountE4(whole: 700))
+    let mine = DebtSheetView.overBalance(
+      AmountE4(whole: 1_700), balance: AmountE4(whole: 1_000), direction: .iOwe)
+    XCTAssertEqual(mine.over, AmountE4(whole: 700))
+  }
+
+  // MARK: A payment that starts where it is told
+
+  /// «Платёж» of a due paid from the reminders starts at the moment and on the account it is
+  /// given, with the monthly payment; an archived or unknown account gives way to the main one;
+  /// without a moment it starts as «Платёж» does — now, or the due of a later month at noon. It
+  /// is the payment form all the same: its own id, and no other sheet starts that way.
+  func testPayAtStartsAtTheGivenMomentAndAccount() throws {
+    let today = environment.today
+    let old = PaymentMethod(name: "Old", kind: .cash, currency: .rub, archived: true)
+    let methods = [card, cash, wallet, old]
+    let debt = Debt(
+      direction: .iOwe, type: .loan, name: "Loan", monthlyPaymentE4: AmountE4(whole: 300),
+      paymentDay: 25)
+    let moment = at(yesterday, 12)
+    typealias Start = (debt: Debt, amount: AmountE4, date: Date?, method: UUID?)
+    func start(_ sheet: DebtSheet, due: DateOnly? = nil) -> Start? {
+      DebtSheetView.payStart(
+        of: sheet, payDue: due, today: today, calendar: calendar, methods: methods)
+    }
+
+    let given = try XCTUnwrap(start(.payAt(debt, at: moment, account: cash.id)))
+    XCTAssertEqual(given.debt.id, debt.id)
+    XCTAssertEqual(given.amount, AmountE4(whole: 300))
+    XCTAssertEqual(given.date, moment)
+    XCTAssertEqual(given.method, cash.id)
+
+    let own = try XCTUnwrap(start(.payAt(debt, at: nil, account: nil)))
+    XCTAssertNil(own.date, "now")
+    XCTAssertEqual(own.method, card.id, "the main account")
+    XCTAssertEqual(own.amount, AmountE4(whole: 300))
+
+    let archived = try XCTUnwrap(start(.payAt(debt, at: moment, account: old.id)))
+    XCTAssertEqual(archived.method, card.id, "an archived account gives way to the main one")
+    XCTAssertEqual(archived.date, moment)
+    XCTAssertEqual(
+      start(.payAt(debt, at: moment, account: UUID()))?.method, card.id,
+      "so does an account that is not there")
+
+    let later = today.monthKey.next.firstDay
+    let ahead = DebtSheetView.payDate(due: later, today: today, calendar: calendar)
+    let aheadAt = try XCTUnwrap(start(.payAt(debt, at: nil, account: cash.id), due: later))
+    XCTAssertEqual(aheadAt.date, ahead)
+    XCTAssertEqual(aheadAt.method, cash.id)
+
+    let pay = try XCTUnwrap(start(.pay(debt), due: later))
+    XCTAssertEqual(pay.debt.id, debt.id)
+    XCTAssertEqual(pay.amount, AmountE4(whole: 300))
+    XCTAssertEqual(pay.date, ahead)
+    XCTAssertEqual(pay.method, card.id)
+    XCTAssertNil(try XCTUnwrap(start(.pay(debt))).date)
+    let noMonthly = Debt(direction: .iOwe, type: .personal, name: "Igor")
+    XCTAssertEqual(start(.pay(noMonthly))?.amount, .zero)
+
+    XCTAssertNil(start(.create))
+    XCTAssertNil(start(.repay(debt, amount: AmountE4(whole: 50), account: cash.id)))
+    XCTAssertNil(start(.offset(debt)))
+
+    XCTAssertNotEqual(DebtSheet.payAt(debt, at: nil, account: nil).id, DebtSheet.pay(debt).id)
+    XCTAssertEqual(
+      DebtSheet.payAt(debt, at: moment, account: cash.id).id,
+      DebtSheet.payAt(debt, at: nil, account: nil).id)
   }
 }

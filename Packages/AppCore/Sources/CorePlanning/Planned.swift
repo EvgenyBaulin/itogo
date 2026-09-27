@@ -92,12 +92,12 @@ public struct PlannedMonth: Hashable, Sendable {
   ///   operation already paid — one «Mark as paid» wrote (`sched:<payment>:<due>`), or an
   ///   ordinary expense that matches it (`matches`) — never counts twice.
   /// * Debts — the rule of `PlannedPayments`: not closed, payments are expenses, a monthly
-  ///   payment and a payment day after today's day number, nothing paid on the debt in that
-  ///   month yet — neither an operation nor a journal `payment` line (`DebtSchedule`, the
-  ///   rule of the debt card and of the reminders). The due date is the payment day clipped
-  ///   to the length of the month and must not be after `until`; this month's payment due
-  ///   today or earlier and still unpaid goes to `debtsDueByToday` instead. When `until`
-  ///   reaches into later months, each of them brings its own payment.
+  ///   payment and a payment day, and the due of each month still unpaid — each payment closes
+  ///   the earliest due still unpaid, counted from the start of the debt (`DebtDues`, the rule
+  ///   of the debt card and of the reminders). The due date is the payment day clipped to the
+  ///   length of the month and must not be after `until`; this month's payment due today or
+  ///   earlier and still unpaid goes to `debtsDueByToday` instead. When `until` reaches into
+  ///   later months, each of them brings its own payment.
   /// * Goals — max(0, monthly plan − contributions this month), never more than the goal
   ///   still needs (`GoalRules.planStillDue`), as `PlannedPayments` has it, for today's
   ///   month only: a goal's plan is for a month, not for a day. The item is in the goal's
@@ -140,34 +140,24 @@ public struct PlannedMonth: Hashable, Sendable {
     }
 
     // Debts whose payments are expenses.
-    var paidDebts: [MonthKey: Set<UUID>] = [:]
     var debtsDueByToday = AmountE4.zero
-    for debt in ledger.dataset.debts {
-      guard !debt.closed, DebtRules.paymentIsExpense(on: debt),
-        let payment = debt.monthlyPaymentE4, let day = debt.paymentDay
+    let payable = ledger.dataset.debts.filter { debt in
+      !debt.closed && DebtRules.paymentIsExpense(on: debt) && debt.monthlyPaymentE4 != nil
+        && debt.paymentDay != nil
+    }
+    let states = DebtDues.states(
+      debts: payable, ledger: ledger, journal: book.debtEntries, today: today)
+    for debt in payable {
+      guard let payment = debt.monthlyPaymentE4, let day = debt.paymentDay,
+        let state = states[debt.id]
       else { continue }
-      // A payment day before the debt began owed nothing (`DebtSchedule.nextPaymentDate`).
-      let start = DebtSchedule.start(
-        of: book.debtEntries.lazy.filter { $0.debtId == debt.id }, calendar: ledger.calendar)
       for current in MonthKey.range(month, through: last.monthKey) {
-        // This month's payment due today or before: out of the forecast, but
-        // still owed while unpaid. The due date is the clipped one: a debt paid «on the
-        // 31st» is due today on 30 September.
-        let due = Recurrence.clipped(day: day, in: current)
+        // This month's payment due today or before: out of the forecast, but still owed while
+        // unpaid. The due date is the clipped one: a debt paid «on the 31st» is due today on
+        // 30 September.
+        let due = DebtDueState.payday(day, in: current)
         let byToday = current == month && due <= today
-        guard due <= last, DebtStart.owes(due: due, startsOn: start) else { continue }
-        let paid = DebtSchedule.isPaid(
-          debt, for: current, startsOn: start, calendar: ledger.calendar
-        ) { month in
-          if paidDebts[month] == nil {
-            paidDebts[month] = DebtSchedule.debtsPaid(
-              in: month, ledger: ledger, journal: book.debtEntries)
-          }
-          return DebtSchedule.isPaid(
-            debt.id, in: month, paidByOperation: paidDebts[month] ?? [],
-            journal: book.debtEntries)
-        }
-        guard !paid else { continue }
+        guard due <= last, state.isUnpaid(due) else { continue }
         let rubles = SubscriptionMath.rubles(payment, in: debt.currency, rubPerUnit: rubPerUnit)
         if rubles == nil { missing.append(debt.id) }
         if byToday {

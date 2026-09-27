@@ -4,20 +4,80 @@ import Testing
 
 @testable import CoreCSV
 
-/// The 21 file names of the export, in their one fixed order: the 18 of the first schema,
-/// then the three the accounts brought, at the end.
+/// The 23 file names of the export, in their one fixed order: the 18 of the first schema,
+/// then the three the accounts brought, then the cards and their cashback rules, at the end.
 private let specifiedFileNames = [
   "transactions.csv", "transaction_parts.csv", "reimbursement_links.csv", "people.csv",
   "payment_methods.csv", "places.csv", "events.csv", "categories.csv", "templates.csv",
   "scheduled_payments.csv", "subscription_prices.csv", "expected_income.csv", "budgets.csv",
   "goals.csv", "debts.csv", "debt_entries.csv", "reconciliations.csv", "rates.csv",
-  "account_groups.csv", "transfers.csv", "reconciliation_balances.csv",
+  "account_groups.csv", "transfers.csv", "reconciliation_balances.csv", "cards.csv",
+  "cashback_rules.csv",
 ]
 
-@Suite("ExportTables describes the 21 files of the export")
+@Suite("ExportTables describes the 23 files of the export")
 struct ExportTablesDescriptionTests {
-  @Test func thereAreExactlyTwentyOneTables() {
-    #expect(ExportTables.all.count == 21)
+  @Test func theTwentyThreeFilesInTheirOrder() {
+    #expect(ExportTables.all.count == 23)
+    #expect(ExportTables.all.map(\.fileName) == specifiedFileNames)
+    #expect(ExportTables.all.suffix(2) == [ExportTables.cards, ExportTables.cashbackRules])
+  }
+
+  /// Every column the cards, the cashback, the events of payments, the plans of goals, the
+  /// deleted debts, the accounts of expected income and the modes of counts brought goes after
+  /// every column an older export had, in the order the schema declares them, so an older
+  /// reader still finds its columns where they were.
+  @Test func everyNewColumnIsLast() {
+    #expect(
+      ExportTables.transactions.columns == [
+        "id", "kind", "occurred_at", "currency", "amount", "amount_expr", "rate", "rate_date",
+        "rate_source", "rate_provisional", "amount_rub", "note", "place_id",
+        "payment_method_id", "period_month", "debt_id", "credit_debt_id", "import_batch_id",
+        "external_id", "created_at", "updated_at", "deleted_at", "account_currency",
+        "account_amount", "card_id", "cashback_currency", "cashback",
+      ])
+    #expect(
+      ExportTables.scheduledPayments.columns == [
+        "id", "name", "kind", "amount", "currency", "category_id", "payment_method_id",
+        "for_whom", "for_person_id", "reimbursable", "debtor_person_id",
+        "reimbursement_amount", "reimbursement_currency", "freq", "interval", "day", "month",
+        "next_date", "end_date", "trial_end", "cancel_url", "remind_days_before", "active",
+        "card_id", "event_id",
+      ])
+    #expect(
+      ExportTables.expectedIncome.columns == [
+        "id", "name", "category_id", "person_id", "kind", "total", "currency", "due_date",
+        "freq", "day", "parts_expected", "closed", "payment_method_id",
+      ])
+    #expect(
+      ExportTables.goals.columns == [
+        "id", "name", "target", "target_date", "monthly_plan", "subcategory_id", "archived",
+        "currency", "plan_start_month",
+      ])
+    #expect(
+      ExportTables.debts.columns == [
+        "id", "direction", "type", "name", "person_id", "currency", "interest_rate",
+        "monthly_payment", "payment_day", "remind_days_before", "payments_are_expenses",
+        "origin", "note", "closed", "loans_subcategory_id", "deleted_at",
+      ])
+    #expect(
+      ExportTables.reconciliations.columns == [
+        "id", "date", "actual_total_rub", "expected_total_rub", "difference", "transaction_id",
+        "reconciled_at", "breakdown", "kind", "origin",
+      ])
+    #expect(
+      ExportTables.reconciliationBalances.columns == [
+        "id", "reconciliation_id", "payment_method_id", "currency", "actual", "expected",
+        "difference", "transaction_id", "records_difference",
+      ])
+    #expect(
+      ExportTables.cards.columns == [
+        "id", "payment_method_id", "name", "aliases", "sort", "archived",
+      ])
+    #expect(
+      ExportTables.cashbackRules.columns == [
+        "id", "payment_method_id", "card_id", "category_id", "month", "percent",
+      ])
   }
 
   /// A column added later goes after every column an older export had, so an older reader
@@ -35,16 +95,22 @@ struct ExportTablesDescriptionTests {
       ),
       (ExportTables.reconciliations, ["kind"]),
     ]
+    // The columns each file had before the cards came: the accounts' ones last among them.
+    let before: [String: Int] = [
+      "transactions.csv": 24, "transaction_parts.csv": 17, "payment_methods.csv": 10,
+      "templates.csv": 8, "goals.csv": 8, "debt_entries.csv": 15, "reconciliations.csv": 9,
+    ]
     for (table, columns) in added {
-      #expect(Array(table.columns.suffix(columns.count)) == columns, "\(table.fileName)")
+      let older = Array(table.columns.prefix(before[table.fileName] ?? 0))
+      #expect(Array(older.suffix(columns.count)) == columns, "\(table.fileName)")
     }
-    #expect(ExportTables.transactions.columns.count == 24)
+    #expect(ExportTables.transactions.columns.count == 27)
     #expect(ExportTables.transactionParts.columns.count == 17)
     #expect(ExportTables.paymentMethods.columns.count == 10)
     #expect(ExportTables.templates.columns.count == 8)
-    #expect(ExportTables.goals.columns.count == 8)
+    #expect(ExportTables.goals.columns.count == 9)
     #expect(ExportTables.debtEntries.columns.count == 15)
-    #expect(ExportTables.reconciliations.columns.count == 9)
+    #expect(ExportTables.reconciliations.columns.count == 10)
     #expect(
       ExportTables.accountGroups.columns == ["id", "name", "in_summary", "sort", "archived"])
     #expect(
@@ -53,7 +119,7 @@ struct ExportTablesDescriptionTests {
         "to_payment_method_id", "to_currency", "to_amount", "note", "created_at", "updated_at",
       ])
     #expect(
-      ExportTables.reconciliationBalances.columns == [
+      Array(ExportTables.reconciliationBalances.columns.prefix(8)) == [
         "id", "reconciliation_id", "payment_method_id", "currency", "actual", "expected",
         "difference", "transaction_id",
       ])
@@ -546,7 +612,7 @@ extension ExportTablesRowTests {
     #expect(
       ExportTables.reconciliations.columns == [
         "id", "date", "actual_total_rub", "expected_total_rub", "difference",
-        "transaction_id", "reconciled_at", "breakdown", "kind",
+        "transaction_id", "reconciled_at", "breakdown", "kind", "origin",
       ])
     let reconciledAt = Self.utc.date(
       from: DateComponents(year: 2026, month: 9, day: 17, hour: 6, minute: 30, second: 5))!
@@ -664,6 +730,141 @@ extension ExportTablesRowTests {
       kind: .accounts)
     let read = try roundTrip(ExportTables.reconciliations, row: ExportTables.row(sheet))
     #expect(read["kind"] == "accounts")
+  }
+}
+
+// MARK: - Cards, cashback and the columns that came with them
+
+extension ExportTablesRowTests {
+  /// A card with other names, and its rules: a percent is a decimal string with a dot, an
+  /// empty month is «always», an empty category «everything else».
+  @Test func aCardAndARule() throws {
+    let account = UUID()
+    let card = PaymentCard(
+      accountId: account, name: "Visa, «зарплатная»", aliases: ["Зарплатная", "visa 1234"],
+      sort: 3, archived: true)
+    let read = try roundTrip(ExportTables.cards, row: ExportTables.row(card))
+    #expect(read["id"] == card.id.uuidString)
+    #expect(read["payment_method_id"] == account.uuidString)
+    #expect(read["name"] == "Visa, «зарплатная»")
+    #expect(read["aliases"] == "Зарплатная\nvisa 1234")
+    #expect(read["sort"] == "3")
+    #expect(read["archived"] == "true")
+
+    let always = CashbackRule(
+      accountId: account, cardId: card.id, percent: try #require(CashbackPercent(e4: 15_000)))
+    let first = try roundTrip(ExportTables.cashbackRules, row: ExportTables.row(always))
+    #expect(first["id"] == always.id.uuidString)
+    #expect(first["payment_method_id"] == account.uuidString)
+    #expect(first["card_id"] == card.id.uuidString)
+    #expect(first["category_id"] == "")
+    #expect(first["month"] == "")
+    #expect(first["percent"] == "1.5")
+
+    let category = UUID()
+    let september = CashbackRule(
+      accountId: account, categoryId: category, month: MonthKey(year: 2026, month: 9),
+      percent: try #require(CashbackPercent(e4: 333_333)))
+    let second = try roundTrip(ExportTables.cashbackRules, row: ExportTables.row(september))
+    #expect(second["card_id"] == "")
+    #expect(second["category_id"] == category.uuidString)
+    #expect(second["month"] == "2026-09")
+    #expect(second["percent"] == "33.3333")
+    let small = CashbackRule(accountId: account, percent: try #require(CashbackPercent(e4: 7_500)))
+    #expect(
+      try roundTrip(ExportTables.cashbackRules, row: ExportTables.row(small))["percent"] == "0.75")
+  }
+
+  /// The card of an operation and the cashback typed for it, in the currency that moved; an
+  /// operation without them leaves the three cells empty.
+  @Test func theCashbackOfAnOperation() throws {
+    let card = UUID()
+    let purchase = Transaction(
+      kind: .expense, occurredAt: Date(timeIntervalSince1970: 1_789_900_000),
+      amountE4: AmountE4(whole: 1_500), paymentMethodId: UUID(), cardId: card,
+      cashback: Money(amount: AmountE4(whole: 45), currency: .rub))
+    let read = try roundTrip(ExportTables.transactions, row: ExportTables.row(purchase))
+    #expect(read["card_id"] == card.uuidString)
+    #expect(read["cashback_currency"] == "RUB")
+    #expect(read["cashback"] == "45")
+    let plain = Transaction(
+      kind: .expense, occurredAt: Date(timeIntervalSince1970: 1_789_900_000),
+      amountE4: AmountE4(whole: 10))
+    let empty = try roundTrip(ExportTables.transactions, row: ExportTables.row(plain))
+    for column in ["card_id", "cashback_currency", "cashback"] {
+      #expect(empty[column] == "", "\(column) is not empty")
+    }
+  }
+
+  /// A later count that records says `true`, one that keeps says `false`, a starting point
+  /// says nothing.
+  @Test func recordsDifferenceIsTrueFalseOrEmpty() throws {
+    func cell(_ mode: Bool?) throws -> String? {
+      let count = ReconciledBalance(
+        reconciliationId: UUID(), accountId: UUID(), currency: .rub,
+        actualE4: AmountE4(whole: 100), expectedE4: mode == nil ? nil : AmountE4(whole: 90),
+        differenceE4: mode == nil ? nil : AmountE4(whole: 10), recordsDifference: mode)
+      return try roundTrip(ExportTables.reconciliationBalances, row: ExportTables.row(count))[
+        "records_difference"]
+    }
+    #expect(try cell(true) == "true")
+    #expect(try cell(false) == "false")
+    #expect(try cell(nil) == "")
+    #expect(CSVValue.string(bool: Bool?.none) == "")
+    #expect(CSVValue.string(bool: Bool?.some(true)) == "true")
+  }
+
+  /// Where starting balances came from is the raw value of the origin; a count of a sheet has
+  /// none.
+  @Test func originIsItsRawValue() throws {
+    for origin in ReconciliationOrigin.allCases {
+      let opening = Reconciliation(
+        date: DateOnly(year: 2026, month: 9, day: 20),
+        reconciledAt: Date(timeIntervalSince1970: 1_789_900_000), actualTotalRubE4: .zero,
+        kind: .opening, origin: origin)
+      let read = try roundTrip(ExportTables.reconciliations, row: ExportTables.row(opening))
+      #expect(read["origin"] == origin.rawValue)
+    }
+    #expect(ReconciliationOrigin.allCases.map(\.rawValue) == ["setup", "account", "merge"])
+    let sheet = Reconciliation(
+      date: DateOnly(year: 2026, month: 9, day: 20), actualTotalRubE4: .zero, kind: .accounts)
+    #expect(
+      try roundTrip(ExportTables.reconciliations, row: ExportTables.row(sheet))["origin"] == "")
+  }
+
+  /// A deleted debt says when, as every instant of the export; the event of a payment, the
+  /// card, the month a plan starts and the account an income is expected on are ids and months.
+  @Test func deletedAtIsAnInstant() throws {
+    let deleted = Debt(
+      direction: .iOwe, type: .personal, name: "Друг", currency: .rub,
+      deletedAt: Self.utc.date(
+        from: DateComponents(year: 2026, month: 9, day: 27, hour: 14, minute: 3, second: 0)))
+    let read = try roundTrip(ExportTables.debts, row: ExportTables.row(deleted))
+    #expect(read["deleted_at"] == "2026-09-27T14:03:00Z")
+    let live = Debt(direction: .iOwe, type: .personal, name: "Друг", currency: .rub)
+    #expect(try roundTrip(ExportTables.debts, row: ExportTables.row(live))["deleted_at"] == "")
+
+    let goal = Goal(
+      name: "Car", targetE4: AmountE4(whole: 100_000), monthlyPlanE4: AmountE4(whole: 10_000),
+      planStartMonth: MonthKey(year: 2026, month: 9))
+    #expect(
+      try roundTrip(ExportTables.goals, row: ExportTables.row(goal))["plan_start_month"]
+        == "2026-09")
+    let card = UUID()
+    let event = UUID()
+    let payment = ScheduledPayment(
+      name: "Rent", kind: .bill, amountE4: AmountE4(whole: 50_000), currency: .rub,
+      freq: .monthly, cardId: card, eventId: event)
+    let paid = try roundTrip(ExportTables.scheduledPayments, row: ExportTables.row(payment))
+    #expect(paid["card_id"] == card.uuidString)
+    #expect(paid["event_id"] == event.uuidString)
+    let account = UUID()
+    let income = ExpectedIncome(
+      name: "Salary", totalE4: AmountE4(whole: 100_000), currency: .rub,
+      paymentMethodId: account)
+    #expect(
+      try roundTrip(ExportTables.expectedIncome, row: ExportTables.row(income))[
+        "payment_method_id"] == account.uuidString)
   }
 }
 

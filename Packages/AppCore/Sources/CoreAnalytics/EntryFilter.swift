@@ -4,9 +4,10 @@ import Foundation
 /// The filters of the Transactions window, applied to the whole `Dataset` through
 /// the ledger, off the main thread.
 ///
-/// Operation-level criteria — period, type, place, payment method, text — look at the
-/// operation. Part-level criteria — category, quality, «for whom», person, event,
-/// reimbursement status — must all hold for **one** part: «bad groceries» finds a split
+/// Operation-level criteria — period, type, place, account, card, text — look at the
+/// operation. An account finds the operations of every card of it: a card is always a card of
+/// the operation's own account. Part-level criteria — category, quality, «for whom», person,
+/// event, reimbursement status — must all hold for **one** part: «bad groceries» finds a split
 /// with a bad grocery part, not one with bad fees next to neutral groceries.
 ///
 /// The period takes income by the month it is for when the period is made of whole months,
@@ -25,7 +26,10 @@ public struct EntryFilter: Hashable, Sendable {
   public var personId: UUID?
   public var placeId: UUID?
   public var eventId: UUID?
+  /// An account: its operations, whatever card of it paid.
   public var paymentMethodId: UUID?
+  /// A card: only the operations that name it.
+  public var cardId: UUID?
   /// What became of a part of a purchase paid for somebody else. Only purchases match: a
   /// refund or any other kind never waits for money.
   public var reimbursementStatus: ReimbursementStatus?
@@ -37,7 +41,7 @@ public struct EntryFilter: Hashable, Sendable {
     subcategoryId: UUID? = nil, quality: Quality? = nil, forWhom: ForWhom? = nil,
     personId: UUID? = nil, placeId: UUID? = nil, eventId: UUID? = nil,
     paymentMethodId: UUID? = nil, reimbursementStatus: ReimbursementStatus? = nil,
-    text: String = ""
+    text: String = "", cardId: UUID? = nil
   ) {
     self.period = period
     self.kind = kind
@@ -51,6 +55,7 @@ public struct EntryFilter: Hashable, Sendable {
     self.paymentMethodId = paymentMethodId
     self.reimbursementStatus = reimbursementStatus
     self.text = text
+    self.cardId = cardId
   }
 
   public static let none = EntryFilter()
@@ -88,6 +93,7 @@ public struct EntryFilter: Hashable, Sendable {
     if let kind, row.kind != kind { return false }
     if let placeId, row.placeId != placeId { return false }
     if let paymentMethodId, row.paymentMethodId != paymentMethodId { return false }
+    if let cardId, row.cardId != cardId { return false }
     if let period {
       if row.kind == .income && period.isWholeMonths {
         guard period.months.contains(row.month) else { return false }

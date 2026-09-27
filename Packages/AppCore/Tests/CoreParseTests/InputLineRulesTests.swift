@@ -110,18 +110,24 @@ struct InputLineRulesTests {
     #expect(Fixture.parse("такси 450 1.9.2026").date == DateOnly(year: 2026, month: 9, day: 1))
   }
 
-  /// «29.02» есть не в каждом году: берётся последний високосный, который не в будущем.
-  @Test("«29.02» — последний високосный год, а не пропуск даты")
-  func leapDayFindsTheLastLeapYear() {
-    #expect(Fixture.parse("кофе 250 29.02").date == DateOnly(year: 2024, month: 2, day: 29))
+  /// «29.02» — день года, который даёт правило дня без года: этот год, если 29 февраля не
+  /// позже сегодняшнего дня, иначе прошлый. Нет в том году 29 февраля — строка не
+  /// сохраняется и говорит почему; високосный год не ищется назад.
+  @Test("«29.02» года без 29 февраля — отказ с причиной")
+  func leapDayOfAYearWithoutOneIsRefused() {
+    let common = Fixture.parse("кофе 250 29.02")
+    #expect(common.date == nil)
+    #expect(common.dateProblem == .notInYear(day: 29, month: 2, year: 2026))
     let parser = InputLineParser(vocabulary: Fixture.vocabulary, calendar: .utc)
     let dayBefore = parser.parse("кофе 250 29.02", today: DateOnly(year: 2024, month: 2, day: 28))
-    #expect(dayBefore.date == DateOnly(year: 2020, month: 2, day: 29))
+    #expect(dayBefore.dateProblem == .notInYear(day: 29, month: 2, year: 2023))
     let onTheDay = parser.parse("кофе 250 29.02", today: DateOnly(year: 2024, month: 2, day: 29))
     #expect(onTheDay.date == DateOnly(year: 2024, month: 2, day: 29))
-    // 2100 is not a leap year: the last 29 February before it is in 2096.
+    #expect(onTheDay.dateProblem == nil)
+    // 2100 is not a leap year, and neither is 2103.
     let century = parser.parse("кофе 250 29.02", today: DateOnly(year: 2103, month: 6, day: 1))
-    #expect(century.date == DateOnly(year: 2096, month: 2, day: 29))
+    #expect(century.dateProblem == .notInYear(day: 29, month: 2, year: 2103))
+    #expect(!century.isSaveable)
   }
 
   /// Двузначный год — ближайший к сегодняшнему: не дальше двадцати лет вперёд и восьмидесяти
@@ -136,11 +142,13 @@ struct InputLineRulesTests {
     #expect(Fixture.parse("кофе 250 12.09.2099").date == DateOnly(year: 2099, month: 9, day: 12))
   }
 
-  @Test("Несуществующая дата остаётся текстом")
-  func impossibleDateIsNotADate() {
+  @Test("Несуществующая дата — отказ с причиной, а не текст")
+  func impossibleDateIsRefused() {
     let result = Fixture.parse("кофе 250 31.02")
     #expect(result.date == nil)
-    #expect(result.note == "кофе 31.02")
+    #expect(result.dateProblem == .noSuchDate(written: "31.02"))
+    #expect(result.note == "кофе")
+    #expect(!result.isSaveable)
   }
 
   @Test("Одинокое «12.09» читается как сумма, а не как дата")

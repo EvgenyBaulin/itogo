@@ -33,6 +33,7 @@ enum EntryCommit {
     case RefundError.otherCurrency: return "entry.error.refundOtherCurrency"
     case RefundError.notRefundable, RefundError.purchaseHasRefunds:
       return "entry.error.refundNotRefundable"
+    case ReimbursementRecording.Failure.noSurchargesCategory: return "reimbursement.noSurcharges"
     case CoreError.divisionByZero: return "entry.error.divisionByZero"
     case CoreError.amountOutOfRange: return "entry.error.amountTooLarge"
     default:
@@ -43,11 +44,26 @@ enum EntryCommit {
     }
   }
 
+  /// Where money given back above a debt owed to me goes: the system Surcharges category and
+  /// the note of that income, in the interface language.
+  struct SurplusSetting: Hashable {
+    var categoryId: UUID?
+    var note: String?
+  }
+
+  /// `paidDebtBalance` — what was left on `paidDebt` when the line saves: money given back on a
+  /// debt owed to me then follows the one rule of repayments (`DebtRules.repayment`) — the
+  /// journal takes what was owed, the debt closes once covered, and what came back above it is
+  /// income in «Доплаты» (`surplus` says where; without its category the save is refused with
+  /// `ReimbursementRecording.Failure.noSurchargesCategory`), all in the one change. Without a
+  /// balance the whole amount is the payment, as before.
   static func change(
     entry: TransactionEntry, openedCredit: Debt?, creditIsNew: Bool = true, paidDebt: Debt?,
-    expectedIncomeId: UUID?, day: DateOnly
+    expectedIncomeId: UUID?, day: DateOnly, paidDebtBalance: AmountE4? = nil,
+    surplus: SurplusSetting? = nil, now: Date = Date()
   ) throws -> PlanningChange? {
     var rows = PlanningRows.empty
+    var created = [entry]
     let note = entry.transaction.note
     if let debt = openedCredit {
       guard entry.transaction.kind.canBeBoughtOnCredit else { throw CreditNotPurchase() }
@@ -67,6 +83,26 @@ enum EntryCommit {
           DebtRules.makeEntry(
             debtId: debt.id, kind: .borrowed, amountE4: entry.transaction.amountE4, date: day,
             description: note, transactionId: entry.id))
+      } else if debt.direction == .owedToMe, let balance = paidDebtBalance {
+        let outcome = try DebtRules.repayment(
+          on: debt, by: entry.transaction, balance: balance, date: day, description: note)
+        if let line = outcome.line { rows.debtEntries.append(line) }
+        if outcome.closes, !debt.closed {
+          var closed = debt
+          closed.closed = true
+          rows.debts.append(closed)
+        }
+        if let income = outcome.surplus {
+          guard let categoryId = surplus?.categoryId else {
+            throw ReimbursementRecording.Failure.noSurchargesCategory
+          }
+          let transaction = entry.transaction
+          created.append(
+            try MoneyBack.surplusEntry(
+              income, of: entry.id, on: transaction.occurredAt, now: now,
+              rate: income.currency == .rub ? nil : transaction.rate,
+              rateDate: transaction.rateDate, categoryId: categoryId, note: surplus?.note))
+        }
       } else {
         let outcome = try DebtRules.payment(
           on: debt, amountE4: entry.transaction.amountE4, date: day, transactionId: entry.id,
@@ -79,63 +115,7 @@ enum EntryCommit {
         ExpectedIncomeLink(expectedIncomeId: expectedIncomeId, transactionId: entry.id)
       ]
     }
-    guard rows != .empty else { return nil }
-    return PlanningChange(created: [entry], upsert: rows)
-  }
-}
-
-/// «Это было до сверки в 14:05?» — asked when an operation is saved after the latest count of a
-/// balance it moves and dated on that count's day (`EntryDraftModel.countToAskAbout`). The
-/// answer dates it before or after the count (`EntryDraftModel.answerCount`) and the save goes
-/// on; closing the question saves nothing.
-struct BeforeTheCountQuestion: Identifiable, Hashable {
-  /// The moment of the count.
-  let count: Date
-  var id: Date { count }
-}
-
-/// The question as a dialog of whatever view saves: «Да» and «Нет» answer it, and `answered`
-/// gets the count and whether the operation was before it.
-struct BeforeTheCountDialog: ViewModifier {
-  @Dependency(\.environment) private var environment
-  @Binding var question: BeforeTheCountQuestion?
-  let answered: (_ count: Date, _ wasBefore: Bool) -> Void
-
-  func body(content: Content) -> some View {
-    content.confirmationDialog(
-      title, isPresented: isPresented, titleVisibility: .visible, presenting: question
-    ) { question in
-      Button(t("entry.beforeCount.yes")) { answered(question.count, true) }
-      Button(t("entry.beforeCount.no")) { answered(question.count, false) }
-      Button(environment.language("action.cancel"), role: .cancel) {}
-    } message: { _ in
-      Text(verbatim: t("entry.beforeCount.message"))
-    }
-  }
-
-  private var title: String {
-    guard let question else { return "" }
-    return environment.language.format(
-      "entry.beforeCount.title", table: "Entry", environment.dates.time(question.count))
-  }
-
-  private var isPresented: Binding<Bool> {
-    Binding(
-      get: { question != nil },
-      set: { isShown in
-        if !isShown { question = nil }
-      })
-  }
-
-  private func t(_ key: String) -> String { environment.language(key, table: "Entry") }
-}
-
-extension View {
-  /// Asks «Это было до сверки в 14:05?» while `question` is set.
-  func beforeTheCountQuestion(
-    _ question: Binding<BeforeTheCountQuestion?>,
-    answered: @escaping (_ count: Date, _ wasBefore: Bool) -> Void
-  ) -> some View {
-    modifier(BeforeTheCountDialog(question: question, answered: answered))
+    guard rows != .empty || created.count > 1 else { return nil }
+    return PlanningChange(created: created, upsert: rows)
   }
 }

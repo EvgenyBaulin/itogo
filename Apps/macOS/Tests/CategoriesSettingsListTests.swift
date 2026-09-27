@@ -82,6 +82,41 @@ final class CategoriesSettingsListTests: XCTestCase {
       tables.flatMap(Self.groupRows).isEmpty, "the probe found no header in a list of sections")
   }
 
+  /// Settings → Категории with «Сверка» remembered by the reconciliation: the rows of «Сверка»
+  /// and of what is under it have no limit field; «Food» keeps its own.
+  func testTheReconciliationRowsHaveNoLimitField() throws {
+    let references = try XCTUnwrap(environment.references)
+    let settings = try XCTUnwrap(environment.settings)
+    // First in the list: the list is lazy, and a row below the window has no field to find.
+    let food = CoreKit.Category(kind: .expense, name: "Food", sort: -3, quality: .neutral)
+    let reconcile = CoreKit.Category(
+      kind: .expense, name: "Сверка", sort: -2, quality: .neutral)
+    let small = CoreKit.Category(
+      parentId: reconcile.id, kind: .expense, name: "Мелочи", sort: -1)
+    for category in [food, reconcile, small] { try references.save(category) }
+    let deps = AppDependencies.forTests(environment)
+    let placeholder = environment.language("categories.limit.placeholder", table: "Settings")
+
+    func limitFields() throws -> Int {
+      let window = show(
+        CategoriesSettingsView().frame(width: 700, height: 520).appDependencies(deps))
+      defer { window.close() }
+      return Self.textFields(in: try XCTUnwrap(window.contentView))
+        .filter { $0.placeholderString == placeholder }.count
+    }
+
+    let everyRow = try limitFields()
+    XCTAssertGreaterThanOrEqual(everyRow, 3, "the probe finds no limit field")
+    try settings.set(PlanningSettings.reconcileExpenseCategoryKey, to: reconcile.id.uuidString)
+    XCTAssertEqual(LimitWrites.limitless(environment, nil), [reconcile.id])
+    XCTAssertEqual(
+      everyRow - (try limitFields()), 2, "«Сверка» or «Мелочи» still offers a limit")
+  }
+
+  private static func textFields(in view: NSView) -> [NSTextField] {
+    ((view as? NSTextField).map { [$0] } ?? []) + view.subviews.flatMap(textFields)
+  }
+
   func testTheListOfCategoriesHasNoHeaderThatSticks() throws {
     // A category with a subcategory under it: the header the list used to stick to the top.
     let references = try XCTUnwrap(environment.references)

@@ -33,6 +33,25 @@ struct PlanningPerformanceTests {
     #expect(times.median < .milliseconds(150))
   }
 
+  /// The plan of every balance through the end of the month is built with the data after every
+  /// write, next to the planning snapshot: it has to stay small beside it, and laying the
+  /// forecast over it is a few multiplications.
+  @Test func theAccountPlan() {
+    let ledger = Ledger(dataset: Self.dataset, calendar: Synthetic.calendar)
+    let today = Self.set.lastDay
+    let planning = PlanningSnapshot.build(
+      ledger: ledger, today: today, now: Date(), rubPerUnit: [:])
+    let remainder = MonthForecast.remainder(ledger: ledger, today: today)
+    var pairs = 0
+    let times = Bench.measure("account plan, \(ledger.dataset.entries.count) operations") {
+      pairs =
+        AccountMonthPlan.build(ledger: ledger, planning: planning)
+        .forecast(remainder: remainder).sections.flatMap(\.lines).count
+    }
+    #expect(pairs >= 0)
+    #expect(times.median < .milliseconds(60))
+  }
+
   @Test func theSuggestions() {
     let ledger = Ledger(dataset: Self.dataset, calendar: Synthetic.calendar)
     let today = Self.set.lastDay

@@ -105,6 +105,52 @@ public enum RefundRules {
     (index.refunded(part: part.id), index.refundedStoredRub(part: part.id))
   }
 
+  /// The live refunds of a purchase as they follow it once its rate or rubles changed — by the
+  /// bank's refinement or by the owner's own edit: each refund part's rubles worked out again
+  /// from its purchase part (`rubles(refundAmount:part:refundedBefore:)`), the refunds taken in
+  /// the order given — oldest first —, each refund carrying the purchase's rate, rate date,
+  /// source and provisional flag, and its rubles the sum of its parts. What came onto the
+  /// account (the refund's own charge) never changes: balances do not move.
+  ///
+  /// 100 $ bought at 90 (9,000 ₽) with 90 $ refunded (8,100 ₽): the rate edited to 50 makes the
+  /// purchase 5,000 ₽ and the refund 4,500 ₽; a later refund of the last 10 $ then completes the
+  /// part with 500 ₽.
+  ///
+  /// Only the refunds that change come back; `updated_at` is the writer's.
+  public static func following(
+    purchase: TransactionEntry, refunds: [TransactionEntry]
+  ) -> [TransactionEntry] {
+    let parts = Dictionary(
+      purchase.parts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    var before: [UUID: (amount: AmountE4, rub: AmountE4)] = [:]
+    var changed: [TransactionEntry] = []
+    for refund in refunds where !refund.transaction.isDeleted && refund.transaction.kind == .refund
+    {
+      var next = refund
+      var touched = false
+      for index in next.parts.indices {
+        guard let partId = next.parts[index].refundOfPartId, let part = parts[partId] else {
+          continue
+        }
+        touched = true
+        let taken = before[partId] ?? (.zero, .zero)
+        let rubles = rubles(
+          refundAmount: next.parts[index].amountE4, part: part, refundedBefore: taken)
+        before[partId] = (taken.amount + next.parts[index].amountE4, taken.rub + rubles)
+        next.parts[index].amountRubE4 = rubles
+      }
+      guard touched else { continue }
+      let source = purchase.transaction
+      next.transaction.rate = source.rate
+      next.transaction.rateDate = source.rateDate
+      next.transaction.rateSource = source.rateSource
+      next.transaction.rateProvisional = source.rateProvisional
+      next.transaction.amountRubE4 = AmountE4.sum(next.parts.map(\.amountRubE4))
+      if next != refund { changed.append(next) }
+    }
+    return changed
+  }
+
   /// The refund of `amount` of `part` — «Вся сумма» when `amount` is nil: what is left of it.
   ///
   /// A refund in the purchase's currency at the purchase's rate, with one part that takes back

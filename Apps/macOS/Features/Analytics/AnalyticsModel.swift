@@ -51,6 +51,8 @@ enum AnalyticsReason: String, Hashable, Sendable, CaseIterable {
   case noAnomalies
   case modelNotReady
   case noBacktest
+  case noCountedBalance
+  case noCashbackRules
 
   var key: String { "analytics.reason.\(rawValue)" }
 }
@@ -63,8 +65,8 @@ enum AnalyticsBlock: String, CaseIterable, Hashable, Sendable {
   case forWhomValues, forWhomPeople, forWhomDynamics
   case placesByAmount, placesByPurchases, placesTable, newPlaces
   case events
-  case methodSpending, methodTable
-  case forecast
+  case methodSpending, methodTable, cashbackMonths
+  case forecast, accountBalances
   case anomalies
   case modelCategories, modelForecast
 
@@ -97,6 +99,9 @@ struct AnalyticsRequest: Hashable, Sendable {
 struct ForecastInputs: Hashable, Sendable {
   var planned: AmountE4
   var remainder: MonthForecast.Remainder
+  /// What is known about every balance through the end of the month: with the remainder, each
+  /// account's balance at the end of the month.
+  var accounts: AccountMonthPlan = .empty
 }
 
 /// The line above a section: «Сентябрь 2026 · неполный, по 18 сентября · сравнение с 1–18
@@ -140,6 +145,7 @@ struct AnalyticsNames: Sendable {
     for item in dataset.paymentMethods {
       byId[item.id] = Name(text: item.name, archived: item.archived)
     }
+    for item in dataset.cards { byId[item.id] = Name(text: item.name, archived: item.archived) }
     // The scheduled payments, so «По подпискам за других» can name a bar. A payment that is
     // no longer active reads the way an archived row does: its charges are history, and the
     // history is what the card is made of.
@@ -193,9 +199,9 @@ struct AnalyticsModel: Sendable {
       return [AnalyticsBlock.events.rawValue]
         + (model.events.content ?? []).map { AnalyticsBlock.event($0.eventId) }
     case .paymentMethods:
-      blocks = [.methodSpending, .methodTable]
+      blocks = [.methodSpending, .methodTable, .cashbackMonths]
     case .forecast:
-      blocks = [.forecast]
+      blocks = [.forecast, .accountBalances]
     case .anomalies:
       blocks = [.anomalies]
     case .modelQuality:
@@ -471,14 +477,56 @@ struct MethodRow: Hashable, Sendable {
   var key: ReportKey
   var mySpending: Int64
   var turnover: Int64
+  /// Received: income in the cashback category, by the month it is for.
   var cashback: Int64
   /// Cashback over turnover in basis points; `nil` when the turnover is not positive.
   var cashbackShare: Int?
+  /// What the cards' rules promise for the purchases of the period: an expectation, not
+  /// income.
+  var expectedCashback: Int64 = 0
+  /// The lines of the account's cards — and its own line —, shown only when it has more than
+  /// one.
+  var cards: [CardMethodRow] = []
+}
+
+/// A line of an account in «Оборот и кэшбэк»: one of its cards, or the account's own line
+/// (`cardId == nil`: purchases no card priced).
+struct CardMethodRow: Hashable, Sendable {
+  var cardId: UUID?
+  var mySpending: Int64
+  var turnover: Int64
+  var expected: Int64
+  var received: Int64
+}
+
+/// «Кэшбэк по месяцам»: what was expected by the month of the purchases and what came by the
+/// month it is for, of every account together or of one account or one card.
+struct CashbackMonthsModel: Hashable, Sendable {
+  /// What the picker offers: all accounts first, then each account followed by its cards.
+  enum Choice: Hashable, Sendable {
+    case all
+    case account(UUID)
+    case card(UUID)
+  }
+
+  struct Month: Hashable, Sendable {
+    var month: MonthKey
+    var expected: Int64
+    var received: Int64
+    /// Received − expected, worked out exactly and rounded once.
+    var difference: Int64
+  }
+
+  var choices: [Choice]
+  var months: [Choice: [Month]]
+  /// The account of each card offered, for its name «Т-Банк · Black».
+  var cardAccounts: [UUID: UUID] = [:]
 }
 
 struct PaymentMethodsSectionModel: Sendable {
   var spending: ChartBlock<[RankedValue]>
   var table: ChartBlock<[MethodRow]>
+  var cashbackMonths: ChartBlock<CashbackMonthsModel> = .notEnoughData(.noCashbackRules)
 }
 
 struct DayValue: Hashable, Sendable {
@@ -514,6 +562,9 @@ struct ForecastPlot: Hashable, Sendable {
 struct ForecastSectionModel: Sendable {
   var month: MonthKey
   var chart: ChartBlock<ForecastPlot>
+  /// The balance of every account at the end of the month, or «Мало данных» while no account
+  /// was ever counted.
+  var accounts: ChartBlock<AccountForecast> = .notEnoughData(.noCountedBalance)
 }
 
 /// «Качество модели»: what the category model and the month forecast scored on this very

@@ -182,9 +182,12 @@ struct ReviewFixesTests {
   ])
   func theGoalReserveNeverAsksMoreThanTheGoalNeeds(saved: [String], reserve: String) {
     var sketch = S()
+    // The plan starts in September, as for a goal carried over from before plans had a start:
+    // August's savings are then no credit towards September, and the cap is what shows.
     let goal = Goal(
       id: S.id(401), name: "Trip", targetE4: S.money("100000"),
-      monthlyPlanE4: S.money("10000"), subcategoryId: S.goalTrip)
+      monthlyPlanE4: S.money("10000"), subcategoryId: S.goalTrip,
+      planStartMonth: MonthKey(year: 2026, month: 9))
     sketch.add(.expense, saved[0], at: S.at("2026-08-10", 12), category: S.goalTrip)
     if saved.count > 1 {
       sketch.add(.expense, saved[1], at: S.at("2026-09-10", 12), category: S.goalTrip)

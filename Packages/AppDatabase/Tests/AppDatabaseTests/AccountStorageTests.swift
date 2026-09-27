@@ -375,16 +375,19 @@ struct AccountDataTests {
 
     let export = ExportRepository(writer: stack.writer)
     let tables = try export.tables()
-    #expect(tables.count == 21)
+    #expect(tables.count == 23)
     #expect(
-      tables.suffix(3).map(\.fileName) == [
-        "account_groups.csv", "transfers.csv", "reconciliation_balances.csv",
+      tables.suffix(5).map(\.fileName) == [
+        "account_groups.csv", "transfers.csv", "reconciliation_balances.csv", "cards.csv",
+        "cashback_rules.csv",
       ])
     let counts = try export.rowCounts()
     #expect(counts["account_groups"] == 1)
     #expect(counts["transfers"] == 1)
     #expect(counts["reconciliation_balances"] == 1)
-    for table in tables.suffix(3) {
+    #expect(counts["cards"] == 0)
+    #expect(counts["cashback_rules"] == 0)
+    for table in tables.dropLast(2).suffix(3) {
       let rows = try CSVReader.dictionaries(from: table.data)
       #expect(rows.count == 1, "\(table.fileName)")
     }
@@ -452,5 +455,63 @@ struct TransferFeeKeyTests {
     try repository.restore(ids: effects.deletedIds, at: noon, effects: effects)
     #expect(try repository.entry(id: fee.id)?.transaction.externalId == key)
     #expect(try repository.entry(id: fee.id)?.transaction.isDeleted == false)
+  }
+}
+
+@Suite("An account goes to the archive with its money moved")
+struct ArchiveWithMoneyStorageTests {
+  /// «В архив» on the cash with 3,000 ₽ shows 3,000 and moves them to Сбер with the archive.
+  /// A purchase of 500 ₽ written meanwhile makes it 2,500: the change that still expects
+  /// 3,000 is refused whole — no archive, no transfer —, and the one that expects 2,500 lands.
+  @Test func archivingWithMoneyRefusesAStaleAmount() throws {
+    let stack = try TestSupport.makeStack()
+    let references = ReferenceRepository(writer: stack.writer)
+    let sber = PaymentMethod(name: "Sber", currency: .rub, isDefault: true)
+    var cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
+    try references.save(sber)
+    try references.save(cash)
+    let planning = PlanningRepository(writer: stack.writer)
+    let counted = noon.addingTimeInterval(-3_600)
+    let count = Reconciliation(
+      date: CalendarContext.utc.day(of: counted), reconciledAt: counted,
+      actualTotalRubE4: .zero, kind: .accounts)
+    _ = try planning.apply(
+      PlanningChange(
+        upsert: PlanningRows(
+          reconciliations: [count],
+          reconciledBalances: [
+            ReconciledBalance(
+              reconciliationId: count.id, accountId: cash.id, currency: .rub,
+              actualE4: AmountE4(whole: 3_000))
+          ]), at: counted))
+    let key = BalanceKey(accountId: cash.id, currency: .rub)
+
+    var draft = TransactionDraft(
+      occurredAt: noon.addingTimeInterval(-600), amount: AmountE4(whole: 500),
+      paymentMethodId: cash.id)
+    draft.normalizeSinglePart()
+    try TransactionRepository(writer: stack.writer).save(try draft.materialize())
+
+    cash.archived = true
+    func archive(expecting amount: Int64) -> PlanningChange {
+      let settling = Transfer(
+        occurredAt: noon, fromAccountId: cash.id, fromCurrency: .rub,
+        fromAmountE4: AmountE4(whole: amount), toAccountId: sber.id, toCurrency: .rub,
+        toAmountE4: AmountE4(whole: amount), createdAt: noon, updatedAt: noon)
+      return PlanningChange(
+        upsert: PlanningRows(paymentMethods: [cash], transfers: [settling]), at: noon,
+        expectingBalances: [key: AmountE4(whole: amount)])
+    }
+    #expect(throws: PlanningWriteError.balanceChanged(key)) {
+      try planning.apply(archive(expecting: 3_000))
+    }
+    let untouched = try AccountRepository(writer: stack.writer).accounts(includeArchived: true)
+    #expect(untouched.first { $0.id == cash.id }?.archived == false)
+    #expect(try stack.writer.read { db in try Transfer.fetchCount(db) } == 0)
+
+    _ = try planning.apply(archive(expecting: 2_500))
+    let archived = try AccountRepository(writer: stack.writer).accounts(includeArchived: true)
+    #expect(archived.first { $0.id == cash.id }?.archived == true)
+    #expect(try stack.writer.read { db in try Transfer.fetchCount(db) } == 1)
   }
 }

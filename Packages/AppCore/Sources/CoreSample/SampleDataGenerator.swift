@@ -44,6 +44,12 @@ public struct SampleDataSet: Sendable {
   /// The money on every account and currency once the whole history has happened, as the
   /// accounts layer kept it while it wrote — never read back through a rule of the app.
   public var accountExpectations: [BalanceKey: AmountE4] = [:]
+  /// The cards of the accounts, and the cashback rules on them; none unless a layer adds them.
+  public var cards: [PaymentCard] = []
+  public var cashbackRules: [CashbackRule] = []
+  /// Income expected on top of what the planning of the history expects
+  /// (`SampleDataSet.planning`); none unless a layer adds it.
+  public var addedExpectedIncome: [ExpectedIncome] = []
 
   public init(
     categories: [CoreKit.Category],

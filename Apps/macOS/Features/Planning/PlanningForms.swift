@@ -10,7 +10,9 @@ struct PlanningSheetView: View {
   var body: some View {
     switch sheet {
     case .payment, .newPayment:
-      ScheduledPaymentForm(original: sheet.editedPayment, start: sheet.startingPayment)
+      ScheduledPaymentForm(
+        original: sheet.editedPayment, start: sheet.startingPayment,
+        startCurrencyChosen: sheet.startCurrencyChosen)
     case .markAsPaid(let status): MarkAsPaidForm(status: status)
     case .budget(let budget): BudgetForm(original: budget)
     case .goal(let goal): GoalForm(original: goal)
@@ -29,12 +31,19 @@ struct PlanningChoices {
   let people: [Person]
   let currencies: [CurrencyCode]
   let tree: CategoryTree?
+  /// Every event, archived ones included, by start: a form offers the live ones not over yet
+  /// (`events(keeping:today:)`) and keeps the one a record already names.
+  let allEvents: [Event]
 
   init(_ compute: ComputeStore, _ environment: AppEnvironment) {
     let dataset = compute.snapshot?.dataset
     categories = (dataset?.categories ?? []).filter { !$0.archived }
     methods = (dataset?.paymentMethods ?? []).filter { !$0.archived }
     people = (dataset?.people ?? []).filter { !$0.archived }
+    allEvents = (dataset?.events ?? []).sorted { left, right in
+      left.startDate != right.startDate
+        ? left.startDate < right.startDate : left.id.uuidString < right.id.uuidString
+    }
     let enabled = (try? environment.settings?.enabledCurrencies()) ?? []
     currencies = enabled.isEmpty ? [.rub] : enabled
     tree = compute.snapshot?.ledger.tree
@@ -53,6 +62,15 @@ struct PlanningChoices {
 
   func label(_ category: CoreKit.Category) -> String {
     category.parentId == nil ? category.name : "   \(category.name)"
+  }
+
+  /// The events a scheduled payment may belong to: the live ones not over by `today`, by
+  /// start, and `current` — the one the payment names — even archived or over, so a save
+  /// never drops it unseen.
+  func events(keeping current: UUID?, today: DateOnly) -> [Event] {
+    allEvents.filter { event in
+      event.id == current || (!event.archived && event.endDate >= today)
+    }
   }
 }
 

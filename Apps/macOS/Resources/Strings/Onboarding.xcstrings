@@ -120,6 +120,23 @@
         }
       }
     },
+    "onboarding.balance.unknown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "don't know"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "не знаю"
+          }
+        }
+      }
+    },
     "onboarding.card.action": {
       "extractionState": "manual",
       "localizations": {
@@ -341,6 +358,23 @@
         }
       }
     },
+    "onboarding.emptyBalances": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accounts with empty fields stay unreconciled."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счета с пустыми полями останутся несверенными."
+          }
+        }
+      }
+    },
     "onboarding.expected": {
       "extractionState": "manual",
       "localizations": {
@@ -551,13 +585,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mark where your money is and how much is there now. These balances become the first reconciliation of each account: from then on its balance is what you counted plus everything that moved after it."
+            "value": "Mark where your money is and how much is there now. A balance you type becomes the account's first reconciliation: from then on its balance is what you counted plus everything that moved after it. An empty field means «don't know»: the account stays unreconciled, and its first count becomes its starting point."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Отметьте, где лежат ваши деньги и сколько там сейчас. Эти остатки станут первой сверкой каждого счёта: дальше остаток — это посчитанное плюс всё, что прошло после."
+            "value": "Отметьте, где лежат ваши деньги и сколько там сейчас. Вписанный остаток станет первой сверкой счёта: дальше остаток — это посчитанное плюс всё, что прошло после. Пустое поле — «не знаю»: такой счёт останется несверенным, и его первая сверка станет точкой отсчёта."
           }
         }
       }
@@ -681,6 +715,23 @@
         }
       }
     },
+    "onboarding.issue.nameIsOtherName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The name matches another name of the account «%@» — change it in Settings"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название совпадает с другим названием счёта «%@» — поправьте его в Настройках"
+          }
+        }
+      }
+    },
     "onboarding.issue.nameTaken": {
       "extractionState": "manual",
       "localizations": {
@@ -694,6 +745,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Такое название уже есть у другого счёта — как название или как другое имя."
+          }
+        }
+      }
+    },
+    "onboarding.issue.nameTakenByCard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A card is called “%@” — choose another name."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Так называется карта «%@» — выберите другое название."
           }
         }
       }

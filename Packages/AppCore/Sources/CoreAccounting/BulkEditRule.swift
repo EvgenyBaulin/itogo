@@ -67,6 +67,10 @@ public enum BulkSkipReason: String, Hashable, Sendable, CaseIterable {
   /// A purchase on credit moved a debt when it was made; taking it back is a change of that
   /// debt, which belongs to the Debts section.
   case creditPurchase
+  /// A purchase on credit whose debt is deleted but was paid: its payments were never
+  /// spending — the purchase was —, so without it the money that left the account would be in
+  /// no figure. The payments are deleted first.
+  case creditPurchasePaid
   /// A reimbursement closed a part of the purchase: gone, it would leave that reimbursement
   /// closing nothing and its shortfall counted as my spending on a purchase that is not
   /// there. The reimbursement is deleted first — which opens the part again.
@@ -80,6 +84,9 @@ public enum BulkSkipReason: String, Hashable, Sendable, CaseIterable {
   /// The account does not hold the operation's currency, and the rate needed to work out what
   /// it is charged is not known yet.
   case noRateForCharge
+  /// The difference a count recorded: its account is the count's, and it never goes to «Цели»
+  /// or a category of the app (`DifferenceEditRefusal`).
+  case reconciliationDifference
 }
 
 /// An operation the change leaves alone, entirely or in part.
@@ -222,15 +229,23 @@ public enum BulkEditRule {
   ///
   /// A purchase refunds take money back from stays too, unless every one of those refunds
   /// goes in the same deletion: `refunds` are the refunds of the whole ledger.
+  ///
+  /// A purchase on credit stays while its debt is there. Once the debt is deleted
+  /// (`deletedDebts`) the purchase goes like any other — unless something ever paid that debt
+  /// (`paidDebts`, `DebtRules.paidDebts`): «Телефон» 60,000 ₽ on credit with 3 × 5,000 ₽ paid
+  /// stays spending of 60,000 ₽, or the 15,000 ₽ that left the card would be in no figure.
   public static func deletion(
-    of entries: [TransactionEntry], refunds: RefundIndex = .empty
+    of entries: [TransactionEntry], refunds: RefundIndex = .empty,
+    deletedDebts: Set<UUID> = [], paidDebts: Set<UUID> = []
   ) -> BulkEditPlan {
     var plan = BulkEditPlan()
     let deleted = Set(entries.map(\.id))
     for entry in entries {
       let refundedBy = entry.parts.flatMap { refunds.refunds(ofPart: $0.id) }
-      if entry.transaction.creditDebtId != nil {
+      if let debt = entry.transaction.creditDebtId, !deletedDebts.contains(debt) {
         plan.skipped.append(BulkSkip(transactionId: entry.id, reason: .creditPurchase))
+      } else if let debt = entry.transaction.creditDebtId, paidDebts.contains(debt) {
+        plan.skipped.append(BulkSkip(transactionId: entry.id, reason: .creditPurchasePaid))
       } else if entry.parts.contains(where: { $0.reimbursementStatus == .returned }) {
         plan.skipped.append(BulkSkip(transactionId: entry.id, reason: .closedByReimbursement))
       } else if refundedBy.contains(where: { !deleted.contains($0) }) {
@@ -278,6 +293,12 @@ public enum BulkEditRule {
         edited.transaction.accountCurrency = charged?.currency
         edited.transaction.accountAmountE4 = charged?.amount
       }
+      // A card belongs to its own account: moved to another, the operation names none. The
+      // cashback typed for it stays only while the money it was typed in still moves.
+      if edited.transaction.paymentMethodId != transaction.paymentMethodId {
+        edited.transaction.cardId = nil
+      }
+      edited.transaction.cashback = edited.transaction.keptCashback
     case .category, .refile, .quality, .forWhom, .forPerson, .event:
       var reached = 0
       for index in edited.parts.indices where edit.reaches(edited.parts[index]) {
@@ -333,7 +354,8 @@ public enum BulkEditRule {
   /// it, onto the operation as it is now. Everything else — a part written off since, a
   /// rate refined since — stays as the database has it: undo takes back my change, not
   /// the changes that came after it. The account comes back with what it was charged, so an
-  /// operation never stays on its old account with the charge of the new one.
+  /// operation never stays on its old account with the charge of the new one, and with the card
+  /// and the cashback a move to another account took away: the card is one of that account's.
   public static func revert(
     _ current: TransactionEntry, to snapshot: TransactionEntry
   ) -> TransactionEntry {
@@ -342,6 +364,8 @@ public enum BulkEditRule {
     reverted.transaction.paymentMethodId = snapshot.transaction.paymentMethodId
     reverted.transaction.accountCurrency = snapshot.transaction.accountCurrency
     reverted.transaction.accountAmountE4 = snapshot.transaction.accountAmountE4
+    reverted.transaction.cardId = snapshot.transaction.cardId
+    reverted.transaction.cashback = snapshot.transaction.cashback
     let before = Dictionary(
       snapshot.parts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     for index in reverted.parts.indices {
@@ -363,6 +387,16 @@ public enum BulkEditRule {
   private static func refusal(
     of edit: BulkEdit, for transaction: Transaction, tree: CategoryTree
   ) -> BulkSkipReason? {
+    if OperationEditRule.isReconcileDifference(transaction) {
+      switch edit {
+      case .paymentMethod:
+        return .reconciliationDifference
+      case .category(let categoryId), .refile(_, to: let categoryId):
+        if tree.systemRole(of: categoryId) != nil { return .reconciliationDifference }
+      case .quality, .forWhom, .forPerson, .event, .place:
+        break
+      }
+    }
     switch edit {
     case .category(let categoryId), .refile(_, to: let categoryId):
       if transaction.kind == .reimbursement { return .moneyReturned }

@@ -39,6 +39,12 @@ public struct Transaction: Identifiable, Hashable, Sendable, Codable {
   public var createdAt: Date
   public var updatedAt: Date
   public var deletedAt: Date?
+  /// The card that paid: always a card of `paymentMethodId`, which is what moves the money.
+  /// `nil`: the account itself.
+  public var cardId: UUID?
+  /// The cashback the owner typed for this operation, in the currency that moved on the
+  /// account — an expectation, never income. `nil`: the card's rules say what to expect.
+  public var cashback: Money?
 
   public init(
     id: UUID = UUID(),
@@ -64,7 +70,9 @@ public struct Transaction: Identifiable, Hashable, Sendable, Codable {
     externalId: String? = nil,
     createdAt: Date = Date(),
     updatedAt: Date = Date(),
-    deletedAt: Date? = nil
+    deletedAt: Date? = nil,
+    cardId: UUID? = nil,
+    cashback: Money? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -90,6 +98,8 @@ public struct Transaction: Identifiable, Hashable, Sendable, Codable {
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     self.deletedAt = deletedAt
+    self.cardId = cardId
+    self.cashback = cashback
   }
 
   public var isDeleted: Bool { deletedAt != nil }

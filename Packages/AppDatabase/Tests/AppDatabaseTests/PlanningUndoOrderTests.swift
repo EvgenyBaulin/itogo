@@ -35,6 +35,37 @@ struct PlanningUndoOrderTests {
     #expect(try planning.budgets().map(\.id) == [first.id, second.id])
   }
 
+  /// The links a deletion let go of come back once every row is back: a template and a part of
+  /// an operation pointed at a category and a goal deleted in one change, and ⌘Z points them at
+  /// the two again — the goal is written back after the category, the links after both.
+  @Test func linksLetGoOfComeBackAfterTheRowsTheyPointAt() throws {
+    let (stack, references) = try stack()
+    let planning = PlanningRepository(writer: stack.writer)
+    let hobby = CoreKit.Category(kind: .expense, name: "Hobby")
+    let guitar = Goal(name: "Guitar", targetE4: AmountE4(whole: 30_000))
+    _ = try planning.apply(
+      PlanningChange(upsert: PlanningRows(categories: [hobby], goals: [guitar])))
+    let template = Template(text: "strings 900", categoryId: hobby.id)
+    try ReferenceRepository(writer: stack.writer).save(template)
+    var draft = TransactionDraft(
+      occurredAt: Date(timeIntervalSince1970: 1_789_900_000), amount: AmountE4(whole: 900),
+      paymentMethodId: references.paymentMethod.id)
+    draft.normalizeSinglePart()
+    draft.parts[0].goalId = guitar.id
+    draft.parts[0].categoryId = references.category.id
+    let contribution = try draft.materialize()
+    try TransactionRepository(writer: stack.writer).save(contribution)
+    let before = try stack.writer.read { db in try ExactTables.read(db) }
+
+    let undo = try planning.apply(
+      PlanningChange(
+        delete: PlanningRowIDs(categories: [hobby.id], goals: [guitar.id]),
+        unlinking: PlanningRowIDs(goals: [guitar.id])))
+    #expect(Set(undo.cleared.map(\.referencedId)) == [hobby.id, guitar.id])
+    try planning.revert(undo)
+    #expect(try stack.writer.read { db in try ExactTables.read(db) } == before)
+  }
+
   /// The same for three lines of one day of a debt's journal, deleted in a shuffled order: they
   /// come back in the order they were written, which is the order of that day.
   @Test func journalLinesOfOneDayComeBackInTheirOrder() throws {
@@ -138,23 +169,26 @@ struct PlanningUndoOrderTests {
     #expect(back.parts.map(\.id) == entry.parts.map(\.id))
   }
 
-  /// An operation a change deleted and ⌘Z brought back is stamped as updated at the moment of
-  /// the undo, not at the moment it had: bringing a row back is an update of it. Pinned as it
-  /// is, since «the last rating by hand» is found by that stamp (the question is written down
-  /// for the owner).
-  @Test func anOperationBroughtBackIsStampedAtTheUndo() throws {
+  /// An operation a change deleted and ⌘Z brought back keeps the moment it was last written
+  /// before the deletion: bringing a row back is not a new write of it, and «the last rating by
+  /// hand» is found by that stamp — the owner's answer.
+  @Test func anOperationBroughtBackKeepsItsUpdateMoment() throws {
     let (stack, references) = try stack()
     let entry = try split(stack, references)
     let planning = PlanningRepository(writer: stack.writer)
     let undoMoment = Date(timeIntervalSince1970: 1_795_000_000)
+    let stored = try #require(
+      try TransactionRepository(writer: stack.writer).entry(id: entry.id)
+    ).transaction.updatedAt
 
     let undo = try planning.apply(
       PlanningChange(softDeleted: [entry.id], at: Date(timeIntervalSince1970: 1_792_000_000)))
+    #expect(undo.deletion.updatedAtBefore[entry.id] == stored)
     try planning.revert(undo, at: undoMoment)
 
     let back = try #require(try TransactionRepository(writer: stack.writer).entry(id: entry.id))
     #expect(back.transaction.deletedAt == nil)
-    #expect(back.transaction.updatedAt == undoMoment)
-    #expect(entry.transaction.updatedAt != undoMoment)
+    #expect(back.transaction.updatedAt == stored)
+    #expect(back.transaction.updatedAt != undoMoment)
   }
 }

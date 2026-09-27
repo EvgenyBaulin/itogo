@@ -49,15 +49,10 @@ struct AddRecordSheet: View {
         }
         .onSubmit(save)
         if case .event = form.kind {
-          DatePicker(selection: startBinding, displayedComponents: .date) {
-            Text(verbatim: environment.language("references.start", table: "Settings"))
-          }
-          DatePicker(
-            selection: endBinding, in: environment.calendar.startOfDay(form.start)...,
-            displayedComponents: .date
-          ) {
-            Text(verbatim: environment.language("references.end", table: "Settings"))
-          }
+          EventDaysFields(
+            owner: nil, start: startBinding, end: endBinding,
+            startLabel: environment.language("references.start", table: "Settings"),
+            endLabel: environment.language("references.end", table: "Settings"))
         }
         if form.kind == .paymentMethod {
           Picker(selection: $form.paymentKind) {
@@ -154,16 +149,12 @@ struct AddRecordSheet: View {
     }
   }
 
-  private var startBinding: Binding<Date> {
-    Binding(
-      get: { environment.calendar.startOfDay(form.start) },
-      set: { form.setStart(environment.calendar.day(of: $0)) })
+  private var startBinding: Binding<DateOnly> {
+    Binding(get: { form.start }, set: { form.setStart($0) })
   }
 
-  private var endBinding: Binding<Date> {
-    Binding(
-      get: { environment.calendar.startOfDay(form.end) },
-      set: { form.setEnd(environment.calendar.day(of: $0)) })
+  private var endBinding: Binding<DateOnly> {
+    Binding(get: { form.end }, set: { form.setEnd($0) })
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Entry") }

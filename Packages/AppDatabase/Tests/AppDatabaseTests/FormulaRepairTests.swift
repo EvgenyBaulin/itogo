@@ -62,4 +62,20 @@ struct FormulaRepairTests {
     // A second pass finds nothing more to do.
     #expect(try repository.dropFormulasThatNoLongerAddUp() == .init(checked: 3, dropped: 0))
   }
+
+  /// In front of `к` a lone comma is decimal now: «1,500к+250» saved as 1 500 250 comes to
+  /// 1 750 today, so the formula goes and the amount stays. «2,5к+500» reads the same either way.
+  @Test func aFormulaWithACommaBeforeKIsDroppedAndItsAmountKept() throws {
+    let stack = try TestSupport.makeStack()
+    let repository = TransactionRepository(writer: stack.writer)
+    let million = try save(
+      AmountE4(whole: 1_500_250), formula: "1,500\u{043A}+250", in: repository)
+    let same = try save(AmountE4(whole: 3_000), formula: "2,5\u{043A}+500", in: repository)
+
+    #expect(try repository.dropFormulasThatNoLongerAddUp() == .init(checked: 2, dropped: 1))
+    let kept = try #require(try repository.entry(id: million)?.transaction)
+    #expect(kept.amountExpr == nil)
+    #expect(kept.amountE4 == AmountE4(whole: 1_500_250))
+    #expect(try repository.entry(id: same)?.transaction.amountExpr == "2,5\u{043A}+500")
+  }
 }

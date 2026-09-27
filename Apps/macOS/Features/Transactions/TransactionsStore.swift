@@ -32,6 +32,19 @@ public struct StoreWrite: Sendable {
 
   /// The operations the write touched.
   public var touchedIds: [UUID] { upserted.map(\.id) + removed }
+
+  /// The same write with what the counts it reached wrote in it laid over: the operations of
+  /// their differences made or rewritten, the ones that went for good, and — when a count's
+  /// numbers moved — planning read again, so the figures of «Сверка» follow at once.
+  public func laying(_ counts: CountsSettled) -> StoreWrite {
+    guard !counts.isEmpty else { return self }
+    var write = self
+    let replaced = Set(counts.upserted.map(\.id)).union(counts.removed)
+    write.upserted = upserted.filter { !replaced.contains($0.id) } + counts.upserted
+    write.removed += counts.removed.filter { !removed.contains($0) }
+    write.planningChanged = planningChanged || counts.countsChanged > 0
+    return write
+  }
 }
 
 /// A write of the store that did not land («блок показывает сообщение…, ошибка уходит
@@ -73,48 +86,6 @@ public struct StoreFailure: Hashable, Sendable {
 @MainActor
 @Observable
 public final class TransactionsStore {
-  public struct DayGroup: Identifiable, Sendable {
-    public let day: DateOnly
-    /// Spending and refunds of spending.
-    public let expenses: [TransactionEntry]
-    /// Income, and the money people gave back. A reimbursement is listed here because money
-    /// came in, but it is not income: the row says so and `totals` never adds it to income.
-    public let income: [TransactionEntry]
-    /// What the day comes to — the same function the selection and the delete confirmation
-    /// use, so selecting the whole day shows exactly the numbers of its header. Transfers are
-    /// in none of it: money moved between the owner's own accounts is neither earned nor spent.
-    /// A refund taken back from a purchase counts on the purchase's day, as the purchase
-    /// made cheaper, and adds nothing on its own day.
-    public let totals: RowTotals
-    /// Money moved that day between the owner's own accounts, newest first: rows of their own,
-    /// after the income and the spending.
-    public let transfers: [Transfer]
-
-    /// `refunds` are the refunds of the whole ledger: a purchase listed here shows what a
-    /// refund made on a later day took back, and a refund listed here whose purchase is on
-    /// another day adds nothing — the same numbers as Overview and the selection.
-    public init(
-      day: DateOnly, expenses: [TransactionEntry], income: [TransactionEntry],
-      debts: [UUID: Debt] = [:], transfers: [Transfer] = [], refunds: RefundIndex = .empty
-    ) {
-      self.day = day
-      self.expenses = expenses
-      self.income = income
-      self.transfers = transfers
-      self.totals = RowTotals(entries: income + expenses, debts: debts, refunds: refunds)
-    }
-
-    public var id: String { day.iso }
-    public var entries: [TransactionEntry] { income + expenses }
-    /// Everything of the day a list can select: the operations, then the transfers.
-    public var selectableIds: [UUID] { entries.map(\.id) + transfers.map(\.id) }
-
-    /// Which side of a day an operation is listed on.
-    nonisolated static func isListedWithIncome(_ kind: TransactionKind) -> Bool {
-      kind == .income || kind == .reimbursement
-    }
-  }
-
   /// The type of the error of the last write that failed.
   public private(set) var lastError: String?
   /// A failed write nobody else reports — ⌘Z, a bulk change, a deletion — for the alert of
@@ -168,29 +139,41 @@ public final class TransactionsStore {
     var operations = 25_000
   }
 
+  /// Each step keeps what the counts its write reached wrote (`CountsSettled`): its undo hands
+  /// the operations of their differences as they were back to the settle, so a difference the
+  /// write took to zero comes back as the owner left it.
   private enum UndoStep: Sendable {
-    case created(UUID)
+    case created(UUID, CountsSettled)
     /// One operation edited, with the journal lines the edit moved (`EditedEntry`).
     case edited(EditedEntry)
     /// One bulk change: the operations as they were before it.
-    case editedMany([TransactionEntry])
+    case editedMany([TransactionEntry], CountsSettled)
+    /// One bulk change that moved money on an archived account, and the transfers written
+    /// with it to keep that account at zero: undone together, in one write.
+    case editedManySettling(before: [TransactionEntry], transfers: [UUID], counts: CountsSettled)
     /// One deletion, of one operation or many, with everything it took along.
     case deletedMany([UUID], DeletionEffects)
     /// One action of planning — «Mark as paid», a contribution, a reconciliation, a limit, a
     /// transfer — with the operations it created, rewrote and deleted.
     case planned(PlanningUndo)
+    /// Money back recorded by a sheet, with everything it wrote: its surplus and shortfalls,
+    /// the parts it closed, the purchases repriced at a rate typed there and the money back of
+    /// their parts balanced again.
+    case moneyBack(MoneyBackWrite)
 
     /// How many operations undoing it writes.
     var size: Int {
       switch self {
       case .created, .edited: 1
-      case .editedMany(let before): before.count
+      case .editedMany(let before, _), .editedManySettling(let before, _, _): before.count
       case .deletedMany(let ids, let effects): ids.count + effects.companionIds.count
       case .planned(let undo):
         max(
           1,
           undo.createdTransactionIds.count + undo.rewrittenBefore.count
             + undo.deletion.deletedIds.count + undo.deletion.companionIds.count)
+      case .moneyBack(let write):
+        max(1, write.created.count + write.repricedBefore.count + write.refundsBefore.count)
       }
     }
   }
@@ -329,11 +312,13 @@ public final class TransactionsStore {
     do {
       let previous = try repository.entry(id: entry.id)
       // What the write wrote: an operation that named no account is on the main one now, and
-      // that is what the lists show and what ⌘Z takes back.
-      let written = try repository.save(entry)
+      // that is what the lists show and what ⌘Z takes back. A backdated one changed the
+      // differences of the counts whose windows it entered, in the same write.
+      let (written, counts) = try repository.saveReporting(entry)
       push(
-        previous.map { .edited(EditedEntry(before: $0, after: written)) } ?? .created(written.id))
-      finishWrite(StoreWrite(upserted: [written]))
+        previous.map { .edited(EditedEntry(before: $0, after: written, counts: counts)) }
+          ?? .created(written.id, counts))
+      finishWrite(Self.laid(counts, over: StoreWrite(upserted: [written])))
       return true
     } catch {
       failed(.save, error, file: file)
@@ -374,24 +359,28 @@ public final class TransactionsStore {
       return stamped
     }
     let asked = (change.created + rewritten).filter { !written.contains($0.id) }
-    return StoreWrite(
-      upserted: undo.written + asked,
-      removed: undo.deletion.deletedIds + undo.deletion.companionIds,
-      partStatuses: statuses(undo.deletion.reopenedPartIds, .expected),
-      planningChanged: true)
+    return laid(
+      undo.counts,
+      over: StoreWrite(
+        upserted: undo.written + asked,
+        removed: undo.deletion.deletedIds + undo.deletion.companionIds,
+        partStatuses: statuses(undo.deletion.reopenedPartIds, .expected),
+        planningChanged: true))
   }
 
   /// What the undo of a change of planning wrote: the operations it created are gone, and the
   /// ones it rewrote or deleted are back — as they are after the undo, read again, the live
   /// ones only — with the parts a deletion had reopened closed again.
   nonisolated static func reverted(
-    _ undo: PlanningUndo, readBack: [TransactionEntry]
+    _ undo: PlanningUndo, readBack: [TransactionEntry], counts: CountsSettled = .none
   ) -> StoreWrite {
-    StoreWrite(
-      upserted: readBack.filter { !$0.transaction.isDeleted },
-      removed: undo.createdTransactionIds,
-      partStatuses: statuses(undo.deletion.reopenedPartIds, .returned),
-      planningChanged: true)
+    laid(
+      counts,
+      over: StoreWrite(
+        upserted: readBack.filter { !$0.transaction.isDeleted },
+        removed: undo.createdTransactionIds,
+        partStatuses: statuses(undo.deletion.reopenedPartIds, .returned),
+        planningChanged: true))
   }
 
   /// The operations the undo of a change of planning brings back.
@@ -418,6 +407,12 @@ public final class TransactionsStore {
     /// The edit moves the money on an account that does not hold the currency, and nothing
     /// says what the account was charged; nothing was written.
     case chargeMissing
+    /// A transfer that was to keep an archived account at zero may not be written — its other
+    /// side went to the archive meanwhile, or no longer holds the currency; nothing was.
+    case settlingRefused
+    /// The edit would change the money of a count's difference — its amount, type, account,
+    /// currency, moment or debt — or file it under a category of the app; nothing was written.
+    case declinedDifference
     /// The view was shown without the app's dependencies, so there was nothing to write to.
     /// Never seen in a window that was assembled properly.
     case refused
@@ -435,9 +430,19 @@ public final class TransactionsStore {
   /// An operation that moves a debt takes its journal line along in the same write — the
   /// amount, the day and the debt the edit changed («Платёж одновременно уменьшает
   /// долг») — and one ⌘Z brings both back. `calendar` dates the line, as the entry line does.
+  ///
+  /// `settling` are the transfers that keep an archived account at zero when the edit changes
+  /// its past (`ArchivedMoney`): written in the same write, under every rule of the edit, and
+  /// taken back with it by the same ⌘Z.
+  ///
+  /// A purchase whose rubles the edit changes balances the money that came back for it again;
+  /// a surplus written anew is noted «Излишек возврата» in the language of the interface. The
+  /// counts whose windows the edit reached follow the books in the same write, and the lists lay
+  /// what they wrote over what they show.
   @discardableResult
   public func saveEdit(
-    _ edited: TransactionEntry, calendar: CalendarContext = .system, file: String = #fileID
+    _ edited: TransactionEntry, calendar: CalendarContext = .system, settling: [Transfer] = [],
+    file: String = #fileID
   ) -> EditOutcome {
     guard !refuses("saveEdit", file) else { return .refused }
     guard let repository else { return .failed }
@@ -445,8 +450,10 @@ public final class TransactionsStore {
       // `edit` passes over a deleted row and stamps what it writes with this instant, so the
       // operation reported below is the very row in the database.
       let result = try repository.edit(
-        id: edited.id, at: edited.transaction.updatedAt, calendar: calendar
-      ) { fresh in edited.rebased(onto: fresh) }
+        id: edited.id, at: edited.transaction.updatedAt, calendar: calendar,
+        settlingTransfers: settling,
+        settlement: SettlementSetting(surplusNote: Self.surplusNote())
+      ) { fresh in Self.laid(edited, over: fresh) }
       switch result {
       case .gone:
         return .gone
@@ -454,10 +461,20 @@ public final class TransactionsStore {
         return .saved
       case .edited(let change):
         push(.edited(change))
+        change.settlement.counts.log()
         finishWrite(
-          StoreWrite(upserted: [change.after], planningChanged: change.reachesBeyondTheOperation))
+          Self.laid(
+            change.counts,
+            over: StoreWrite(
+              upserted: [change.after], planningChanged: change.reachesBeyondTheOperation)))
         return .saved
       }
+    } catch let refusal as DifferenceEditRefusal {
+      // The panel never offers such a change of a count's difference; another writer may.
+      AppLog.info(
+        "store.differenceKept", .db, "an edit of a count's difference was not written",
+        [LogPair("refusal", .token(String(describing: refusal)))])
+      return .declinedDifference
     } catch let refusal as EditRefusal {
       return .declined(refusal)
     } catch let refusal as LinkedEditRefusal {
@@ -466,10 +483,70 @@ public final class TransactionsStore {
       return .refundRefused(refusal)
     } catch AccountWriteError.chargeMissing {
       return .chargeMissing
+    } catch is SettlingTransferRefusal {
+      return .settlingRefused
     } catch {
       failed(.edit, error, file: file)
       return .failed
     }
+  }
+
+  /// The edit laid over the row as it is inside the write (`rebased(onto:)`). The difference of a
+  /// count keeps the money the count gives it: a backdated entry may have rewritten its amount —
+  /// or turned it from spending into income — while the editor was open, and the editor never
+  /// changes that money. So its type, amount, currency, rate, rubles, account, charge, moment and
+  /// debts are the row's; its comment, place, card and the owner's fields of its part are the
+  /// edit's — the category and rating only while the type is still the one the editor showed.
+  nonisolated static func laid(
+    _ edited: TransactionEntry, over fresh: TransactionEntry
+  ) -> TransactionEntry {
+    var laid = edited.rebased(onto: fresh)
+    guard OperationEditRule.isReconcileDifference(fresh.transaction) else { return laid }
+    let money = fresh.transaction
+    let sameKind = laid.transaction.kind == money.kind
+    laid.transaction.kind = money.kind
+    laid.transaction.amountE4 = money.amountE4
+    laid.transaction.amountExpr = money.amountExpr
+    laid.transaction.currency = money.currency
+    laid.transaction.rate = money.rate
+    laid.transaction.rateDate = money.rateDate
+    laid.transaction.rateSource = money.rateSource
+    laid.transaction.rateProvisional = money.rateProvisional
+    laid.transaction.amountRubE4 = money.amountRubE4
+    laid.transaction.paymentMethodId = money.paymentMethodId
+    laid.transaction.accountCurrency = money.accountCurrency
+    laid.transaction.accountAmountE4 = money.accountAmountE4
+    laid.transaction.occurredAt = money.occurredAt
+    laid.transaction.debtId = money.debtId
+    laid.transaction.creditDebtId = money.creditDebtId
+    guard laid.parts.map(\.id) == fresh.parts.map(\.id) else { return laid }
+    for index in laid.parts.indices {
+      let stored = fresh.parts[index]
+      laid.parts[index].amountE4 = stored.amountE4
+      laid.parts[index].amountRubE4 = stored.amountRubE4
+      laid.parts[index].goalId = stored.goalId
+      if !sameKind {
+        laid.parts[index].categoryId = stored.categoryId
+        laid.parts[index].categorySource = stored.categorySource
+        laid.parts[index].quality = stored.quality
+        laid.parts[index].qualitySource = stored.qualitySource
+      }
+    }
+    return laid
+  }
+
+  /// «Излишек возврата» in the language of the interface as it is chosen right now: the note of
+  /// the income an edit or a refinement of a rate writes when money that came back now covers a
+  /// part with some over. Read where the choice is stored, so a write off the main thread — the
+  /// refinement of rates — has it too.
+  public nonisolated static func surplusNote(_ defaults: UserDefaults = .standard) -> String {
+    let words = (key: "reimbursement.surplus", table: "Entry")
+    let code = AppLanguage.storedCode(in: defaults)
+    let bundle =
+      Bundle.main.path(forResource: code, ofType: "lproj").flatMap(Bundle.init(path:)) ?? .main
+    let value = bundle.localizedString(forKey: words.key, value: nil, table: words.table)
+    guard value == words.key else { return value }
+    return Bundle.main.localizedString(forKey: words.key, value: words.key, table: words.table)
   }
 
   /// Deleting one operation is deleting many that happen to be one: the same rules, the
@@ -499,7 +576,28 @@ public final class TransactionsStore {
   /// What deleting the listed operations would take: a purchase a live refund takes money
   /// back from stays, unless that refund goes too.
   public func planDeletion(ids: Set<UUID>) -> BulkEditPlan {
-    BulkEditRule.deletion(of: entries(ids: ids), refunds: listing?.refundIndex ?? .empty)
+    let debts = deletionDebts()
+    return BulkEditRule.deletion(
+      of: entries(ids: ids), refunds: listing?.refundIndex ?? .empty, deletedDebts: debts.deleted,
+      paidDebts: debts.paid)
+  }
+
+  /// The debts a deletion asks about: the deleted ones, and those something ever paid
+  /// (`DebtRules.paidDebts`). A purchase on credit of a deleted debt goes like any other, unless
+  /// its debt was paid: then the money that left the account would be in no figure.
+  func deletionDebts() -> DeletionDebts {
+    guard let dataset = listing?.dataset else { return .none }
+    return DeletionDebts(
+      deleted: Set(dataset.deletedDebts.map(\.id)),
+      paid: DebtRules.paidDebts(entries: dataset.entries, journal: dataset.planning.debtEntries))
+  }
+
+  /// The debts `BulkEditRule.deletion` asks about, read on the main thread for a deletion that
+  /// may choose off it.
+  struct DeletionDebts: Sendable {
+    var deleted: Set<UUID>
+    var paid: Set<UUID>
+    static let none = DeletionDebts(deleted: [], paid: [])
   }
 
   /// Every account the data knows, archived ones included: an operation moved in bulk goes to
@@ -512,18 +610,31 @@ public final class TransactionsStore {
   /// One bulk change, one write, one step of undo. More than `backgroundThreshold`
   /// operations are written off the main thread: the call returns at once, and the change
   /// is reported through `didWrite` when it has landed.
+  ///
+  /// `settling` are the transfers that keep an archived account at zero when the change moves
+  /// money on it (`ArchivedMoney`): written in the same write, taken back by the same ⌘Z. They
+  /// count the money of the operations the change was to change when they were worked out —
+  /// `planned`, else those it changes as the lists have them now — so they go in only when the
+  /// change lands on exactly those. When the operations changed elsewhere meanwhile nothing is
+  /// written, and the screen asks for the change again (`WriteFailureCause.planOutdated`).
   @discardableResult
   public func apply(
     _ edit: BulkEdit, to ids: [UUID], rates: DayRates = .empty,
-    calendar: CalendarContext = .system, file: String = #fileID
+    calendar: CalendarContext = .system, settling: [Transfer] = [], planned: Set<UUID>? = nil,
+    file: String = #fileID
   ) -> Bool {
     guard !refuses("apply(BulkEdit:)", file), repository != nil, !isWritingInBackground else {
       return false
     }
+    let planned =
+      settling.isEmpty
+      ? nil
+      : planned
+        ?? Set(plan(edit, ids: Set(ids), rates: rates, calendar: calendar).changed.map(\.id))
     let tree = CategoryTree(categories())
     let history = qualityHistory()
     let accounts = accounts()
-    return modifyMany(ids, file: file) { fresh in
+    return modifyMany(ids, settling: settling, planned: planned, file: file) { fresh in
       BulkEditRule.apply(
         edit, to: fresh, tree: tree, history: history, accounts: accounts, rates: rates,
         calendar: calendar
@@ -549,32 +660,47 @@ public final class TransactionsStore {
     return modifyMany(ids, file: file) { fresh in change.applied(to: fresh, tree: tree) }
   }
 
-  /// Rewrites the operations `transform` changes, in one write that is one step of undo.
+  /// Rewrites the operations `transform` changes, in one write that is one step of undo —
+  /// with `settling`, the transfers that keep an archived account at zero, in the same write
+  /// and the same step, when the write changes exactly the operations of `planned`.
   private func modifyMany(
-    _ ids: [UUID], file: String,
+    _ ids: [UUID], settling: [Transfer] = [], planned: Set<UUID>? = nil, file: String,
     transform: @escaping @Sendable (TransactionEntry) -> TransactionEntry?
   ) -> Bool {
     guard let repository, !isWritingInBackground else { return false }
+    let settlingIds = settling.map(\.id)
+    let step: @Sendable ([TransactionEntry], CountsSettled) -> UndoStep = { before, counts in
+      settlingIds.isEmpty
+        ? .editedMany(before, counts)
+        : .editedManySettling(before: before, transfers: settlingIds, counts: counts)
+    }
     if Self.writesInBackground(ids.count) {
       runInBackground(.change, file: file) {
-        let modified = try await repository.modifyInBackground(ids: ids, transform: transform)
-        guard !modified.isEmpty else { return nil }
+        let batch = try await repository.modifyReportingInBackground(
+          ids: ids, settlingTransfers: settling, planned: planned, transform: transform)
+        guard !batch.modified.isEmpty else { return nil }
         return Landed(
-          step: .editedMany(modified.map(\.before)),
-          write: StoreWrite(upserted: modified.map(\.after)))
+          step: step(batch.modified.map(\.before), batch.counts),
+          write: Self.laid(
+            batch.counts,
+            over: StoreWrite(
+              upserted: batch.modified.map(\.after), planningChanged: !settlingIds.isEmpty)))
       }
       return true
     }
     do {
       var after: [UUID: TransactionEntry] = [:]
-      let before = try repository.modify(ids: ids) { fresh in
+      let (before, counts) = try repository.modifyReporting(
+        ids: ids, settlingTransfers: settling, planned: planned
+      ) { fresh in
         let changed = transform(fresh)
         after[fresh.id] = changed
         return changed
       }
       guard !before.isEmpty else { return true }
-      let write = StoreWrite(upserted: before.compactMap { after[$0.id] })
-      record(Landed(step: .editedMany(before), write: write))
+      let write = StoreWrite(
+        upserted: before.compactMap { after[$0.id] }, planningChanged: !settling.isEmpty)
+      record(Landed(step: step(before, counts), write: Self.laid(counts, over: write)))
       return true
     } catch {
       failed(.change, error, file: file)
@@ -592,22 +718,45 @@ public final class TransactionsStore {
   /// A transfer the rules keep (`TransferActions.deletionRefusals`) stays, and what else is
   /// listed goes; when nothing but kept transfers is listed, nothing is written and the answer
   /// is `false`.
+  ///
+  /// `settling` are the transfers that keep an archived account at zero when the deletion
+  /// takes money off it or leaves money on it (`ArchivedMoney`): written in the same change
+  /// and taken back by the same ⌘Z. They count the money of the operations the deletion was to
+  /// take when they were worked out — `planned` (`deletionPlanned(of:)`), else those it takes as
+  /// the lists have them now —, so they go in only when it takes exactly those. When one was
+  /// deleted elsewhere meanwhile nothing is written, and the screen asks for the deletion again
+  /// (`WriteFailureCause.planOutdated`).
   @discardableResult
-  public func delete(ids: [UUID], file: String = #fileID) -> Bool {
+  public func delete(
+    ids: [UUID], settling: [Transfer] = [], planned: Set<UUID>? = nil, file: String = #fileID
+  ) -> Bool {
     guard !refuses("delete(ids:)", file), let repository, !isWritingInBackground else {
+      return false
+    }
+    // Money left on an archived account is moved in the same write, never left there: a
+    // deletion that would leave some and brings no transfer for it is not written (the
+    // question before it — `BulkConfirmationDialog` — always brings them).
+    if settling.isEmpty, !archivedLeftovers(ofDeleting: ids).leftovers.isEmpty {
+      AppLog.info(
+        "store.deleteUnsettled", .db,
+        "a deletion that would leave money on an archived account was not written",
+        [LogPair("count", .count(ids.count))])
       return false
     }
     let (transfers, kept) = transferDeletions(among: ids)
     let ids = kept.isEmpty ? ids : ids.filter { kept[$0] == nil }
-    if !transfers.isEmpty { return delete(ids, with: transfers, file: file) }
+    if !transfers.isEmpty || !settling.isEmpty {
+      return delete(ids, with: transfers, settling: settling, planned: planned, file: file)
+    }
     if ids.isEmpty { return kept.isEmpty }
     // A purchase a live refund takes money back from stays: the write refuses it, and would
     // refuse the whole deletion with it.
     let refunds = listing?.refundIndex ?? .empty
+    let debts = deletionDebts()
     if Self.writesInBackground(ids.count) {
       runInBackground(.delete, file: file) {
         let effects = try await repository.softDeleteInBackground(ids: ids) { listed in
-          Self.deletable(listed, refunds: refunds)
+          Self.deletable(listed, refunds: refunds, debts: debts)
         }
         return effects.deletedIds.isEmpty ? nil : Self.deletion(effects)
       }
@@ -617,10 +766,12 @@ public final class TransactionsStore {
       var listed: [TransactionEntry] = []
       let effects = try repository.softDelete(ids: ids) { rows in
         listed = rows
-        return Self.deletable(rows, refunds: refunds)
+        return Self.deletable(rows, refunds: refunds, debts: debts)
       }
       guard !effects.deletedIds.isEmpty else {
-        return BulkEditRule.deletion(of: listed, refunds: refunds).skipped.isEmpty
+        return BulkEditRule.deletion(
+          of: listed, refunds: refunds, deletedDebts: debts.deleted, paidDebts: debts.paid
+        ).skipped.isEmpty
       }
       record(Self.deletion(effects))
       return true
@@ -677,16 +828,22 @@ public final class TransactionsStore {
   /// — the parts a deleted money back had closed included. The operations are chosen by the
   /// same rule as any deletion, from the rows the lists show. More than `backgroundThreshold`
   /// rows are written off the main thread.
-  private func delete(_ ids: [UUID], with transfers: [Transfer], file: String) -> Bool {
+  private func delete(
+    _ ids: [UUID], with transfers: [Transfer], settling: [Transfer] = [],
+    planned: Set<UUID>? = nil, file: String
+  ) -> Bool {
     guard let planning else { return false }
     let transferIds = Set(transfers.map(\.id))
     let operations = entries(ids: Set(ids).subtracting(transferIds))
     // A purchase a live refund still takes money back from stays, as in any deletion: the write
     // would refuse it, and the whole change with it.
-    var gone = Self.deletable(operations, refunds: listing?.refundIndex ?? .empty)
+    var gone = Self.deletable(
+      operations, refunds: listing?.refundIndex ?? .empty, debts: deletionDebts())
     for fee in feeIds(of: transfers) where !gone.contains(fee) { gone.append(fee) }
     let change = PlanningChange(
-      delete: PlanningRowIDs(transfers: transfers.map(\.id)), softDeleted: gone, at: Date())
+      upsert: PlanningRows(transfers: settling),
+      delete: PlanningRowIDs(transfers: transfers.map(\.id)), softDeleted: gone, at: Date(),
+      settlingPlanned: settling.isEmpty ? nil : planned ?? Set(gone))
     if Self.writesInBackground(gone.count + transfers.count) {
       runInBackground(.delete, file: file) {
         let undo = try await planning.applyInBackground(change)
@@ -704,6 +861,103 @@ public final class TransactionsStore {
     }
   }
 
+  // MARK: Archived accounts stay at zero
+
+  /// What deleting `ids` — the operations the rules let go, the transfers and their fees —
+  /// would leave on accounts in the archive, as the lists have the rows now; `balances` are
+  /// the accounts' now, worked out from the lists' data when not given. Nothing for a deletion
+  /// that moves no archived money.
+  public func archivedLeftovers(
+    ofDeleting ids: [UUID], balances: AccountBalances? = nil
+  ) -> ArchivedMoneyCheck {
+    guard let listing, listing.dataset.paymentMethods.contains(where: \.archived) else {
+      return .none
+    }
+    let balances = balances ?? Self.balances(of: listing.dataset)
+    let (going, gone) = deletionTakes(ids)
+    let removed = listing.dataset.entries.filter { gone.contains($0.id) }
+    return Self.archivedLeftovers(
+      removing: removed, adding: [], transfersRemoved: going, dataset: listing.dataset,
+      balances: balances)
+  }
+
+  /// The operations a deletion of `ids` takes, as the lists have them now: those the rules let
+  /// go, and the fees of the transfers among `ids`. What `archivedLeftovers(ofDeleting:)` weighs,
+  /// taken with it for `delete(ids:settling:planned:)`.
+  public func deletionPlanned(of ids: [UUID]) -> Set<UUID> {
+    deletionTakes(ids).operations
+  }
+
+  private func deletionTakes(_ ids: [UUID]) -> (going: [Transfer], operations: Set<UUID>) {
+    let going = transferDeletions(among: ids).going
+    let transferIds = Set(going.map(\.id))
+    let listed = entries(ids: Set(ids).subtracting(transferIds))
+    var gone = Set(
+      Self.deletable(
+        listed, refunds: listing?.refundIndex ?? .empty, debts: deletionDebts()))
+    gone.formUnion(feeIds(of: going))
+    return (going, gone)
+  }
+
+  /// What the bulk change `edit` of `ids` would leave on accounts in the archive, as the lists
+  /// have the rows now.
+  public func archivedLeftovers(
+    of edit: BulkEdit, ids: Set<UUID>, rates: DayRates = .empty,
+    calendar: CalendarContext = .system, balances: AccountBalances? = nil
+  ) -> ArchivedMoneyCheck {
+    guard let listing, listing.dataset.paymentMethods.contains(where: \.archived) else {
+      return .none
+    }
+    let after = plan(edit, ids: ids, rates: rates, calendar: calendar).changed
+    let before = entries(ids: Set(after.map(\.id)))
+    return Self.archivedLeftovers(
+      removing: before, adding: after, dataset: listing.dataset,
+      balances: balances ?? Self.balances(of: listing.dataset))
+  }
+
+  /// What one edited operation would leave on accounts in the archive.
+  public func archivedLeftovers(
+    editing before: TransactionEntry, into after: TransactionEntry,
+    balances: AccountBalances? = nil
+  ) -> ArchivedMoneyCheck {
+    guard let listing, listing.dataset.paymentMethods.contains(where: \.archived) else {
+      return .none
+    }
+    return Self.archivedLeftovers(
+      removing: [before], adding: [after], dataset: listing.dataset,
+      balances: balances ?? Self.balances(of: listing.dataset))
+  }
+
+  /// The balances of the accounts as the lists' data has them now.
+  nonisolated static func balances(of dataset: Dataset) -> AccountBalances {
+    AccountBalances.build(
+      entries: dataset.entries, transfers: dataset.transfers,
+      debtEntries: dataset.planning.debtEntries, debts: dataset.debtsById,
+      reconciliations: dataset.planning.reconciliations,
+      balances: dataset.planning.reconciledBalances, accounts: dataset.paymentMethods,
+      tree: CategoryTree(dataset.categories), now: Date(), calendar: .system)
+  }
+
+  /// The movements of the operations and transfers taken away and put in, weighed against the
+  /// latest counts of the archived accounts (`ArchivedMoney.leftovers`).
+  nonisolated static func archivedLeftovers(
+    removing old: [TransactionEntry], adding new: [TransactionEntry],
+    transfersRemoved: [Transfer] = [], transfersAdded: [Transfer] = [], dataset: Dataset,
+    balances: AccountBalances
+  ) -> ArchivedMoneyCheck {
+    let accounts = dataset.paymentMethods
+    guard accounts.contains(where: \.archived) else { return .none }
+    let mainId = accounts.first { $0.isDefault && !$0.archived }?.id
+    let tree = CategoryTree(dataset.categories)
+    func moves(_ entries: [TransactionEntry]) -> [AccountMovement] {
+      entries.compactMap { AccountBalances.movement(of: $0, mainId: mainId, tree: tree) }
+    }
+    return ArchivedMoney.leftovers(
+      removing: moves(old) + transfersRemoved.flatMap(ArchivedMoney.movements(of:)),
+      adding: moves(new) + transfersAdded.flatMap(ArchivedMoney.movements(of:)),
+      balances: balances, accounts: accounts)
+  }
+
   /// The live fees of these transfers (`transfer:<id>:fee`): a transfer takes its fee along.
   private func feeIds(of transfers: [Transfer]) -> [UUID] {
     guard let listing else { return [] }
@@ -717,21 +971,25 @@ public final class TransactionsStore {
   }
 
   /// What of these operations a deletion takes: the rule's choice, without what is gone.
-  /// `refunds` say which purchases a live refund takes money back from.
+  /// `refunds` say which purchases a live refund takes money back from, `debts` which debts are
+  /// deleted and which were ever paid.
   private nonisolated static func deletable(
-    _ entries: [TransactionEntry], refunds: RefundIndex = .empty
+    _ entries: [TransactionEntry], refunds: RefundIndex = .empty, debts: DeletionDebts = .none
   ) -> [UUID] {
-    BulkEditRule.deletion(of: entries, refunds: refunds).changed
-      .filter { !$0.transaction.isDeleted }.map(\.id)
+    BulkEditRule.deletion(
+      of: entries, refunds: refunds, deletedDebts: debts.deleted, paidDebts: debts.paid
+    ).changed.filter { !$0.transaction.isDeleted }.map(\.id)
   }
 
   /// The step and the report of a deletion that happened.
   private nonisolated static func deletion(_ effects: DeletionEffects) -> Landed {
     Landed(
       step: .deletedMany(effects.deletedIds, effects),
-      write: StoreWrite(
-        removed: effects.deletedIds + effects.companionIds,
-        partStatuses: statuses(effects.reopenedPartIds, .expected)))
+      write: laid(
+        effects.counts,
+        over: StoreWrite(
+          removed: effects.deletedIds + effects.companionIds,
+          partStatuses: statuses(effects.reopenedPartIds, .expected))))
   }
 
   /// Whether a bulk write of this many operations leaves the main thread.
@@ -838,42 +1096,61 @@ public final class TransactionsStore {
     do {
       let write: StoreWrite
       switch step {
-      case .created(let id):
-        try repository.purge(id: id)
-        write = StoreWrite(removed: [id])
+      case .created(let id, let counts):
+        let back = try repository.purge(id: id, templates: counts.operationsBefore)
+        write = Self.laid(back, over: StoreWrite(removed: [id]))
       case .edited(let change):
-        try repository.revert(change)
-        write = StoreWrite(
-          upserted: [change.before], planningChanged: change.reachesBeyondTheOperation)
-      case .editedMany(let before):
+        let back = try repository.revert(change)
+        write = Self.laid(back, over: Self.revertedEdit(change))
+      case .editedMany(let before, let counts):
         // My change is taken back from the rows as they are now: a part written off or a
         // rate refined since the change stays as it is.
         let snapshots = Self.byId(before)
         var reverted: [UUID: TransactionEntry] = [:]
         // What the account was charged comes back with the account: the undo puts back what
         // the operations were, a row of the time before accounts included, and asks nothing.
-        let changed = try repository.modify(
-          ids: before.map(\.id), checkingCharges: false
+        let (changed, back) = try repository.modifyReporting(
+          ids: before.map(\.id), checkingCharges: false, templates: counts.operationsBefore
         ) { fresh in
           let back = snapshots[fresh.id].map { BulkEditRule.revert(fresh, to: $0) }
           reverted[fresh.id] = back
           return back
         }
-        write = StoreWrite(upserted: changed.compactMap { reverted[$0.id] })
+        write = Self.laid(back, over: StoreWrite(upserted: changed.compactMap { reverted[$0.id] }))
+      case .editedManySettling(let before, let transfers, let counts):
+        let snapshots = Self.byId(before)
+        var reverted: [UUID: TransactionEntry] = [:]
+        let (changed, back) = try repository.modifyReporting(
+          ids: before.map(\.id), checkingCharges: false, removingTransfers: transfers,
+          templates: counts.operationsBefore
+        ) { fresh in
+          let back = snapshots[fresh.id].map { BulkEditRule.revert(fresh, to: $0) }
+          reverted[fresh.id] = back
+          return back
+        }
+        write = Self.laid(
+          back,
+          over: StoreWrite(upserted: changed.compactMap { reverted[$0.id] }, planningChanged: true))
       case .deletedMany(let ids, let effects):
-        try repository.restore(ids: ids, effects: effects)
+        let back = try repository.restore(ids: ids, effects: effects)
         // What comes back is whatever the rows are now; the few of them are read again.
         let restored = try repository.entries(ids: ids + effects.companionIds)
           .filter { !$0.transaction.isDeleted }
-        write = StoreWrite(
-          upserted: restored, partStatuses: Self.statuses(effects.reopenedPartIds, .returned))
+        write = Self.laid(
+          back,
+          over: StoreWrite(
+            upserted: restored, partStatuses: Self.statuses(effects.reopenedPartIds, .returned)))
       case .planned(let undo):
         guard let planning else { return }
-        try planning.revert(undo)
+        let counts = try planning.revert(undo)
         let back = Self.broughtBack(by: undo)
         var readBack: [TransactionEntry] = []
         if !back.isEmpty { readBack = try repository.entries(ids: back) }
-        write = Self.reverted(undo, readBack: readBack)
+        write = Self.reverted(undo, readBack: readBack, counts: counts)
+      case .moneyBack(let recorded):
+        let counts = try repository.revertMoneyBack(recorded)
+        let readBack = try repository.entries(ids: Self.broughtBack(by: recorded))
+        write = Self.laid(counts, over: Self.revertedMoneyBack(recorded, readBack: readBack))
       }
       // Nothing else runs on the main actor meanwhile: the step is still the last one.
       undoStack.removeLast()
@@ -889,37 +1166,113 @@ public final class TransactionsStore {
     _ step: UndoStep, repository: TransactionRepository, planning: PlanningRepository?
   ) async throws -> StoreWrite {
     switch step {
-    case .created(let id):
-      try repository.purge(id: id)
-      return StoreWrite(removed: [id])
+    case .created(let id, let counts):
+      let back = try repository.purge(id: id, templates: counts.operationsBefore)
+      return laid(back, over: StoreWrite(removed: [id]))
     case .edited(let change):
-      try repository.revert(change)
-      return StoreWrite(
-        upserted: [change.before], planningChanged: change.reachesBeyondTheOperation)
-    case .editedMany(let before):
+      let back = try repository.revert(change)
+      return laid(back, over: revertedEdit(change))
+    case .editedMany(let before, let counts):
       let snapshots = byId(before)
-      let modified = try await repository.modifyInBackground(
-        ids: before.map(\.id), checkingCharges: false
+      let batch = try await repository.modifyReportingInBackground(
+        ids: before.map(\.id), checkingCharges: false, templates: counts.operationsBefore
       ) { fresh in
         snapshots[fresh.id].map { BulkEditRule.revert(fresh, to: $0) }
       }
-      return StoreWrite(upserted: modified.map(\.after))
+      return laid(batch.counts, over: StoreWrite(upserted: batch.modified.map(\.after)))
+    case .editedManySettling(let before, let transfers, let counts):
+      let snapshots = byId(before)
+      let batch = try await repository.modifyReportingInBackground(
+        ids: before.map(\.id), checkingCharges: false, removingTransfers: transfers,
+        templates: counts.operationsBefore
+      ) { fresh in
+        snapshots[fresh.id].map { BulkEditRule.revert(fresh, to: $0) }
+      }
+      return laid(
+        batch.counts,
+        over: StoreWrite(upserted: batch.modified.map(\.after), planningChanged: true))
     case .deletedMany(let ids, let effects):
-      try await repository.restoreInBackground(ids: ids, effects: effects)
+      let back = try await repository.restoreInBackground(ids: ids, effects: effects)
       let restored = try await repository.entriesInBackground(ids: ids + effects.companionIds)
         .filter { !$0.transaction.isDeleted }
-      return StoreWrite(
-        upserted: restored, partStatuses: statuses(effects.reopenedPartIds, .returned))
+      return laid(
+        back,
+        over: StoreWrite(
+          upserted: restored, partStatuses: statuses(effects.reopenedPartIds, .returned)))
     case .planned(let undo):
       // A change of planning that deleted or rewrote many operations: taken back off the main
       // thread like any bulk step.
       guard let planning else { throw PlanningUndoUnavailable() }
-      try await planning.revertInBackground(undo)
+      let counts = try await planning.revertInBackground(undo)
       let back = broughtBack(by: undo)
       var readBack: [TransactionEntry] = []
       if !back.isEmpty { readBack = try await repository.entriesInBackground(ids: back) }
-      return reverted(undo, readBack: readBack)
+      return reverted(undo, readBack: readBack, counts: counts)
+    case .moneyBack(let recorded):
+      let counts = try repository.revertMoneyBack(recorded)
+      let readBack = try await repository.entriesInBackground(ids: broughtBack(by: recorded))
+      return laid(counts, over: revertedMoneyBack(recorded, readBack: readBack))
     }
+  }
+
+  /// What the undo of an edit wrote: the operation as it was. A difference of a count given back
+  /// may have taken the place of the one made again under its count's id, so planning is read
+  /// again then too.
+  private nonisolated static func revertedEdit(_ change: EditedEntry) -> StoreWrite {
+    StoreWrite(
+      upserted: [change.before],
+      planningChanged: change.reachesBeyondTheOperation
+        || OperationEditRule.isReconcileDifference(change.before.transaction))
+  }
+
+  /// The operations the undo of a money back writes back: the purchases repriced, their
+  /// refunds, and the surpluses and the owner's own spending balanced again.
+  private nonisolated static func broughtBack(by write: MoneyBackWrite) -> [UUID] {
+    write.repricedBefore.map(\.id) + write.refundsBefore.map(\.id)
+      + write.settlement.operationsBefore.map(\.id)
+  }
+
+  /// What the undo of a money back wrote: the money back, its surplus and shortfalls and the
+  /// surpluses balanced anew are gone, the purchases and what hangs on them are as they are
+  /// read back, the parts it closed wait again, and planning is read again.
+  private nonisolated static func revertedMoneyBack(
+    _ write: MoneyBackWrite, readBack: [TransactionEntry]
+  ) -> StoreWrite {
+    StoreWrite(
+      upserted: readBack.filter { !$0.transaction.isDeleted },
+      removed: write.created + write.settlement.createdOperations
+        + readBack.filter(\.transaction.isDeleted).map(\.id),
+      partStatuses: statuses(write.closedPartIds, .expected), planningChanged: true)
+  }
+
+  // MARK: Money back
+
+  /// Money back recorded by a sheet — the line's confirmation or the parts of a person —, with
+  /// everything `TransactionRepository.apply` wrote for it: one step of ⌘Z that takes all of it
+  /// back (`revertMoneyBack`). What the counts its money reached wrote is laid over the lists.
+  public func recordedMoneyBack(_ write: MoneyBackWrite, file: String = #fileID) {
+    guard !refuses("recordedMoneyBack", file) else { return }
+    push(.moneyBack(write))
+    if !write.counts.isEmpty { finishWrite(Self.laid(write.counts, over: StoreWrite())) }
+  }
+
+  /// A write with what the counts it reached wrote laid over it (`StoreWrite.laying`); the
+  /// journal gets how many counts moved and what became of their operations — counts only.
+  nonisolated static func laid(_ counts: CountsSettled, over write: StoreWrite) -> StoreWrite {
+    if counts.waitingForRate > 0 {
+      AppLog.warning(
+        "reconcile.waitsForRate", .db, "a difference in another currency waits for a rate",
+        [LogPair("counts", .count(counts.waitingForRate))])
+    }
+    guard !counts.isEmpty else { return write }
+    AppLog.info(
+      "reconcile.settled", .db, "a write moved the differences of counts",
+      [
+        LogPair("counts", .count(counts.countsChanged)), LogPair("created", .count(counts.created)),
+        LogPair("rewritten", .count(counts.rewritten)), LogPair("purged", .count(counts.purged)),
+        LogPair("modeChanged", .count(counts.modeChanged)),
+      ])
+    return write.laying(counts)
   }
 
   /// The planning repository is gone — the store let go of its database — while an undo of
@@ -1013,37 +1366,5 @@ public final class TransactionsStore {
   /// so a plan and the change that follows it do not read them twice.
   private func qualityHistory() -> ManualQualityHistory {
     (try? repository?.manualQualityHistory()) ?? .empty
-  }
-
-  /// Pure grouping, isolated from the store so it can be exercised without a UI. A transfer
-  /// goes on the day it was made, newest first; a day of transfers alone is a day too.
-  /// `refunds` — the ledger's (`Ledger.refundIndex`) — count a refund taken back from a
-  /// purchase in the purchase's day, never twice.
-  nonisolated static func group(
-    _ entries: [TransactionEntry], calendar: CalendarContext, debts: [UUID: Debt] = [:],
-    transfers: [Transfer] = [], refunds: RefundIndex = .empty
-  )
-    -> [DayGroup]
-  {
-    let byDay = Dictionary(grouping: entries) { calendar.day(of: $0.transaction.occurredAt) }
-    let transfersByDay = Dictionary(grouping: transfers) { calendar.day(of: $0.occurredAt) }
-    let days = Set(byDay.keys).union(transfersByDay.keys)
-    return days.sorted(by: >).map { day in
-      let entries = byDay[day] ?? []
-      return DayGroup(
-        day: day,
-        expenses: entries.filter { !DayGroup.isListedWithIncome($0.transaction.kind) },
-        income: entries.filter { DayGroup.isListedWithIncome($0.transaction.kind) },
-        debts: debts,
-        transfers: (transfersByDay[day] ?? []).sorted(by: Self.newestFirst),
-        refunds: refunds)
-    }
-  }
-
-  /// Newest first; of two made at the same moment, the later written first.
-  nonisolated static func newestFirst(_ left: Transfer, _ right: Transfer) -> Bool {
-    if left.occurredAt != right.occurredAt { return left.occurredAt > right.occurredAt }
-    if left.createdAt != right.createdAt { return left.createdAt > right.createdAt }
-    return left.id.uuidString > right.id.uuidString
   }
 }

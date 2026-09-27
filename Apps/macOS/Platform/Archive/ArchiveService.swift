@@ -357,6 +357,13 @@ enum ArchiveImportFlow {
     if let accent = values["theme.accent"], AppTheme.Accent(rawValue: accent) != nil {
       defaults.set(accent, forKey: AppTheme.accentKey)
     }
+    // The order of the fields of the ↓ panel is read as a whole order before it is kept: a
+    // field this build does not know goes, one it lacks takes its standard place.
+    if let order = values[AppEnvironment.entryFieldOrderKey] {
+      defaults.set(
+        EntryFieldOrder.encode(EntryFieldOrder.decode(order)),
+        forKey: AppEnvironment.entryFieldOrderKey)
+    }
   }
 
   /// What an import asks the owner and what it tells them. Alerts in the app; a test answers

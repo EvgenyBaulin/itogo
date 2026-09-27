@@ -92,6 +92,16 @@ struct ExpectedIncomeForm: View {
           Text(verbatim: "—").tag(UUID?.none)
           ForEach(choices.people) { Text(verbatim: $0.name).tag(Optional($0.id)) }
         }
+        Picker(t("form.toAccount"), selection: $income.paymentMethodId) {
+          ForEach(
+            ExpectedIncomeAccounts.options(
+              compute.snapshot?.dataset.paymentMethods ?? [], selection: income.paymentMethodId,
+              auto: t("form.toAccount.auto"), locale: environment.language.locale), id: \.self
+          ) { option in
+            Text(verbatim: option.title).tag(option.id)
+          }
+        }
+        .accessibilityIdentifier("expected.account")
       }
       .formStyle(.grouped)
       HStack {
@@ -133,6 +143,32 @@ struct ExpectedIncomeForm: View {
   private func followTheLastDay() { income.followTheLastDay(&lastDay, today: environment.today) }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
+}
+
+/// «На счёт» of an expected income: where its money is to come to. The first choice leaves it
+/// open — the account of the latest income received for it, else the main one —; then the
+/// live accounts in the order of every menu, the main one first. An account chosen before and
+/// archived since stays in the list, so the form shows what is stored.
+@MainActor
+enum ExpectedIncomeAccounts {
+  struct Option: Hashable {
+    var id: UUID?
+    var title: String
+  }
+
+  static func options(
+    _ accounts: [PaymentMethod], selection: UUID?, auto: String, locale: Locale
+  ) -> [Option] {
+    let offered = FormAccounts.offered(accounts, locale: locale)
+    var options = [Option(id: nil, title: auto)]
+    options += offered.map { Option(id: $0.id, title: $0.name) }
+    if let selection, !offered.contains(where: { $0.id == selection }),
+      let kept = accounts.first(where: { $0.id == selection })
+    {
+      options.append(Option(id: kept.id, title: kept.name))
+    }
+    return options
+  }
 }
 
 extension ExpectedIncome {

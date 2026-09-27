@@ -9,11 +9,12 @@ import Testing
 struct IncomeEstimateTests: SavingsFixtures {
   let today = DateOnly(year: 2026, month: 9, day: 19)
 
-  /// Salary of 100 000 in June, 120 000 in July, 90 000 in August — the August one arriving
-  /// on 3 September, marked «for August» — and 50 000 on 5 September.
+  /// Salary of 100 000 on 1 June — the book begins on the 1st, so June is a whole month —,
+  /// 120 000 in July, 90 000 in August — the August one arriving on 3 September, marked «for
+  /// August» — and 50 000 on 5 September.
   func history() -> SavingsBook {
     var book = SavingsBook()
-    book.income("2026-06-05", "100000")
+    book.income("2026-06-01", "100000")
     book.income("2026-07-05", "120000")
     book.income("2026-09-03", "90000", for: "2026-08")
     book.income("2026-09-05", "50000")
@@ -116,11 +117,11 @@ struct IncomeEstimateTests: SavingsFixtures {
     #expect(estimate(book).value == rub("130000"))
   }
 
-  /// The history starts in July: two complete months, and their median is the mean
+  /// The history starts on 1 July: two complete months, and their median is the mean
   /// (120 000 + 90 000) ÷ 2 = 105 000.
   @Test func aShortHistoryTakesTheMonthsItHas() {
     var book = SavingsBook()
-    book.income("2026-07-05", "120000")
+    book.income("2026-07-01", "120000")
     book.income("2026-08-05", "90000")
     book.income("2026-09-05", "50000")
     let result = estimate(book)
@@ -153,7 +154,7 @@ struct IncomeEstimateTests: SavingsFixtures {
   /// it is a real zero: the median of 0 and 90 000 is 45 000.
   @Test func monthsWithoutAnyIncomeAreNoHistoryOfIncome() {
     var book = SavingsBook()
-    book.expense("2026-07-10", "30000")
+    book.expense("2026-07-01", "30000")
     book.expense("2026-08-10", "30000")
     book.expense("2026-09-02", "1000")
     let none = estimate(book)
@@ -182,6 +183,59 @@ struct IncomeEstimateTests: SavingsFixtures {
     #expect(history.median3 == rub("45000"))
     #expect(history.value == rub("50000"))
     #expect(!history.lowData)
+  }
+
+  /// The first record on 25 July, 100 000 of salary in August, nothing expected in September,
+  /// today the 20th: July is only part of a month and no history of income, so the median is
+  /// August's 100 000 — not the 50 000 a zero July would make of it.
+  @Test func aFirstMonthStartedAfterThe1stIsNoHistory() {
+    var book = SavingsBook()
+    book.expense("2026-07-25", "3000")
+    book.income("2026-08-05", "100000")
+    let result = IncomeEstimate.month(
+      ledger: book.ledger, statuses: [], today: DateOnly(year: 2026, month: 9, day: 20))
+    #expect(result.source == .median)
+    #expect(result.monthsInMedian == 1)
+    #expect(result.median3 == rub("100000"))
+    #expect(result.value == rub("100000"))
+    #expect(
+      IncomeEstimate.historyStart(firstDay: date("2026-07-25")) == MonthKey(year: 2026, month: 8))
+  }
+
+  /// A book begun on 1 July is a whole July: without income it is a real zero beside August's
+  /// 100 000, and the median of the two is 50 000.
+  @Test func aFirstMonthStartedOnThe1stCounts() {
+    var book = SavingsBook()
+    book.expense("2026-07-01", "3000")
+    book.income("2026-08-05", "100000")
+    let result = IncomeEstimate.month(
+      ledger: book.ledger, statuses: [], today: DateOnly(year: 2026, month: 9, day: 20))
+    #expect(result.monthsInMedian == 2)
+    #expect(result.median3 == rub("50000"))
+    #expect(
+      IncomeEstimate.historyStart(firstDay: date("2026-07-01")) == MonthKey(year: 2026, month: 7))
+    #expect(IncomeEstimate.historyStart(firstDay: nil) == nil)
+  }
+
+  /// A book begun on 3 September has no complete month of income before November: in
+  /// September and in October the estimate is what came, «мало данных»; in November October
+  /// is history.
+  @Test func aStartThisMonthGivesNoMedianUntilAMonthIsComplete() {
+    var book = SavingsBook()
+    book.expense("2026-09-03", "1000")
+    book.income("2026-09-05", "50000")
+    book.income("2026-10-05", "60000")
+    for iso in ["2026-09-20", "2026-10-20"] {
+      let result = IncomeEstimate.month(ledger: book.ledger, statuses: [], today: date(iso))
+      #expect(result.source == .receivedOnly, "\(iso)")
+      #expect(result.median3 == nil, "\(iso)")
+      #expect(result.lowData, "\(iso)")
+    }
+    let november = IncomeEstimate.month(
+      ledger: book.ledger, statuses: [], today: date("2026-11-20"))
+    #expect(november.source == .median)
+    #expect(november.monthsInMedian == 1)
+    #expect(november.median3 == rub("60000"))
   }
 
   @Test func medianOfOddAndEvenCounts() {

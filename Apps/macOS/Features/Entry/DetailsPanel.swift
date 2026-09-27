@@ -2,26 +2,49 @@ import AppCore
 import SwiftUI
 
 /// The ↓ panel. Every field of an operation is here: type, category with suggestions,
-/// quality, for whom, place, event, the account and what it was charged, goal, debt, note,
-/// date, currency and rate — plus splitting, paying for somebody else and buying on credit.
+/// quality, for whom, place, event, the account or its card and what it was charged, the
+/// cashback, goal, debt, note, date, currency and rate — plus splitting, paying for somebody
+/// else and buying on credit.
 /// Only the fields the kind has are shown (`EntryDraftModel.fields`): income has no place,
 /// event, «на кого», «за другого» or credit; money back has its person and its account; a
 /// refund names the purchase it takes money back from.
+///
+/// The fields stand in the owner's order (Settings → «Ввод», `AppEnvironment.entryFieldOrder`),
+/// and Tab walks them in it; the type stays on top — it decides which fields there are — and
+/// the parts and the actions below them.
 struct DetailsPanel: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
+  /// «Запомнить» of «Кэшбэк» writes its rule through the store: a step of ⌘Z.
+  @Dependency(\.store) private var store
   /// Handed to the sheet of «Add…», which SwiftUI lays out in a host of its own.
   @Environment(\.dependencies) private var dependencies
   @Bindable var model: EntryDraftModel
   /// Return in a text field of the panel («Сохранение — Enter»). The ↓ panel
   /// of the entry line saves with it; the editor of a saved operation has «Save» of its own.
   var submit: (() -> Void)? = nil
+  /// The control of the panel that has the keyboard focus, when it is one of the fields.
+  @FocusState private var focus: PanelFocus?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       typeRow
       Divider()
       mainFields
+      // The difference of a count: why its money cannot be changed here.
+      if model.isReconcileDifference {
+        Label {
+          Text(
+            verbatim: environment.language(
+              "editor.reconcileDifference.locked", table: "Transactions"))
+        } icon: {
+          Image(systemName: "lock")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("entry.reconcileDifference.locked")
+      }
       // Money back is never split: a split held before the kind changed stays out of sight,
       // and out of what is written.
       if model.isSplit && model.has(.split) {
@@ -47,6 +70,17 @@ struct DetailsPanel: View {
     }
     .frame(maxWidth: 720, alignment: .leading)
     .onSubmit { submit?() }
+    // The panel is asked to put the focus somewhere: the first or the last field of the order —
+    // Tab and Shift-Tab in the line — or the field Enter asks for. Asked on the next turn: the
+    // panel may be appearing just now.
+    .task(id: model.focusRequest) {
+      guard let request = model.focusRequest else { return }
+      try? await Task.sleep(for: .milliseconds(30))
+      focus = PanelTabOrder.resolve(
+        request, order: environment.entryFieldOrder, shown: shownControls,
+        fullKeyboardAccess: PanelTabOrder.fullKeyboardAccess)
+      model.focusRequest = nil
+    }
     // The data was computed again — the bank's rates among it: «Списано со счёта» reads them
     // afresh the next time it is worked out.
     .onChange(of: compute.generation) { _, _ in model.ratesMayHaveChanged() }
@@ -72,7 +106,8 @@ struct DetailsPanel: View {
     .pickerStyle(.segmented)
     .labelsHidden()
     // Money came back for a part: what the operation is stays as the reimbursement found it.
-    .disabled(model.hasClosedPart)
+    // The difference of a count is what the count found.
+    .disabled(model.hasClosedPart || model.isReconcileDifference)
     // The defaults also drop a category of the other kind from every part, so switching an
     // expense to income never leaves an expense category behind.
     .onChange(of: model.draft.kind) { _, _ in
@@ -82,210 +117,424 @@ struct DetailsPanel: View {
 
   // MARK: Main fields
 
-  @ViewBuilder
+  /// The fields in the owner's order. A field the kind does not have is not shown, wherever it
+  /// stands in the order.
   private var mainFields: some View {
     Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-      GridRow {
-        fieldLabel("entry.amount")
-        HStack(spacing: 8) {
-          AmountField(
-            amount: totalBinding,
-            // The text goes along: a formula typed here is kept in `amount_expr`.
-            onTyped: { model.setTotal($0, typed: $1) }
-          )
-          .frame(width: 140)
-          // One part is the whole operation: its amount is the total.
-          .disabled(!model.isSplit && model.hasClosedPart)
-          // The formula the amount was worked out from, its numbers written the way the app
-          // writes them.
-          if let expression = model.draft.amountExpression {
-            Text(verbatim: ExpressionEvaluator.canonical(expression) ?? expression)
-              .font(.caption.monospaced())
-              .foregroundStyle(.secondary)
-          }
+      ForEach(environment.entryFieldOrder, id: \.self) { field in
+        rows(for: field)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func rows(for field: EntryField) -> some View {
+    switch field {
+    case .amount: amountRows
+    case .category: categoryRows
+    case .quality: qualityRow
+    case .forWhom: forWhomRow
+    case .place: placeRow
+    case .event: eventRow
+    case .account: accountRows
+    case .cashback: cashbackRow
+    case .goal: goalRow
+    case .debt: debtRow
+    case .note: noteRow
+    case .date: dateRow
+    case .incomeMonth: incomeMonthRows
+    case .currency: currencyRows
+    }
+  }
+
+  /// Which controls are on screen, for Tab: by the same conditions the rows are laid by.
+  private var shownControls: Set<PanelFocus> {
+    var shown: Set<PanelFocus> = [.amount, .account, .note, .date, .currency]
+    if model.has(.category) { shown.formUnion([.category, .subcategory]) }
+    if model.hasQuality && model.has(.quality) { shown.insert(.quality) }
+    if model.has(.fromPerson) {
+      shown.insert(.forPerson)
+    } else if model.has(.forWhom) {
+      shown.formUnion([.forWhom, .forPerson])
+    }
+    if model.has(.place) { shown.insert(.place) }
+    if model.has(.event) { shown.insert(.event) }
+    if model.needsCharge { shown.insert(.charge) }
+    if model.showsCashback { shown.insert(.cashback) }
+    if showsGoal { shown.insert(.goal) }
+    if showsDebt { shown.insert(.debt) }
+    if model.draft.kind == .income {
+      shown.insert(.incomeMonth)
+      if !openExpectations.isEmpty, model.linksExpectedIncome { shown.insert(.expected) }
+    }
+    if model.draft.currency != .rub { shown.insert(.rate) }
+    return shown
+  }
+
+  /// The money of the difference of a count follows the books: it is not changed here.
+  private var moneyLocked: Bool { model.isReconcileDifference }
+
+  @ViewBuilder
+  private var amountRows: some View {
+    GridRow {
+      fieldLabel("entry.amount")
+      HStack(spacing: 8) {
+        AmountField(
+          amount: totalBinding,
+          // The text goes along: a formula typed here is kept in `amount_expr`.
+          onTyped: { model.setTotal($0, typed: $1) }
+        )
+        .frame(width: 140)
+        .focused($focus, equals: .amount)
+        // One part is the whole operation: its amount is the total.
+        .disabled((!model.isSplit && model.hasClosedPart) || moneyLocked)
+        // The formula the amount was worked out from, its numbers written the way the app
+        // writes them.
+        if let expression = model.draft.amountExpression {
+          Text(verbatim: ExpressionEvaluator.canonical(expression) ?? expression)
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
         }
       }
-      if !model.isSplit && model.hasClosedPart {
+    }
+    if !model.isSplit && model.hasClosedPart {
+      GridRow {
+        Color.clear.frame(width: 1, height: 1)
+        closedPartCaption
+      }
+    }
+    if model.offersRefundPurchase {
+      GridRow {
+        fieldLabel("entry.refund.purchase")
+        refundPurchaseRow
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var categoryRows: some View {
+    if model.has(.category) {
+      GridRow {
+        fieldLabel("entry.category", marked: model.markedGap == .category)
+        HStack(spacing: 8) {
+          categoryPicker(forPartAt: 0)
+            .focused($focus, equals: .category)
+          if model.markedGap == .category { gapMark(.category) }
+        }
+      }
+      GridRow {
+        fieldLabel("entry.subcategory", marked: model.markedGap == .subcategory)
+        HStack(spacing: 8) {
+          subcategoryPicker(forPartAt: 0)
+            .focused($focus, equals: .subcategory)
+          if model.markedGap == .subcategory { gapMark(.subcategory) }
+        }
+      }
+      if !model.categorySuggestions.isEmpty {
         GridRow {
           Color.clear.frame(width: 1, height: 1)
-          closedPartCaption
+          suggestionChips
         }
       }
-      if model.offersRefundPurchase {
-        GridRow {
-          fieldLabel("entry.refund.purchase")
-          refundPurchaseRow
-        }
-      }
-      if model.has(.category) {
-        GridRow {
-          fieldLabel("entry.category")
-          categoryPicker(forPartAt: 0)
-        }
-        GridRow {
-          fieldLabel("entry.subcategory")
-          subcategoryPicker(forPartAt: 0)
-        }
-        if !model.categorySuggestions.isEmpty {
-          GridRow {
-            Color.clear.frame(width: 1, height: 1)
-            suggestionChips
-          }
-        }
-      }
-      if model.hasQuality && model.has(.quality) {
-        GridRow {
-          fieldLabel("entry.quality")
-          qualityPicker(for: partBinding(0))
-        }
-      }
-      if model.has(.fromPerson) {
-        // Money back names the person it came from, and nothing else about them.
-        GridRow {
-          fieldLabel("entry.fromWhom")
-          referencePicker(
-            selection: partBinding(0).forPersonId,
-            options: model.people.map { ($0.id, $0.name) }, adding: .person(part: 0))
-        }
-      } else if model.has(.forWhom) {
-        GridRow {
-          fieldLabel(forWhomKey)
-          forWhomPicker(forPartAt: 0)
-        }
-      }
-      if model.has(.place) {
-        GridRow {
-          fieldLabel("entry.place")
-          // Through the model, like a place the line names: it brings its category and its
-          // payment method. A place not been to yet is added from the menu, and the name the
-          // line could not match is where its sheet starts.
-          referencePicker(
-            selection: Binding(
-              get: { model.draft.placeId },
-              set: { model.setPlace($0, today: environment.today) }),
-            options: model.places.map { ($0.id, $0.name) }, adding: .place)
-        }
-      }
-      if model.has(.event) {
-        GridRow {
-          fieldLabel("entry.event")
-          HStack(spacing: 8) {
-            referencePicker(
-              selection: partBinding(0).eventId,
-              options: model.events.map { ($0.id, $0.name) }, adding: .event(part: 0))
-            if let suggested = model.suggestedEvent, model.draft.parts.first?.eventId == nil {
-              Button {
-                model.draft.parts[0].eventId = suggested.id
-              } label: {
-                Label {
-                  Text(verbatim: suggested.name)
-                } icon: {
-                  Image(systemName: "calendar.badge.plus")
-                }
-              }
-              .buttonStyle(.bordered)
-              .controlSize(.small)
-              .help(t("entry.eventSuggested"))
-            }
-          }
-        }
-      }
+    }
+  }
+
+  /// What the line did not say, beside the picker Enter asks for: a symbol and words, never the
+  /// colour alone.
+  private func gapMark(_ gap: EntryGap) -> some View {
+    Label {
+      Text(verbatim: EntryLineMessage.mark(gap, environment))
+    } icon: {
+      Image(systemName: "exclamationmark.circle")
+    }
+    .font(.caption)
+    .foregroundStyle(.tint)
+    .fixedSize()
+    .accessibilityIdentifier("entry.gap.mark")
+  }
+
+  @ViewBuilder
+  private var qualityRow: some View {
+    if model.hasQuality && model.has(.quality) {
       GridRow {
-        // «Со счёта» for spending, «На счёт» for money that comes in, «Счёт» for a goal.
-        fieldLabel(model.accountFieldKey)
-        // An account chosen here is the owner's: no place chosen after it replaces it. The
-        // main account first, the rest in the owner's order, and no «none»: an operation that
-        // names no account is on the main one, and the picker says so. Only a database with no
-        // account yet shows «—», with «Add…» to make one.
+        fieldLabel("entry.quality")
+        // A menu like every other field: chosen by a click, and from the keyboard with Space,
+        // the arrows and Return — a segmented control took Return for nothing.
+        qualityMenu(for: partBinding(0))
+          .focused($focus, equals: .quality)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var forWhomRow: some View {
+    if model.has(.fromPerson) {
+      // Money back names the person it came from, and nothing else about them.
+      GridRow {
+        fieldLabel("entry.fromWhom")
+        referencePicker(
+          selection: partBinding(0).forPersonId,
+          options: model.people.map { ($0.id, $0.name) }, adding: .person(part: 0)
+        )
+        .focused($focus, equals: .forPerson)
+      }
+    } else if model.has(.forWhom) {
+      GridRow {
+        fieldLabel(forWhomKey)
+        forWhomPicker(forPartAt: 0, focusing: true)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var placeRow: some View {
+    if model.has(.place) {
+      GridRow {
+        fieldLabel("entry.place")
+        // Through the model, like a place the line names: it brings its category and its
+        // payment method. A place not been to yet is added from the menu, and the name the
+        // line could not match is where its sheet starts. A place archived since is shown only
+        // for the operation already at it.
         referencePicker(
           selection: Binding(
-            get: { model.selectedAccount?.id }, set: { model.setPaymentMethod($0) }),
-          options: model.accountChoices(locale: environment.language.locale)
-            .map { ($0.id, $0.name) },
-          adding: .paymentMethod, offersNone: model.selectedAccount == nil)
+            get: { model.draft.placeId },
+            set: { model.setPlace($0, today: environment.today) }),
+          options: model.placeChoices.map { choice in
+            (
+              choice.id,
+              choice.archived ? environment.format("common.archivedName", choice.name) : choice.name
+            )
+          },
+          adding: .place
+        )
+        .focused($focus, equals: .place)
       }
-      if model.needsCharge {
-        GridRow {
-          fieldLabel("entry.accountCharge")
-          AccountChargeField(model: model)
-        }
-      }
-      if model.has(.goal) && model.isGoalContribution(model.part(at: 0)) {
-        GridRow {
-          fieldLabel("entry.goal")
-          referencePicker(
-            selection: Binding(
-              get: { model.part(at: 0).goalId },
-              set: {
-                model.setGoal($0, forPartAt: 0)
-                model.applyDefaults(today: environment.today)
-              }),
-            options: model.goals.map { ($0.id, $0.name) })
-        }
-      }
-      if model.has(.debt) && (model.draft.kind == .expense || model.draft.debtId != nil) {
-        GridRow {
-          fieldLabel("entry.debt")
-          referencePicker(
-            selection: $model.draft.debtId,
-            options: model.debts.map { ($0.id, $0.name) })
-        }
-      }
+    }
+  }
+
+  @ViewBuilder
+  private var eventRow: some View {
+    if model.has(.event) {
       GridRow {
-        fieldLabel("entry.note")
-        TextField(text: Binding($model.draft.note, replacingNilWith: "")) {
-          Text(verbatim: t("entry.note"))
-        }
-        .labelsHidden()
-      }
-      GridRow {
-        fieldLabel("entry.date")
-        // A new day offers the event covering it instead of the old day's.
-        DatePicker(
-          selection: Binding(
-            get: { model.draft.occurredAt },
-            set: { model.setDate($0, today: environment.today) }),
-          displayedComponents: [.date, .hourAndMinute]
-        ) {
-          Text(verbatim: t("entry.date"))
-        }
-        .labelsHidden()
-        .environment(\.locale, environment.language.locale)
-      }
-      if model.draft.kind == .income {
-        GridRow {
-          fieldLabel("entry.periodMonth")
-          periodMonthPicker
-        }
-        if !openExpectations.isEmpty {
-          GridRow {
-            fieldLabel("entry.expected")
-            if model.linksExpectedIncome {
-              Picker(selection: $model.expectedIncomeId) {
-                Text(verbatim: "—").tag(UUID?.none)
-                ForEach(openExpectations) { status in
-                  Text(verbatim: status.income.name).tag(Optional(status.id))
-                }
-              } label: {
-                EmptyView()
+        fieldLabel("entry.event")
+        HStack(spacing: 8) {
+          referencePicker(
+            selection: partBinding(0).eventId,
+            options: model.events.map { ($0.id, $0.name) }, adding: .event(part: 0)
+          )
+          .focused($focus, equals: .event)
+          if let suggested = model.suggestedEvent, model.draft.parts.first?.eventId == nil {
+            Button {
+              model.draft.parts[0].eventId = suggested.id
+            } label: {
+              Label {
+                Text(verbatim: suggested.name)
+              } icon: {
+                Image(systemName: "calendar.badge.plus")
               }
-              .labelsHidden()
-            } else {
-              // The editor writes no link: a saved income is tied in Planning.
-              caption("entry.expectedInPlanning")
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(t("entry.eventSuggested"))
           }
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private var accountRows: some View {
+    GridRow {
+      // «Со счёта» for spending, «На счёт» for money that comes in, «Счёт» for a goal.
+      fieldLabel(model.accountFieldKey)
+      // An account chosen here is the owner's: no place chosen after it replaces it. The
+      // main account first, the rest in the owner's order, each followed by its live cards
+      // («Т-Банк · Black»): a card brings its account, an account picked names no card. No
+      // «none»: an operation that names no account is on the main one, and the picker says so.
+      // Only a database with no account yet shows «—», with «Add…» to make one.
+      referencePicker(
+        selection: Binding(
+          get: { model.accountOrCardSelection }, set: { model.setAccountOrCard($0) }),
+        options: model.accountCardChoices(locale: environment.language.locale).map { choice in
+          (
+            choice.id,
+            choice.archived ? environment.format("common.archivedName", choice.name) : choice.name
+          )
+        },
+        adding: .paymentMethod, offersNone: model.selectedAccount == nil
+      )
+      .focused($focus, equals: .account)
+      .disabled(moneyLocked)
+      .accessibilityIdentifier("entry.account")
+    }
+    if model.needsCharge {
       GridRow {
-        fieldLabel("entry.currency")
-        currencyPicker
+        fieldLabel("entry.accountCharge")
+        AccountChargeField(model: model)
+          .focused($focus, equals: .charge)
+          .disabled(moneyLocked)
       }
-      if model.draft.currency != .rub {
+    }
+  }
+
+  /// «Кэшбэк» of a purchase that moves money on its account: what its rules expect, or a figure
+  /// or a percent typed for this operation alone. «Запомнить» writes a typed percent as a rule
+  /// of the card at once — a step of ⌘Z of its own. An empty or unreadable field never stops
+  /// the save.
+  @ViewBuilder
+  private var cashbackRow: some View {
+    if model.showsCashback {
+      GridRow {
+        fieldLabel("entry.cashback")
+        CashbackField(
+          state: $model.cashbackField, draft: model.draft,
+          expectation: model.cashbackExpectation, context: model.cashbackContext,
+          remember: { rule in
+            model.rememberCashback(rule) {
+              CardActions(environment: environment, store: store).remember($0)
+            }
+          }
+        )
+        .focused($focus, equals: .cashback)
+      }
+    }
+  }
+
+  /// The goal row: for a part that goes to a goal («цель — если выбрана категория Goals»).
+  private var showsGoal: Bool {
+    model.has(.goal) && model.isGoalContribution(model.part(at: 0))
+  }
+
+  @ViewBuilder
+  private var goalRow: some View {
+    if showsGoal {
+      GridRow {
+        fieldLabel("entry.goal")
+        referencePicker(
+          selection: Binding(
+            get: { model.part(at: 0).goalId },
+            set: {
+              model.setGoal($0, forPartAt: 0)
+              model.applyDefaults(today: environment.today)
+            }),
+          options: model.goals.map { ($0.id, $0.name) }
+        )
+        .focused($focus, equals: .goal)
+      }
+    }
+  }
+
+  /// The debt row: a purchase may pay one, and any operation keeps the debt it pays.
+  private var showsDebt: Bool {
+    model.has(.debt) && (model.draft.kind == .expense || model.draft.debtId != nil)
+  }
+
+  @ViewBuilder
+  private var debtRow: some View {
+    if showsDebt {
+      GridRow {
+        fieldLabel("entry.debt")
+        // A debt closed or deleted since stays in the menu of the payment that names it, and
+        // says so; the payment keeps it unless another is picked. The difference of a count pays
+        // no debt: its amount follows every recount, and a debt's balance would follow it.
+        referencePicker(
+          selection: $model.draft.debtId,
+          options: model.debtChoices.map { choice in
+            switch choice.state {
+            case .open: (choice.id, choice.name)
+            case .closed:
+              (
+                choice.id,
+                environment.language.format("entry.debt.closed", table: "Entry", choice.name)
+              )
+            case .deleted:
+              (
+                choice.id,
+                environment.language.format("entry.debt.gone", table: "Entry", choice.name)
+              )
+            }
+          }
+        )
+        .focused($focus, equals: .debt)
+        .disabled(moneyLocked)
+        .accessibilityIdentifier("entry.debt")
+      }
+    }
+  }
+
+  private var noteRow: some View {
+    GridRow {
+      fieldLabel("entry.note")
+      TextField(text: Binding($model.draft.note, replacingNilWith: "")) {
+        Text(verbatim: t("entry.note"))
+      }
+      .labelsHidden()
+      .focused($focus, equals: .note)
+    }
+  }
+
+  private var dateRow: some View {
+    GridRow {
+      fieldLabel("entry.date")
+      // A new day offers the event covering it instead of the old day's.
+      DatePicker(
+        selection: Binding(
+          get: { model.draft.occurredAt },
+          set: { model.setDate($0, today: environment.today) }),
+        displayedComponents: [.date, .hourAndMinute]
+      ) {
+        Text(verbatim: t("entry.date"))
+      }
+      .labelsHidden()
+      .environment(\.locale, environment.language.locale)
+      .focused($focus, equals: .date)
+      .disabled(moneyLocked)
+    }
+  }
+
+  @ViewBuilder
+  private var incomeMonthRows: some View {
+    if model.draft.kind == .income {
+      GridRow {
+        fieldLabel("entry.periodMonth")
+        periodMonthPicker
+          .focused($focus, equals: .incomeMonth)
+      }
+      if !openExpectations.isEmpty {
         GridRow {
-          fieldLabel("entry.rate")
-          rateField
+          fieldLabel("entry.expected")
+          if model.linksExpectedIncome {
+            Picker(selection: $model.expectedIncomeId) {
+              Text(verbatim: "—").tag(UUID?.none)
+              ForEach(openExpectations) { status in
+                Text(verbatim: status.income.name).tag(Optional(status.id))
+              }
+            } label: {
+              EmptyView()
+            }
+            .labelsHidden()
+            .focused($focus, equals: .expected)
+          } else {
+            // The editor writes no link: a saved income is tied in Planning.
+            caption("entry.expectedInPlanning")
+          }
         }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var currencyRows: some View {
+    GridRow {
+      fieldLabel("entry.currency")
+      currencyPicker
+        .focused($focus, equals: .currency)
+    }
+    if model.draft.currency != .rub {
+      GridRow {
+        fieldLabel("entry.rate")
+        rateField
+          .focused($focus, equals: .rate)
       }
     }
   }
@@ -531,10 +780,12 @@ struct DetailsPanel: View {
 
   // MARK: Pieces
 
-  private func fieldLabel(_ key: String) -> some View {
+  /// `marked`: the field Enter asks for — its name stands out.
+  private func fieldLabel(_ key: String, marked: Bool = false) -> some View {
     Text(verbatim: t(key))
       .font(.caption)
-      .foregroundStyle(.secondary)
+      .fontWeight(marked ? .semibold : .regular)
+      .foregroundStyle(marked ? Color.primary : Color.secondary)
       .gridColumnAlignment(.leading)
   }
 
@@ -592,21 +843,7 @@ struct DetailsPanel: View {
     .disabled(children.isEmpty && !canAdd)
   }
 
-  private func qualityPicker(for part: Binding<PartDraft>) -> some View {
-    Picker(selection: qualitySelection(for: part)) {
-      ForEach(Quality.allCases, id: \.self) { quality in
-        Text(verbatim: environment.language(Palette.qualityKey(quality)))
-          .tag(Quality?.some(quality))
-      }
-    } label: {
-      Text(verbatim: t("entry.quality"))
-    }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .disabled(!model.canRateByHand(part.wrappedValue))
-  }
-
-  /// The same choice folded into a menu, narrow enough for a row of the split. Every value
+  /// The quality as a menu — of the first part and of every part of a split. Every value
   /// carries its symbol and its name, never a colour alone.
   private func qualityMenu(for part: Binding<PartDraft>) -> some View {
     Picker(selection: qualitySelection(for: part)) {
@@ -639,7 +876,8 @@ struct DetailsPanel: View {
       })
   }
 
-  private func forWhomPicker(forPartAt index: Int) -> some View {
+  /// `focusing`: the pickers of the first part, which Tab reaches as fields of the panel.
+  private func forWhomPicker(forPartAt index: Int, focusing: Bool = false) -> some View {
     let part = partBinding(index)
     return HStack(spacing: 6) {
       // Choosing a value drops the person the part named. A set person beats the value
@@ -654,9 +892,12 @@ struct DetailsPanel: View {
         Text(verbatim: t("entry.forWhom"))
       }
       .labelsHidden()
+      .modifier(PanelFocused(focus: $focus, control: focusing ? .forWhom : nil))
       referencePicker(
         selection: part.forPersonId,
-        options: model.people.map { ($0.id, $0.name) }, adding: .person(part: index))
+        options: model.people.map { ($0.id, $0.name) }, adding: .person(part: index)
+      )
+      .modifier(PanelFocused(focus: $focus, control: focusing ? .forPerson : nil))
     }
   }
 
@@ -752,8 +993,9 @@ struct DetailsPanel: View {
       EmptyView()
     }
     .labelsHidden()
-    // A refund of a purchase is in the purchase's currency.
-    .disabled(model.hasClosedPart || model.refundTarget != nil)
+    // A refund of a purchase is in the purchase's currency; a difference of a count in the
+    // currency counted.
+    .disabled(model.hasClosedPart || model.refundTarget != nil || moneyLocked)
   }
 
   /// The purchase a refund takes money back from: picked, «без покупки», or still to pick.
@@ -803,7 +1045,7 @@ struct DetailsPanel: View {
         .labelsHidden()
         .frame(width: 120)
         // A refund of a purchase is at the purchase's rate.
-        .disabled(!model.canTypeRate)
+        .disabled(!model.canTypeRate || moneyLocked)
       if model.draft.rateSource == .manual {
         Text(verbatim: t("entry.rateManual"))
           .font(.caption)
@@ -1072,5 +1314,21 @@ extension Binding<String> {
     self.init(
       get: { source.wrappedValue ?? placeholder },
       set: { source.wrappedValue = $0.isEmpty ? nil : $0 })
+  }
+}
+
+/// A control of the ↓ panel Tab reaches as a field: bound to the panel's focus when it has a
+/// place in the order, left alone otherwise — a picker of the second part of a split.
+private struct PanelFocused: ViewModifier {
+  var focus: FocusState<PanelFocus?>.Binding
+  let control: PanelFocus?
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if let control {
+      content.focused(focus, equals: control)
+    } else {
+      content
+    }
   }
 }

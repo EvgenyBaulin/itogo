@@ -133,12 +133,15 @@ struct ChangeStreamTests {
   }
 
   /// The tables of the accounts are ledger tables: balances are made of the transfers and the
-  /// counts, and the groups decide what the total shows.
+  /// counts, and the groups decide what the total shows. So are the cards and their cashback
+  /// rules: what Analytics shows of the cashback expected is made of them.
   @Test func theTablesOfTheAccountsAreWatched() throws {
-    for table in ["account_groups", "transfers", "reconciliation_balances"] {
+    for table in [
+      "account_groups", "transfers", "reconciliation_balances", "cards", "cashback_rules",
+    ] {
       #expect(DatabaseStack.ledgerTables.contains(table), "\(table) is not watched")
     }
-    #expect(DatabaseStack.ledgerTables.count == 24)
+    #expect(DatabaseStack.ledgerTables.count == 26)
     #expect(Set(DatabaseStack.ledgerTables).count == DatabaseStack.ledgerTables.count)
   }
 

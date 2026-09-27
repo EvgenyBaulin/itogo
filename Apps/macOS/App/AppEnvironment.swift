@@ -95,6 +95,38 @@ public final class AppEnvironment {
   /// a reminder ask for it from wherever they are.
   public var showsReconciliation = false
 
+  /// The due dates that passed unpaid were asked about at this launch already: the question
+  /// comes once a launch, not at every new window. Kept in memory only.
+  public var overdueAskedThisLaunch = false
+
+  /// The reminders are open on the due dates that passed unpaid.
+  public var showsOverdue = false
+
+  /// The order of the fields of the ↓ panel and of the editor of an operation, chosen in the
+  /// settings. A habit of the owner, not data of the books: kept in `UserDefaults` beside the
+  /// theme, carried by the archive (`portableSettings`), never a step of ⌘Z. Written whole —
+  /// every field once — whatever is set (`EntryFieldOrder.sanitized`).
+  public var entryFieldOrder: [EntryField] = AppEnvironment.storedEntryFieldOrder() {
+    didSet {
+      guard entryFieldOrder != oldValue else { return }
+      UserDefaults.standard.set(
+        EntryFieldOrder.encode(EntryFieldOrder.sanitized(entryFieldOrder)),
+        forKey: Self.entryFieldOrderKey)
+    }
+  }
+
+  /// The key of `entryFieldOrder` in `UserDefaults` and in the archive's `settings.json`.
+  /// `nonisolated`: an archive being imported writes it from off the main actor, and the test
+  /// guard reads it before the first test.
+  nonisolated static let entryFieldOrderKey = "entry.fieldOrder"
+
+  /// The order `UserDefaults` keeps, read as a whole order; the standard one when there is none.
+  nonisolated static func storedEntryFieldOrder(
+    in defaults: UserDefaults = .standard
+  ) -> [EntryField] {
+    EntryFieldOrder.decode(defaults.string(forKey: entryFieldOrderKey))
+  }
+
   /// «Найти пропущенные…» of a reconciliation: the Transactions window shows these days as
   /// soon as it is there, then clears this.
   public var pendingTransactionsRange: DayRange?
@@ -280,6 +312,71 @@ public final class AppEnvironment {
     }
   }
 
+  // MARK: Answers about a count remembered
+
+  /// The answers «Больше не спрашивать для этой сверки» keeps, read from the database now —
+  /// not from the last snapshot of the numbers —, so an answer given a moment ago counts at
+  /// once. Reconciliation → «было до сверки». Only the answers still of use are read, against
+  /// the counts as the database has them now (`BeforeCountAnswers.pruned`): once every balance
+  /// a count counted is counted on a later day, its answer dates nothing, though the next
+  /// answer kept is the write that lets it go. Empty when there is no database, the counts
+  /// cannot be read, or nothing is kept.
+  func rememberedCountAnswers() -> [UUID: Bool] {
+    guard let settings, let planning else { return [:] }
+    let text = try? settings.string(PlanningSettings.beforeCountAnswersKey)
+    let answers = PlanningSettings.countAnswers(from: text ?? nil)
+    guard !answers.isEmpty, let counts = try? countedBalances(planning) else { return [:] }
+    return BeforeCountAnswers.pruned(answers, balances: counts)
+  }
+
+  /// The balances as counted, from the reconciliations the database has now: what decides
+  /// which answers about a count are still of use.
+  private func countedBalances(_ planning: PlanningRepository) throws -> AccountBalances {
+    let book = try planning.book()
+    return AccountBalances.build(
+      entries: [], transfers: [], debtEntries: [], debts: [:],
+      reconciliations: book.reconciliations, balances: book.reconciledBalances, accounts: [],
+      tree: CategoryTree([]), now: now(), calendar: calendar)
+  }
+
+  /// Keeps the answer to the question about the count of `reconciliation`: the next operation
+  /// or transfer of that day is dated by it without asking. The answers of counts no longer on
+  /// the latest counted day of any balance go in the same write (`BeforeCountAnswers.pruned`),
+  /// read against the counts as the database has them now — and so does this one, when its
+  /// reconciliation is no such count: no count at all, or a count of an earlier day than its
+  /// balances' latest, which the next operation of its day is asked about again. A preference
+  /// of the question, not a step of ⌘Z. Returns whether the answer is kept: written, and not
+  /// let go of by the same write.
+  @discardableResult
+  func rememberCountAnswer(reconciliation: UUID, wasBefore: Bool) -> Bool {
+    var isKept = false
+    let written = attempt("reconcile.answerRefused", on: settings) { settings in
+      guard let planning else { throw DatabaseError.notFound }
+      let counts = try countedBalances(planning)
+      var answers = PlanningSettings.countAnswers(
+        from: try settings.string(PlanningSettings.beforeCountAnswersKey))
+      answers[reconciliation] = wasBefore
+      let kept = BeforeCountAnswers.pruned(answers, balances: counts)
+      // No answer left is an empty text: it reads as no answer at all.
+      try settings.set(
+        PlanningSettings.beforeCountAnswersKey,
+        to: PlanningSettings.countAnswersText(kept) ?? "")
+      isKept = kept[reconciliation] != nil
+    }
+    guard written else { return false }
+    let pairs = [
+      LogPair("reconciliation", .id(reconciliation)), LogPair("before", .flag(wasBefore)),
+    ]
+    if isKept {
+      AppLog.info("reconcile.answerKept", .db, "an answer about a count is remembered", pairs)
+    } else {
+      AppLog.info(
+        "reconcile.answerPruned", .db,
+        "an answer about a count is not kept: it is no count of its latest day", pairs)
+    }
+    return isKept
+  }
+
   public func refreshForWhomLabels() {
     guard let settings else { return }
     var labels: [ForWhom: String] = [:]
@@ -375,6 +472,7 @@ public final class AppEnvironment {
       "language": language.choice.rawValue,
       "theme.scheme": theme.scheme.rawValue,
       "theme.accent": theme.accent.rawValue,
+      Self.entryFieldOrderKey: EntryFieldOrder.encode(entryFieldOrder),
     ]
     if let currencies = try? settings?.enabledCurrencies() {
       values["currencies"] = currencies.map(\.code).joined(separator: ",")
@@ -570,6 +668,9 @@ public final class AppEnvironment {
   /// repositories go first, so anything that still holds this environment reads `nil` rather than a
   /// closed connection.
   public func close() async {
+    // The catch-up of the counts the open started writes through the stack: it lands before
+    // anything is let go of.
+    await countsCaughtUp()
     // A background request `applyRate` fired holds the service itself: closed first, it
     // cancels what is on its way and writes nothing after this.
     await rateService?.close()
@@ -641,19 +742,26 @@ public final class AppEnvironment {
         })
     }
     self.stack = stack
-    self.transactions = TransactionRepository(writer: stack.writer)
+    // Every write that moves money settles the counts whose windows it reaches, in the owner's
+    // calendar; «Сверка» is made again, when it has to be, in the language of the interface.
+    let liveCounts = LiveCountsContext(
+      calendar: calendar, categoryName: language("categories.reconciliation", table: "Settings"))
+    self.transactions = TransactionRepository(writer: stack.writer, liveCounts: liveCounts)
     self.references = ReferenceRepository(writer: stack.writer)
     self.settings = SettingsRepository(writer: stack.writer)
     self.rates = RateRepository(writer: stack.writer)
-    self.planning = PlanningRepository(writer: stack.writer)
+    self.planning = PlanningRepository(writer: stack.writer, liveCounts: liveCounts)
     self.anomalies = AnomalyRepository(writer: stack.writer)
     self.accounts = AccountRepository(writer: stack.writer)
     let exportRepository = ExportRepository(writer: stack.writer)
     self.csvExport = CSVExportService(repository: exportRepository)
     self.archives = ArchiveService(stack: stack, appVersion: Self.appVersion)
+    // A refinement that lets money back cover a part writes the income over it with the note
+    // an edit gives it, in the language of the interface at that moment.
     self.rateService = RateService(
       repository: RateRepository(writer: stack.writer),
-      transactions: TransactionRepository(writer: stack.writer), calendar: calendar)
+      transactions: TransactionRepository(writer: stack.writer, liveCounts: liveCounts),
+      calendar: calendar, surplusNote: { TransactionsStore.surplusNote() })
     let backups = BackupService(stack: stack, directory: AppPaths.backupsDirectory)
     self.backups = backups
     // Copies of a data set stay in its own folder: synthetic history has no place next to
@@ -684,6 +792,20 @@ public final class AppEnvironment {
     refreshForWhomLabels()
     assignsEventAutomatically = (try? settings?.string("events.automatic")) == "1"
     state = .ready
+    // Beside the launch, off the main thread: on a long history the catch-up reads almost all
+    // of it. Every write settles its own windows whenever it lands, and what the catch-up
+    // writes reaches the figures the way any change does.
+    let catchUp = ReconciliationRepository(writer: stack.writer)
+    countsCatchUp = Task { await Self.settleCountsAtOpen(liveCounts, with: catchUp) }
+  }
+
+  /// The catch-up of the counts the open started (`settleCountsAtOpen`).
+  @ObservationIgnored private var countsCatchUp: Task<Void, Never>?
+
+  /// Waits until the catch-up of the counts the open started has landed; at once when there is
+  /// none. `close()` waits for it before the database goes.
+  public func countsCaughtUp() async {
+    await countsCatchUp?.value
   }
 
   /// Exactly one live account is main at every open (`AccountRepository.ensureMainAccount`):
@@ -733,6 +855,49 @@ public final class AppEnvironment {
     } catch {
       AppLog.error(
         "db.formulasCheckFailed", .db, "the formulas could not be checked",
+        [LogPair("error", .error(error))])
+    }
+  }
+
+  /// Every later count's difference follows the books once at every open, beside the launch
+  /// (`ReconciliationRepository.settleAllInBackground`): the catch-up for counts whose windows
+  /// got operations dated back while nothing settled them — the first open of a book of 1.1 —
+  /// and for anything a missed path left behind; a difference whose count is gone goes. A first
+  /// count the owner has not decided about is left as it is. Not a step of ⌘Z: the difference
+  /// is derived. A failure costs nothing but the catch-up, which the next open makes again. A
+  /// difference taken away because its count is gone, and a count whose difference still waits
+  /// for a rate of the bank, are in the journal on their own — the second even when nothing was
+  /// written.
+  private static func settleCountsAtOpen(
+    _ context: LiveCountsContext, with repository: ReconciliationRepository
+  ) async {
+    do {
+      let settled = try await repository.settleAllInBackground(context: context)
+      if settled.orphansPurged > 0 {
+        AppLog.info(
+          "reconcile.orphansPurged", .db, "differences whose count is gone were taken away",
+          [LogPair("operations", .count(settled.orphansPurged))])
+      }
+      if settled.waitingForRate > 0 {
+        AppLog.warning(
+          "reconcile.waitsForRate", .db, "a difference in a foreign currency waits for a rate",
+          [LogPair("counts", .count(settled.waitingForRate))])
+      }
+      guard !settled.isEmpty else { return }
+      AppLog.info(
+        "reconcile.settledAtOpen", .db, "the counts follow the books again",
+        [
+          LogPair("counts", .count(settled.countsChanged)),
+          LogPair("created", .count(settled.created)),
+          LogPair("rewritten", .count(settled.rewritten)),
+          LogPair("purged", .count(settled.purged)),
+          LogPair("modeChanged", .count(settled.modeChanged)),
+          LogPair("orphans", .count(settled.orphansPurged)),
+          LogPair("waitForRate", .count(settled.waitingForRate)),
+        ])
+    } catch {
+      AppLog.error(
+        "reconcile.settleFailed", .db, "the counts could not follow the books",
         [LogPair("error", .error(error))])
     }
   }

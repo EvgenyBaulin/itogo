@@ -160,6 +160,7 @@ extension Template: @retroactive FetchableRecord, @retroactive PersistableRecord
   }
 }
 
+/// `plan_start_month` is 'YYYY-MM', or NULL for a plan counted from the first contribution.
 extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "goals"
 
@@ -172,7 +173,8 @@ extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
       monthlyPlanE4: try RowMapping.optionalAmount(row, "monthly_plan_e4"),
       subcategoryId: RowMapping.optionalUUID(row, "subcategory_id"),
       archived: try RowMapping.flag(row, "archived", fallback: false),
-      currency: CurrencyCode(row["currency"] ?? "RUB"))
+      currency: CurrencyCode(row["currency"] ?? "RUB"),
+      planStartMonth: RowMapping.month(row, "plan_start_month"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -184,6 +186,7 @@ extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
     container["subcategory_id"] = subcategoryId?.uuidString
     container["archived"] = archived
     container["currency"] = currency.code
+    container["plan_start_month"] = planStartMonth?.iso
   }
 }
 

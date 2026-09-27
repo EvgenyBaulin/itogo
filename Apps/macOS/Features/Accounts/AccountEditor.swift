@@ -98,6 +98,14 @@ struct AccountDraft: Equatable {
     }
     return .success(result)
   }
+
+  /// Enter writes the balance back the way the app writes amounts. A zero typed stays «0»: an
+  /// empty field is «не знаю» and counts nothing, so zero must not be written back as empty.
+  @MainActor mutating func settleOpening(_ currency: CurrencyCode) {
+    guard let text = openings[currency], let settled = BalanceField.settledText(text)
+    else { return }
+    openings[currency] = settled
+  }
 }
 
 /// The form of one account, new or there already: name, kind, currencies in order, group,
@@ -224,13 +232,20 @@ struct AccountEditor: View {
             .font(.body.monospacedDigit())
             .multilineTextAlignment(.trailing)
             .frame(width: 140)
-            .onSubmit { settleOpening(currency) }
+            .onSubmit { draft.settleOpening(currency) }
           } label: {
             Text(
               verbatim: environment.format(
                 "account.editor.balanceNow", table: "Accounts", currency.code))
           }
         }
+      }
+      // A balance may be below zero: a credit card owes the bank.
+      if draft.currencies.contains(where: countsOpening) {
+        Text(verbatim: t("account.balance.creditHint"))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
       Menu {
         ForEach(addable, id: \.code) { currency in
@@ -329,13 +344,6 @@ struct AccountEditor: View {
     return !books.balances.hasHistory(key(currency))
   }
 
-  /// Enter writes the balance back the way the app writes amounts.
-  private func settleOpening(_ currency: CurrencyCode) {
-    guard let text = draft.openings[currency], let settled = AmountField.settledText(text)
-    else { return }
-    draft.openings[currency] = settled
-  }
-
   // MARK: Saving
 
   private func save() {
@@ -370,9 +378,10 @@ struct AccountEditor: View {
   }
 }
 
-/// The other names of an account, one row each with ×, and a field to add one: the entry line
-/// knows the account by any of them («Т-Банк» — «тинькофф», «тинек»).
-private struct AccountOtherNames: View {
+/// The other names of an account or of a card, one row each with ×, and a field to add one: the
+/// entry line knows the account by any of them («Т-Банк» — «тинькофф», «тинек»), and a card too,
+/// putting the operation on the card's account («кофе 300 виртуалка»).
+struct AccountOtherNames: View {
   @Dependency(\.environment) private var environment
   @Binding var names: [String]
   @State private var typed = ""

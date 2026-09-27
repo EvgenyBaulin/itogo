@@ -270,8 +270,9 @@ struct BatchTests {
   }
 
   /// How far a part has come back is a fact about its operation: closing it, reopening it
-  /// by deleting the reimbursement, closing it again by ⌘Z and writing it off all stamp the
-  /// purchase's `updated_at`, which the export and the transfer archive carry.
+  /// by deleting the reimbursement and writing it off all stamp the purchase's `updated_at`,
+  /// which the export and the transfer archive carry; closing it again by ⌘Z gives back the
+  /// moment the purchase had before the deletion.
   @Test func aPartsStatusStampsItsOperationAsUpdated() throws {
     let (stack, repository) = try makeRepository()
     let setup = try dinnerForAFriend(stack, repository)
@@ -291,7 +292,7 @@ struct BatchTests {
 
     let restoredAt = instant.addingTimeInterval(120)
     try repository.restore(ids: effects.deletedIds, at: restoredAt, effects: effects)
-    #expect(try updated() == restoredAt)
+    #expect(try updated() == instant)
 
     try repository.softDelete(ids: [reimbursementId], at: instant.addingTimeInterval(180))
     let writtenOffAt = instant.addingTimeInterval(240)
@@ -502,6 +503,13 @@ struct BatchTests {
     #expect(WriteFailureCause(of: DatabaseError.unbalancedParts) == .other)
   }
 
+  /// A bulk change whose transfers were worked out on operations that changed since is no
+  /// failure of the database: the owner is told to make the change again.
+  @Test func anOutdatedPlanIsSaidAsSuch() {
+    #expect(
+      WriteFailureCause(of: SettlingPlanOutdated(operationIds: [UUID()])) == .planOutdated)
+  }
+
   // MARK: Deleting a debt payment
 
   @Test func deletingADebtPaymentTakesItsMovementOffTheDebtAndUndoPutsItBack() throws {
@@ -542,5 +550,325 @@ struct BatchTests {
     try repository.restore(ids: effects.deletedIds, at: instant, effects: effects)
     #expect(try repository.entry(id: old.id)?.transaction.isDeleted == true)
     #expect(try repository.entry(id: new.id)?.transaction.isDeleted == false)
+  }
+
+  /// ⌘Z of a deletion gives each operation back the moment it was last written, its
+  /// companions' too: bringing it back is not a new write of it. «coffee 250» rated bad on 01.09
+  /// and «coffee 300» rated good on 10.09; the first deleted on 15.09 and brought back — the
+  /// owner's latest rating of «coffee» is still the good one.
+  @Test func undoOfADeletionGivesBackTheUpdateMoment() throws {
+    let (_, repository) = try makeRepository()
+    let first = Date(timeIntervalSince1970: 1_788_220_800)
+    func coffee(_ amount: Int64, _ quality: Quality, at moment: Date) throws -> TransactionEntry {
+      var entry = try TestSupport.makeEntry(amount: amount, occurredAt: moment, note: "coffee")
+      entry.transaction.createdAt = moment
+      entry.transaction.updatedAt = moment
+      entry.parts[0].quality = quality
+      entry.parts[0].qualitySource = .manual
+      return entry
+    }
+    let bad = try repository.save(try coffee(2_500_000, .bad, at: first))
+    try repository.save(try coffee(3_000_000, .good, at: first.addingTimeInterval(9 * 86_400)))
+    let deletedAt = first.addingTimeInterval(14 * 86_400)
+    let effects = try repository.softDelete(ids: [bad.id], at: deletedAt)
+    #expect(effects.updatedAtBefore == [bad.id: first])
+    #expect(try repository.entry(id: bad.id)?.transaction.updatedAt == deletedAt)
+    try repository.restore(
+      ids: effects.deletedIds, at: deletedAt.addingTimeInterval(60), effects: effects)
+    let back = try #require(try repository.entry(id: bad.id))
+    #expect(!back.transaction.isDeleted)
+    #expect(back.transaction.updatedAt == first)
+    #expect(try repository.manualQualityHistory().quality(for: "coffee") == .good)
+  }
+
+  /// A reimbursement deleted with its surplus: ⌘Z gives both their moments back.
+  @Test func undoOfADeletionGivesTheCompanionsTheirMomentsBack() throws {
+    let (stack, repository) = try makeRepository()
+    let (_, surcharges, owed) = try dinnerForAFriend(stack, repository)
+    let money = try reimburse(
+      700, closing: owed, surcharges: surcharges.id, repository: repository,
+      at: instant.addingTimeInterval(-3_600))
+    let stamps = try repository.entries(from: .distantPast, to: .distantFuture)
+      .reduce(into: [UUID: Date]()) { $0[$1.id] = $1.transaction.updatedAt }
+    let effects = try repository.softDelete(ids: [money], at: instant)
+    #expect(!effects.companionIds.isEmpty)
+    try repository.restore(
+      ids: effects.deletedIds, at: instant.addingTimeInterval(60), effects: effects)
+    for id in [money] + effects.companionIds {
+      #expect(try repository.entry(id: id)?.transaction.updatedAt == stamps[id])
+    }
+  }
+
+  /// A money back that closed the part of a dinner, deleted and brought back by ⌘Z: the
+  /// deletion stamps the dinner — its part waits again —, and ⌘Z gives the dinner back the
+  /// moment it had before, not the moment of the ⌘Z: its rating stays as old as it is.
+  @Test func undoOfDeletingAMoneyBackGivesItsPurchasesTheirMomentsBack() throws {
+    let (stack, repository) = try makeRepository()
+    let (_, surcharges, owed) = try dinnerForAFriend(stack, repository)
+    let dinner = try #require(owed.first?.transactionId)
+    let money = try reimburse(
+      600, closing: owed, surcharges: surcharges.id, repository: repository,
+      at: instant.addingTimeInterval(-3_600))
+    let before = try #require(try repository.entry(id: dinner)?.transaction.updatedAt)
+    let effects = try repository.softDelete(ids: [money], at: instant)
+    #expect(effects.reopenedPartIds == owed.map(\.partId))
+    #expect(try repository.entry(id: dinner)?.transaction.updatedAt == instant)
+    try repository.restore(
+      ids: effects.deletedIds, at: instant.addingTimeInterval(60), effects: effects)
+    let back = try #require(try repository.entry(id: dinner))
+    #expect(back.transaction.updatedAt == before)
+    #expect(back.parts.first { $0.id == owed[0].partId }?.reimbursementStatus == .returned)
+  }
+
+  // MARK: The card of an operation, and money left on an account in the archive
+
+  /// Five purchases paid with the card of «T-Bank», one with 35 rubles of cashback typed for
+  /// it, moved to «Sber» in one bulk change: the card stays behind with its account. ⌘Z puts
+  /// them back on «T-Bank» with the card and the cashback.
+  @Test func undoOfAMoveToAnotherAccountBringsTheCardBack() throws {
+    let (stack, repository) = try makeRepository()
+    let tbank = PaymentMethod(name: "T-Bank", kind: .card, currency: .rub, isDefault: true)
+    let sber = PaymentMethod(name: "Sber", kind: .card, currency: .rub)
+    let card = PaymentCard(accountId: tbank.id, name: "T-Bank")
+    _ = try PlanningRepository(writer: stack.writer).apply(
+      PlanningChange(upsert: PlanningRows(paymentMethods: [tbank, sber], cards: [card])))
+    var ids: [UUID] = []
+    for number in 0..<5 {
+      var draft = TransactionDraft(
+        occurredAt: instant, amount: AmountE4(whole: 100 * Int64(number + 1)),
+        note: "purchase \(number)", paymentMethodId: tbank.id, cardId: card.id,
+        cashback: number == 0 ? Money(amount: AmountE4(whole: 35), currency: .rub) : nil)
+      draft.normalizeSinglePart()
+      let entry = try draft.materialize()
+      try repository.save(entry)
+      ids.append(entry.id)
+    }
+    let stored = try repository.entries(ids: ids)
+    let tree = CategoryTree([])
+    let accounts = [tbank, sber]
+
+    let before = try repository.modify(ids: ids, at: instant) { entry in
+      BulkEditRule.apply(.paymentMethod(sber.id), to: entry, tree: tree, accounts: accounts)
+        .changedEntry
+    }
+    #expect(before.count == 5)
+    let moved = try repository.entries(ids: ids)
+    #expect(moved.allSatisfy { $0.transaction.paymentMethodId == sber.id })
+    #expect(moved.allSatisfy { $0.transaction.cardId == nil })
+    #expect(moved.compactMap(\.transaction.cashback).count == 1)
+
+    let snapshots = Dictionary(uniqueKeysWithValues: before.map { ($0.id, $0) })
+    try repository.modify(ids: ids, at: instant, checkingCharges: false) { current in
+      snapshots[current.id].map { BulkEditRule.revert(current, to: $0) }
+    }
+    let back = Dictionary(
+      uniqueKeysWithValues: try repository.entries(ids: ids).map { ($0.id, $0) })
+    for entry in stored {
+      #expect(back[entry.id]?.transaction.paymentMethodId == tbank.id)
+      #expect(back[entry.id]?.transaction.cardId == card.id)
+      #expect(back[entry.id]?.transaction.cashback == entry.transaction.cashback)
+    }
+  }
+
+  /// Two purchases on cash in the archive made cheaper in one bulk change: the money they leave
+  /// on the cash goes to the live card in the same write. One the rules refuse leaves all of it
+  /// as it was, and the undo of the change takes its transfer away with the operations.
+  @Test func aBulkEditWritesItsSettlingTransfersInOneWrite() async throws {
+    let (stack, repository) = try makeRepository()
+    let references = ReferenceRepository(writer: stack.writer)
+    let card = PaymentMethod(name: "Sber", kind: .card, currency: .rub, isDefault: true)
+    var cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
+    try references.save(card)
+    try references.save(cash)
+    var ids: [UUID] = []
+    for amount: Int64 in [1_000, 2_000] {
+      var draft = TransactionDraft(
+        occurredAt: instant, amount: AmountE4(whole: amount), note: "market",
+        paymentMethodId: cash.id)
+      draft.normalizeSinglePart()
+      let entry = try draft.materialize()
+      try repository.save(entry)
+      ids.append(entry.id)
+    }
+    cash.archived = true
+    try references.save(cash)
+    let stored = try repository.entries(ids: ids)
+    let halved: @Sendable (TransactionEntry) -> TransactionEntry? = { entry in
+      var changed = entry
+      let half = AmountE4(raw: entry.transaction.amountE4.raw / 2)
+      changed.transaction.amountE4 = half
+      changed.transaction.amountRubE4 = half
+      changed.parts[0].amountE4 = half
+      changed.parts[0].amountRubE4 = half
+      return changed
+    }
+    let settling = Transfer(
+      occurredAt: instant, fromAccountId: cash.id, fromCurrency: .rub,
+      fromAmountE4: AmountE4(whole: 1_500), toAccountId: card.id, toCurrency: .rub,
+      toAmountE4: AmountE4(whole: 1_500), createdAt: instant, updatedAt: instant)
+    func transfers() throws -> [Transfer] {
+      try stack.writer.read { db in try Transfer.fetchAll(db) }
+    }
+
+    var wrong = settling
+    wrong.toAmountE4 = AmountE4(whole: 1_400)
+    #expect(throws: SettlingTransferRefusal(transferId: wrong.id, issue: .amountsDiffer)) {
+      try repository.modify(ids: ids, at: instant, settlingTransfers: [wrong], transform: halved)
+    }
+    #expect(
+      try repository.entries(ids: ids).sorted { $0.id.uuidString < $1.id.uuidString }
+        == stored.sorted { $0.id.uuidString < $1.id.uuidString })
+    #expect(try transfers().isEmpty)
+
+    let modified = try await repository.modifyInBackground(
+      ids: ids, at: instant, settlingTransfers: [settling], transform: halved)
+    #expect(modified.count == 2)
+    #expect(try transfers() == [settling])
+
+    let snapshots: [UUID: TransactionEntry] = Dictionary(
+      uniqueKeysWithValues: modified.map { ($0.before.id, $0.before) })
+    try repository.modify(
+      ids: ids, at: instant, checkingCharges: false, removingTransfers: [settling.id]
+    ) { current in snapshots[current.id] }
+    #expect(try transfers().isEmpty)
+    #expect(
+      try repository.entries(ids: ids).map(\.transaction.amountE4).sorted()
+        == [AmountE4(whole: 1_000), AmountE4(whole: 2_000)])
+  }
+
+  /// Two purchases of 1,000 and 2,000 on cash that went to the archive after them, the live
+  /// card the main account.
+  private struct ArchivedCash {
+    let stack: DatabaseStack
+    let repository: TransactionRepository
+    let card: PaymentMethod
+    let cash: PaymentMethod
+    let ids: [UUID]
+
+    func transfers() throws -> [Transfer] {
+      try stack.writer.read { db in try Transfer.fetchAll(db) }
+    }
+
+    func amounts() throws -> [UUID: AmountE4] {
+      Dictionary(
+        uniqueKeysWithValues: try repository.entries(ids: ids).map {
+          ($0.id, $0.transaction.amountE4)
+        })
+    }
+
+    /// The money `amount` moved from the cash to the card.
+    func settling(_ amount: Int64, at instant: Date) -> Transfer {
+      Transfer(
+        occurredAt: instant, fromAccountId: cash.id, fromCurrency: .rub,
+        fromAmountE4: AmountE4(whole: amount), toAccountId: card.id, toCurrency: .rub,
+        toAmountE4: AmountE4(whole: amount), createdAt: instant, updatedAt: instant)
+    }
+  }
+
+  private func archivedCash() throws -> ArchivedCash {
+    let (stack, repository) = try makeRepository()
+    let references = ReferenceRepository(writer: stack.writer)
+    let card = PaymentMethod(name: "Sber", kind: .card, currency: .rub, isDefault: true)
+    var cash = PaymentMethod(name: "Cash", kind: .cash, currency: .rub)
+    try references.save(card)
+    try references.save(cash)
+    var ids: [UUID] = []
+    for amount: Int64 in [1_000, 2_000] {
+      var draft = TransactionDraft(
+        occurredAt: instant, amount: AmountE4(whole: amount), note: "market",
+        paymentMethodId: cash.id)
+      draft.normalizeSinglePart()
+      let entry = try draft.materialize()
+      try repository.save(entry)
+      ids.append(entry.id)
+    }
+    cash.archived = true
+    try references.save(cash)
+    return ArchivedCash(
+      stack: stack, repository: repository, card: card, cash: cash, ids: ids)
+  }
+
+  /// The planned change of the purchases: each one priced at `amounts[id]`, the rest left.
+  private func priced(
+    _ amounts: [UUID: AmountE4]
+  ) -> @Sendable (TransactionEntry) -> TransactionEntry? {
+    { entry in
+      guard let amount = amounts[entry.id] else { return nil }
+      var changed = entry
+      changed.transaction.amountE4 = amount
+      changed.transaction.amountRubE4 = amount
+      changed.parts[0].amountE4 = amount
+      changed.parts[0].amountRubE4 = amount
+      return changed
+    }
+  }
+
+  /// Another window made both purchases cheaper while the change that planned the same was
+  /// waiting: nothing changes in the write, so the transfer worked out for the plan is not
+  /// written — and the change is not refused for naming the archived cash either.
+  @Test func aBulkEditThatChangesNothingWritesNoTransfer() async throws {
+    let setup = try archivedCash()
+    let (first, second) = (setup.ids[0], setup.ids[1])
+    let cheaper = priced([first: AmountE4(whole: 500), second: AmountE4(whole: 1_000)])
+    try setup.repository.modify(ids: setup.ids, at: instant, transform: cheaper)
+    let settling = setup.settling(1_500, at: instant)
+
+    let before = try setup.repository.modify(
+      ids: setup.ids, at: instant, settlingTransfers: [settling], transform: cheaper)
+    #expect(before.isEmpty)
+    #expect(try setup.transfers().isEmpty)
+
+    let planned = Set(setup.ids)
+    let modified = try await setup.repository.modifyInBackground(
+      ids: setup.ids, at: instant, settlingTransfers: [settling], planned: planned,
+      transform: cheaper)
+    #expect(modified.isEmpty)
+    #expect(try setup.transfers().isEmpty)
+  }
+
+  /// One of the two purchases was made cheaper elsewhere meanwhile; the transfer of the plan
+  /// counts both. Written, it would leave 500 below zero on the archived cash, so nothing of
+  /// the change is written and the caller is told which operation left the plan. Planned
+  /// again, the change of the other purchase lands with its own transfer.
+  @Test func aBulkEditWhoseOperationNoLongerChangesWritesNothing() async throws {
+    let setup = try archivedCash()
+    let (first, second) = (setup.ids[0], setup.ids[1])
+    let cheaper = priced([first: AmountE4(whole: 500), second: AmountE4(whole: 1_000)])
+    try setup.repository.modify(ids: [first], at: instant, transform: cheaper)
+    let stored = try setup.amounts()
+    let outdated = SettlingPlanOutdated(operationIds: [first])
+
+    #expect(throws: outdated) {
+      try setup.repository.modify(
+        ids: setup.ids, at: instant, settlingTransfers: [setup.settling(1_500, at: instant)],
+        planned: [first, second], transform: cheaper)
+    }
+    #expect(try setup.amounts() == stored)
+    #expect(try setup.transfers().isEmpty)
+    await #expect(throws: outdated) {
+      try await setup.repository.modifyInBackground(
+        ids: setup.ids, at: instant, settlingTransfers: [setup.settling(1_500, at: instant)],
+        planned: [first, second], transform: cheaper)
+    }
+    #expect(try setup.amounts() == stored)
+    #expect(try setup.transfers().isEmpty)
+
+    // An operation the plan left alone that changes is no less a change the transfer does not
+    // count.
+    #expect(throws: SettlingPlanOutdated(operationIds: [second])) {
+      try setup.repository.modify(
+        ids: setup.ids, at: instant, settlingTransfers: [setup.settling(1_000, at: instant)],
+        planned: [], transform: cheaper)
+    }
+    #expect(try setup.amounts() == stored)
+    #expect(try setup.transfers().isEmpty)
+
+    let settling = setup.settling(1_000, at: instant)
+    let before = try setup.repository.modify(
+      ids: setup.ids, at: instant, settlingTransfers: [settling], planned: [second],
+      transform: cheaper)
+    #expect(before.map(\.id) == [second])
+    #expect(try setup.amounts()[second] == AmountE4(whole: 1_000))
+    #expect(try setup.transfers() == [settling])
   }
 }

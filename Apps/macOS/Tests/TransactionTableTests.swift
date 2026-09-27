@@ -382,8 +382,9 @@ final class TransactionFiltersTests: XCTestCase {
   }
 
   /// A value chosen in the sidebar and archived since — in Settings, or by a restore — is no
-  /// longer offered: its picker shows «Any», so the table must not stay filtered by it.
-  func testAValueArchivedAfterItWasChosenStopsFiltering() {
+  /// longer offered: its picker shows «Any», so the table must not stay filtered by it. A place
+  /// is the exception: the archive keeps it in its operations, so the filter still offers it.
+  func testAValueArchivedAfterItWasChosenStopsFilteringButAPlaceStays() {
     let cafe = Place(name: "Cafe")
     let anya = Person(name: "Anya")
     let card = PaymentMethod(name: "Card")
@@ -419,7 +420,7 @@ final class TransactionFiltersTests: XCTestCase {
     XCTAssertEqual(filters.categoryId, groceries.id)
     XCTAssertNil(filters.subcategoryId)
 
-    // The category and every other value archived: all of them go.
+    // The category and every other value archived: all of them go but the place.
     var archivedGroceries = groceries
     archivedGroceries.archived = true
     var archived = (cafe, anya, card, trip)
@@ -433,11 +434,14 @@ final class TransactionFiltersTests: XCTestCase {
           categories: [archivedGroceries, archivedFruit, salary], people: [archived.1],
           places: [archived.0], events: [archived.3], paymentMethods: [archived.2])))
     XCTAssertNil(filters.categoryId)
-    XCTAssertNil(filters.placeId)
+    // An archived place stays in its operations and in the filter, which goes on finding them.
+    XCTAssertEqual(filters.placeId, cafe.id)
     XCTAssertNil(filters.personId)
     XCTAssertNil(filters.paymentMethodId)
     XCTAssertNil(filters.eventId)
-    XCTAssertEqual(filters.entryFilter(today: today), EntryFilter(period: .month(today.monthKey)))
+    XCTAssertEqual(
+      filters.entryFilter(today: today),
+      EntryFilter(period: .month(today.monthKey), placeId: cafe.id))
   }
 
   /// Each period as the core reads it; a custom range in either order; the search trimmed.

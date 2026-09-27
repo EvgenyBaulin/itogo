@@ -9,9 +9,12 @@ public struct TransactionRepository: Sendable {
   let writer: any DatabaseWriter
   /// My ratings by description (`manualQualityHistory()`), kept between reads.
   let manualRatings = ManualRatingsCache()
+  /// The owner's calendar and the name of «Сверка», for the counts every write settles.
+  let liveCounts: LiveCountsContext
 
-  public init(writer: any DatabaseWriter) {
+  public init(writer: any DatabaseWriter, liveCounts: LiveCountsContext = .standard) {
     self.writer = writer
+    self.liveCounts = liveCounts
   }
 
   /// Saves an operation and its parts in one transaction. Parts must add up to the total.
@@ -21,16 +24,32 @@ public struct TransactionRepository: Sendable {
   /// currency must say what the account was charged. A refund that takes back from a purchase
   /// part is held to that part as it is inside the write (`refuseUnsoundRefund`). Returns the
   /// operation as written.
+  ///
+  /// The counts whose windows the operation left or entered follow the books in the same write
+  /// (`saveReporting`).
   @discardableResult
   public func save(_ entry: TransactionEntry) throws -> TransactionEntry {
+    try saveReporting(entry).entry
+  }
+
+  /// `save`, and what the counts it reached wrote: a backdated operation changes the difference
+  /// of the count whose window holds it, and the operation of that difference with it — in the
+  /// same write, so ⌘Z of the save takes both back.
+  public func saveReporting(
+    _ entry: TransactionEntry
+  ) throws -> (entry: TransactionEntry, counts: CountsSettled) {
     guard entry.isBalanced else { throw DatabaseError.unbalancedParts }
+    let context = liveCounts
     return try writer.write { db in
       let previous = try Self.entry(id: entry.id, db: db)
-      let assigned = try Self.assigningAccount(entry, over: previous, db: db)
+      let lookups = WriteLookups()
+      let assigned = try Self.assigningAccount(entry, over: previous, lookups: lookups, db: db)
       try Self.refuseUnsoundRefund(assigned, over: previous, db: db)
       try assigned.transaction.save(db)
       try Self.replaceParts(of: assigned, db: db)
-      return assigned
+      let touch = try LiveCountsWriter.touch(
+        entries: [(previous, assigned)], calendar: context.calendar, lookups: lookups, db: db)
+      return (assigned, try LiveCountsWriter.settle(touch, context: context, db: db))
     }
   }
 
@@ -38,8 +57,12 @@ public struct TransactionRepository: Sendable {
 
   /// The operation with an account: one that names none gets the live main account — when
   /// there is none yet, before the accounts are set up, it stays without, and the setup gives
-  /// it one. Then the charge is checked (`refuseMissingCharge`), unless `checkingCharge` is
-  /// off: ⌘Z writes back a row as it was, and a row of the time before accounts had no charge.
+  /// it one. A card it names must be a card of that account, or the write is refused with
+  /// `AccountWriteError.cardOfAnotherAccount` — money always moves on the card's own account.
+  /// The cashback typed for it is kept only on an expense and only in the currency that moves
+  /// on the account (`Transaction.keptCashback`). Then the charge is checked
+  /// (`refuseMissingCharge`), unless `checkingCharge` is off: ⌘Z writes back a row as it was,
+  /// and a row of the time before accounts had no charge.
   ///
   /// `lookups` keeps what the check reads for the whole write, when it writes many operations.
   static func assigningAccount(
@@ -50,6 +73,12 @@ public struct TransactionRepository: Sendable {
     if assigned.transaction.paymentMethodId == nil {
       assigned.transaction.paymentMethodId = try lookups.mainAccountId(db)
     }
+    if let cardId = assigned.transaction.cardId {
+      guard let account = try lookups.cardAccount(cardId, db),
+        account == assigned.transaction.paymentMethodId
+      else { throw AccountWriteError.cardOfAnotherAccount }
+    }
+    assigned.transaction.cashback = assigned.transaction.keptCashback
     guard checkingCharge else { return assigned }
     var before = previous
     if before?.transaction.paymentMethodId == nil, previous != nil {
@@ -411,253 +440,26 @@ public struct TransactionRepository: Sendable {
   ///
   /// A debt payment moved its debt right after it was saved, and that movement goes in the
   /// same write: the foreign key would only set its `transaction_id` to NULL and leave the
-  /// debt reduced by a payment that never happened.
-  public func purge(id: UUID) throws {
-    _ = try writer.write { db in
+  /// debt reduced by a payment that never happened. The counts whose window held the operation
+  /// follow the books again in the same write; what they wrote comes back.
+  ///
+  /// `templates` are the operations of the counts as the save being taken back found them
+  /// (`CountsSettled.operationsBefore` of `saveReporting`): a difference that save purged at
+  /// zero comes back as the owner left it — his category, comment and rating —, not written
+  /// anew.
+  @discardableResult
+  public func purge(
+    id: UUID, templates: [UUID: TransactionEntry?] = [:]
+  ) throws -> CountsSettled {
+    let context = liveCounts
+    return try writer.write { db in
+      let gone = try Self.entry(id: id, db: db)
       try db.execute(
         sql: "DELETE FROM debt_entries WHERE transaction_id = ?", arguments: [id.uuidString])
       try db.execute(sql: "DELETE FROM transactions WHERE id = ?", arguments: [id.uuidString])
-    }
-  }
-
-  // MARK: Parts paid for somebody else
-
-  /// Parts that are still waiting to come back — the "Owed to me" list — each with what came
-  /// back for it already and what is left: money back may cover only some of a part.
-  ///
-  /// Only purchases with a part that can still be waiting for are read: `owedToMe` would
-  /// pass over every other operation, and there is no point in mapping the whole history
-  /// for it.
-  public func owedParts() throws -> [OwedPart] {
-    let (entries, links) = try writer.read { db -> ([TransactionEntry], [ReimbursementLink]) in
-      let entries = try Self.entries(
-        where: """
-          deleted_at IS NULL AND kind = ?
-            AND id IN (
-              SELECT transaction_id FROM transaction_parts
-              WHERE reimbursable = 1
-                AND (reimbursement_status IS NULL OR reimbursement_status = ?))
-          """,
-        arguments: [TransactionKind.expense.rawValue, ReimbursementStatus.expected.rawValue],
-        db: db)
-      let links = try ReimbursementLink.fetchAll(
-        db,
-        sql: """
-          SELECT l.* FROM reimbursement_links l
-          JOIN transactions t ON t.id = l.reimbursement_tx_id
-          JOIN transaction_parts p ON p.id = l.part_id
-          WHERE t.deleted_at IS NULL AND p.reimbursable = 1
-            AND (p.reimbursement_status IS NULL OR p.reimbursement_status = ?)
-          ORDER BY l.rowid
-          """,
-        arguments: [ReimbursementStatus.expected.rawValue])
-      return (entries, links)
-    }
-    return MyExpensesRule.owedToMe(entries: entries, links: links)
-  }
-
-  /// Writes the result of a reimbursement: the links, the new statuses and, when the
-  /// money did not match, the extra income or expense the rules produced.
-  ///
-  /// The parts were read when the sheet opened, and each of them may have stopped waiting
-  /// since — its purchase deleted from another window or taken back by ⌘Z, the part written
-  /// off or closed by another reimbursement, or more of it came back meanwhile. Such a part is
-  /// refused inside the write with `ReimbursementError.partNoLongerOwed`, and nothing is
-  /// written: a link to it would count the money as returned with nothing behind it, and the
-  /// links of a part never come to more than what was left of it.
-  ///
-  /// The reimbursement and the operations it brings are given an account like any other
-  /// (`assigningAccount`).
-  public func apply(
-    _ outcome: ReimbursementOutcome,
-    reimbursement: TransactionEntry,
-    extra: [TransactionEntry] = [],
-    at instant: Date = Date()
-  ) throws {
-    guard reimbursement.isBalanced else { throw DatabaseError.unbalancedParts }
-    // The surplus and the shortfalls are operations like any other: their parts have to
-    // add up too, or the totals would never match again.
-    guard extra.allSatisfy(\.isBalanced) else { throw DatabaseError.unbalancedParts }
-    try writer.write { db in
-      var checked: Set<UUID> = []
-      for partId in outcome.closedPartIds + outcome.links.map(\.partId)
-      where checked.insert(partId).inserted {
-        guard try Self.isOwed(partId: partId, db: db) else {
-          throw ReimbursementError.partNoLongerOwed(partId)
-        }
-      }
-      var linked: [UUID: AmountE4] = [:]
-      for link in outcome.links { linked[link.partId, default: .zero] += link.amountE4 }
-      for (partId, amount) in linked {
-        guard amount <= (try Self.remainingRub(ofPart: partId, db: db)) else {
-          throw ReimbursementError.partNoLongerOwed(partId)
-        }
-      }
-      let written = try Self.assigningAccount(reimbursement, db: db)
-      try written.transaction.save(db)
-      try Self.replaceParts(of: written, db: db)
-      for entry in extra {
-        let companion = try Self.assigningAccount(entry, db: db)
-        try companion.transaction.save(db)
-        try Self.replaceParts(of: companion, db: db)
-      }
-      for link in outcome.links {
-        try link.insert(db)
-      }
-      for partId in outcome.closedPartIds {
-        try db.execute(
-          sql: "UPDATE transaction_parts SET reimbursement_status = ? WHERE id = ?",
-          arguments: [ReimbursementStatus.returned.rawValue, partId.uuidString])
-      }
-      try Self.stampOperations(ofParts: outcome.closedPartIds, at: instant, db: db)
-    }
-  }
-
-  /// How far a part has come back is a fact about its operation, like any field of it: the
-  /// operation was updated when a reimbursement closed the part, when deleting that
-  /// reimbursement reopened it (and ⌘Z closed it again), and when it was written off.
-  /// `status` narrows it to the parts whose status is that one, read before the status moves.
-  static func stampOperations(
-    ofParts partIds: [UUID], whereStatus status: ReimbursementStatus? = nil, at instant: Date,
-    db: Database
-  ) throws {
-    let condition = status == nil ? "" : "reimbursement_status = ? AND "
-    let statusArgument = status.map { StatementArguments([$0.rawValue]) } ?? []
-    for chunk in partIds.map(\.uuidString).chunked(by: chunkSize) {
-      let marks = databaseQuestionMarks(count: chunk.count)
-      try db.execute(
-        sql: """
-          UPDATE transactions SET updated_at = ?
-          WHERE id IN (
-            SELECT transaction_id FROM transaction_parts WHERE \(condition)id IN (\(marks)))
-          """,
-        arguments: [StoredInstant.databaseValue(instant)] + statusArgument
-          + StatementArguments(chunk))
-    }
-  }
-
-  /// Whether a part still waits for its money, by the same condition as `owedParts()`: a
-  /// part «for somebody else» of a live purchase, neither returned nor written off, with
-  /// something left of it.
-  private static func isOwed(partId: UUID, db: Database) throws -> Bool {
-    let waits =
-      try Bool.fetchOne(
-        db,
-        sql: """
-          SELECT EXISTS (
-            SELECT 1 FROM transaction_parts p
-            JOIN transactions t ON t.id = p.transaction_id
-            WHERE p.id = ? AND t.deleted_at IS NULL AND t.kind = ? AND p.reimbursable = 1
-              AND (p.reimbursement_status IS NULL OR p.reimbursement_status = ?))
-          """,
-        arguments: [
-          partId.uuidString, TransactionKind.expense.rawValue,
-          ReimbursementStatus.expected.rawValue,
-        ]) ?? false
-    return try waits && remainingRub(ofPart: partId, db: db).raw > 0
-  }
-
-  /// What live money back gave back for a part, in rubles.
-  static func returnedRub(ofPart partId: UUID, db: Database) throws -> AmountE4 {
-    AmountE4(
-      raw: try Int64.fetchOne(
-        db,
-        sql: """
-          SELECT COALESCE(SUM(l.amount_e4), 0) FROM reimbursement_links l
-          JOIN transactions t ON t.id = l.reimbursement_tx_id
-          WHERE l.part_id = ? AND t.deleted_at IS NULL
-          """,
-        arguments: [partId.uuidString]) ?? 0)
-  }
-
-  /// What is left of a part: its rubles less what live money back gave back for it.
-  static func remainingRub(ofPart partId: UUID, db: Database) throws -> AmountE4 {
-    let rubles = AmountE4(
-      raw: try Int64.fetchOne(
-        db, sql: "SELECT amount_rub_e4 FROM transaction_parts WHERE id = ?",
-        arguments: [partId.uuidString]) ?? 0)
-    return rubles - (try returnedRub(ofPart: partId, db: db))
-  }
-
-  /// Writing a part off: it stops waiting and becomes my spending.
-  ///
-  /// The sheet offers the parts it read when it opened. One that stopped waiting since —
-  /// closed by a reimbursement, written off, its purchase deleted — is refused inside the
-  /// write with `ReimbursementError.partNoLongerOwed`, as `apply` refuses it: a closed part
-  /// written off would leave its link counting money for a part given up on. A part some money
-  /// already came back for is refused with `ReimbursementError.partlyReturned`: only what is
-  /// left of it is written off (`writeOffRemainder`).
-  public func writeOffPart(id: UUID, at instant: Date = Date()) throws {
-    _ = try writer.write { db in
-      guard try Self.isOwed(partId: id, db: db) else {
-        throw ReimbursementError.partNoLongerOwed(id)
-      }
-      guard try Self.returnedRub(ofPart: id, db: db).isZero else {
-        throw ReimbursementError.partlyReturned(id)
-      }
-      try db.execute(
-        sql: "UPDATE transaction_parts SET reimbursement_status = ? WHERE id = ?",
-        arguments: [ReimbursementStatus.writtenOff.rawValue, id.uuidString])
-      try Self.stampOperations(ofParts: [id], at: instant, db: db)
-    }
-  }
-
-  /// «Списать остаток»: what is left of a part some money already came back for becomes my
-  /// spending, and the part is settled — in one write.
-  ///
-  /// `companion` is the operation `MoneyBack.remainderWriteOff` made from the part as the
-  /// sheet read it; its amount is worked out again here from the part as it is now — what is
-  /// left of it in rubles —, and it gets the key `writeoff:<part>:<its id>`, a line of the
-  /// books. The part becomes `returned`.
-  ///
-  /// Refused with `ReimbursementError.partNoLongerOwed` when the part stopped waiting, and
-  /// with `.nothingReturnedYet` when no money came back for it: then the whole part is written
-  /// off (`writeOffPart`). Returns the operation as written.
-  @discardableResult
-  public func writeOffRemainder(
-    partId: UUID, companion: TransactionEntry, at instant: Date = Date()
-  ) throws -> TransactionEntry {
-    try writer.write { db in
-      guard try Self.isOwed(partId: partId, db: db) else {
-        throw ReimbursementError.partNoLongerOwed(partId)
-      }
-      guard try Self.returnedRub(ofPart: partId, db: db).raw > 0 else {
-        throw ReimbursementError.nothingReturnedYet(partId)
-      }
-      let remaining = try Self.remainingRub(ofPart: partId, db: db)
-      var entry = companion
-      entry.transaction.kind = .expense
-      entry.transaction.currency = .rub
-      entry.transaction.amountE4 = remaining
-      entry.transaction.amountExpr = nil
-      entry.transaction.rate = nil
-      entry.transaction.rateDate = nil
-      entry.transaction.rateSource = nil
-      entry.transaction.rateProvisional = false
-      entry.transaction.amountRubE4 = remaining
-      entry.transaction.accountCurrency = nil
-      entry.transaction.accountAmountE4 = nil
-      entry.transaction.externalId = MoneyBack.writeOffKey(part: partId, operation: entry.id)
-      entry.transaction.createdAt = instant
-      entry.transaction.updatedAt = instant
-      entry.transaction.deletedAt = nil
-      guard var first = entry.parts.first else { throw DatabaseError.unbalancedParts }
-      first.transactionId = entry.id
-      first.amountE4 = remaining
-      first.amountRubE4 = remaining
-      first.reimbursable = false
-      first.reimbursementStatus = nil
-      first.debtorPersonId = nil
-      first.refundOfPartId = nil
-      entry.parts = [first]
-      entry = try Self.assigningAccount(entry, db: db)
-      try entry.transaction.insert(db)
-      for part in entry.parts { try part.insert(db) }
-      try db.execute(
-        sql: "UPDATE transaction_parts SET reimbursement_status = ? WHERE id = ?",
-        arguments: [ReimbursementStatus.returned.rawValue, partId.uuidString])
-      try Self.stampOperations(ofParts: [partId], at: instant, db: db)
-      return entry
+      let touch = try LiveCountsWriter.touch(
+        entries: [(gone, nil)], calendar: context.calendar, lookups: WriteLookups(), db: db)
+      return try LiveCountsWriter.settle(touch, context: context, templates: templates, db: db)
     }
   }
 
@@ -732,11 +534,13 @@ public struct TransactionRepository: Sendable {
   }
 }
 
-/// What the checks of one write read once: the main account, the accounts asked about and the
-/// categories. A write of many operations would otherwise read them again for each.
+/// What the checks of one write read once: the main account, the accounts and the cards asked
+/// about and the categories. A write of many operations would otherwise read them again for
+/// each.
 final class WriteLookups {
   private var main: UUID??
   private var accounts: [UUID: PaymentMethod?] = [:]
+  private var cards: [UUID: UUID?] = [:]
   private var tree: CategoryTree?
 
   init() {}
@@ -752,6 +556,16 @@ final class WriteLookups {
     if let known = accounts[id] { return known }
     let found = try PaymentMethod.fetchOne(db, key: id.uuidString)
     accounts[id] = .some(found)
+    return found
+  }
+
+  /// The account a card belongs to; `nil` when there is no such card.
+  func cardAccount(_ id: UUID, _ db: Database) throws -> UUID? {
+    if let known = cards[id] { return known }
+    let found = try String.fetchOne(
+      db, sql: "SELECT payment_method_id FROM cards WHERE id = ?", arguments: [id.uuidString]
+    ).flatMap(UUID.init(uuidString:))
+    cards[id] = .some(found)
     return found
   }
 
@@ -778,12 +592,22 @@ public enum WriteFailureCause: Hashable, Sendable {
   /// points at one removed since. The schema's foreign keys, or
   /// `PlanningWriteError.referencedByOperations`.
   case tiedToOtherRows
+  /// A bulk change came with transfers that keep an account in the archive at zero, worked out
+  /// on operations that changed since (`SettlingPlanOutdated`): nothing was written, and the
+  /// change is to be made again from the operations as they are now.
+  case planOutdated
   /// Anything else: the database did not take the write.
   case other
 
   public init(of error: any Error) {
-    if error is PlanningWriteError {
-      self = .tiedToOtherRows
+    if error is SettlingPlanOutdated {
+      self = .planOutdated
+    } else if let planning = error as? PlanningWriteError {
+      self = planning.tiesRows ? .tiedToOtherRows : .other
+    } else if let database = error as? GRDB.DatabaseError,
+      Self.ownTriggerMessages.contains(where: { database.message?.contains($0) == true })
+    {
+      self = .other
     } else if let database = error as? GRDB.DatabaseError,
       Self.foreignKeyCodes.contains(database.extendedResultCode)
     {
@@ -795,8 +619,14 @@ public enum WriteFailureCause: Hashable, Sendable {
 
   /// A row inserted or put back that points at nothing fails as a foreign key; a row deleted
   /// while another points at it by `ON DELETE RESTRICT` fails through SQLite's trigger code,
-  /// with the same «FOREIGN KEY constraint failed». The schema has no triggers of its own.
+  /// with the same «FOREIGN KEY constraint failed».
   private static let foreignKeyCodes: [ResultCode] = [
     .SQLITE_CONSTRAINT_FOREIGNKEY, .SQLITE_CONSTRAINT_TRIGGER,
   ]
+
+  /// The schema's own triggers (`card_of_account_*`) abort with a message of their own and the
+  /// same trigger code, so their message is read first: a card of another account is not a row
+  /// tied the other way. The repositories refuse it before writing; only another writer meets
+  /// the trigger.
+  private static let ownTriggerMessages = ["card_of_another_account"]
 }

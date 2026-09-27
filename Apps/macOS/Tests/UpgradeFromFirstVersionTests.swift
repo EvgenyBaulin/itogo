@@ -259,6 +259,13 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
 
   // MARK: Helpers
 
+  /// The counts of the update's first data step — the accounts —, apart from those of the
+  /// cards, which the same update also gives.
+  static func accountsStep(_ steps: [String: Int]) -> [String: Int] {
+    let keys: Set = ["mainKept", "mainChosen", "mainCreated", "defaultsCleared", "assigned"]
+    return steps.filter { keys.contains($0.key) }
+  }
+
   private func start() async -> AppEnvironment {
     let environment = AppEnvironment()
     environments.append(environment)
@@ -326,11 +333,16 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
 
     XCTAssertEqual(environment.state, .ready)
     let stack = try XCTUnwrap(environment.stack)
-    XCTAssertEqual(stack.applied.applied, 1)
-    XCTAssertEqual(try stack.appliedMigrations().count, 4)
+    XCTAssertEqual(stack.applied.applied, 2)
+    XCTAssertEqual(try stack.appliedMigrations().count, 5)
     XCTAssertEqual(
-      stack.applied.dataSteps,
+      Self.accountsStep(stack.applied.dataSteps),
       ["mainKept": 1, "mainChosen": 0, "mainCreated": 0, "defaultsCleared": 1, "assigned": 3])
+    // The second step: a card for every live card account, and no sheet of counts to judge —
+    // the first version counted one total at most.
+    XCTAssertEqual(stack.applied.dataSteps["countsRecorded"], 0)
+    XCTAssertEqual(stack.applied.dataSteps["countsKept"], 0)
+    XCTAssertNotNil(stack.applied.dataSteps["cardsCreated"])
 
     // The copy: one, checked, the first version's file to the last row.
     let copies = copiesBeforeAnUpdate()
@@ -840,7 +852,7 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
       try FirstVersionFile.dump(at: url), before, "the older file was changed by a stopped update")
     XCTAssertEqual(
       try DatabaseStack.pendingMigrations(fileAt: url, schema: BundleSchemaSource()),
-      ["0004_accounts"])
+      ["0004_accounts", "0005_cards"])
     let copies = copiesBeforeAnUpdate()
     XCTAssertEqual(copies.count, 1)
     let copy = try XCTUnwrap(copies.first)
@@ -855,7 +867,7 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
     await environment.start()
 
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 4)
+    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 5)
     let kept = try FileManager.default.contentsOfDirectory(
       at: DatabaseRecovery.damagedDirectory, includingPropertiesForKeys: nil
     ).filter { $0.pathExtension == "sqlite" }
@@ -950,7 +962,7 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
 
     XCTAssertEqual(restored.state, .ready)
     let stack = try XCTUnwrap(restored.stack)
-    XCTAssertEqual(stack.applied.applied, 1, "the restored file was not updated")
+    XCTAssertEqual(stack.applied.applied, 2, "the restored file was not updated")
     XCTAssertEqual(copiesBeforeAnUpdate(), [copy], "a second copy of the same file was written")
     XCTAssertEqual(try FirstVersionFile.dump(at: copy), firstVersion, "the copy itself changed")
     XCTAssertNil(restored.accountSetup, "the setup of the restored database is not asked again")
@@ -1002,7 +1014,7 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
     let restored = await start()
 
     XCTAssertEqual(restored.state, .ready)
-    XCTAssertEqual(restored.stack?.applied.applied, 1)
+    XCTAssertEqual(restored.stack?.applied.applied, 2)
     let copies = copiesBeforeAnUpdate()
     XCTAssertEqual(copies.count, 2, "the restored copy was updated without a copy of its own")
     XCTAssertTrue(copies.contains(first))
@@ -1016,9 +1028,9 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
   }
 
   /// «Позже» right after the update, and the setup finished later from the card of Overview:
-  /// the accounts of the first version are listed again, their counts are the first ones, and
-  /// the question is over.
-  func testTheSetupPutOffAfterTheUpdateIsFinishedLater() async throws {
+  /// the accounts of the first version are listed again, the balance typed is the first count
+  /// of its account, the fields left empty count nothing, and the question is over.
+  func testTheSetupPutOffAfterTheUpdateIsFinishedLaterCountingOnlyTheTypedBalance() async throws {
     try firstVersionInPlace()
     let environment = await start()
     XCTAssertEqual(environment.state, .ready)
@@ -1047,7 +1059,8 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
     let book = try XCTUnwrap(later.planning).book()
     XCTAssertEqual(book.reconciliations.filter { $0.kind == .total }.count, 2)
     let counted = book.reconciledBalances
-    XCTAssertEqual(counted.count, 3, "every account and currency gets its first count")
+    // An empty «Остаток сейчас» is «не знаю»: no opening, the account stays not yet counted.
+    XCTAssertEqual(counted.count, 1, "only the balance typed is counted")
     XCTAssertTrue(counted.allSatisfy(\.isStartingPoint))
     XCTAssertEqual(
       counted.first { $0.key == BalanceKey(accountId: card, currency: .rub) }?.actualE4,
@@ -1229,7 +1242,7 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
     let imported = await start()
 
     XCTAssertEqual(imported.state, .ready)
-    XCTAssertEqual(imported.stack?.applied.applied, 1)
+    XCTAssertEqual(imported.stack?.applied.applied, 2)
     XCTAssertEqual(copiesBeforeAnUpdate().count, 1)
     XCTAssertNil(imported.accountSetup)
     XCTAssertTrue(AccountSetupOffer.asks(imported, isTestHost: false))
@@ -1261,7 +1274,7 @@ final class UpgradeFromFirstVersionTests: XCTestCase {
     let imported = await start()
 
     XCTAssertEqual(imported.state, .ready)
-    XCTAssertEqual(imported.stack?.applied.applied, 1)
+    XCTAssertEqual(imported.stack?.applied.applied, 2)
     XCTAssertEqual(copiesBeforeAnUpdate().count, 1)
     XCTAssertNil(imported.accountSetup, "the answer of the replaced database stayed")
     XCTAssertTrue(AccountSetupOffer.asks(imported, isTestHost: false))
@@ -1368,7 +1381,7 @@ extension UpgradeFromFirstVersionTests {
     let imported = await start()
 
     XCTAssertEqual(imported.state, .ready)
-    XCTAssertEqual(imported.stack?.applied.applied, 1)
+    XCTAssertEqual(imported.stack?.applied.applied, 2)
     let copies = copiesBeforeAnUpdate()
     XCTAssertEqual(copies.count, 1)
     let copy = try XCTUnwrap(copies.first)
@@ -1515,7 +1528,7 @@ extension UpgradeFromFirstVersionTests {
     let third = await start()
 
     XCTAssertEqual(third.state, .ready)
-    XCTAssertEqual(third.stack?.applied.applied, 1)
+    XCTAssertEqual(third.stack?.applied.applied, 2)
     XCTAssertEqual(copiesBeforeAnUpdate().count, 2, "a third copy of the same data was kept")
     XCTAssertTrue(copiesBeforeAnUpdate().contains(first))
     let entry = try XCTUnwrap(
@@ -1630,7 +1643,7 @@ extension UpgradeFromFirstVersionTests {
     let environment = await start()
 
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(environment.stack?.applied.applied, 1)
+    XCTAssertEqual(environment.stack?.applied.applied, 2)
     XCTAssertEqual(copiesBeforeAnUpdate().count, 1)
     XCTAssertTrue(AccountSetupOffer.asks(environment, isTestHost: false))
     let accounts = try XCTUnwrap(environment.accounts).accounts(includeArchived: true)
@@ -1644,9 +1657,12 @@ extension UpgradeFromFirstVersionTests {
 
   /// The first version checked a name only when an account was added: another name typed later
   /// could be the name of another account. After the update the setup says so of that account,
-  /// and the only way out inside the sheet — which has no field for other names — is to rename
-  /// it; the other name stays on the account that carries it.
-  func testTwoAccountsTheFirstVersionLetShareANameAreToldAndOneIsRenamed() async throws {
+  /// naming the account whose other name is in the way, and the only way out inside the sheet —
+  /// which has no field for other names — is to rename it; the other name stays on the account
+  /// that carries it.
+  func testTwoAccountsTheFirstVersionLetShareANameAreToldWhoseOtherNameAndOneIsRenamed()
+    async throws
+  {
     let url = try firstVersionInPlace()
     try FirstVersionFile.execute(
       at: url,
@@ -1660,8 +1676,10 @@ extension UpgradeFromFirstVersionTests {
     let at = Date()
     let read = await AccountSetupExpectations.load(from: environment, at: at)
     model.setExpected(try XCTUnwrap(read))
-    XCTAssertTrue(model.issues.contains(.nameTaken(card)), "\(model.issues)")
-    XCTAssertTrue(model.issues.allSatisfy { [.nameTaken(card), .nameTaken(cash)].contains($0) })
+    // A clash with another name of a live account names that account: «Cash» carries «card».
+    let clash = AccountSetupModel.Issue.nameIsOtherNameOf(card, rival: "Cash")
+    XCTAssertTrue(model.issues.contains(clash), "\(model.issues)")
+    XCTAssertTrue(model.issues.allSatisfy { [clash, .nameTaken(cash)].contains($0) })
     XCTAssertNil(model.plan(at: at))
 
     let index = try XCTUnwrap(model.accounts.firstIndex { $0.id == card })
@@ -1686,7 +1704,7 @@ extension UpgradeFromFirstVersionTests {
     try XCTUnwrap(carried.database).write(to: AppPaths.databaseURL)
     let environment = await start()
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(environment.stack?.applied.applied, 1)
+    XCTAssertEqual(environment.stack?.applied.applied, 2)
     let store = try store(for: environment)
 
     var model = try XCTUnwrap(AccountSetupModel.load(from: environment))
@@ -1795,7 +1813,7 @@ extension UpgradeFromFirstVersionTests {
     let firstStart = Date().timeIntervalSince(began)
 
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(environment.stack?.applied.applied, 1)
+    XCTAssertEqual(environment.stack?.applied.applied, 2)
     XCTAssertEqual(
       try FirstVersionFile.rows(
         at: AppPaths.databaseURL,

@@ -440,17 +440,51 @@ final class RefundFlowTests: XCTestCase {
 
   // MARK: The amount of the line in the purchase's currency
 
+  /// On the screen of an account in tenge, «возврат 7000 кроссовки» is 7,000 in the purchase's
+  /// rubles: an amount without a code is in the currency of the purchase, whatever currency the
+  /// screen laid.
+  func testAnAmountWithoutACodeIsInThePurchasesCurrencyOnAnyScreen() throws {
+    let kaspi = PaymentMethod(name: "Kaspi", currency: CurrencyCode("KZT"))
+    try references.save(kaspi)
+    let shoes = try buy("кроссовки", AmountE4(whole: 7000), daysAgo: 10)
+    let model = makeModel()
+    model.openAccountScreen = { kaspi.id }
+    try enter("возврат 7000 кроссовки", into: model)
+    XCTAssertEqual(model.draft.currency, CurrencyCode("KZT"), "the screen laid its currency")
+    XCTAssertNil(model.refundQuery.currency, "a currency nobody said")
+
+    let picker = picker(for: model)
+    XCTAssertEqual(picker.selected?.purchase.id, shoes.id)
+    XCTAssertTrue(picker.wholeAmount, "«Вся сумма, 7,000.00 ₽»")
+  }
+
+  /// A code typed in the line still counts: «возврат 7000 ₸ кроссовки» is in tenge.
+  func testATypedCodeStillCounts() throws {
+    try buy("кроссовки", AmountE4(whole: 7000), daysAgo: 10)
+    let model = makeModel()
+    try enter("возврат 7000 ₸ кроссовки", into: model)
+    XCTAssertEqual(model.refundQuery.currency, CurrencyCode("KZT"))
+    XCTAssertFalse(picker(for: model).wholeAmount)
+  }
+
+  /// An amount typed with the code of another currency than the purchase's is taken at the
+  /// purchase's rate; without a code it is in the purchase's own currency.
   func testALineAmountInAnotherCurrencyIsTakenAtThePurchaseRate() throws {
     try buy(
       "кроссовки", AmountE4(whole: 100), daysAgo: 10, currency: .usd, rate: 90,
       account: freedom.id)
     let model = makeModel()
-    try enter("возврат кроссовки 3000", into: model)
+    try enter("возврат кроссовки 3000₽", into: model)
     let picker = picker(for: model)
     XCTAssertNotNil(picker.selected)
     // 3 000 ₽ at the purchase's 90 is 33.33 $ — not «Вся сумма» of 100 $.
     XCTAssertFalse(picker.wholeAmount)
     XCTAssertEqual(picker.amount, try AmountE4(decimal: Decimal(string: "33.3333")!))
+
+    let plain = makeModel()
+    try enter("возврат кроссовки 100", into: plain)
+    XCTAssertNil(plain.refundQuery.currency)
+    XCTAssertTrue(self.picker(for: plain).wholeAmount, "100 without a code is 100 $")
   }
 
   func testTheChargeOfALinkedRefundIsProvisionalByTheRatesOfItsOwnDay() throws {

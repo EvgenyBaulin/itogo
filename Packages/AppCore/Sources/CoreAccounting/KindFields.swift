@@ -33,6 +33,11 @@ public enum OperationField: String, CaseIterable, Sendable {
   case fromPerson
   case split
   case note
+  /// The card that paid, a card of the operation's account. Money back names none: it is money
+  /// from a person onto an account.
+  case card
+  /// Expense only: the cashback the owner typed for the purchase — an expectation, never income.
+  case cashback
 }
 
 /// Which fields an operation of each kind has, and what becomes of the ones it does not.
@@ -44,6 +49,8 @@ public enum OperationField: String, CaseIterable, Sendable {
 ///   keeps «за другого» together with the person who pays it back — a part «за другого» always
 ///   names that person.
 /// * Money back is money from a person onto an account, and nothing else.
+/// * A purchase, income and a refund may name the card that paid or took the money; money back
+///   never does. Only a purchase has a cashback of its own.
 ///
 /// The panel, the entry line, the save and a bulk change all ask this one table. What an
 /// income stored before this rule existed — a place, an event, a person — stays in the
@@ -51,14 +58,15 @@ public enum OperationField: String, CaseIterable, Sendable {
 public enum KindFields {
   private static let expense: Set<OperationField> = [
     .account, .accountCharge, .place, .event, .forWhom, .forPerson, .reimbursable, .debtor,
-    .credit, .debt, .goal, .category, .quality, .split, .note,
+    .credit, .debt, .goal, .category, .quality, .split, .note, .card, .cashback,
   ]
   private static let income: Set<OperationField> = [
     .account, .accountCharge, .category, .periodMonth, .expectedIncome, .debt, .split, .note,
+    .card,
   ]
   private static let refund: Set<OperationField> = [
     .account, .accountCharge, .place, .event, .forWhom, .forPerson, .reimbursable, .debtor,
-    .goal, .category, .quality, .refundOf, .split, .note,
+    .goal, .category, .quality, .refundOf, .split, .note, .card,
   ]
   private static let reimbursement: Set<OperationField> = [
     .account, .accountCharge, .fromPerson, .debt, .note,
@@ -75,10 +83,13 @@ public enum KindFields {
 
   /// An operation whose parts all go to goals — a contribution, or taking money back out of a
   /// goal — moves no money between accounts: it keeps its account, but has nothing charged on
-  /// it, so there is no «Списано со счёта».
+  /// it, so there is no «Списано со счёта», and no card money earns cashback on it.
   public static func fields(of kind: TransactionKind, goalOnly: Bool) -> Set<OperationField> {
     var fields = fields(of: kind)
-    if goalOnly { fields.remove(.accountCharge) }
+    if goalOnly {
+      fields.remove(.accountCharge)
+      fields.remove(.cashback)
+    }
     return fields
   }
 
@@ -132,6 +143,8 @@ public enum KindFields {
     drop(.credit, when: result.creditDebtId != nil) { result.creditDebtId = nil }
     drop(.debt, when: result.debtId != nil) { result.debtId = nil }
     drop(.periodMonth, when: result.periodMonth != nil) { result.periodMonth = nil }
+    drop(.card, when: result.cardId != nil) { result.cardId = nil }
+    drop(.cashback, when: result.cashback != nil) { result.cashback = nil }
 
     let keepsPerson = kind == .reimbursement
     for index in result.parts.indices {

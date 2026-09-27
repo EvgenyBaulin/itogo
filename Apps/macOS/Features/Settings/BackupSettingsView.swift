@@ -35,6 +35,10 @@ struct BackupSettingsView: View {
         if AppPaths.dataSet != nil {
           Text(verbatim: environment.language(Self.dataSetMirrorsNowhereKey, table: "Settings"))
             .foregroundStyle(.secondary)
+        } else if mirror != nil {
+          Text(verbatim: environment.language(Self.beforeUpdateCopiesKey, table: "Settings"))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
 
@@ -175,6 +179,10 @@ struct BackupSettingsView: View {
 
   /// Said in a data-set launch, where copies are mirrored nowhere.
   static let dataSetMirrorsNowhereKey = "backups.dataSet.noMirror"
+
+  /// Said under a chosen folder: the copies written before updates are there too, in a folder of
+  /// their own that no rotation enters.
+  static let beforeUpdateCopiesKey = "settings.backups.beforeMigrationMirrored"
 
   /// Said when the folder just chosen could not be remembered, so it was not taken.
   static let folderNotRememberedKey = "backups.failure.folderNotRemembered"

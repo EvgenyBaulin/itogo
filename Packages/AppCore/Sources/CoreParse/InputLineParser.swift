@@ -22,18 +22,23 @@ import Foundation
 ///     ("в День рождения", "in cash"), which then takes the marker, or a time ("в среду",
 ///     "at 9am"), which stays in the note with it —, then known places,
 ///     events and payment methods anywhere in the line. Inside one pass the longest
-///     dictionary spelling wins; on equal length the order is place, event, payment method;
+///     dictionary spelling wins; on equal length the order is place, event, payment method.
+///     A card names its account as well; it wins only with a longer spelling than the
+///     account's, and only a card of the account already read, if one was;
 ///  5. **currency** — a word, a code or a symbol, including the forms glued to the number;
 ///     a code that is also an English word ("try", "gel", "amd") only glued to the number or
 ///     in capitals right after it;
 ///  6. **date** — keywords, ISO, `12.09.2026` and `12.09`. A bare `12.09` is read as a date
 ///     only when the line still holds another number that can be the amount, otherwise
-///     "кофе 12.09" would have no amount at all;
+///     "кофе 12.09" would have no amount at all. A day the calendar does not have — «31.09»,
+///     29 February of a common year — is taken as the date all the same and reported
+///     (`dateProblem`): the line is refused with the reason instead of saving it as a number;
 ///  7. **amount** — the longest run of neighbouring unclaimed words that evaluates as an
 ///     expression; runs are tried left to right, so the first number of the line wins —
 ///     unless it is a count or a day ("2 шт", "3 ночи", "к 8 марта") and another number is
 ///     there. A "+" in front of it ("кэшбэк +250") is the sign of income when nothing else
-///     named the kind;
+///     named the kind. A word that multiplies with a glued `x` («250x2») is the amount only
+///     when no other number is left: «доска 20x30 1500» costs 1 500;
 ///  8. **note** — everything left, joined by single spaces.
 ///
 /// A name read behind its marker keeps the marker in its token — «для мамы», «в Пятёрочке»,
@@ -182,7 +187,7 @@ private struct ParseSession {
   private func isInsideALongerName(_ range: Range<Int>) -> Bool {
     let lists = [
       vocabulary.places, vocabulary.events, vocabulary.paymentMethods, vocabulary.goals,
-      vocabulary.debts, vocabulary.people,
+      vocabulary.debts, vocabulary.people, vocabulary.cards.map(\.entry),
     ]
     // Only a name that can reach the phrase is looked up: a long line is not walked whole
     // for every kind word in it.
@@ -340,9 +345,12 @@ private struct ParseSession {
     (words[marker..<start].map(\.original) + [name]).joined(separator: " ")
   }
 
-  /// A known place, event or payment method starts behind the marker.
+  /// A known place, event, payment method or card starts behind the marker.
   private func knowsOtherName(behind marker: Int, from start: Int) -> Bool {
-    [vocabulary.places, vocabulary.events, vocabulary.paymentMethods].contains { entries in
+    [
+      vocabulary.places, vocabulary.events, vocabulary.paymentMethods,
+      vocabulary.cards.map(\.entry),
+    ].contains { entries in
       bestMatch(entries, behind: marker, from: start) != nil
     }
   }
@@ -365,7 +373,9 @@ private struct ParseSession {
       // a time: "в среду", "в январе", "в 12:30", "at 9am" say when, not where.
       guard !isAmountish(words[next]), currencyAffix(in: words[next].amountText) == nil,
         Lexicon.forWhomWords[words[next].normalized] == nil,
-        date(from: words[next].normalized, allowDayMonth: false) == nil,
+        dateReading(
+          from: words[next].normalized, written: words[next].original,
+          allowDayMonth: false) == nil,
         !Lexicon.datePhrases.contains(where: { matches($0.words, at: next, loose: false) }),
         !Lexicon.timeWords.contains(words[next].normalized),
         !isClockTime(words[next].normalized)
@@ -378,8 +388,9 @@ private struct ParseSession {
     }
   }
 
-  /// A known event or payment method behind the place marker at `marker`: the longer
-  /// spelling wins, on equal length the event (the order of `readKnownNames`).
+  /// A known event, payment method or card behind the place marker at `marker`: the longer
+  /// spelling wins, on equal length the event, then the account (the order of
+  /// `readKnownNames`).
   private mutating func readMarkedName(after marker: Int, from start: Int) -> Bool {
     var winner: (role: ParsedRole, entry: ParserVocabulary.Entry, range: Range<Int>)?
     if result.eventId == nil,
@@ -393,6 +404,19 @@ private struct ParseSession {
     {
       winner = (.paymentMethod, match.entry, match.range)
     }
+    var card: CardReading?
+    if let found = cardReading(behind: marker, from: start),
+      found.range.count > (winner?.range.count ?? 0)
+    {
+      card = found
+    }
+    if let card {
+      take(card)
+      claim(
+        marker..<card.range.upperBound, as: .paymentMethod,
+        text: marked(marker..<card.range.upperBound))
+      return true
+    }
     guard let winner else { return false }
     if winner.role == .event {
       result.eventId = winner.entry.id
@@ -403,6 +427,54 @@ private struct ParseSession {
       marker..<winner.range.upperBound, as: winner.role,
       text: marked(marker..<winner.range.upperBound))
     return true
+  }
+
+  /// A card the line names, with the account it belongs to. Two live cards of one account
+  /// spelled alike name the account alone (`card` nil); spelled alike on two accounts, they
+  /// name nothing and are not a reading at all.
+  struct CardReading {
+    let card: UUID?
+    let accountId: UUID
+    let range: Range<Int>
+  }
+
+  /// The card whose longest spelling starts at `index`, while none is read yet and the line
+  /// names no other account than the card's.
+  private func cardReading(at index: Int, loose: Bool) -> CardReading? {
+    guard result.cardId == nil, !vocabulary.cards.isEmpty else { return nil }
+    var length = 0
+    var found: [ParserVocabulary.CardEntry] = []
+    for card in vocabulary.cards {
+      guard let match = bestMatch([card.entry], at: index, loose: loose) else { continue }
+      if match.range.count > length {
+        length = match.range.count
+        found = [card]
+      } else if match.range.count == length, !found.contains(card) {
+        found.append(card)
+      }
+    }
+    guard let first = found.first else { return nil }
+    let accounts = Set(found.map(\.accountId))
+    guard accounts.count == 1 else { return nil }
+    guard result.paymentMethodId == nil || result.paymentMethodId == first.accountId else {
+      return nil
+    }
+    let distinct = Set(found.map(\.entry.id))
+    return CardReading(
+      card: distinct.count == 1 ? first.entry.id : nil, accountId: first.accountId,
+      range: index..<(index + length))
+  }
+
+  /// The same behind a marker: a name that begins with the article is tried as written first.
+  private func cardReading(behind marker: Int, from start: Int) -> CardReading? {
+    if start > marker + 1, let whole = cardReading(at: marker + 1, loose: true) { return whole }
+    return cardReading(at: start, loose: true)
+  }
+
+  /// A card read: it names its account too.
+  private mutating func take(_ card: CardReading) {
+    result.cardId = card.card
+    result.paymentMethodId = card.accountId
   }
 
   /// Places, events and payment methods written without any marker. Inside one position
@@ -426,6 +498,23 @@ private struct ParseSession {
         match.range.count > (winner?.range.count ?? 0)
       {
         winner = (.paymentMethod, match.entry, match.range)
+      }
+      // A card wins only with a longer spelling: on a tie the account's own name is the
+      // account («сбер» of «Сбер» and of its card «Сбер»).
+      if let card = cardReading(at: index, loose: false),
+        card.range.count > (winner?.range.count ?? 0)
+      {
+        take(card)
+        claim(card.range, as: .paymentMethod)
+        continue
+      }
+      // The account of the card read before it: its name says nothing new and leaves the note.
+      if winner == nil, result.cardId != nil, let account = result.paymentMethodId,
+        let match = bestMatch(vocabulary.paymentMethods, at: index, loose: false),
+        match.entry.id == account
+      {
+        claim(match.range, as: nil)
+        continue
       }
       guard let winner else { continue }
       switch winner.role {
@@ -493,10 +582,15 @@ private struct ParseSession {
     let numbers = amountCandidates()
     for index in words.indices where !words[index].claimed {
       let allowDayMonth = numbers.count > (numbers.contains(index) ? 1 : 0)
-      guard let parsed = date(from: words[index].normalized, allowDayMonth: allowDayMonth) else {
-        continue
+      guard
+        let reading = dateReading(
+          from: words[index].normalized, written: words[index].original,
+          allowDayMonth: allowDayMonth)
+      else { continue }
+      switch reading {
+      case .day(let day): result.date = day
+      case .problem(let problem): result.dateProblem = problem
       }
-      result.date = parsed
       claim(index, as: .date, text: words[index].original)
       return
     }
@@ -505,8 +599,16 @@ private struct ParseSession {
   mutating func readAmount() {
     guard result.amount == nil else { return }
     let aside = countsAndDays()
+    // A word multiplied with a glued `x` — «250x2» — is the amount only when no other number
+    // is left to be it: «доска 20x30 1500» is a board of 20 by 30 that costs 1 500.
+    let plainNumberLeft = words.indices.contains { index in
+      !words[index].claimed && isAmountish(words[index]) && !aside.contains(index)
+        && !ExpressionLexer.hasGluedTimes(words[index].amountText)
+        && words[index].amountText.contains(where: ExpressionLexer.isDigit)
+    }
     func readable(_ index: Int) -> Bool {
       !words[index].claimed && isAmountish(words[index]) && !aside.contains(index)
+        && !(plainNumberLeft && ExpressionLexer.hasGluedTimes(words[index].amountText))
     }
     var index = 0
     while index < words.count {
@@ -654,12 +756,15 @@ private struct ParseSession {
   private func isAmountish(_ word: InputWord) -> Bool {
     let text = word.amountText
     guard !text.isEmpty else { return false }
-    return text.allSatisfy { character in
-      ExpressionLexer.isDigit(character)
+    let characters = Array(text)
+    return characters.indices.allSatisfy { index in
+      let character = characters[index]
+      return ExpressionLexer.isDigit(character)
         || ExpressionLexer.operatorKind(character) != nil
         || ExpressionLexer.decimalSeparators.contains(character)
         || ExpressionLexer.thousandSuffixes.contains(character)
         || ExpressionLexer.isSpace(character)
+        || ExpressionLexer.isGluedTimes(characters, at: index)
     }
   }
 
@@ -686,15 +791,30 @@ private struct ParseSession {
     }
   }
 
+  /// What a word written as a date says: the day, or why the calendar has no such day.
+  enum DateReading {
+    case day(DateOnly)
+    case problem(ParsedInput.DateProblem)
+  }
+
   /// `today` / `сегодня` are handled by the phrase table; this reads the written forms:
   /// ISO `2026-09-12`, `12.09.2026`, `12.09.26` and the bare `12.09` (a two-digit month).
-  private func date(from text: String, allowDayMonth: Bool) -> DateOnly? {
+  ///
+  /// A word is taken for a date by its shape: a day from 1 to 31 and a month from 1 to 12.
+  /// Such a word whose day the month does not have — «31.09», «30.02», «2026-04-31», 29
+  /// February of a common year — is a date all the same, one that cannot be: `.problem`, so
+  /// the line says why instead of saving «31.09» as a price. A month above 12, a day of 0 or
+  /// above 31 is no date at all — «12.13», «1.50», «0.09» stay numbers. `written` is the word as
+  /// typed, for the reason.
+  func dateReading(from text: String, written: String, allowDayMonth: Bool) -> DateReading? {
+    let shown = TextNormalizer.trimmingEdgePunctuation(written)
     if text.contains("-") {
       let parts = text.split(separator: "-", omittingEmptySubsequences: false)
-      guard parts.count == 3, parts[0].count == 4, allDigits(parts),
-        let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2])
+      guard parts.count == 3, parts[0].count == 4, parts[1].count <= 2, parts[2].count <= 2,
+        allDigits(parts), let year = Int(parts[0]), let month = Int(parts[1]),
+        let day = Int(parts[2])
       else { return nil }
-      return validated(year: year, month: month, day: day)
+      return reading(year: year, month: month, day: day, written: shown)
     }
     let parts = text.split(separator: ".", omittingEmptySubsequences: false)
     guard allDigits(parts), parts[0].count <= 2 else { return nil }
@@ -703,7 +823,7 @@ private struct ParseSession {
         var year = Int(parts[2])
       else { return nil }
       if parts[2].count <= 2 { year = nearestYear(endingIn: year) }
-      return validated(year: year, month: month, day: day)
+      return reading(year: year, month: month, day: day, written: shown)
     }
     // A bare day and month writes the month with two digits, the way the spec shows it
     // («12.09», and «1.09»): one digit after the point is a fraction — «молоко 1.5 90» is one
@@ -711,15 +831,24 @@ private struct ParseSession {
     guard allowDayMonth, parts.count == 2, parts[1].count == 2,
       let day = Int(parts[0]), let month = Int(parts[1])
     else { return nil }
-    // The year is the latest one that does not put the date into the future. For every day
-    // but 29 February that is this year or the last; a leap day may lie up to eight years
-    // back, since 2100 skips one.
-    for year in stride(from: today.year, through: today.year - 8, by: -1) {
-      if let date = validated(year: year, month: month, day: day), date <= today {
-        return date
-      }
+    // The year is the latest one that does not put the day into the future: this year when
+    // the day and month are not after today's, else the last. 29 February of a year that has
+    // none is not looked for years back: the line says that year has no such day.
+    let year = (month, day) <= (today.month, today.day) ? today.year : today.year - 1
+    return reading(year: year, month: month, day: day, written: shown)
+  }
+
+  /// A day and month shaped as a date: the day, the problem of a day the month lacks, or nil
+  /// when the shape is not a date's.
+  private func reading(year: Int, month: Int, day: Int, written: String) -> DateReading? {
+    guard (1...12).contains(month), (1...31).contains(day), year >= 1900, year <= 9999 else {
+      return nil
     }
-    return nil
+    if let valid = validated(year: year, month: month, day: day) { return .day(valid) }
+    if month == 2 && day == 29 {
+      return .problem(.notInYear(day: day, month: month, year: year))
+    }
+    return .problem(.noSuchDate(written: written))
   }
 
   /// The year a two-digit year means: the one ending in those digits that lies no more than

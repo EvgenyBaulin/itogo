@@ -356,6 +356,7 @@ final class BackupServiceTests: XCTestCase {
     let keys =
       failures.map(\.messageKey) + [
         BackupSettingsView.mirrorUnavailableKey, BackupSettingsView.dataSetMirrorsNowhereKey,
+        BackupSettingsView.beforeUpdateCopiesKey,
       ]
     for choice in [AppLanguage.Choice.english, .russian] {
       language.choice = choice
@@ -453,6 +454,28 @@ final class MirrorFolderAtLaunchTests: XCTestCase {
 
     XCTAssertNil(environment.mirrorFolder)
     XCTAssertFalse(environment.mirrorFolderUnavailable)
+  }
+
+  /// Settings → Бэкапы → «Выбрать папку…» after an update: the copy written before it, already
+  /// in the folder of copies, reaches the chosen folder's «before-migration» at once.
+  func testTheFolderChosenAfterAnUpdateGetsTheCopyBeforeIt() async throws {
+    let environment = await start()
+    let name = BackupService.fileName(
+      at: Date(timeIntervalSince1970: 1_790_000_000), label: "before-migration")
+    try FileManager.default.createDirectory(
+      at: AppPaths.backupsDirectory, withIntermediateDirectories: true)
+    try Data("the older version".utf8).write(
+      to: AppPaths.backupsDirectory.appendingPathComponent(name))
+    let chosen = directory.appendingPathComponent("chosen", isDirectory: true)
+    try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: true)
+
+    environment.useMirrorFolder(chosen)
+
+    let arrived = chosen.appendingPathComponent("before-migration/\(name)")
+    for _ in 0..<100 where !FileManager.default.fileExists(atPath: arrived.path) {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertEqual(try Data(contentsOf: arrived), Data("the older version".utf8))
   }
 
   /// Choosing a folder again is the way out, and it clears the warning.
@@ -726,11 +749,131 @@ extension BackupServiceTests {
     try await service.applyRetention(now: start.addingTimeInterval(3_600))
 
     for folder in [backupsFolder, mirror] {
-      let left = contents(of: folder)
+      // The chosen folder also holds «before-migration», where that copy is put as well.
+      let left = contents(of: folder).filter { $0.hasPrefix("finance-") }
       XCTAssertTrue(left.contains(update), "the copy before the update was pruned in \(folder)")
       XCTAssertEqual(left.filter { $0 != update }.count, 50, "it took the place of a copy")
     }
     let listed = try await service.backups().map(\.lastPathComponent)
     XCTAssertTrue(listed.contains(update), "the copy before the update cannot be restored")
+  }
+  // MARK: The copy before an update in the chosen folder
+
+  private var beforeUpdateMirror: URL {
+    mirrorFolder.appendingPathComponent("before-migration", isDirectory: true)
+  }
+
+  /// The copy written before an update also lands in the folder the owner chose, in its
+  /// subfolder «before-migration», byte for byte — the way back to the older version survives
+  /// the Mac itself.
+  func testACopyBeforeAnUpdateReachesTheChosenFolder() async throws {
+    try FileManager.default.createDirectory(at: mirrorFolder, withIntermediateDirectories: true)
+    let copy = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: Date(timeIntervalSince1970: 1_790_000_000))
+    let service = BackupService(stack: stack, directory: backupsFolder)
+
+    await service.setMirror(mirrorFolder)
+
+    let mirrored = beforeUpdateMirror.appendingPathComponent(copy.lastPathComponent)
+    XCTAssertEqual(contents(of: beforeUpdateMirror), [copy.lastPathComponent])
+    XCTAssertEqual(try Data(contentsOf: mirrored), try Data(contentsOf: copy))
+    XCTAssertEqual(contents(of: mirrorFolder), ["before-migration"], "it landed beside the copies")
+    let failure = await service.lastFailure
+    XCTAssertNil(failure)
+  }
+
+  /// A copy already in the folder is not copied again.
+  func testItIsNotCopiedTwice() async throws {
+    try FileManager.default.createDirectory(at: mirrorFolder, withIntermediateDirectories: true)
+    _ = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: Date(timeIntervalSince1970: 1_790_000_000))
+    let service = BackupService(stack: stack, directory: backupsFolder)
+    await service.setMirror(mirrorFolder)
+    let modified =
+      try FileManager.default.attributesOfItem(
+        atPath: beforeUpdateMirror.appendingPathComponent(contents(of: beforeUpdateMirror)[0]).path
+      )[.modificationDate] as? Date
+
+    let again = await service.mirrorCopiesBeforeUpdates()
+
+    XCTAssertEqual(again, 0)
+    XCTAssertEqual(contents(of: beforeUpdateMirror).count, 1)
+    let after =
+      try FileManager.default.attributesOfItem(
+        atPath: beforeUpdateMirror.appendingPathComponent(contents(of: beforeUpdateMirror)[0]).path
+      )[.modificationDate] as? Date
+    XCTAssertEqual(after, modified)
+  }
+
+  /// Sixty copies after changes and the retention of fifty: the copy before the update stays in
+  /// the folder of copies and in the chosen one — whose retention looks only at its top.
+  func testRotationNeverTouchesIt() async throws {
+    let manager = FileManager.default
+    try manager.createDirectory(at: mirrorFolder, withIntermediateDirectories: true)
+    let moscow = try XCTUnwrap(TimeZone(identifier: "Europe/Moscow"))
+    let start = Date(timeIntervalSince1970: 1_789_000_000)
+    let update = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: start.addingTimeInterval(-180 * 86_400))
+    let service = BackupService(stack: stack, directory: backupsFolder)
+    await service.setMirror(mirrorFolder)
+    for folder in [backupsFolder, mirrorFolder] {
+      for index in 0..<60 {
+        let name = BackupService.fileName(
+          at: start.addingTimeInterval(Double(index) * 60), in: moscow)
+        try Data("x".utf8).write(to: folder.appendingPathComponent(name))
+      }
+    }
+
+    try await service.applyRetention(now: start.addingTimeInterval(3_600))
+
+    XCTAssertTrue(contents(of: backupsFolder).contains(update.lastPathComponent))
+    XCTAssertEqual(contents(of: beforeUpdateMirror), [update.lastPathComponent])
+    XCTAssertEqual(
+      contents(of: mirrorFolder).filter { $0.hasPrefix("finance-") }.count, 50,
+      "the chosen folder is not pruned as before")
+  }
+
+  /// A folder chosen after the update gets the copy too, when it is chosen.
+  func testAFolderChosenLaterGetsIt() async throws {
+    try FileManager.default.createDirectory(at: mirrorFolder, withIntermediateDirectories: true)
+    let service = BackupService(stack: stack, directory: backupsFolder)
+    let copy = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: Date(timeIntervalSince1970: 1_790_000_000))
+    let none = await service.mirrorCopiesBeforeUpdates()
+    XCTAssertNil(none)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: beforeUpdateMirror.path))
+
+    await service.setMirror(mirrorFolder)
+
+    XCTAssertEqual(contents(of: beforeUpdateMirror), [copy.lastPathComponent])
+  }
+
+  /// Without a folder nothing is put anywhere and nothing is said to have failed.
+  func testWithoutAFolderNothingHappens() async throws {
+    _ = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: Date(timeIntervalSince1970: 1_790_000_000))
+    let service = BackupService(stack: stack, directory: backupsFolder)
+
+    await service.setMirror(nil)
+
+    let arrived = await service.mirrorCopiesBeforeUpdates()
+    XCTAssertNil(arrived)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: mirrorFolder.path))
+    let failure = await service.lastFailure
+    XCTAssertNil(failure)
+  }
+
+  /// A chosen folder the copy cannot reach is told, as for every copy.
+  func testACopyBeforeAnUpdateThatDoesNotArriveIsTold() async throws {
+    _ = try BackupService.copyBeforeMigration(
+      of: databaseURL, into: backupsFolder, now: Date(timeIntervalSince1970: 1_790_000_000))
+    let notAFolder = directory.appendingPathComponent("iCloud")
+    try Data("a file where the folder was".utf8).write(to: notAFolder)
+    let service = BackupService(stack: stack, directory: backupsFolder)
+
+    await service.setMirror(notAFolder)
+
+    let failure = await service.lastFailure
+    XCTAssertEqual(failure, .notMirrored)
   }
 }

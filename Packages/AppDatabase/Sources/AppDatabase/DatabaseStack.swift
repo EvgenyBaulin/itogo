@@ -5,22 +5,35 @@ import Synchronization
 
 /// What the data steps of the migrations need from the app (`MigrationDataSteps`): the name of
 /// a main account made for the operations of an older build, in the language of the interface
-/// — the package cannot know it — and where its id comes from.
+/// — the package cannot know it —, where its id comes from, and the month the update happens
+/// in.
 public struct MigrationContext: Sendable {
   /// «Основной счёт» / "Main account".
   public var mainAccountName: String
   public var makeId: @Sendable () -> UUID
+  /// The month of the update, `YYYY-MM` in the owner's calendar: the plan of every goal that
+  /// already has one counts from it. Taken when the context is made, so an update stopped and
+  /// tried again at once gives the same month.
+  public var updateMonth: String
   /// The data step throws once the SQL has run: how the tests prove that a migration that
-  /// stops leaves nothing behind.
+  /// stops leaves nothing behind. The first step that runs throws.
   var failAfterSQL = false
+  /// The same for the step of this one migration only, so the ones before it land.
+  var failAfterSQLOf: String? = nil
 
-  public init(mainAccountName: String, makeId: @escaping @Sendable () -> UUID = { UUID() }) {
+  public init(
+    mainAccountName: String, makeId: @escaping @Sendable () -> UUID = { UUID() },
+    updateMonth: String? = nil
+  ) {
     self.mainAccountName = mainAccountName
     self.makeId = makeId
+    self.updateMonth = updateMonth ?? CalendarContext.system.day(of: Date()).monthKey.iso
   }
 
-  /// For stacks nobody's history goes through — tests, tools, generated data sets.
-  public static let tests = MigrationContext(mainAccountName: "Main account")
+  /// For stacks nobody's history goes through — tests, tools, generated data sets. Its month is
+  /// fixed, so two updates made with it compare value for value on any day.
+  public static let tests = MigrationContext(
+    mainAccountName: "Main account", updateMonth: "2026-09")
 }
 
 /// Opens the database, applies the SQL migrations and hands out repositories.
@@ -41,8 +54,9 @@ public final class DatabaseStack: Sendable {
     public var applied: Int
     public var milliseconds: Int
     /// What the data steps of the migrations applied this time did (`MigrationDataSteps`),
-    /// counts only: `mainKept`, `mainChosen`, `mainCreated`, `defaultsCleared`, `assigned`.
-    /// Empty when no migration with a step ran.
+    /// counts only: `mainKept`, `mainChosen`, `mainCreated`, `defaultsCleared`, `assigned` of
+    /// the accounts; `cardsCreated`, `cardsSkipped`, `countsRecorded`, `countsKept`,
+    /// `goalPlansStarted` of the cards. Empty when no migration with a step ran.
     public var dataSteps: [String: Int]
 
     public init(
@@ -173,10 +187,18 @@ public final class DatabaseStack: Sendable {
         underlying: error)
     }
     let elapsed = Int((DispatchTime.now().uptimeNanoseconds - began) / 1_000_000)
+    let applied = migrations.filter { !alreadyApplied.contains($0.name) }.count
+    // The readers opened before the update keep the schema they read then: a `SELECT *` one of
+    // them prepares takes the columns of that schema, and SQLite, noticing the change only when
+    // the statement runs, reads the new columns into no row — the first reads after an update
+    // would see a count without its mode and a goal without the month of its plan. Readers made
+    // after the update read the schema it left.
+    if applied > 0, let pool = writer as? DatabasePool {
+      pool.invalidateReadOnlyConnections()
+    }
     return Migrations(
-      onDisk: migrations.count,
-      applied: migrations.filter { !alreadyApplied.contains($0.name) }.count,
-      milliseconds: elapsed, dataSteps: steps.total)
+      onDisk: migrations.count, applied: applied, milliseconds: elapsed,
+      dataSteps: steps.total)
   }
 
   /// The counts of the data steps, added up across the migrations of one open. GRDB runs the
@@ -216,15 +238,17 @@ public final class DatabaseStack: Sendable {
   /// of the book: they move with every debt payment and hold the balances the debt figures
   /// are made of. The anomalies waved away come with the data too, so «Это нормально» is a
   /// change like any other, whoever writes it; so do the owner's choices of a category
-  /// against the model, which «Качество модели» counts; and so do the groups of the accounts,
-  /// the transfers between them and the balances counted on them. A test holds this
-  /// list against the statements the load runs.
+  /// against the model, which «Качество модели» counts; so do the groups of the accounts,
+  /// the transfers between them and the balances counted on them; and so do the cards and
+  /// their cashback rules, which the cashback expected of every purchase is made of. A test
+  /// holds this list against the statements the load runs.
   static let ledgerTables = [
     "transactions", "transaction_parts", "reimbursement_links", "categories", "people",
     "places", "events", "payment_methods", "goals", "debts", "debt_entries", "rates",
     "settings", "scheduled_payments", "subscription_prices", "expected_income",
     "expected_income_links", "budgets", "reconciliations", "anomaly_dismissals",
-    "category_feedback", "account_groups", "transfers", "reconciliation_balances",
+    "category_feedback", "account_groups", "transfers", "reconciliation_balances", "cards",
+    "cashback_rules",
   ]
 
   /// One element after every committed transaction that changed one of `ledgerTables` —

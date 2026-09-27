@@ -227,9 +227,10 @@ final class DebtsFlowTests: XCTestCase {
     let closed = try XCTUnwrap(try references.debts(includeClosed: true).first { $0.id == debt.id })
     XCTAssertTrue(closed.closed)
 
-    XCTAssertEqual(DebtCardAction.offered(for: closed), [.reopen])
+    XCTAssertEqual(DebtCardAction.offered(for: closed), [.reopen, .delete])
     XCTAssertEqual(
-      DebtCardAction.offered(for: other), [.pay, .addEntry, .offset, .transfer, .adjust, .close])
+      DebtCardAction.offered(for: other),
+      [.pay, .addEntry, .offset, .transfer, .adjust, .close, .delete])
 
     let five = AmountE4(whole: 5_000)
     XCTAssertFalse(actions.pay(closed, amount: five, on: Date(), paymentMethodId: nil))
@@ -319,22 +320,109 @@ final class DebtsFlowTests: XCTestCase {
     XCTAssertEqual(DebtSheetView.savedPaymentDay(monthly: AmountE4(whole: 8_500), day: 25), 25)
   }
 
-  /// «Платёж» from the reminder of next month's due pays that due (third review, 19.09): on
-  /// 29 September the payment of 1 October is dated the 1st, or September would hold two
-  /// payments and October none, and the reminder would stay.
-  func testPayingNextMonthsDueFromTheReminderIsDatedOnIt() {
+  /// «Платёж» starts now whatever the due: a payment pays the earliest unpaid due, so the date
+  /// is when the money moved — next month's due paid on 29 September is a payment of the 29th.
+  func testPayDateIsNowWhateverTheDue() {
     let calendar = CalendarContext.utc
-    let october = DateOnly(year: 2026, month: 10, day: 1)
-    let paid = DebtSheetView.payDate(
-      due: october, today: DateOnly(year: 2026, month: 9, day: 29), calendar: calendar)
-    XCTAssertEqual(paid.map(calendar.day(of:)), october)
-    // A due of this month, or overdue, is paid now, as the form always did.
-    XCTAssertNil(
-      DebtSheetView.payDate(
-        due: DateOnly(year: 2026, month: 9, day: 25),
-        today: DateOnly(year: 2026, month: 9, day: 29),
-        calendar: calendar))
-    XCTAssertNil(DebtSheetView.payDate(due: nil, today: october, calendar: calendar))
+    let september29 = DateOnly(year: 2026, month: 9, day: 29)
+    for due in [
+      DateOnly(year: 2026, month: 10, day: 1), DateOnly(year: 2026, month: 9, day: 25),
+      DateOnly(year: 2026, month: 8, day: 5),
+    ] {
+      XCTAssertNil(DebtSheetView.payDate(due: due, today: september29, calendar: calendar))
+    }
+    XCTAssertNil(DebtSheetView.payDate(due: nil, today: september29, calendar: calendar))
+    let loan = Debt(
+      direction: .iOwe, type: .loan, name: "Loan", monthlyPaymentE4: AmountE4(whole: 8_000))
+    let start = DebtSheetView.payStart(
+      of: .pay(loan), payDue: DateOnly(year: 2026, month: 10, day: 5), today: september29,
+      calendar: calendar, methods: [])
+    XCTAssertNil(start?.date, "now")
+    XCTAssertEqual(start?.amount, AmountE4(whole: 8_000))
+  }
+
+  /// «Провести» of an overdue due opens the form at the moment and on the account it was asked
+  /// with; a missing or archived account gives the main one.
+  func testPayAtKeepsTheMomentAndTheAccount() {
+    let calendar = CalendarContext.utc
+    let main = PaymentMethod(name: "Main", isDefault: true)
+    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    var old = PaymentMethod(name: "Old")
+    old.archived = true
+    let loan = Debt(direction: .iOwe, type: .loan, name: "Loan")
+    let moment = calendar.startOfDay(DateOnly(year: 2026, month: 9, day: 5))
+      .addingTimeInterval(12 * 3600)
+    let start = DebtSheetView.payStart(
+      of: .payAt(loan, at: moment, account: cash.id), payDue: nil, today: today,
+      calendar: calendar, methods: [main, cash])
+    XCTAssertEqual(start?.date, moment)
+    XCTAssertEqual(start?.method, cash.id)
+    let fallback = DebtSheetView.payStart(
+      of: .payAt(loan, at: nil, account: old.id), payDue: nil, today: today, calendar: calendar,
+      methods: [main, cash])
+    XCTAssertNil(fallback?.date)
+    XCTAssertEqual(fallback?.method, main.id)
+  }
+
+  /// «просрочен» beside the next payment once its day has passed unpaid; never on a closed
+  /// debt.
+  func testAnOverdueDebtIsMarked() {
+    func line(next: DateOnly?, closed: Bool = false) -> DebtLine {
+      var debt = Debt(direction: .iOwe, type: .loan, name: "Loan")
+      debt.closed = closed
+      return DebtLine(
+        debt: debt, balance: AmountE4(whole: 1_000), balanceRub: nil, groups: [],
+        nextPayment: next, paidThisMonth: false, entries: [])
+    }
+    XCTAssertTrue(line(next: today.adding(days: -1)).isOverdue(today: today))
+    XCTAssertFalse(line(next: today).isOverdue(today: today))
+    XCTAssertFalse(line(next: today.adding(days: 3)).isOverdue(today: today))
+    XCTAssertFalse(line(next: nil).isOverdue(today: today))
+    XCTAssertFalse(line(next: today.adding(days: -1), closed: true).isOverdue(today: today))
+  }
+
+  /// «Удалить…» is offered on every debt, open or closed, last.
+  func testDeleteIsOfferedOnOpenAndClosedDebts() {
+    var debt = Debt(direction: .iOwe, type: .loan, name: "Loan")
+    XCTAssertEqual(DebtCardAction.offered(for: debt).last, .delete)
+    var lent = Debt(direction: .owedToMe, type: .personal, name: "Kim")
+    XCTAssertEqual(DebtCardAction.offered(for: lent).last, .delete)
+    debt.closed = true
+    XCTAssertEqual(DebtCardAction.offered(for: debt), [.reopen, .delete])
+    lent.closed = true
+    XCTAssertEqual(DebtCardAction.offered(for: lent), [.reopen, .delete])
+  }
+
+  /// The confirmation of «Удалить…» says what stays, in both languages: 3 payments of a phone
+  /// bought on credit stay and are not spending, the purchase stays spending, 45,000 ₽ left
+  /// go from sight.
+  func testTheConfirmationSaysWhatStays() {
+    let phone = Debt(
+      direction: .iOwe, type: .installment, name: "Phone", paymentsAreExpenses: false,
+      origin: .purchase)
+    let purchase = TransactionEntry(
+      transaction: Transaction(
+        kind: .expense, occurredAt: Date(), amountE4: AmountE4(whole: 60_000), note: "Телефон",
+        creditDebtId: phone.id),
+      parts: [])
+    let deletion = DebtDeletion(
+      debt: phone, archivedSubcategory: nil, journalLines: 4, movesMoneyLines: 0, operations: 3,
+      meaning: .notSpending, creditPurchases: [purchase], balance: AmountE4(whole: 45_000))
+    let language = AppLanguage()
+    // The choice is kept in the defaults of the test host: the classes after this one find it.
+    let before = language.choice
+    defer { language.choice = before }
+    for (choice, code) in [(AppLanguage.Choice.english, "en"), (.russian, "ru")] {
+      language.choice = choice
+      let text = DebtDeletionText.message(
+        deletion, personName: nil, language: language,
+        money: MoneyFormatter(locale: Locale(identifier: code)))
+      let lines = text.split(separator: "\n")
+      XCTAssertEqual(lines.count, 5, code)
+      XCTAssertTrue(text.contains("45,000\u{00A0}"), "\(code): \(text)")
+      XCTAssertTrue(text.contains("Телефон"), code)
+      XCTAssertFalse(text.contains("debts.delete"), "\(code): a key left untranslated")
+    }
   }
 
   /// An amount field emptied by hand means zero, not the last digit left in it (fourth
@@ -514,6 +602,42 @@ final class DebtActionsAgainstTheJournalTests: XCTestCase {
     XCTAssertEqual(try balance(old), .zero)
     XCTAssertEqual(try balance(new), AmountE4(whole: 500))
     XCTAssertTrue(try saved(old).closed, "all that was left moved")
+  }
+
+  /// «Удалить…» a loan paid once: it leaves the lists, its subcategory of «Кредиты» goes to the
+  /// archive, its payment stays as it was — and one ⌘Z brings both back.
+  func testDeletingADebtIsOneUndoStep() async throws {
+    let loan = Debt(direction: .iOwe, type: .loan, name: "Car loan", paymentsAreExpenses: true)
+    XCTAssertTrue(
+      actions.create(loan, balance: AmountE4(whole: 100_000), on: today, moneyMovedNow: false))
+    let paying = try saved(loan)
+    XCTAssertTrue(
+      actions.pay(paying, amount: AmountE4(whole: 10_000), on: Date(), paymentMethodId: nil))
+    let subcategory = try XCTUnwrap(paying.loansSubcategoryId)
+    let stack = try XCTUnwrap(environment.stack)
+    compute.applyLight(
+      DataSnapshot.build(
+        dataset: try await DatasetRepository(writer: stack.writer).load(version: 1),
+        calendar: .utc, today: today, context: SnapshotContext(), version: DataVersion(load: 1)))
+
+    XCTAssertTrue(actions.delete(try saved(loan)))
+    XCTAssertTrue(try references.debts(includeClosed: true).isEmpty)
+    let deleted = try XCTUnwrap(
+      try references.debts(includeClosed: true, includeDeleted: true).first)
+    XCTAssertNotNil(deleted.deletedAt)
+    XCTAssertEqual(
+      try references.categories(includeArchived: true).first { $0.id == subcategory }?.archived,
+      true)
+    XCTAssertEqual(try operations().count, 1, "the payment stays")
+    XCTAssertEqual(try operations().first?.transaction.debtId, loan.id)
+
+    store.undo()
+    let back = try saved(loan)
+    XCTAssertNil(back.deletedAt)
+    XCTAssertEqual(
+      try references.categories(includeArchived: true).first { $0.id == subcategory }?.archived,
+      false)
+    XCTAssertEqual(try balance(loan), AmountE4(whole: 90_000))
   }
 
   /// What the Pay form offers: closing once the amount covers what is left — on by default,

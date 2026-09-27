@@ -486,9 +486,11 @@ final class AccountsJourneyTests: XCTestCase {
   /// money now 105 000 ₽; a 7 000 ₽ bill due on the 20th; a goal planned at 10 000 ₽ a month
   /// with 4 000 ₽ put in this month; a trip on the 25th with a 5 000 ₽ budget.
   /// D = 30 September: grey = 105 000 − 7 000 − 4 000 saved − 6 000 still planned − 5 000.
-  /// The contribution changes neither figure: before it the grey line took 10 000 of plan and
-  /// nothing saved. D = 31 October adds the next bill and a full month of the plan.
-  func testTheGreyLineTakesTheBillTheGoalAndTheTripAndAContributionChangesNothing() async throws {
+  /// The contribution leaves the grey line as it was — before it the grey line took 10 000 of
+  /// plan and nothing saved —, while the main figure no longer counts the 4 000 ₽ in the goal
+  /// as money to spend (101 000). D = 31 October adds the next bill and a full month of the
+  /// plan.
+  func testTheGreyLineTakesTheBillTheGoalAndTheTripAndAContributionLeavesItAsItWas() async throws {
     let books = try await openTheBooks()
     let bill = ScheduledPayment(
       name: "Аренда", amountE4: AmountE4(whole: 7_000), paymentMethodId: books.sber.id,
@@ -517,7 +519,8 @@ final class AccountsJourneyTests: XCTestCase {
         on: noon.addingTimeInterval(-600), account: books.sber.id, withdraw: false))
     let second = try await show()
     let after = second.planning.freeMoney
-    XCTAssertEqual(after.main, AmountE4(whole: 105_000), "the goal's money stays on the account")
+    XCTAssertEqual(
+      after.main, AmountE4(whole: 101_000), "the 4 000 ₽ put into the goal are not to be spent")
     XCTAssertEqual(after.plan.goalSavings, AmountE4(whole: 4_000))
     XCTAssertEqual(after.plan.goalPlans, AmountE4(whole: 6_000))
     XCTAssertEqual(after.grey, untilMonthEnd.grey, "a contribution changed what is free")
@@ -538,8 +541,9 @@ final class AccountsJourneyTests: XCTestCase {
     XCTAssertEqual(farAway.until, DateOnly(year: 2027, month: 9, day: 16), "D is a year at most")
   }
 
-  /// «Деньги целей лежат на счетах в сводке» off: the goal money is taken to be elsewhere, so
-  /// the grey line no longer takes it away; the plans still are.
+  /// «Деньги целей лежат на счетах в сводке» on: the 4 000 ₽ in the goal are no money to spend
+  /// (101 000). Off: the goal money is taken to be elsewhere, so neither the main figure nor
+  /// the grey line takes it away; the plans still are.
   func testTheSwitchOfTheGoalMoneyStopsTakingTheSavingsAway() async throws {
     let books = try await openTheBooks()
     let goal = Goal(
@@ -552,6 +556,7 @@ final class AccountsJourneyTests: XCTestCase {
         stored, amount: AmountE4(whole: 4_000), currency: .rub,
         on: noon.addingTimeInterval(-600), account: books.sber.id, withdraw: false))
     let on = try await show()
+    XCTAssertEqual(on.planning.freeMoney.main, AmountE4(whole: 105_000 - 4_000))
     XCTAssertEqual(on.planning.freeMoney.grey, AmountE4(whole: 105_000 - 4_000 - 6_000))
 
     try XCTUnwrap(environment.settings).set(
@@ -1271,10 +1276,12 @@ final class AccountsJourneyTests: XCTestCase {
   }
 
   /// The remembered category of fees filed under «Банк», and the whole «Банк» put into the
-  /// archive: the next fee does not bring back a category under a parent the owner archived —
-  /// it makes a new category of fees, live, beside the archived one. This pins how it works
-  /// today (see the note of open questions).
-  func testAFeeWhoseRememberedCategoryIsUnderAnArchivedParentMakesANewOne() async throws {
+  /// archive. The next fee — 2,000 ₽ from Сбер to the cash with 20 ₽ — says under the fee that
+  /// «Комиссии» comes back with «Банк», and saving brings both back in the step that writes the
+  /// transfer and its fee: one «Комиссии», live, under a live «Банк»; Сбер pays 2,020 ₽, the
+  /// cash gets 2,000 ₽. ⌘Z takes the transfer and the fee away and puts both categories back
+  /// into the archive.
+  func testAFeeUnderAnArchivedParentBringsBothBack() async throws {
     let books = try await openTheBooks()
     try await transfer(
       from: books.sber, .rub, to: books.cash, .rub, sent: 1_000, fee: 10,
@@ -1293,6 +1300,15 @@ final class AccountsJourneyTests: XCTestCase {
     try references.save(fees)
     bank.archived = true
     try references.save(bank)
+    let categoriesBefore = store.categories().count
+    let sberBefore = try XCTUnwrap(balance(first, books.sber.id, .rub))
+    let cashBefore = try XCTUnwrap(balance(first, books.cash.id, .rub))
+
+    let comingBack = try XCTUnwrap(transfers.feeCategoryComingBack(), "nothing said under the fee")
+    XCTAssertEqual(comingBack, FeeCategoryComingBack(category: fees.name, parent: "Банк"))
+    let caption = TransferText.feeComingBack(comingBack, environment)
+    XCTAssertTrue(caption.contains(fees.name) && caption.contains("Банк"), caption)
+    XCTAssertFalse(caption.hasPrefix("transfer."), "the key itself was shown: \(caption)")
 
     try await transfer(
       from: books.sber, .rub, to: books.cash, .rub, sent: 2_000, fee: 20,
@@ -1301,22 +1317,88 @@ final class AccountsJourneyTests: XCTestCase {
     let newTransfer = try XCTUnwrap(
       second.dataset.transfers.first { $0.fromAmountE4 == AmountE4(whole: 2_000) })
     let newFee = try XCTUnwrap(TransferActions.fee(of: newTransfer.id, in: second.dataset.entries))
-    XCTAssertNotEqual(newFee.parts.first?.categoryId, feeCategory)
+    XCTAssertEqual(newFee.parts.first?.categoryId, feeCategory, "a second category of fees")
+    XCTAssertEqual(newFee.transaction.amountE4, AmountE4(whole: 20))
+    XCTAssertEqual(newFee.transaction.paymentMethodId, books.sber.id)
     let named = store.categories().filter { $0.name == fees.name }
-    XCTAssertEqual(named.count, 2, "the archived one under «Банк» and a new live one")
-    XCTAssertEqual(named.filter(\.archived).map(\.id), [feeCategory])
+    XCTAssertEqual(named.map(\.id), [feeCategory], "one «\(fees.name)», the one brought back")
+    XCTAssertEqual(named.first?.archived, false)
+    XCTAssertEqual(store.categories().first { $0.id == bank.id }?.archived, false)
+    XCTAssertEqual(store.categories().count, categoriesBefore, "a category was made")
+    XCTAssertEqual(balance(second, books.sber.id, .rub), sberBefore - AmountE4(whole: 2_020))
+    XCTAssertEqual(balance(second, books.cash.id, .rub), cashBefore + AmountE4(whole: 2_000))
+    XCTAssertNil(transfers.feeCategoryComingBack(), "the caption stayed with both live")
+
+    store.undo()
+    let back = try await freshBooks()
+    XCTAssertNil(back.dataset.transfers.first { $0.id == newTransfer.id })
+    XCTAssertNil(TransferActions.fee(of: newTransfer.id, in: back.dataset.entries))
+    XCTAssertEqual(balance(back, books.sber.id, .rub), sberBefore)
+    XCTAssertEqual(balance(back, books.cash.id, .rub), cashBefore)
+    XCTAssertEqual(store.categories().first { $0.id == feeCategory }?.archived, true)
+    XCTAssertEqual(store.categories().first { $0.id == bank.id }?.archived, true)
   }
 
-  // MARK: How three open questions are answered today
+  /// The starter «Комиссии» and its «Прочее» put into the archive before any fee was written:
+  /// the first fee brings both back — said under the fee first — and remembers the category,
+  /// rather than making a second «Комиссии». ⌘Z sends both back to the archive.
+  func testTheFirstFeeBringsBackAnArchivedStarterFees() async throws {
+    let books = try await openTheBooks()
+    let references = try XCTUnwrap(environment.references)
+    let starter = store.categories()
+    var other = try XCTUnwrap(
+      starter.first {
+        $0.parentId == nil && $0.kind == .expense
+          && ["прочее", "other"].contains($0.name.lowercased())
+      }, "the starter tree has no «Прочее»")
+    var fees = try XCTUnwrap(
+      starter.first {
+        $0.parentId == other.id && ["комиссии", "fees"].contains($0.name.lowercased())
+      }, "the starter tree has no «Комиссии»")
+    XCTAssertNil(
+      try environment.settings?.string(AccountSettings.transferFeeCategoryKey),
+      "a category of fees was remembered before any fee")
+    fees.archived = true
+    try references.save(fees)
+    other.archived = true
+    try references.save(other)
+    let count = store.categories().count
 
-  /// A merge writes the merged balance as a starting point at its moment, as a count would.
+    XCTAssertEqual(
+      transfers.feeCategoryComingBack(),
+      FeeCategoryComingBack(category: fees.name, parent: other.name))
+
+    try await transfer(
+      from: books.sber, .rub, to: books.cash, .rub, sent: 1_000, fee: 10,
+      at: noon.addingTimeInterval(-3_600))
+    let written = try await freshBooks()
+    let fee = try XCTUnwrap(
+      TransferActions.fee(
+        of: try XCTUnwrap(written.dataset.transfers.first).id, in: written.dataset.entries))
+    XCTAssertEqual(fee.parts.first?.categoryId, fees.id, "the fee did not go to the starter one")
+    XCTAssertEqual(fee.parts.first?.quality, .bad)
+    XCTAssertEqual(store.categories().count, count, "a second category of fees was made")
+    XCTAssertEqual(store.categories().first { $0.id == fees.id }?.archived, false)
+    XCTAssertEqual(store.categories().first { $0.id == other.id }?.archived, false)
+    XCTAssertEqual(
+      try environment.settings?.string(AccountSettings.transferFeeCategoryKey), fees.id.uuidString)
+
+    store.undo()
+    let back = try await freshBooks()
+    XCTAssertTrue(back.dataset.transfers.isEmpty)
+    XCTAssertEqual(store.categories().count, count)
+    XCTAssertEqual(store.categories().first { $0.id == fees.id }?.archived, true)
+    XCTAssertEqual(store.categories().first { $0.id == other.id }?.archived, true)
+  }
+
+  // MARK: A merge, and the money of an account in the archive
+
+  /// A merge is no count: the merged account behaves as if the two had always been one.
   /// Counted at 06:00 (Сбер 100 000 ₽, cash 5 000 ₽), merged at 12:00 (105 000 ₽), a 300 ₽
-  /// coffee of 09:00 typed after the merge is taken to be inside that starting point: the
-  /// money now stays 105 000 ₽, where without the merge it would be 104 700 ₽. And an
-  /// operation of today typed after the merge is asked «Это было до сверки в 12:00?», though
-  /// nobody counted at 12:00. This pins how it works today; the other reading — a merge is no
-  /// count, and what happened before it still moves the money — is the owner's to choose.
-  func testAMergeIsAStartingPointForWhatHappenedBeforeIt() async throws {
+  /// coffee of 09:00 typed after the merge is after the real count, so it moves the money:
+  /// 104 700 ₽. And an operation of today typed after the merge is asked about the real count
+  /// of 06:00, never about 12:00, when nobody counted.
+  func testAMergeIsNoCountForWhatHappenedBeforeIt() async throws {
     let books = try await openTheBooks()
     let current = try await freshBooks()
     let preview = try XCTUnwrap(
@@ -1325,7 +1407,7 @@ final class AccountsJourneyTests: XCTestCase {
 
     try spend(300, on: books.sber.id, at: noon.addingTimeInterval(-3 * 3_600))
     let after = try await show()
-    XCTAssertEqual(after.planning.freeMoney.main, AmountE4(whole: 105_000))
+    XCTAssertEqual(after.planning.freeMoney.main, AmountE4(whole: 104_700))
 
     var typed = TransactionDraft(
       occurredAt: noon.addingTimeInterval(3_600), amount: AmountE4(whole: 100),
@@ -1335,14 +1417,15 @@ final class AccountsJourneyTests: XCTestCase {
       FormAccounts.countToAsk(
         about: try typed.materialize(), savedAt: noon.addingTimeInterval(3_600),
         snapshot: after, calendar: environment.calendar),
-      noon, "the merge is asked about as a count")
+      noon.addingTimeInterval(-6 * 3_600), "the real count is asked about, not the merge")
   }
 
-  /// Money that comes back onto an account in the archive: the cash emptied by a 5 000 ₽
-  /// purchase and archived, the purchase then made 4 000 ₽. The 1 000 ₽ is on the cash again;
-  /// the sheet lists it (a row of an account in the archive), but neither «Всего» nor the free
-  /// sum counts it, since the sidebar lists live accounts only. This pins how it works today.
-  func testMoneyBackOnAnArchivedAccountIsOnTheSheetButNotInTheTotal() async throws {
+  /// Money an edit brings back onto an account in the archive goes to a live account in the
+  /// same step: the cash emptied by a 5 000 ₽ purchase and archived, the purchase then made
+  /// 4 000 ₽ the way the editor saves it. The 1 000 ₽ would be left on the cash, where no total
+  /// sees it; the save asks, and the transfer to Сбер lands with the edit: the cash stays at
+  /// zero, Сбер holds 101 000 ₽, and so do «Всего» and the free sum. One ⌘Z takes both back.
+  func testMoneyAnEditLeavesOnAnArchivedAccountGoesToALiveOneInTheSameStep() async throws {
     let books = try await openTheBooks()
     let purchase = try spend(5_000, on: books.cash.id, at: noon.addingTimeInterval(-5 * 3_600))
     let emptied = try await freshBooks()
@@ -1353,26 +1436,42 @@ final class AccountsJourneyTests: XCTestCase {
     cheaper.transaction.amountRubE4 = AmountE4(whole: 4_000)
     cheaper.parts[0].amountE4 = AmountE4(whole: 4_000)
     cheaper.parts[0].amountRubE4 = AmountE4(whole: 4_000)
-    XCTAssertTrue(store.apply(PlanningChange(rewritten: [cheaper])))
+    let current = try await freshBooks()
+    store.show(Ledger(dataset: current.dataset, calendar: environment.calendar))
+    let check = store.archivedLeftovers(
+      editing: purchase, into: cheaper, balances: current.balances)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: 1_000)])
+    let settling = ArchivedMoneyForm(
+      check: check, accounts: current.dataset.paymentMethods, locale: Locale(identifier: "ru")
+    ).transfers(now: noon, note: "остаток")
+    XCTAssertEqual(settling.first?.toAccountId, books.sber.id, "the main account is offered")
+    XCTAssertEqual(
+      store.saveEdit(cheaper, calendar: environment.calendar, settling: settling), .saved)
 
+    let after = try await freshBooks()
+    XCTAssertEqual(balance(after, books.cash.id, .rub), .zero, "the archived cash stays at zero")
+    XCTAssertEqual(balance(after, books.sber.id, .rub), AmountE4(whole: 101_000))
     let snapshot = try await show()
-    let row = sheet(snapshot).first { $0.key.accountId == books.cash.id }
-    XCTAssertEqual(row?.expected, AmountE4(whole: 1_000))
-    XCTAssertEqual(row?.isHeld, false)
-    XCTAssertEqual(snapshot.planning.freeMoney.main, AmountE4(whole: 100_000))
-    XCTAssertEqual(snapshot.planning.accounts.inSummaryTotalRub, AmountE4(whole: 100_000))
+    XCTAssertEqual(snapshot.planning.freeMoney.main, AmountE4(whole: 101_000))
+    XCTAssertEqual(snapshot.planning.accounts.inSummaryTotalRub, AmountE4(whole: 101_000))
+
+    store.undo()
+    let undone = try await freshBooks()
+    XCTAssertTrue(undone.dataset.transfers.isEmpty, "one ⌘Z takes the transfer back")
+    XCTAssertEqual(
+      undone.dataset.entries.first { $0.id == purchase.id }?.transaction.amountE4,
+      AmountE4(whole: 5_000))
+    XCTAssertEqual(balance(undone, books.sber.id, .rub), AmountE4(whole: 100_000))
   }
 
-  /// An old transfer to the cash, once the cash is in the archive, is neither edited — not
-  /// even its comment — nor deleted: deleting it would take 1 000 ₽ back off the archived cash,
-  /// which no total counts, and hand them to Сбер, so «Всего» would grow out of nothing. Сбер
+  /// An old transfer to the cash, once the cash is in the archive: its comment is edited — it
+  /// moves no money —, and deleting it would take 1 000 ₽ back off the archived cash, which no
+  /// total counts, and hand them to Сбер, so «Всего» would grow out of nothing. So the deletion
+  /// alone is refused; with the transfer that brings the 1 000 ₽ back to the cash from Сбер it
+  /// goes, in one step of ⌘Z, the cash stays at zero and the money stays 105 000 ₽. Сбер
   /// 100 000 ₽ and cash 5 000 ₽ counted at 06:00; 1 000 ₽ to the cash at 09:00, 6 000 ₽ back at
-  /// 10:00; the empty cash archived. Once «Вернуть» brings the cash back the deletion goes
-  /// through, the money now stays 105 000 ₽ (Сбер 106 000, cash −1 000), and one ⌘Z brings the
-  /// transfer back.
-  func testATransferOfAnArchivedAccountIsNeitherDeletedNorEditedUntilTheAccountIsBack()
-    async throws
-  {
+  /// 10:00; the empty cash archived.
+  func testATransferOfAnArchivedAccountIsDeletedOnlyWithTheMoneyMoved() async throws {
     let books = try await openTheBooks()
     try await transfer(
       from: books.sber, .rub, to: books.cash, .rub, sent: 1_000,
@@ -1390,21 +1489,24 @@ final class AccountsJourneyTests: XCTestCase {
     XCTAssertEqual(
       transfers.save(
         form, occurredAt: form.occurredAt(now: noon, calendar: environment.calendar),
-        books: current), .refused(.issue(.archivedAccount)))
+        books: current), .done, "a comment moves no money")
+    let noted = try await freshBooks()
     XCTAssertEqual(
-      transfers.delete(old, books: current), .refused(.issue(.archivedAccount)),
-      "a deletion moves the money of the archived account as an edit would")
+      transfers.delete(old, books: noted), .refused(.issue(.archivedAccount)),
+      "a deletion that leaves the archived cash below zero moves the money first")
     let kept = try await show()
     XCTAssertEqual(kept.planning.freeMoney.main, AmountE4(whole: 105_000))
     XCTAssertEqual(kept.planning.accounts.inSummaryTotalRub, AmountE4(whole: 105_000))
 
-    XCTAssertEqual(accounts.restore(books.cash.id), .done)
-    let back = try await freshBooks()
-    XCTAssertEqual(transfers.delete(old, books: back), .done)
+    let check = transfers.deletion(of: old, books: noted)
+    XCTAssertEqual(check.leftovers.map(\.amount), [AmountE4(whole: -1_000)])
+    let settling = ArchivedMoneyForm(
+      check: check, accounts: noted.dataset.paymentMethods, locale: Locale(identifier: "ru")
+    ).transfers(now: noon, note: "остаток")
+    XCTAssertEqual(transfers.delete(old, books: noted, settling: settling), .done)
     let deleted = try await show()
     XCTAssertEqual(deleted.planning.freeMoney.main, AmountE4(whole: 105_000))
-    XCTAssertEqual(expected(sheet(deleted), books.sber.id, .rub), AmountE4(whole: 106_000))
-    XCTAssertEqual(expected(sheet(deleted), books.cash.id, .rub), AmountE4(whole: -1_000))
+    XCTAssertEqual(deleted.planning.accounts.inSummaryTotalRub, AmountE4(whole: 105_000))
     store.undo()
     let undone = try await freshBooks()
     XCTAssertEqual(undone.dataset.transfers.count, 2, "one ⌘Z brings the transfer back")
@@ -1460,10 +1562,11 @@ final class AccountsJourneyTests: XCTestCase {
     let books = try await freshBooks()
     let draft = try XCTUnwrap(form.transfer(id: UUID(), occurredAt: nine, now: noon))
     XCTAssertTrue(form.asksAboutTheCount(draft, calendar: calendar))
-    let counts = TransferActions.countMoments(
-      for: draft, savedAt: noon, balances: books.balances, calendar: calendar)
-    XCTAssertEqual(counts, [counted])
-    let questions = CountQuestions(counts: counts, occurredAt: nine, calendar: calendar)
+    guard
+      case .ask(let questions) = transfers.countStep(
+        for: form, occurredAt: nine, books: books, now: noon, remembered: [:])
+    else { return XCTFail("a transfer of the count's day typed after it is asked about") }
+    XCTAssertEqual(questions.counts, [counted])
     guard case .stamp(let before) = questions.answer(wasBefore: true) else {
       return XCTFail("«Да» to the only count stamps")
     }
@@ -1639,10 +1742,10 @@ final class AccountsJourneyTests: XCTestCase {
 
   // MARK: Goals to the end
 
-  /// A goal with no monthly plan: 10 000 ₽ put in leaves the money now at 105 000 ₽ and takes
-  /// them off the grey line (95 000); «Снять» 4 000 ₽ gives them back (99 000), the money now
-  /// still 105 000 ₽; the goal in the archive saves nothing any more (105 000).
-  func testAGoalWithdrawnOrArchivedGivesItsSavingsBackToTheGreyLine() async throws {
+  /// A goal with no monthly plan: 10 000 ₽ put in stay on Сбер but are no longer money to
+  /// spend — the main figure and the grey line both take them off (95 000); «Снять» 4 000 ₽
+  /// gives those back (99 000); the goal in the archive saves nothing any more (105 000).
+  func testAGoalWithdrawnOrArchivedGivesItsSavingsBackToBothFigures() async throws {
     let books = try await openTheBooks()
     let goal = Goal(name: "Велосипед", targetE4: AmountE4(whole: 60_000))
     _ = try await show()
@@ -1653,7 +1756,7 @@ final class AccountsJourneyTests: XCTestCase {
         stored, amount: AmountE4(whole: 10_000), currency: .rub,
         on: noon.addingTimeInterval(-600), account: books.sber.id, withdraw: false))
     let saved = try await show()
-    XCTAssertEqual(saved.planning.freeMoney.main, AmountE4(whole: 105_000))
+    XCTAssertEqual(saved.planning.freeMoney.main, AmountE4(whole: 95_000))
     XCTAssertEqual(saved.planning.freeMoney.grey, AmountE4(whole: 95_000))
 
     stored = try XCTUnwrap(try environment.references?.goals().first { $0.id == goal.id })
@@ -1662,11 +1765,12 @@ final class AccountsJourneyTests: XCTestCase {
         stored, amount: AmountE4(whole: 4_000), currency: .rub,
         on: noon.addingTimeInterval(-300), account: books.sber.id, withdraw: true))
     let withdrawn = try await show()
-    XCTAssertEqual(withdrawn.planning.freeMoney.main, AmountE4(whole: 105_000))
+    XCTAssertEqual(withdrawn.planning.freeMoney.main, AmountE4(whole: 99_000))
     XCTAssertEqual(withdrawn.planning.freeMoney.plan.goalSavings, AmountE4(whole: 6_000))
     XCTAssertEqual(withdrawn.planning.freeMoney.grey, AmountE4(whole: 99_000))
     store.undo()
     let undone = try await show()
+    XCTAssertEqual(undone.planning.freeMoney.main, AmountE4(whole: 95_000), "one ⌘Z")
     XCTAssertEqual(undone.planning.freeMoney.grey, AmountE4(whole: 95_000), "one ⌘Z")
 
     stored = try XCTUnwrap(try environment.references?.goals().first { $0.id == goal.id })
@@ -1858,10 +1962,11 @@ final class AccountsJourneyTests: XCTestCase {
       "only the fee left the money; a contribution never moves it")
   }
 
-  /// An operation of an account in the archive edited the way the editor saves it: the cash
-  /// emptied by a 5 000 ₽ purchase and archived, the purchase then saved as 4 000 ₽. The edit
-  /// goes through, and the 1 000 ₽ back on the archived cash is on the sheet but in no total —
-  /// the premise of the open question about money on an account in the archive.
+  /// An operation of an account in the archive written by the store's plain save, which asks
+  /// nothing — the question about the money is the editor's, and its transfer goes with
+  /// `saveEdit`: the cash emptied by a 5 000 ₽ purchase and archived, the purchase then saved as
+  /// 4 000 ₽. The 1 000 ₽ back on the archived cash is on the sheet but in no total, which is
+  /// why the editor asks first.
   func testAnEditOfAnOperationOfAnArchivedAccountPutsMoneyWhereNoTotalSeesIt() async throws {
     let books = try await openTheBooks()
     let purchase = try spend(5_000, on: books.cash.id, at: noon.addingTimeInterval(-5 * 3_600))
@@ -1873,7 +1978,7 @@ final class AccountsJourneyTests: XCTestCase {
     cheaper.transaction.amountRubE4 = AmountE4(whole: 4_000)
     cheaper.parts[0].amountE4 = AmountE4(whole: 4_000)
     cheaper.parts[0].amountRubE4 = AmountE4(whole: 4_000)
-    XCTAssertTrue(store.save(cheaper), "the editor's save of the operation")
+    XCTAssertTrue(store.save(cheaper), "the store's plain save")
 
     let snapshot = try await show()
     XCTAssertEqual(
@@ -1933,38 +2038,70 @@ final class AccountsJourneyTests: XCTestCase {
     XCTAssertEqual(expected(sheet(merged), books.cash.id, .rub), AmountE4(whole: 105_000))
   }
 
-  // MARK: How more open questions are answered today
+  // MARK: A bill on the day of the count, a merge, goal money spent
 
-  /// A bill due on the day of the latest count is taken to be inside that count: counted at
-  /// 06:00 of 16 September, a 7 000 ₽ rent due that day is not held back before it is paid
-  /// (grey 105 000 ₽), and «Провести» then lowers the grey line to 98 000 ₽ with the money.
-  /// This pins how it works today (see the note of open questions).
-  func testABillDueOnTheDayOfTheCountIsTakenAsPaidByIt() async throws {
+  /// A bill due on the day of the latest count waits for its payment: counted at 06:00 of
+  /// 16 September, a 7 000 ₽ rent due that day is held back until it is paid (grey 98 000 ₽,
+  /// the money still 105 000 ₽). «Провести» asks «Это было до сверки в 06:00?». «Да» puts the
+  /// payment inside the count, which already holds the money gone: the rent closes without a
+  /// second deduction, 105 000 ₽ both. «Нет» (after one ⌘Z) dates it after the count, so it
+  /// moves the money and the rent is taken away once: 98 000 ₽ both.
+  func testABillDueOnTheDayOfTheCountWaitsForItsPayment() async throws {
     let books = try await openTheBooks()
+    let count = noon.addingTimeInterval(-6 * 3_600)
     let bill = ScheduledPayment(
       name: "Аренда", amountE4: AmountE4(whole: 7_000), paymentMethodId: books.sber.id,
       day: 16, nextDate: today)
     XCTAssertTrue(planning.save(bill, previous: nil))
     let waiting = try await show()
     XCTAssertEqual(waiting.planning.freeMoney.main, AmountE4(whole: 105_000))
-    XCTAssertEqual(waiting.planning.freeMoney.grey, AmountE4(whole: 105_000))
+    XCTAssertEqual(waiting.planning.freeMoney.grey, AmountE4(whole: 98_000))
 
     let stored = try XCTUnwrap(waiting.planning.book.scheduled.first)
+    guard
+      case .sameDay(.ask(let questions)) = planning.countQuestion(
+        paying: .scheduled(stored, amount: AmountE4(whole: 7_000)), due: today,
+        on: noon.addingTimeInterval(-600), savedAt: noon)
+    else { return XCTFail("«Провести» on the day of the count did not ask about it") }
+    XCTAssertEqual(questions.counts, [count])
+
+    guard case .stamp(let before) = questions.answer(wasBefore: true) else {
+      return XCTFail("«Да, до сверки» asked about another count")
+    }
+    XCTAssertLessThan(before, count)
     XCTAssertTrue(
       planning.markAsPaid(
-        stored, due: today, amount: AmountE4(whole: 7_000),
-        on: noon.addingTimeInterval(-600), paymentMethodId: books.sber.id, updatePrice: false))
+        stored, due: today, amount: AmountE4(whole: 7_000), on: before,
+        paymentMethodId: books.sber.id, updatePrice: false))
+    let inside = try await show()
+    XCTAssertEqual(
+      inside.planning.freeMoney.main, AmountE4(whole: 105_000),
+      "the count already holds the rent gone")
+    XCTAssertEqual(
+      inside.planning.freeMoney.grey, AmountE4(whole: 105_000), "the rent is still held back")
+
+    store.undo()
+    let again = try await show()
+    XCTAssertEqual(again.planning.freeMoney.grey, AmountE4(whole: 98_000), "one ⌘Z")
+
+    guard case .stamp(let after) = questions.answer(wasBefore: false) else {
+      return XCTFail("«Нет» asked about another count")
+    }
+    XCTAssertGreaterThan(after, count)
+    XCTAssertTrue(
+      planning.markAsPaid(
+        stored, due: today, amount: AmountE4(whole: 7_000), on: after,
+        paymentMethodId: books.sber.id, updatePrice: false))
     let paid = try await show()
     XCTAssertEqual(paid.planning.freeMoney.main, AmountE4(whole: 98_000))
     XCTAssertEqual(paid.planning.freeMoney.grey, AmountE4(whole: 98_000))
   }
 
-  /// A merge counts the account merged into in every currency at its moment, so a bill of that
-  /// account overdue since the last real count is taken to be paid by it. Counted on 1
-  /// September, a 7 000 ₽ rent due on the 10th and not paid is held back on the 16th (grey
-  /// 98 000 ₽); the cash merged into Сбер, it is not (grey 105 000 ₽), though nothing was paid.
-  /// This pins how it works today (see the note of open questions).
-  func testAMergeTakesAnOverdueBillOfTheAccountAsPaid() async throws {
+  /// A merge is no count: the merged account rests on the last real count of the two, so a
+  /// bill of that account overdue since then is still unpaid. Counted on 1 September, a 7 000 ₽
+  /// rent due on the 10th and not paid is held back on the 16th (grey 98 000 ₽); the cash
+  /// merged into Сбер, it still is — nothing was paid.
+  func testAMergeIsNoCountForAnOverdueBill() async throws {
     let first = environment.calendar.noon(of: DateOnly(year: 2026, month: 9, day: 1))
     moment = first
     let sber = PaymentMethod(name: "Сбер", currency: .rub, isDefault: true)
@@ -1991,15 +2128,16 @@ final class AccountsJourneyTests: XCTestCase {
     XCTAssertEqual(accounts.merge(preview), .done)
     let merged = try await show()
     XCTAssertEqual(merged.planning.freeMoney.main, AmountE4(whole: 105_000))
-    XCTAssertEqual(merged.planning.freeMoney.grey, AmountE4(whole: 105_000))
+    XCTAssertEqual(merged.planning.freeMoney.grey, AmountE4(whole: 98_000))
   }
 
   /// Money of a goal spent by an ordinary operation, without «Снять»: 100 000 ₽ put into a goal
-  /// with no plan leaves a grey line of 5 000 ₽; a 100 000 ₽ hotel paid from Сбер takes the
-  /// money now to 5 000 ₽ while the goal still holds its savings, so the grey line takes them
-  /// away a second time: −95 000 ₽. «Снять» first keeps it at 5 000 ₽. This pins how it works
-  /// today (see the note of open questions).
-  func testGoalMoneySpentWithoutWithdrawingIsTakenAwayTwice() async throws {
+  /// with no plan leaves 5 000 ₽ free; a 100 000 ₽ hotel paid from Сбер takes the money on the
+  /// accounts to 5 000 ₽ while the goal still holds its savings, so both figures take them away
+  /// again: −95 000 ₽ — the goals hold more than the accounts, the case in which Overview asks
+  /// «Потратили деньги цели? Нажмите «Забрать»». «Снять» first keeps both at 5 000 ₽, and
+  /// nothing is asked.
+  func testGoalMoneySpentWithoutWithdrawingStaysTakenAwayUntilWithdrawn() async throws {
     let books = try await openTheBooks()
     let goal = Goal(name: "Отпуск", targetE4: AmountE4(whole: 200_000))
     _ = try await show()
@@ -2010,12 +2148,18 @@ final class AccountsJourneyTests: XCTestCase {
         stored, amount: AmountE4(whole: 100_000), currency: .rub,
         on: noon.addingTimeInterval(-900), account: books.sber.id, withdraw: false))
     let saved = try await show()
+    XCTAssertEqual(saved.planning.freeMoney.main, AmountE4(whole: 5_000))
     XCTAssertEqual(saved.planning.freeMoney.grey, AmountE4(whole: 5_000))
+    XCTAssertFalse(saved.planning.freeMoney.goalsExceedMoney)
 
     let hotel = try spend(100_000, on: books.sber.id, at: noon.addingTimeInterval(-600))
     let twice = try await show()
-    XCTAssertEqual(twice.planning.freeMoney.main, AmountE4(whole: 5_000))
+    XCTAssertEqual(twice.planning.freeMoney.main, AmountE4(whole: -95_000))
     XCTAssertEqual(twice.planning.freeMoney.grey, AmountE4(whole: -95_000))
+    XCTAssertEqual(twice.planning.freeMoney.moneyNow, AmountE4(whole: 5_000))
+    XCTAssertEqual(twice.planning.freeMoney.goalSavings, AmountE4(whole: 100_000))
+    XCTAssertTrue(
+      twice.planning.freeMoney.goalsExceedMoney, "Overview does not ask about the goal money")
 
     XCTAssertTrue(store.delete(id: hotel.id))
     stored = try XCTUnwrap(try environment.references?.goals().first { $0.id == goal.id })
@@ -2027,6 +2171,7 @@ final class AccountsJourneyTests: XCTestCase {
     let once = try await show()
     XCTAssertEqual(once.planning.freeMoney.main, AmountE4(whole: 5_000))
     XCTAssertEqual(once.planning.freeMoney.grey, AmountE4(whole: 5_000))
+    XCTAssertFalse(once.planning.freeMoney.goalsExceedMoney)
   }
 
   // MARK: Helpers

@@ -7,6 +7,258 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.2.0] — 2026-09-28
+
+Cards and cashback inside accounts, a first reconciliation that is the truth and later
+differences that follow the books, and a free sum that no longer spends goal money or forgets an
+overdue payment.
+
+### Upgrading
+
+- The first launch of 1.2.0 migrates the database forward, once (schema 5). The update only
+  adds: tables for cards and cashback rules, and columns at the end of seven tables. Every live
+  account of the kind card gets a card named like it, and the monthly plan of every goal that
+  has one starts in the month of the update. No old value changes, and the update itself
+  recomputes no reconciliation difference.
+- As in 1.1.0, the app first writes a copy `finance-<date and time>-before-migration.sqlite`
+  into the backups folder and checks it, and without a checked copy there is no migration. The
+  copy now also goes to the backup folder you chose, into its subfolder `before-migration/`,
+  which the copy rotation of no version ever touches.
+- The update is one-way: 1.1.x opens neither a migrated database nor an archive written by
+  1.2.0. To go back, restore the `-before-migration` copy in 1.1.x; what was entered in 1.2.0 is
+  not in it.
+- Right after the first open, 1.2.0 brings the differences of later reconciliations up to date
+  with the operations entered into their windows afterwards, so the «Reconciliation» figures of
+  past months in Analytics may change. A difference operation whose amount was retyped by hand
+  goes back to the difference.
+- A «Reconciliation» income written by a first real count — a count after nothing but the zero
+  balances 1.1 wrote for empty fields in **Set Up Your Accounts**, or the first one-total count
+  of 1.0.0 — stays exactly as it was, and ignores operations entered into its window, until you
+  choose on the **Last reconciliation** card in Overview: **This was the first count — make it
+  the starting point** (the income goes, the balance stays; ⌘Z brings it back) or **It is a real
+  difference**. The next count of an account 1.1 set up with an empty field is its starting
+  point by default.
+- 1.1 took a due date that passed unpaid before a reconciliation as paid inside it. 1.2.0 counts
+  such a due date as money not yet gone and asks about it at launch: **Taken before the
+  reconciliation** closes it when the bank had already taken the money.
+- A stored amount formula that the new reading of «1,500k» no longer turns into its amount loses
+  the formula; the amount stays.
+
+### Added
+
+- **Cards inside an account.** An account can hold physical and virtual cards. The money and
+  the balance stay with the account; a card says what paid. A new account of the kind card or
+  account gets a card named like it. Cards are added, renamed, archived, brought back and — while
+  nothing names them — deleted on the account screen and in Settings → Accounts, where each
+  account lists its cards. The entry line knows a card by its name and its other names — «coffee
+  350 black» goes to that card and its account — and the ↓ panel lists each account's cards under
+  it; a place brings the card that paid there last, and a refund the card of its purchase. The
+  Account column of Transactions shows «Bank · Black», and its filter takes an account with all
+  its cards, or one card. Scheduled payments and **Mark as paid** can name a card too, and
+  merging accounts moves their cards.
+- **Cashback.** Rules on a card, or on an account without cards: «category, subcategory or
+  everything else — N %», **always** or **only in a month** — for the bank's categories of that
+  month (**Same as Last Month** copies them). A month rule beats an always rule, a subcategory
+  beats its category, and «Everything else» applies when nothing else does; a percent keeps up
+  to four decimals. The ↓ panel of a purchase shows the cashback to expect («≈ 35.00») and the
+  rule that gives it; type an exact amount or a percent over it for this operation, and
+  **Remember** turns the percent into a rule — always, or only this month — in a step of undo of
+  its own. Expected cashback is an expectation and never income; received cashback is income in
+  the cashback category, as before. The two stand side by side: on the account screen for this
+  month, and in Analytics — **Turnover and cashback**, card by card, and the new **Cashback by
+  month**.
+- **Payments and Subscriptions on the account screen**: the scheduled payments paid from the
+  account or from its cards, each opening for editing, and **Add Payment…**.
+- **The end-of-month balance forecast.** The account screen forecasts each currency's balance at
+  the end of the month — the balance now, what is already entered for later days, expected
+  income, unpaid payments and debt payments, and day-to-day spending by the account's share —
+  with an interval. Analytics → Forecast lists every account's balance at the end of the month,
+  the accounts out of the summary apart.
+- An expected income can name the account the money comes to («To account»); left empty, it is
+  the account of the last income received for it, else the main one.
+- **Overdue payments.** At every launch, while a scheduled payment or a debt has an unpaid due
+  date in the past, Reminders open with **Overdue payments**: **Mark as paid** records it,
+  **Taken before the reconciliation** — offered when the account was reconciled after the due
+  date — closes it without an operation and without taking the money off twice, and **Later**
+  asks again at the next launch. Until then the free sum counts that money as not yet gone, and
+  **Review…** under it opens the list.
+- **A scheduled payment can belong to an event.** Its due dates up to the event's end are part
+  of the event's budget, so the free sum takes them off once, and the operation that pays it
+  carries the event.
+- **Foreign-currency goals** can be valued at the rates of the contributions instead of today's
+  rate (Settings → Planning).
+- **Deleting a debt or a credit** (**Delete…** on its row). It leaves Debts, the reminders, the
+  free sum, the forecast and the entry line; the operations that paid it stay and count as they
+  did, and the money of its journal stays in the balances. The confirmation says what stays, and
+  ⌘Z brings it back.
+- **Settings → Entry**: the order of the ↓ panel's fields — drag a field up or down, **Reset**
+  for the standard order. Tab follows it, the entry panel and the editor share it, and it
+  travels in the transfer archive.
+- Return saves from anywhere in the open ↓ panel, once per keystroke; in an open menu Return
+  picks the item.
+- `250x2` in the entry line multiplies, when the line holds no other amount; a size beside a
+  price («board 20x30 1500») stays in the note.
+- **Overview**: «Last entry» says when the last operation or transfer was written, and
+  «Payments in 7 days» shows about how much a payment in another currency is in the default
+  currency at today's rate («≈ 269 ₽»), or «no rate».
+- A transfer has a time, not only a date; a time you chose is never asked about the
+  reconciliation.
+- **Don't ask again for this reconciliation** in every question «Was this before the
+  reconciliation?» — of the entry line, the editor, transfers and payments: the answer is used
+  silently until the account is reconciled again.
+- Negative balances — what a credit card owes the bank — can be typed with a minus wherever a
+  balance is typed, and count as negative money in the total and the free sum. **Transfer the
+  Balance…** of a card below zero covers the debt from the main account.
+- «Worth a second look» offers to move the money 1.1 left on archived accounts, and says «Spent
+  a goal's money? Press «Withdraw»» when the goals hold more than the accounts in the summary.
+
+### Changed
+
+- **The first reconciliation of an account and currency is its starting point, never income
+  or spending.** Operations dated before it are history: they count in their months and do not
+  move the balance. This also holds for the first real count after a zero balance that 1.1 wrote
+  for an empty field: in the reconciliation sheet such a row shows **Starting point** switched
+  on, with both outcomes in exact money — untick it only if that zero was real; a row left empty
+  stays unreconciled.
+- **Later reconciliation differences are live.** Add, edit or delete an operation or a transfer
+  dated inside a count's window — or let the bank's final rate reprice a foreign purchase there,
+  or record money back into it — and its «Reconciliation» difference follows in the same step of
+  undo: a purchase entered afterwards makes a missing difference smaller, an income entered
+  afterwards makes an extra one smaller, at zero the difference operation goes, and a change of
+  sign turns income into spending. «Income by source» no longer shows the same money twice. ⌘Z
+  brings a difference back as you left it — its category, comment and rating. The money, day,
+  account and debt of a difference operation cannot be edited, it never moves into «Goals» or a
+  category of the app, even in a bulk change, and deleting it keeps the count without recording
+  its difference.
+- The reconciliation sheet saves with a single **Save** when nothing differs; its history says
+  which differences were saved without an operation and where starting balances came from.
+- An operation dated on a day with several reconciliations of its account is asked about each
+  of them in turn.
+- An empty «Balance now» in **Set Up Your Accounts** or for a new account means «don't know»: no
+  zero balance is written, the account stays unreconciled, and its first count becomes the
+  starting point. A typed 0 is 0.
+- **Merging accounts is no longer a reconciliation.** The merged account keeps the moment of its
+  own latest count, operations after it move money, and the merge pays no due date. The merge
+  sheet shows what the merged account holds now.
+- **An archived account stays at zero.** An edit or a deletion that would leave money on it, and
+  archiving an account that still holds money, ask which live account takes the money and record
+  a transfer now, in the same step of undo. Changes that move no money are always allowed — the
+  note of such an account's transfer too.
+- **Set Up Your Accounts** names the account whose other name clashes with a name. An account
+  can no longer be named like a card of another account.
+- **The free sum.** «Can spend now» is the money on the accounts in the summary minus what is
+  already put into goals (while «Goal money sits on accounts in the summary» is on): goal money
+  is no longer spendable. The grey line takes off the part of the goal plans not yet paid in, and
+  a contribution over this month's plan counts towards the following months; the goal form says
+  the month its plan starts from. An unpaid overdue due date is taken off even when it falls
+  before the account's reconciliation; one on the day of the reconciliation waits until it is
+  paid, and **Mark as paid** of a due date before a later reconciliation asks whether the money
+  left before the count — for a loan as for a scheduled payment.
+- A payment closes the earliest unpaid due date — of a debt, and of a scheduled payment within
+  its window; **Something else** excludes an operation from every due date of the payment. The
+  Debts card marks a payment that is overdue, and **Payment…** is dated now.
+- A scheduled payment on an archived account is taken from the main account and says «the
+  account is archived — move the payment to another one».
+- The first month of accounting no longer counts in the income median when it did not start on
+  the 1st.
+- The hint of «Keep back the monthly goal plans in «Free to spend»» says what it does: planned
+  contributions not yet made by the chosen date are not free money.
+- **Money back.** Money returned over what is left of a debt owed to me closes the debt, and the
+  rest is income in «Surcharges» — from the entry line, the money-back sheets and the debt's
+  **Payment…** alike. Every surplus of money back is income, except fractions of a kopeck. Both
+  money-back sheets ask the currency the money came in and the account it came to; for another
+  currency they show the rate the part actually cost you, and changing it reprices the purchase.
+  When the bank has not published the day's rate yet, the part-by-part sheet asks for the rate
+  instead of guessing it. A debt kept in another currency is repaid at a rate of its own. After a
+  Bank of Russia refinement, a part the money covers is closed and any surplus is income.
+  Recording money back is one step of undo instead of clearing the history.
+- Editing a purchase's rate or amount rewrites the rubles of its refunds. A refund's amount
+  without a currency code is read in the currency of the chosen purchase, on any screen.
+- «Possible duplicate» compares the purchases' own checks, without refunds; a purchase refunded
+  in full is never a duplicate.
+- «1,500k» is 1,500: a comma before k is a decimal point.
+- An impossible date in the line — «31.09», «29.02» of a common year — is refused with the
+  reason: «31.09 — there is no such date».
+- When the line does not tell the category or the subcategory, Enter opens the ↓ panel on that
+  field and marks it instead of saving; the next Return saves as it stands.
+- Overview lists each day's operations and transfers in one list by time, newest first; the
+  symbol of each row tells its kind, and VoiceOver reads it.
+- A place, a person or an event in the archive is no longer offered in entry and the pickers but
+  stays in its operations, Analytics and Reports; an archived place also stays in the
+  Transactions filter, after the live ones. A place in use can be archived too, and Settings →
+  Reference books says what the archive does.
+- A new goal with the name of an archived one is not saved: **Bring back** the old one or
+  **Delete the old one…** — its contributions stay spending, its subcategory goes to the archive,
+  and ⌘Z takes it back. An archived goal can also be deleted from its row in Planning.
+- No limit can be set on «Reconciliation» or anything under it; a limit set there in 1.1 still
+  counts and can be deleted.
+- A transfer fee whose «Fees» sits under an archived parent brings the parent back with it, in
+  the same step of undo, and the transfer sheet says when «Fees» is coming back from the archive.
+- The report grouped by account is saved as `…-by-account.csv`.
+- VoiceOver says whose «…» menu it is on every row of Accounts and Templates.
+- The old one-total reconciliation of 1.0.0 is signed «one total, before accounts» on the «Last
+  reconciliation» card.
+- Undoing a deletion gives the operation back the time it was last changed, so the last manual
+  rating of a description stays the one you gave last; undoing the deletion of money back no
+  longer marks the purchases it had closed as just changed.
+- The average receipt of a place is net of refunds.
+- **Data formats.** The export and the transfer archive carry 23 files: `cards` and
+  `cashback_rules` join the list, and new columns are appended at the end of `transactions`,
+  `scheduled_payments`, `expected_income`, `goals`, `debts`, `reconciliations` and
+  `reconciliation_balances`. Archives carry `schemaVersion` 5; `formatVersion` stays 1, and
+  `settings.json` also carries the order of the ↓ panel's fields. The README appendix describes
+  cards, cashback rules and live reconciliations.
+
+### Fixed
+
+- «Bad» could not be given to an expense while creating it: the quality was the one field of
+  the ↓ panel that the keyboard could not set, and a category the model filled in gave the
+  operation no quality — a fine filed under «Fines» was saved as «Neutral». The quality is now a
+  menu like every other field, and it follows the category the model chose.
+- An event could not last one day (26.09–26.09) or two; the end only has to be on or after the
+  start, and the date fields always show the event's own days.
+- A purchase on credit made on its payment day owed its first payment that same day, a month
+  before the instalments start; its first payment is now due a month after the purchase.
+- `make migration-dry-run` said only «NSError» when it could not read the file; it now prints
+  the error's domain and code, never a path, and says when Full Disk Access for Terminal is the
+  likely cause.
+
+### Known limitations
+
+- The first open of 1.2.0 recomputes the differences of later reconciliations whose windows got
+  operations entered afterwards, so «Reconciliation» figures of past months may change; an old
+  first-count income stays in «Income by source» until you choose on the «Last reconciliation»
+  card.
+- A loan entered with its original start date but without its earlier payments has an unpaid
+  due date for every month before them, and each launch asks about them; **Taken before the
+  reconciliation** closes those that fall before a reconciliation of the account.
+- Merges made in 1.1 keep their anchor at the merge moment, so **Taken before the
+  reconciliation** and «before the reconciliation?» of such an account read the merge moment.
+- Money returned over the parts while the same person also owes on a debt is income in
+  «Surcharges»; it does not go towards the debt — record that as a debt payment yourself.
+- Only money back is split between a debt owed to me and «Surcharges»; an income that names such
+  a debt still repays it with its whole amount, as in 1.1.
+- Qualities that 1.1 saved without the category the model chose are not repaired; re-rate them
+  in Settings → Categories or with a bulk change.
+- The day-to-day pace of the account forecast leaves out reconciliation losses and parts paid
+  for others, so it is optimistic for cash.
+- Money repaid on a deleted «Owed to me» debt is income.
+- Adding a second card to an account moves the expected cashback of its earlier operations that
+  name no card from the first card's rules to the account's own.
+
+### Internal
+
+- The database's readers are opened again after a migration, so a read right after the update
+  sees the columns it added.
+- `make sample` and `make demo` show what is new: cards and a virtual one, cashback rules of
+  both kinds with a typed amount, a hotel inside a New Year budget, a goal paid ahead of its
+  plan, an expected salary on an account, an archived place, a one-day event, a credit card
+  below zero and a later count whose difference follows an operation entered after it; the demo
+  also has one overdue payment.
+- `make test-core`, `make test-db` and `make bench` take `SPM_SCRATCH=<folder>` for a SwiftPM
+  build folder of their own; `make migration-dry-run` expects the cards the update gives the
+  card accounts.
+
 ## [1.1.2] — 2026-09-26
 
 Fixes to 1.1.1. The database schema and the transfer-archive format stay as 1.1.0 left them.

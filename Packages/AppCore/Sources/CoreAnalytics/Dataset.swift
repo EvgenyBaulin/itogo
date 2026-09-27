@@ -41,6 +41,7 @@ public struct Dataset: Sendable {
   public var places: [Place]
   public var events: [Event]
   public var paymentMethods: [PaymentMethod]
+  /// The debts the owner has, closed ones included; deleted ones are in `deletedDebts`.
   public var debts: [Debt]
   public var goals: [Goal]
   /// Scheduled payments, expected income, limits, reconciliations and debt journals.
@@ -59,6 +60,13 @@ public struct Dataset: Sendable {
   public var accountSettings: AccountSettings
   /// Grows with every change, so a result cached for one version is never shown for another.
   public var version: Int
+  /// The cards of the accounts, archived ones included, in the owner's order.
+  public var cards: [PaymentCard]
+  /// The cashback rules of the cards and of the accounts without cards.
+  public var cashbackRules: [CashbackRule]
+  /// The debts the owner deleted: gone from every list and figure of the debts, still there
+  /// for the operations that point at them (`debtsById`).
+  public var deletedDebts: [Debt]
 
   public init(
     entries: [TransactionEntry] = [],
@@ -77,7 +85,10 @@ public struct Dataset: Sendable {
     transfers: [Transfer] = [],
     accountGroups: [AccountGroup] = [],
     accountSettings: AccountSettings = AccountSettings(storedValues: [:]),
-    version: Int = 0
+    version: Int = 0,
+    cards: [PaymentCard] = [],
+    cashbackRules: [CashbackRule] = [],
+    deletedDebts: [Debt] = []
   ) {
     self.entries = entries
     self.links = links
@@ -96,6 +107,9 @@ public struct Dataset: Sendable {
     self.accountGroups = accountGroups
     self.accountSettings = accountSettings
     self.version = version
+    self.cards = cards
+    self.cashbackRules = cashbackRules
+    self.deletedDebts = deletedDebts
   }
 
   public static let empty = Dataset()
@@ -130,7 +144,10 @@ public struct Dataset: Sendable {
     return copy
   }
 
+  /// Every debt an operation or a journal line may name, deleted ones included: a payment of
+  /// a deleted debt still counts as it did.
   public var debtsById: [UUID: Debt] {
-    Dictionary(debts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    Dictionary(
+      (debts + deletedDebts).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
   }
 }

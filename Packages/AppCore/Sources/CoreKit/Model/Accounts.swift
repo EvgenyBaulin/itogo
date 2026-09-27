@@ -104,11 +104,13 @@ public struct AccountSetupPlan: Hashable, Sendable {
   public var expected: [BalanceKey: AmountE4]
   public var defaultCurrency: CurrencyCode?
   public var at: Date
+  /// The cards the accounts start with, written after the accounts.
+  public var cards: [PaymentCard]
 
   public init(
     accounts: [PaymentMethod], groups: [AccountGroup] = [], mainAccountId: UUID,
     openingBalances: [BalanceKey: AmountE4] = [:], expected: [BalanceKey: AmountE4] = [:],
-    defaultCurrency: CurrencyCode? = nil, at: Date
+    defaultCurrency: CurrencyCode? = nil, at: Date, cards: [PaymentCard] = []
   ) {
     self.accounts = accounts
     self.groups = groups
@@ -117,6 +119,7 @@ public struct AccountSetupPlan: Hashable, Sendable {
     self.expected = expected
     self.defaultCurrency = defaultCurrency
     self.at = at
+    self.cards = cards
   }
 }
 
@@ -129,19 +132,23 @@ public struct AccountMergePlan: Hashable, Sendable {
   /// Transfers between the two accounts in one currency: after the merge they would be a
   /// transfer from an account to itself.
   public var deletedTransferIds: [UUID]
+  /// The balances the target starts from after the merge, each at its moment (`moments`):
+  /// what it held at a real count, never a count of the merge's own.
   public var opening: [BalanceKey: AmountE4]
+  /// The moment of the merge: a balance the owner typed in the merge dialog is counted then.
   public var at: Date
-  /// The keys of the source, counted at zero at `at`: its money now lives in the target, and
-  /// bringing the source back from the archive must not count it twice.
+  /// The keys of the source that were counted, set to zero right after its latest count: its
+  /// money now lives in the target, and bringing the source back from the archive must not
+  /// count it twice.
   public var sourceZero: [BalanceKey]
-  /// The keys of `opening` and `sourceZero` that had been counted before: their row compares,
-  /// with a difference of zero, instead of being a starting point.
-  public var hadAnchor: Set<BalanceKey>
+  /// The moment each key of `opening` and `sourceZero` is counted at: the latest real count
+  /// it rests on, so the merge is no count of its own. A key not here is counted at `at`.
+  public var moments: [BalanceKey: Date]
 
   public init(
     sourceId: UUID, target: PaymentMethod, deletedTransferIds: [UUID] = [],
     opening: [BalanceKey: AmountE4] = [:], at: Date, sourceZero: [BalanceKey] = [],
-    hadAnchor: Set<BalanceKey> = []
+    moments: [BalanceKey: Date] = [:]
   ) {
     self.sourceId = sourceId
     self.target = target
@@ -149,6 +156,37 @@ public struct AccountMergePlan: Hashable, Sendable {
     self.opening = opening
     self.at = at
     self.sourceZero = sourceZero
-    self.hadAnchor = hadAnchor
+    self.moments = moments
+  }
+
+  /// The balances written at one moment: one opening count each.
+  public struct MomentCounts: Sendable {
+    public var at: Date
+    /// The target's balances first, then the source's zeros, each in key order.
+    public var counts: [(key: BalanceKey, actual: AmountE4)]
+  }
+
+  /// What the merge writes, grouped by moment, oldest first: every key of `opening` and every
+  /// key of `sourceZero` not also in it.
+  public var countsByMoment: [MomentCounts] {
+    var rows: [(at: Date, key: BalanceKey, actual: AmountE4)] = []
+    for key in opening.keys.sorted() {
+      if let amount = opening[key] { rows.append((moments[key] ?? at, key, amount)) }
+    }
+    for key in sourceZero.sorted() where opening[key] == nil {
+      rows.append((moments[key] ?? at, key, .zero))
+    }
+    let instants = Set(rows.map(\.at)).sorted()
+    return instants.map { instant in
+      MomentCounts(
+        at: instant, counts: rows.filter { $0.at == instant }.map { ($0.key, $0.actual) })
+    }
+  }
+
+  /// A balance the owner typed for `key` in the merge dialog: the owner's own count, made now,
+  /// in place of whatever the plan would write for it.
+  public mutating func count(_ key: BalanceKey, typed amount: AmountE4) {
+    opening[key] = amount
+    moments[key] = nil
   }
 }

@@ -40,7 +40,18 @@ struct SampleFeatureCoverageTests {
       debts: set.debts, goals: set.goals, planning: set.planningBook,
       settings: AnalyticsSettings(cashbackCategoryId: set.cashbackCategoryId),
       transfers: set.transfers, accountGroups: set.accountGroups,
-      accountSettings: AccountSettings(storedValues: set.settings))
+      accountSettings: AccountSettings(storedValues: set.settings), cards: set.cards,
+      cashbackRules: set.cashbackRules)
+  }
+
+  /// The same history with every layer after its accounts: cards and cashback, planning,
+  /// references and a later count (`withEveryFeature`).
+  static func layered(_ testCase: Case, demo: Bool = false) -> SampleDataSet {
+    SampleDataGenerator(seed: testCase.seed).generate(
+      months: 6, endingOn: Synthetic.endingOn, calendar: Synthetic.calendar,
+      language: testCase.language
+    ).withEveryFeature(
+      seed: testCase.seed, calendar: Synthetic.calendar, language: testCase.language, demo: demo)
   }
 
   /// The end of the last day: every operation of the history has happened by then.
@@ -254,16 +265,7 @@ struct SampleFeatureCoverageTests {
   func theBalancesAreTheOnesTheLayerKept(_ testCase: Case) {
     let set = Self.set(testCase)
     let balances = Self.balances(set)
-    #expect(balances.unassignedOperations == 0)
-    #expect(Set(balances.keys) == Set(set.accountExpectations.keys))
-    for key in balances.keys {
-      #expect(balances[key]?.amountE4 == set.accountExpectations[key], "\(key)")
-      let moments = (balances[key]?.movements ?? []).map(\.at)
-      for moment in moments {
-        let balance = balances.balance(key, at: moment)
-        #expect((balance?.raw ?? -1) >= 0, "\(key) below zero at \(moment)")
-      }
-    }
+    Self.expectTheBalancesKept(set, balances: balances, label: testCase.testDescription)
     // Right after the sheet, every balance is what it counted.
     guard let sheet = set.reconciliations.first(where: { $0.kind == .accounts }),
       let at = sheet.reconciledAt
@@ -281,12 +283,36 @@ struct SampleFeatureCoverageTests {
   /// a part leaves the rest waiting, a difference of a count is spending in «Сверка».
   @Test(arguments: cases)
   func everyMonthIsWhatTheLayerWrote(_ testCase: Case) throws {
-    let set = Self.set(testCase)
+    Self.expectEveryMonthKnown(Self.set(testCase), label: testCase.testDescription)
+  }
+
+  /// The balances the app works out are the ones the layers kept, and no account but one whose
+  /// starting balance was below zero — a credit card — is ever below zero.
+  static func expectTheBalancesKept(
+    _ set: SampleDataSet, balances: AccountBalances, label: String
+  ) {
+    let owing = Set(
+      set.reconciledBalances.filter { $0.isStartingPoint && $0.actualE4.isNegative }.map(\.key))
+    #expect(balances.unassignedOperations == 0, "\(label)")
+    #expect(Set(balances.keys) == Set(set.accountExpectations.keys), "\(label)")
+    for key in balances.keys {
+      #expect(balances[key]?.amountE4 == set.accountExpectations[key], "\(label): \(key)")
+      guard !owing.contains(key) else { continue }
+      let moments = (balances[key]?.movements ?? []).map(\.at)
+      for moment in moments {
+        let balance = balances.balance(key, at: moment)
+        #expect((balance?.raw ?? -1) >= 0, "\(label): \(key) below zero at \(moment)")
+      }
+    }
+  }
+
+  /// Every month's spending, income and money paid for others are what the layers wrote.
+  static func expectEveryMonthKnown(_ set: SampleDataSet, label testLabel: String) {
     let ledger = Ledger(dataset: Self.dataset(set), calendar: Synthetic.calendar)
     for month in Synthetic.months(of: set) {
       let known = set.expectations[month]
       let period = Period.month(month)
-      let label = "\(testCase.testDescription), \(month.iso)"
+      let label = "\(testLabel), \(month.iso)"
       #expect(ledger.expenses(in: period.range) == known.myExpenses, "\(label): my expenses")
       let categories = CategoryBreakdown(ledger: ledger, period: period, kind: .expense)
       var byRoot: [ReportKey: AmountE4] = [:]
@@ -306,6 +332,161 @@ struct SampleFeatureCoverageTests {
             known.forOthers.waiting, known.forOthers.shortfall,
           ], "\(label): for others")
     }
+  }
+
+  // MARK: - The layers after the accounts
+
+  /// Every seed with every layer shows cards and cashback, the planning of an event and of a
+  /// goal paid ahead, an expected salary on an account, an archived place, a one-day event, a
+  /// credit card below zero and a later count whose difference follows the books.
+  @Test(arguments: cases)
+  func everyFeatureOfTheLayersAfterTheAccountsIsThere(_ testCase: Case) throws {
+    let set = Self.layered(testCase)
+    let label = testCase.testDescription
+    let accounts = Dictionary(uniqueKeysWithValues: set.paymentMethods.map { ($0.id, $0) })
+    let entries = set.entries.filter { !$0.transaction.isDeleted }
+    let calendar = Synthetic.calendar
+    let main = try #require(set.paymentMethods.first { $0.isDefault && !$0.archived })
+
+    // Cards: one named like every live card account, two on the main account.
+    for account in set.paymentMethods where account.kind == .card && !account.archived {
+      #expect(
+        set.cards.contains { $0.id == CardsMigration.cardId(forAccount: account.id) },
+        "\(label): \(account.name)")
+    }
+    let own = try #require(set.cards.first { $0.id == CardsMigration.cardId(forAccount: main.id) })
+    #expect(set.cards.filter { $0.accountId == main.id }.count == 2, "\(label)")
+
+    // Cashback rules of both kinds on the main card, a purchase with the cashback typed over
+    // them, and the cashback received naming the card it came to.
+    let month = set.lastDay.monthKey
+    #expect(set.cashbackRules.allSatisfy { $0.cardId == own.id }, "\(label)")
+    #expect(set.cashbackRules.contains { $0.month == nil && $0.categoryId == nil }, "\(label)")
+    #expect(set.cashbackRules.contains { $0.month == nil && $0.categoryId != nil }, "\(label)")
+    #expect(set.cashbackRules.contains { $0.month == month }, "\(label)")
+    #expect(set.cashbackRules.contains { $0.month == month.previous }, "\(label)")
+    #expect(
+      entries.contains { $0.transaction.keptCashback != nil && $0.transaction.cardId == own.id },
+      "\(label): a purchase with its cashback typed")
+    let received = entries.filter { entry in
+      entry.transaction.kind == .income && entry.transaction.cardId != nil
+        && entry.parts.allSatisfy { $0.categoryId == set.cashbackCategoryId }
+    }
+    #expect(!received.isEmpty, "\(label): cashback naming its card")
+    let ledger = Ledger(dataset: Self.dataset(set), calendar: calendar)
+    let report = CashbackReport(ledger: ledger, period: .month(month.previous))
+    let line = report.cells.first {
+      $0.holder == CashbackHolderKey(accountId: main.id, cardId: own.id)
+    }
+    #expect((line?.expectedRub.raw ?? 0) > 0, "\(label): cashback expected on the main card")
+    #expect((line?.receivedRub.raw ?? 0) > 0, "\(label): cashback received on the main card")
+
+    // A hotel paid once, tied to an event with a budget, on the main card.
+    let planning = set.planning
+    let hotel = try #require(planning.scheduled.first { $0.eventId != nil }, "\(label)")
+    let event = try #require(set.events.first { $0.id == hotel.eventId })
+    #expect(event.budgetE4 != nil && hotel.endDate == hotel.nextDate, "\(label)")
+    #expect(hotel.cardId == own.id && hotel.paymentMethodId == main.id, "\(label)")
+    #expect((hotel.nextDate ?? event.endDate) <= event.endDate, "\(label)")
+    #expect(!planning.scheduled.contains { ($0.nextDate ?? set.lastDay) < set.lastDay }, "\(label)")
+
+    // A goal whose plan starts in a month and a deposit ahead of it.
+    let goal = try #require(set.goals.first { $0.planStartMonth != nil }, "\(label)")
+    let state = try #require(
+      GoalMath.planState(goal: goal, rows: ledger.rows, month: month, rates: .empty))
+    #expect(state.creditIn.raw > 0, "\(label): paid ahead of the plan")
+
+    // The salary expected on an account.
+    #expect(
+      planning.expected.contains { $0.kind == .recurring && $0.paymentMethodId == main.id },
+      "\(label)")
+
+    // An archived place with one operation, and an event of one day with its purchase.
+    let archived = try #require(set.places.first { $0.archived }, "\(label)")
+    #expect(entries.filter { $0.transaction.placeId == archived.id }.count == 1, "\(label)")
+    let oneDay = try #require(
+      set.events.first { event in
+        event.startDate == event.endDate && event.kind == .other && event.budgetE4 != nil
+      }, "\(label)")
+    #expect(entries.contains { $0.parts.contains { $0.eventId == oneDay.id } }, "\(label)")
+
+    // A credit card that started below zero and ends below zero.
+    let balances = Self.balances(set)
+    let credit = try #require(
+      set.reconciledBalances.first { $0.isStartingPoint && $0.actualE4.isNegative }, "\(label)")
+    #expect(accounts[credit.accountId]?.kind == .card, "\(label)")
+    #expect((balances[credit.key]?.amountE4?.raw ?? 0) < 0, "\(label): below zero at the end")
+
+    // A later count that records its difference with the ids derived from the count, and an
+    // operation written after it, dated inside its window.
+    let later = try #require(set.reconciliations.last { $0.kind == .accounts }, "\(label)")
+    let countedAt = try #require(later.reconciledAt)
+    let rows = set.reconciledBalances.filter { $0.reconciliationId == later.id }
+    let different = try #require(rows.first { !($0.differenceE4?.isZero ?? true) }, "\(label)")
+    #expect(different.recordsDifference == true, "\(label)")
+    #expect(
+      different.transactionId == ReconcileDifferenceIds.operation(forCount: different.id),
+      "\(label)")
+    #expect(entries.contains { $0.id == different.transactionId }, "\(label)")
+    let previous = try #require(balances.anchors(different.key).dropLast().last)
+    #expect(
+      entries.contains { entry in
+        entry.transaction.paymentMethodId == different.accountId
+          && entry.transaction.createdAt > countedAt && entry.transaction.occurredAt < countedAt
+          && entry.transaction.occurredAt > previous.at
+      }, "\(label): an operation entered after the count, inside its window")
+    #expect(
+      set.transfers.contains { transfer in
+        transfer.to == credit.key && calendar.day(of: transfer.occurredAt) == later.date
+          && transfer.occurredAt < countedAt
+      }, "\(label): the card paid on the day of the count, before it")
+  }
+
+  /// Every count that follows the books is written as following them: the settle of each finds
+  /// nothing to change — no expected balance, no difference, no operation.
+  @Test(arguments: cases)
+  func everyCountOfTheLayersIsSettled(_ testCase: Case) throws {
+    let set = Self.layered(testCase)
+    let balances = Self.balances(set)
+    let tree = CategoryTree(set.categories)
+    let expense = try #require(
+      set.settings[PlanningSettings.reconcileExpenseCategoryKey].flatMap(UUID.init))
+    let income = try #require(
+      set.settings[PlanningSettings.reconcileIncomeCategoryKey].flatMap(UUID.init))
+    let live = LiveCounts.liveIds(
+      reconciliations: set.reconciliations, balances: set.reconciledBalances, frozen: [])
+    let moments = Dictionary(
+      uniqueKeysWithValues: set.reconciliations.map { ($0.id, $0.reconciledAt) })
+    let later = try #require(set.reconciliations.last { $0.kind == .accounts })
+    #expect(
+      set.reconciledBalances.filter { $0.reconciliationId == later.id }.allSatisfy {
+        live.contains($0.id)
+      })
+    for count in set.reconciledBalances where live.contains(count.id) {
+      let expected = try #require(balances.expected(forCount: count.id))
+      let operation = count.transactionId.flatMap { id in set.entries.first { $0.id == id } }
+      let settled = LiveCounts.settle(
+        CountState(
+          count: count, countAt: try #require(moments[count.reconciliationId] ?? nil),
+          operation: operation),
+        expected: expected, rate: nil,
+        categories: ReconcileCategories(expense: expense, income: income), tree: tree,
+        now: Self.end(of: set))
+      #expect(!settled.countChanged, "\(testCase.testDescription): \(count.key)")
+      #expect(settled.operation == .none, "\(testCase.testDescription): \(count.key)")
+    }
+  }
+
+  @Test(arguments: cases)
+  func theBalancesOfEveryLayerAreTheOnesTheLayersKept(_ testCase: Case) {
+    let set = Self.layered(testCase)
+    Self.expectTheBalancesKept(
+      set, balances: Self.balances(set), label: testCase.testDescription)
+  }
+
+  @Test(arguments: cases)
+  func everyMonthOfEveryLayerIsWhatTheLayersWrote(_ testCase: Case) {
+    Self.expectEveryMonthKnown(Self.layered(testCase), label: testCase.testDescription)
   }
 
   static func liveKeys(_ accounts: [PaymentMethod]) -> [BalanceKey] {

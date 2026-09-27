@@ -41,4 +41,36 @@ struct CalendarTests {
     #expect(utc.day(of: instant) == DateOnly(year: 2026, month: 9, day: 17))
     #expect(moscow.day(of: instant) == DateOnly(year: 2026, month: 9, day: 18))
   }
+
+  /// A transfer at a time the owner chose: the day and the clock time in his calendar, to the
+  /// second 00.
+  @Test func aMomentOfADayAndATime() {
+    let moscow = CalendarContext.moscow
+    let day = DateOnly(year: 2026, month: 9, day: 26)
+    let moment = moscow.moment(day, hour: 9, minute: 30)
+    // 09:30 in Moscow is 06:30 UTC.
+    #expect(moment == CalendarContext.utc.startOfDay(day).addingTimeInterval(6 * 3600 + 1800))
+    #expect(moscow.day(of: moment) == day)
+    #expect(moscow.moment(day, hour: 0, minute: 0) == moscow.startOfDay(day))
+    // The last minute of the day stays on the day.
+    let late = moscow.moment(day, hour: 23, minute: 59)
+    #expect(moscow.day(of: late) == day)
+    #expect(late < moscow.startOfDay(DateOnly(year: 2026, month: 9, day: 27)))
+  }
+
+  @Test func timeOfDayRoundTrip() {
+    let moscow = CalendarContext.moscow
+    let day = DateOnly(year: 2026, month: 9, day: 26)
+    for hour in [0, 7, 12, 23] {
+      for minute in [0, 5, 59] {
+        let moment = moscow.moment(day, hour: hour, minute: minute)
+        #expect(moscow.timeOfDay(moment) == TimeOfDay(hour: hour, minute: minute))
+      }
+    }
+    // Seconds are not part of a time on a clock.
+    let withSeconds = moscow.moment(day, hour: 14, minute: 5).addingTimeInterval(23)
+    #expect(moscow.timeOfDay(withSeconds) == TimeOfDay(hour: 14, minute: 5))
+    // Out of range is held to the clock.
+    #expect(TimeOfDay(hour: 25, minute: -3) == TimeOfDay(hour: 23, minute: 0))
+  }
 }

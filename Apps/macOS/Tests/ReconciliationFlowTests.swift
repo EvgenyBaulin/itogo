@@ -297,9 +297,15 @@ final class ReconciliationFlowTests: XCTestCase {
       failures.map(\.rawValue) + [
         "reconcile.accountsQuestion", "reconcile.startingPoint", "reconcile.noDifference",
         "reconcile.notInSummary", "reconcile.kind.accounts", "reconcile.kind.total",
-        "reconcile.kind.opening", "reconcile.negative", "reconcile.noRateForDifference",
-        "reconcile.notHeld", "reconcile.archived", "reconcile.notHeldDifference",
-        "reconcile.difference",
+        "reconcile.kind.opening", "reconcile.kind.setup", "reconcile.kind.account",
+        "reconcile.kind.merge", "reconcile.noRateForDifference", "reconcile.notHeld",
+        "reconcile.archived", "reconcile.notHeldDifference", "reconcile.difference",
+        "reconcile.save", "reconcile.saveOnlyHint", "reconcile.recordHint",
+        "reconcile.notRecordedMark", "reconcile.firstCountToggle",
+        "reconcile.firstCountToggleHint", "reconcile.firstCountToggle.on",
+        "reconcile.firstCountToggle.offIncome", "reconcile.firstCountToggle.offExpense",
+        "reconcile.firstCount.card", "reconcile.firstCount.total", "reconcile.firstCount.fix",
+        "reconcile.firstCount.keep",
       ]
     for choice in [AppLanguage.Choice.english, .russian] {
       environment.language.choice = choice
@@ -311,8 +317,8 @@ final class ReconciliationFlowTests: XCTestCase {
   }
 
   /// What the sheet counts: what the owner typed, else the expected balance he left as it is;
-  /// a starting point left empty is not counted, zero typed is; below zero is not money on an
-  /// account.
+  /// a starting point left empty is not counted, zero typed is, and so is a balance below zero
+  /// — a credit card's.
   func testTheSheetCountsTheUntouchedRowsAsExpected() {
     let a = BalanceKey(accountId: UUID(), currency: .rub)
     let b = BalanceKey(accountId: UUID(), currency: .usd)
@@ -331,7 +337,9 @@ final class ReconciliationFlowTests: XCTestCase {
       ReconcileSheet.counted(rows: rows, typed: [b: .zero, c: .zero, d: .zero], blank: [b, d]),
       [a: AmountE4(whole: 1_000), b: .zero, c: .zero],
       "zero typed is a count; an emptied starting point is not")
-    XCTAssertNil(ReconcileSheet.counted(rows: rows, typed: [a: AmountE4(whole: -1)], blank: []))
+    XCTAssertEqual(
+      ReconcileSheet.counted(rows: rows, typed: [a: AmountE4(whole: -1)], blank: []),
+      [a: AmountE4(whole: -1), b: AmountE4(whole: 50)])
     XCTAssertTrue(
       ReconcileSheet.differs(rows: rows, counted: [a: AmountE4(whole: 999), c: .zero]))
     XCTAssertFalse(
@@ -346,9 +354,8 @@ final class ReconciliationFlowTests: XCTestCase {
 
   /// A field writes the amount it is given into itself — the expected balance when it
   /// appears, a new one when new data comes — and that is not the owner counting. An untouched
-  /// row follows a new expectation: the coffee «Найти пропущенные…» found is no difference,
-  /// and an untouched balance below zero does not stop the sheet. What the owner types is a
-  /// count, the same figure too once he has started.
+  /// row follows a new expectation: the coffee «Найти пропущенные…» found is no difference.
+  /// What the owner types is a count, the same figure too once he has started.
   func testAFieldShowingItsOwnAmountIsNotACount() throws {
     let card = BalanceKey(accountId: UUID(), currency: .rub)
     let cash = BalanceKey(accountId: UUID(), currency: .rub)
@@ -374,7 +381,7 @@ final class ReconciliationFlowTests: XCTestCase {
     try shows(after)
     let counted = ReconcileSheet.counted(rows: [after, below], typed: typed, blank: blank)
     XCTAssertEqual(counted, [card: AmountE4(whole: 49_700), cash: AmountE4(whole: -500)])
-    XCTAssertFalse(ReconcileSheet.differs(rows: [after, below], counted: counted ?? [:]))
+    XCTAssertFalse(ReconcileSheet.differs(rows: [after, below], counted: counted))
 
     ReconcileSheet.typing(
       AmountE4(whole: 49), text: "49", row: after, typed: &typed, blank: &blank)
@@ -601,6 +608,355 @@ final class ReconciliationFlowTests: XCTestCase {
       "31,224.76", "18,898.69", "17,293.17", "1,605.52", "31224.76", "17293.17", "1605.52",
     ]
     XCTAssertEqual(LogPrivacy.offences(inLines: lines, forbidding: secrets), [])
+  }
+
+  // MARK: Balances below zero, the buttons, the first count
+
+  /// Starting balances written the way the setup of 1.1 wrote them — no origin — or, with
+  /// `origin`, the way 1.2 writes them, at `at`.
+  private func opening(
+    _ counts: [BalanceKey: AmountE4], at: Date, origin: ReconciliationOrigin? = nil
+  ) throws {
+    let reconciliation = Reconciliation(
+      date: environment.calendar.day(of: at), reconciledAt: at, actualTotalRubE4: .zero,
+      kind: .opening, origin: origin)
+    let balances = counts.map { key, amount in
+      ReconciledBalance(
+        reconciliationId: reconciliation.id, accountId: key.accountId, currency: key.currency,
+        actualE4: amount)
+    }
+    XCTAssertTrue(
+      store.apply(
+        PlanningChange(
+          upsert: PlanningRows(reconciliations: [reconciliation], reconciledBalances: balances),
+          at: at)))
+  }
+
+  private func spend(_ amount: Int64, on account: UUID, at instant: Date) throws {
+    var draft = TransactionDraft(
+      occurredAt: instant, amount: AmountE4(whole: amount), note: "groceries",
+      paymentMethodId: account)
+    draft.normalizeSinglePart()
+    XCTAssertTrue(store.save(try draft.materialize()))
+  }
+
+  private func keptFirstCounts() throws -> Set<UUID> {
+    try XCTUnwrap(environment.planning).book().settings.firstCountKept
+  }
+
+  /// A credit card holds what is owed: counted below zero, it is counted like any balance, and
+  /// the next count compares with it.
+  func testANegativeBalanceIsCounted() async throws {
+    let credit = try account("Credit")
+    let key = BalanceKey(accountId: credit.id, currency: .rub)
+    let typed = ReconcileSheet.counted(
+      rows: [ReconcileRow(key: key, expected: nil, lastCountedAt: nil, isHeld: true)],
+      typed: [key: AmountE4(whole: -30_000)], blank: [])
+    XCTAssertEqual(typed, [key: AmountE4(whole: -30_000)])
+    let first = try await count(typed, record: true, at: Date().addingTimeInterval(-120))
+    XCTAssertNil(first, "a balance below zero was refused")
+    try spend(2_000, on: credit.id, at: Date().addingTimeInterval(-60))
+
+    let snapshot = try await show()
+    let rows = ReconcileSheet.rows(of: snapshot, at: Date(), first: nil, locale: .current)
+    XCTAssertEqual(rows.first { $0.key == key }?.expected, AmountE4(whole: -32_000))
+    XCTAssertEqual(snapshot.planning.accounts.inSummaryTotalRub, AmountE4(whole: -32_000))
+    let second = try await count([key: AmountE4(whole: -32_000)], record: true, at: Date())
+    XCTAssertNil(second)
+    XCTAssertEqual(try entries().count, 1, "no difference: only the purchase")
+  }
+
+  /// With nothing different there is nothing to decline: one «Сохранить», and the counts keep
+  /// the way of recording a difference, so they follow the books from then on.
+  func testNothingDifferentSavesWithOneButtonInRecordMode() async throws {
+    let card = try account("Card")
+    let key = BalanceKey(accountId: card.id, currency: .rub)
+    let first = [ReconcileRow(key: key, expected: nil, lastCountedAt: nil, isHeld: true)]
+    XCTAssertEqual(
+      ReconcileSheet.buttons(rows: first, counted: [key: AmountE4(whole: 1_000)]), .startingPoint)
+    try await count(
+      [key: AmountE4(whole: 1_000)], record: false, at: Date().addingTimeInterval(-60))
+
+    let snapshot = try await show()
+    let rows = ReconcileSheet.rows(of: snapshot, at: Date(), first: nil, locale: .current)
+    let same = ReconcileSheet.counted(rows: rows, typed: [:], blank: [])
+    XCTAssertEqual(ReconcileSheet.buttons(rows: rows, counted: same), .save)
+    XCTAssertEqual(
+      ReconcileSheet.buttons(rows: rows, counted: [key: AmountE4(whole: 900)]), .saveOrRecord)
+    XCTAssertNil(actions.reconcile(counted: same, rows: rows, recordDifference: true, at: Date()))
+
+    let book = try XCTUnwrap(environment.planning).book()
+    let latest = try XCTUnwrap(
+      book.reconciledBalances.first { $0.reconciliationId == book.reconciliations.last?.id })
+    XCTAssertEqual(latest.differenceE4, .zero)
+    XCTAssertEqual(latest.recordsDifference, true)
+    XCTAssertTrue(try entries().isEmpty)
+  }
+
+  /// «Наличные» left empty in the setup of 1.1 — a 0 with no origin —, 2,000 spent after it,
+  /// 3,000 counted now: the row offers «Точка отсчёта», on by default whatever the books
+  /// expect, and saved so the count is where the money starts — no «Сверка», the spending
+  /// stays 2,000.
+  func testAPreOneTwoZeroOpeningRowIsAStartingPointByDefaultEvenAfterMovements() async throws {
+    let cash = try account("Наличные")
+    let key = BalanceKey(accountId: cash.id, currency: .rub)
+    try opening([key: .zero], at: Date().addingTimeInterval(-3 * 86_400))
+    try spend(2_000, on: cash.id, at: Date().addingTimeInterval(-2 * 86_400))
+
+    let t0 = Date()
+    let snapshot = try await show()
+    let rows = ReconcileSheet.rows(of: snapshot, at: t0, first: nil, locale: .current)
+    XCTAssertEqual(rows.first { $0.key == key }?.expected, AmountE4(whole: -2_000))
+    let offered = ReconcileSheet.startingPointKeys(rows, snapshot: snapshot)
+    XCTAssertEqual(offered, [key])
+    XCTAssertNil(
+      actions.reconcile(
+        counted: [key: AmountE4(whole: 3_000)], rows: rows, recordDifference: true, at: t0,
+        startingPoints: offered))
+
+    let book = try XCTUnwrap(environment.planning).book()
+    let count = try XCTUnwrap(book.reconciledBalances.last { $0.key == key })
+    XCTAssertTrue(count.isStartingPoint)
+    XCTAssertNil(count.recordsDifference)
+    let written = try entries()
+    XCTAssertEqual(written.map(\.transaction.amountE4), [AmountE4(whole: 2_000)], "no «Сверка»")
+    let after = try await show()
+    XCTAssertEqual(
+      after.planning.accounts.balances.balance(key, at: Date()), AmountE4(whole: 3_000))
+    XCTAssertTrue(try keptFirstCounts().isEmpty)
+  }
+
+  /// The same row with 250 spent: «Точка отсчёта» is on at an expected −250, the difference
+  /// column says nothing, and the words under it say what each choice writes.
+  func testAZeroOpeningRowOffersTheStartingPoint() async throws {
+    let cash = try account("Cash")
+    let key = BalanceKey(accountId: cash.id, currency: .rub)
+    try opening([key: .zero], at: Date().addingTimeInterval(-3 * 86_400))
+    try spend(250, on: cash.id, at: Date().addingTimeInterval(-86_400))
+
+    let snapshot = try await show()
+    let rows = ReconcileSheet.rows(of: snapshot, at: Date(), first: nil, locale: .current)
+    let row = try XCTUnwrap(rows.first { $0.key == key })
+    XCTAssertEqual(row.expected, AmountE4(whole: -250))
+    let offered = ReconcileSheet.startingPointKeys(rows, snapshot: snapshot)
+    XCTAssertEqual(offered, [key], "on by default at an expected −250")
+    let saved = ReconcileSheet.compared(rows, startingPoints: offered)
+    XCTAssertNil(saved.first { $0.key == key }?.expected, "a starting point compares nothing")
+    XCTAssertEqual(
+      ReconcileSheet.buttons(rows: saved, counted: [key: AmountE4(whole: 1_000)]), .startingPoint)
+    let outcome = ReconcileSheet.firstCountOutcome(row, counted: AmountE4(whole: 1_000))
+    XCTAssertEqual(outcome.balance, AmountE4(whole: 1_000))
+    XCTAssertEqual(outcome.difference, AmountE4(whole: 1_250), "unticked: income 1,250")
+    XCTAssertEqual(
+      ReconcileSheet.buttons(rows: rows, counted: [key: AmountE4(whole: 1_000)]), .saveOrRecord,
+      "unticked, it compares like any row")
+  }
+
+  /// «Наличные» and «Карта» both rest on the zero openings of 1.1, 2,000 spent by card since,
+  /// and the owner counts only the card. «Наличные», ticked and left alone, shows an empty
+  /// field and is not counted — neither the zero nobody counted nor the balance the books make
+  /// of it is a count — so its first real count is still its starting point. A field typed in
+  /// and emptied again is «не знаю» too. Unticked, an untouched row compares with what the
+  /// books expect, like any row.
+  func testAStartingPointNobodyCountedIsNotSaved() async throws {
+    let cash = try account("Наличные")
+    let card = try account("Карта")
+    let cashKey = BalanceKey(accountId: cash.id, currency: .rub)
+    let cardKey = BalanceKey(accountId: card.id, currency: .rub)
+    try opening([cashKey: .zero, cardKey: .zero], at: Date().addingTimeInterval(-3 * 86_400))
+    try spend(2_000, on: card.id, at: Date().addingTimeInterval(-2 * 86_400))
+
+    let t0 = Date()
+    let snapshot = try await show()
+    let rows = ReconcileSheet.rows(of: snapshot, at: t0, first: nil, locale: .current)
+    XCTAssertEqual(rows.first { $0.key == cashKey }?.expected, .zero)
+    XCTAssertEqual(rows.first { $0.key == cardKey }?.expected, AmountE4(whole: -2_000))
+    let offered = ReconcileSheet.startingPointKeys(rows, snapshot: snapshot)
+    XCTAssertEqual(offered, [cashKey, cardKey])
+
+    var typed: [BalanceKey: AmountE4] = [:]
+    var blank: Set<BalanceKey> = []
+    func sheet() -> ReconcileSheet.Draft {
+      ReconcileSheet.draft(rows: rows, offered: offered, unticked: [], typed: typed, blank: blank)
+    }
+    func saved(_ key: BalanceKey) throws -> ReconcileRow {
+      try XCTUnwrap(sheet().rows.first { $0.key == key })
+    }
+    // Each field shows what will be saved — nothing yet — and tells that text by itself.
+    for key in [cashKey, cardKey] {
+      let row = try saved(key)
+      let shown = ReconcileSheet.shown(row, typed: typed)
+      XCTAssertEqual(shown, .zero, "a starting point's field shows the books' balance")
+      ReconcileSheet.typing(
+        shown, text: AmountField.text(for: shown), row: row, typed: &typed, blank: &blank)
+    }
+    XCTAssertEqual(typed, [:], "the field's own text was taken for a count")
+    XCTAssertEqual(sheet().counted, [:], "an untouched starting point was counted")
+
+    ReconcileSheet.typing(
+      AmountE4(whole: 3_000), text: "3000", row: try saved(cardKey), typed: &typed, blank: &blank)
+    ReconcileSheet.typing(
+      AmountE4(whole: 5), text: "5", row: try saved(cashKey), typed: &typed, blank: &blank)
+    ReconcileSheet.typing(.zero, text: "", row: try saved(cashKey), typed: &typed, blank: &blank)
+    let draft = sheet()
+    XCTAssertEqual(
+      draft.counted, [cardKey: AmountE4(whole: 3_000)], "an emptied starting point was counted")
+    XCTAssertEqual(ReconcileSheet.buttons(rows: draft.rows, counted: draft.counted), .startingPoint)
+    XCTAssertNil(
+      actions.reconcile(
+        counted: draft.counted, rows: rows, recordDifference: false, at: t0,
+        startingPoints: draft.startingPoints, keepingFirstCounts: draft.keeping))
+
+    let book = try XCTUnwrap(environment.planning).book()
+    XCTAssertEqual(
+      book.reconciledBalances.filter { $0.key == cashKey }.count, 1,
+      "«Наличные» got a count nobody made")
+    XCTAssertTrue(try XCTUnwrap(book.reconciledBalances.last { $0.key == cardKey }).isStartingPoint)
+    XCTAssertEqual(try entries().count, 1, "no «Сверка»")
+    let after = try await show()
+    let later = ReconcileSheet.rows(of: after, at: Date(), first: nil, locale: .current)
+    XCTAssertEqual(
+      ReconcileSheet.startingPointKeys(later, snapshot: after), [cashKey],
+      "the next count of «Наличные» is no longer offered as its starting point")
+
+    let unticked = ReconcileSheet.draft(
+      rows: later, offered: [cashKey], unticked: [cashKey], typed: [:], blank: [])
+    XCTAssertEqual(unticked.counted[cashKey], .zero, "unticked, it compares with the books")
+    XCTAssertEqual(unticked.keeping, [cashKey])
+    XCTAssertTrue(unticked.startingPoints.isEmpty)
+  }
+
+  /// A base of 1.1 offers «Точка отсчёта» on several rows and a fix under several counts:
+  /// VoiceOver reads whose each one is.
+  func testTheFirstCountControlsSayWhoseTheyAre() {
+    XCTAssertEqual(
+      ReconcileSheet.spoken("Точка отсчёта", account: "Наличные", currency: .rub),
+      "Точка отсчёта Наличные RUB")
+    XCTAssertEqual(
+      ReconcileSheet.spoken("Fix", account: "Card", currency: .usd), "Fix Card USD")
+    XCTAssertEqual(ReconcileSheet.spoken("Fix", account: nil, currency: nil), "Fix")
+  }
+
+  /// Unticked, the row compares like any other: «Записать разницу» writes the income, and the
+  /// count is remembered as a real difference in the same step — never offered as a first
+  /// count to fix. ⌘Z takes both back.
+  func testUntickingRecordsAndKeeps() async throws {
+    let cash = try account("Cash")
+    let key = BalanceKey(accountId: cash.id, currency: .rub)
+    try opening([key: .zero], at: Date().addingTimeInterval(-86_400))
+
+    let snapshot = try await show()
+    let rows = ReconcileSheet.rows(of: snapshot, at: Date(), first: nil, locale: .current)
+    XCTAssertEqual(ReconcileSheet.startingPointKeys(rows, snapshot: snapshot), [key])
+    XCTAssertNil(
+      actions.reconcile(
+        counted: [key: AmountE4(whole: 5_000)], rows: rows, recordDifference: true, at: Date(),
+        startingPoints: [], keepingFirstCounts: [key]))
+
+    let entry = try XCTUnwrap(try entries().first)
+    XCTAssertEqual(entry.transaction.kind, .income)
+    XCTAssertEqual(entry.transaction.amountE4, AmountE4(whole: 5_000))
+    let book = try XCTUnwrap(environment.planning).book()
+    let count = try XCTUnwrap(book.reconciledBalances.last { $0.key == key })
+    XCTAssertEqual(count.differenceE4, AmountE4(whole: 5_000))
+    XCTAssertEqual(try keptFirstCounts(), [count.id])
+    let after = try await show()
+    XCTAssertTrue(
+      ReconcileSheet.candidates(in: after, kept: after.dataset.planning.settings.firstCountKept)
+        .isEmpty, "a count the owner kept is offered as a first count")
+
+    store.undo()
+    XCTAssertTrue(try entries().isEmpty)
+    XCTAssertTrue(try keptFirstCounts().isEmpty, "⌘Z left the count remembered")
+    XCTAssertFalse(
+      try XCTUnwrap(environment.planning).book().reconciledBalances.contains { $0.id == count.id })
+  }
+
+  /// A 0 typed in the setup of 1.2 is a real count: no «Точка отсчёта», and the next count's
+  /// difference is recorded as usual.
+  func testATypedZeroOfOneTwoRecordsTheDifference() async throws {
+    let cash = try account("Cash")
+    let key = BalanceKey(accountId: cash.id, currency: .rub)
+    try opening([key: .zero], at: Date().addingTimeInterval(-86_400), origin: .setup)
+    _ = try XCTUnwrap(actions.reconciliationCategories())
+
+    let snapshot = try await show()
+    let rows = ReconcileSheet.rows(of: snapshot, at: Date(), first: nil, locale: .current)
+    XCTAssertTrue(ReconcileSheet.startingPointKeys(rows, snapshot: snapshot).isEmpty)
+    XCTAssertNil(
+      actions.reconcile(
+        counted: [key: AmountE4(whole: 500)], rows: rows, recordDifference: true, at: Date()))
+    let entry = try XCTUnwrap(try entries().first)
+    XCTAssertEqual(entry.transaction.kind, .income)
+    XCTAssertEqual(entry.transaction.amountE4, AmountE4(whole: 500))
+  }
+
+  /// The first count 1.1 recorded as income against the zero of an empty field: the fix makes
+  /// it the starting point — no difference, the income in the bin, the balance what was counted
+  /// — and ⌘Z brings back all of it in one step.
+  func testTheFirstCountFixIsOneUndoStep() async throws {
+    let cash = try account("Cash")
+    let key = BalanceKey(accountId: cash.id, currency: .rub)
+    try opening([key: .zero], at: Date().addingTimeInterval(-86_400))
+    // Saved compared, as 1.1 saved it.
+    try await count([key: AmountE4(whole: 3_500)], record: true, at: Date().addingTimeInterval(-60))
+    let recorded = try XCTUnwrap(try entries().first)
+    XCTAssertEqual(recorded.transaction.amountE4, AmountE4(whole: 3_500))
+
+    let snapshot = try await show()
+    let candidate = try XCTUnwrap(ReconcileSheet.candidates(in: snapshot, kept: []).first)
+    XCTAssertEqual(candidate.operationId, recorded.id)
+    XCTAssertTrue(actions.fixFirstCount(candidate))
+
+    var book = try XCTUnwrap(environment.planning).book()
+    let fixed = try XCTUnwrap(book.reconciledBalances.first { $0.id == candidate.id })
+    XCTAssertTrue(fixed.isStartingPoint)
+    XCTAssertNil(fixed.transactionId)
+    XCTAssertEqual(fixed.actualE4, AmountE4(whole: 3_500))
+    XCTAssertTrue(try entries().isEmpty, "the income is still counted")
+    let after = try await show()
+    XCTAssertEqual(
+      after.planning.accounts.balances.balance(key, at: Date()), AmountE4(whole: 3_500))
+    XCTAssertTrue(ReconcileSheet.candidates(in: after, kept: []).isEmpty)
+
+    store.undo()
+    book = try XCTUnwrap(environment.planning).book()
+    let back = try XCTUnwrap(book.reconciledBalances.first { $0.id == candidate.id })
+    XCTAssertEqual(back.differenceE4, AmountE4(whole: 3_500))
+    XCTAssertEqual(back.transactionId, recorded.id)
+    XCTAssertEqual(try entries().map(\.id), [recorded.id], "⌘Z left the income in the bin")
+  }
+
+  /// The history says where starting balances came from and which difference was kept without
+  /// an operation.
+  func testTheHistorySaysWhereStartingBalancesCameFromAndWhatWasNotRecorded() {
+    let day = environment.today
+    XCTAssertEqual(
+      ReconcileSheet.kindKey(
+        Reconciliation(
+          date: day, reconciledAt: Date(), actualTotalRubE4: .zero, kind: .opening,
+          origin: .merge)), "reconcile.kind.merge")
+    XCTAssertEqual(
+      ReconcileSheet.kindKey(
+        Reconciliation(date: day, reconciledAt: Date(), actualTotalRubE4: .zero, kind: .opening)),
+      "reconcile.kind.opening")
+    XCTAssertEqual(
+      ReconcileSheet.kindKey(Reconciliation(date: day, actualTotalRubE4: .zero, kind: .total)),
+      "reconcile.kind.total")
+    environment.language.choice = .english
+    defer { environment.language.choice = .russian }
+    let kept = ReconciledBalance(
+      reconciliationId: UUID(), accountId: UUID(), currency: .rub,
+      actualE4: AmountE4(whole: 800), expectedE4: AmountE4(whole: 1_000),
+      differenceE4: AmountE4(whole: -200), recordsDifference: false)
+    let history = ReconcileSheet.differencesText(
+      [kept], names: { _ in "Card" }, money: environment.money, language: environment.language,
+      marksNotRecorded: true)
+    XCTAssertTrue(history.hasSuffix(" not recorded"), history)
+    let card = ReconcileSheet.differencesText(
+      [kept], names: { _ in "Card" }, money: environment.money, language: environment.language,
+      rounded: true)
+    XCTAssertFalse(card.contains("not recorded"), "the card of Overview keeps it short")
   }
 }
 

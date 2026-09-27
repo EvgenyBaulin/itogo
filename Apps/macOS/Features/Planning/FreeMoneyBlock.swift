@@ -3,10 +3,12 @@ import SwiftUI
 
 // MARK: - Free money
 
-/// The free sum: the money there is now on the accounts of the summary, and — in grey — what of
-/// it is left once the planned payments, the debt payments, the goals and the budgets of the
-/// events until a day D are taken away, with the daily guide counted from that grey line. D is
-/// any day up to a year ahead, the end of the month unless the owner picks another.
+/// The free sum: what can be spent now — the money on the accounts of the summary less what the
+/// goals hold — and, in grey, what of it is left once the planned payments, the debt payments,
+/// the goal plans and the budgets of the events until a day D are taken away, with the daily
+/// guide counted from that grey line. Due dates passed and unpaid are in it as money not yet
+/// gone, and the block says how much of it they are, with the way to sort them out. D is any
+/// day up to a year ahead, the end of the month unless the owner picks another.
 ///
 /// Income still expected is shown and never added: money that has not come is not money
 /// there is. With no count of any account there is nothing to show but «Мало данных» and the
@@ -44,16 +46,19 @@ struct FreeMoneyBlock: View {
     /// Nothing counted yet, so there is no money to start from: «Мало данных: сделайте первую
     /// сверку», with the way to the first count.
     case firstCount
-    /// The money now, with the day D beside it.
-    case main(AmountE4)
+    /// What can be spent now, with the day D beside it: the money now, less the goal savings
+    /// when they are taken off (`spendable`: «можно тратить сейчас»).
+    case main(AmountE4, spendable: Bool)
     /// Currencies the main figure leaves out for want of a rate today.
     case mainWithoutRate([CurrencyCode])
     /// Balances of the summary never counted, with the way to count them.
     case unanchored([BalanceKey])
-    /// The money of the goals inside the main figure, when the grey line takes it away.
-    case goalSavingsInside(AmountE4)
+    /// The money on the accounts and the money of the goals the main figure leaves out.
+    case moneyAndGoals(AmountE4, AmountE4)
     /// «Учитывая запланированные События и траты» and what it takes away.
     case grey(AmountE4, lines: [FreeToSpendLine])
+    /// The due dates passed and unpaid inside the grey line, with «Разобрать…».
+    case overdue(AmountE4)
     /// Currencies of planned amounts left out of the lines for want of a rate today.
     case planWithoutRate([CurrencyCode])
     /// «Можно тратить в день», from the grey line.
@@ -74,8 +79,9 @@ struct FreeMoneyBlock: View {
       case .main: "main"
       case .mainWithoutRate: "mainWithoutRate"
       case .unanchored: "unanchored"
-      case .goalSavingsInside: "goalSavingsInside"
+      case .moneyAndGoals: "moneyAndGoals"
       case .grey: "grey"
+      case .overdue: "overdue"
       case .planWithoutRate: "planWithoutRate"
       case .perDay: "perDay"
       case .stillExpected: "stillExpected"
@@ -94,13 +100,15 @@ struct FreeMoneyBlock: View {
     case .noReconciliation:
       parts.append(.firstCount)
     case .ready:
-      parts.append(.main(free.main ?? .zero))
+      let spendable = free.goalSavings > .zero
+      parts.append(.main(free.main ?? .zero, spendable: spendable))
       if !free.mainWithoutRate.isEmpty { parts.append(.mainWithoutRate(free.mainWithoutRate)) }
       if !free.unanchored.isEmpty { parts.append(.unanchored(free.unanchored)) }
-      if free.plan.subtractsGoalSavings, free.plan.goalSavings > .zero {
-        parts.append(.goalSavingsInside(free.plan.goalSavings))
+      if spendable {
+        parts.append(.moneyAndGoals(free.moneyNow ?? .zero, free.goalSavings))
       }
       parts.append(.grey(free.grey ?? .zero, lines: free.lines))
+      if free.overdue > .zero { parts.append(.overdue(free.overdue)) }
       if !free.planWithoutRate.isEmpty { parts.append(.planWithoutRate(free.planWithoutRate)) }
       parts.append(.perDay(free.dailyGuide, days: free.days))
       for line in free.info where line.key == FreeMoney.Key.stillExpected {
@@ -124,8 +132,8 @@ struct FreeMoneyBlock: View {
     switch part {
     case .firstCount:
       noReconciliation
-    case .main(let main):
-      mainLine(main, free, snapshot)
+    case .main(let main, let spendable):
+      mainLine(main, spendable: spendable, free, snapshot)
     case .mainWithoutRate(let currencies):
       caption(environment.format("free.mainWithoutRate", table: "Planning", codes(currencies)))
     case .unanchored(let keys):
@@ -135,14 +143,32 @@ struct FreeMoneyBlock: View {
         Spacer(minLength: 8)
         reconcileButton
       }
-    case .goalSavingsInside(let saved):
+    case .moneyAndGoals(let money, let goals):
       caption(
         environment.format(
-          "free.goalSavingsInside", table: "Planning", environment.money.rounded(saved)))
+          "free.moneyAndGoals", table: "Planning", environment.money.rounded(money),
+          environment.money.rounded(goals)))
     case .grey(let grey, let lines):
       Divider()
       greyLine(grey)
       FormulaLines(lines: lines.map { (key: $0.key, plus: $0.sign == .plus, amount: $0.amount) })
+    case .overdue(let amount):
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Label {
+          Text(
+            verbatim: environment.format(
+              "free.overdue", table: "Planning", environment.money.rounded(amount)))
+        } icon: {
+          Image(systemName: "exclamationmark.circle")
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 8)
+        Button(t("free.overdueReview")) { environment.showsOverdue = true }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+      }
     case .planWithoutRate(let currencies):
       caption(environment.format("free.planWithoutRate", table: "Planning", codes(currencies)))
     case .perDay(let amount, let days):
@@ -184,7 +210,7 @@ struct FreeMoneyBlock: View {
   }
 
   private func mainLine(
-    _ main: AmountE4, _ free: FreeMoney, _ snapshot: DataSnapshot
+    _ main: AmountE4, spendable: Bool, _ free: FreeMoney, _ snapshot: DataSnapshot
   )
     -> some View
   {
@@ -192,7 +218,7 @@ struct FreeMoneyBlock: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: environment.money.rounded(main))
           .font(.title2.monospacedDigit())
-        Text(verbatim: t("free.main"))
+        Text(verbatim: t(spendable ? "free.mainSpendable" : "free.main"))
           .font(.caption)
           .foregroundStyle(.secondary)
       }

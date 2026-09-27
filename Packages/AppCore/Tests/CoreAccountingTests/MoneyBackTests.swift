@@ -125,16 +125,49 @@ struct MoneyBackTests {
     #expect(result.stillOwed == [OwedRemainder(partId: id(1), remainingRubE4: money(1))])
   }
 
-  /// The tolerance cuts both ways: money over by no more than it is drift, not income.
-  @Test func aSurplusWithinTheToleranceIsNoIncome() {
+  /// Money over the parts is income however little it is: 4,780 ₽ back for a dollar part of
+  /// 4,750 ₽ leave 30 ₽ of income (the tolerance is only for what is left of a part).
+  @Test func everySurplusIsIncome() {
     let part = owed(1, rubles: 4750, on: "2026-03-01", currency: .usd, amount: 50)
     let result = plan(4780, owed: [part])
     #expect(result.closes == [id(1)])
-    #expect(result.surplus == .zero)
-    #expect(MoneyBack.outcome(result, reimbursementTxId: id(9), accountId: nil).surplus == nil)
+    #expect(result.surplus == money(30))
+    #expect(result.surplusRub == money(30))
+    #expect(
+      MoneyBack.outcome(result, reimbursementTxId: id(9), accountId: nil).surplus?.amountE4
+        == money(30))
+    // 56 $ back at 90 for a part of 55.56 $ that cost 5,000 ₽: 0.44 $ = 39.60 ₽ of income.
+    var dollars = owed(2, rubles: 5000, on: "2026-03-01", currency: .usd, amount: 55)
+    dollars.amountE4 = money("55.56")
+    let fromDollars = plan(56, currency: .usd, rubles: 5040, owed: [dollars])
+    #expect(fromDollars.surplus == money("0.44"))
+    #expect(fromDollars.surplusRub == money("39.6"))
+  }
 
-    let beyond = plan(4900, owed: [part])
-    #expect(beyond.surplus == money(150))
+  /// What is over by less than a kopeck is the rounding of the shares, not income.
+  @Test func aSubKopeckCrumbIsNoIncome() {
+    let part = owed(1, rubles: 1000, on: "2026-03-01")
+    let crumb = MoneyBack.plan(
+      received: money("1000.0099"), currency: .rub, receivedRub: money("1000.0099"),
+      rateProvisional: false, person: anya, owed: [part], openDebts: [])
+    #expect(crumb.closes == [id(1)])
+    #expect(crumb.surplus == .zero)
+    #expect(crumb.surplusRub == .zero)
+    let kopeck = MoneyBack.plan(
+      received: money("1000.01"), currency: .rub, receivedRub: money("1000.01"),
+      rateProvisional: false, person: anya, owed: [part], openDebts: [])
+    #expect(kopeck.surplus == money("0.01"))
+  }
+
+  /// The owner's case: a subscription of 20 $ paid from the ruble card at 90 (1,800 ₽), and a
+  /// friend sends 2,000 ₽: the part closes and 200 ₽ are income.
+  @Test func theOwnersSubscriptionExample() {
+    let part = owed(1, rubles: 1800, on: "2026-09-01", currency: .usd, amount: 20)
+    let result = plan(2000, owed: [part])
+    #expect(result.closes == [id(1)])
+    #expect(result.allocations.map(\.amountE4) == [money(1800)])
+    #expect(result.surplus == money(200))
+    #expect(result.surplusRub == money(200))
   }
 
   // MARK: Refusals
@@ -184,6 +217,23 @@ struct MoneyBackTests {
     var closed = debt
     closed.closed = true
     #expect(plan(500, owed: [], debts: [closed]).refusal == .owesNothing)
+  }
+
+  /// A debt owed to me is offered only while something is left on it: money from somebody whose
+  /// debt is at zero is income. A debt the caller has no balance for counts as owing.
+  @Test func owesOnDebtOnlyWhileTheDebtHasABalance() {
+    let debt = Debt(
+      id: id(200), direction: .owedToMe, type: .personal, name: "Loan to Anya", personId: anya)
+    func refusal(_ balances: [UUID: AmountE4]) -> MoneyBackRefusal? {
+      MoneyBack.plan(
+        received: money(500), currency: .rub, receivedRub: money(500), rateProvisional: false,
+        person: anya, owed: [], openDebts: [debt], debtBalances: balances
+      ).refusal
+    }
+    #expect(refusal([id(200): money(300)]) == .owesOnDebt(id(200)))
+    #expect(refusal([id(200): .zero]) == .owesNothing)
+    #expect(refusal([id(200): money(-10)]) == .owesNothing)
+    #expect(refusal([:]) == .owesOnDebt(id(200)))
   }
 
   /// Only the debts of the person who gave the money back are offered: another person's debt

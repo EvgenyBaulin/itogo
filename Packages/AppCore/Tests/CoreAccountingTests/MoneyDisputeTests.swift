@@ -24,12 +24,14 @@ struct MoneyDisputeTests {
   }
 
   /// Аня gives back 56 dollars at 90 — 5 040 ₽: the part closes, and the 0.44 dollars over
-  /// (39.60 ₽) are within the drift of 1 % of 5 000 ₽ = 50 ₽, so they are no income.
-  @Test func fiftySixDollarsCloseThePartAndLeaveNoIncome() {
+  /// (39.60 ₽) are income in «Доплаты» — every kopeck over the parts is (the owner's answer:
+  /// 1.1 took up to 1 % of the part over as drift and wrote nothing).
+  @Test func fiftySixDollarsCloseThePartAndTheRestIsIncome() {
     let plan = dollarsBack("56")
     #expect(plan.closes == [id(1)])
     #expect(plan.allocations == [ReimbursementAllocation(partId: id(1), amountE4: money(5000))])
-    #expect(plan.surplus == .zero && plan.surplusRub == .zero)
+    #expect(plan.surplus == money("0.44"))
+    #expect(plan.surplusRub == money("39.6"))
   }
 
   /// 55.20 dollars (4 968 ₽): the link is 55.20 of 55.56 of the part's rubles — 4 967.6026 ₽ —,

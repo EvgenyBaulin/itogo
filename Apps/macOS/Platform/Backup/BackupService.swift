@@ -57,9 +57,12 @@ public actor BackupService {
   }
 
   /// The folder the owner picked, usually inside iCloud Drive. Access is opened by the
-  /// caller through a security-scoped bookmark.
+  /// caller through a security-scoped bookmark. The copies written before updates reach it at
+  /// once (`mirrorCopiesBeforeUpdates`): at the launch that makes one, and when a folder is
+  /// chosen later, for the copies already on disk.
   public func setMirror(_ url: URL?) {
     mirror = url
+    mirrorCopiesBeforeUpdates()
   }
 
   /// Drops a copy that has not been written yet: nothing is left to run against a database
@@ -275,6 +278,59 @@ public actor BackupService {
 
   /// The label of the copy written before the database is migrated to a newer schema.
   static let beforeMigration = "before-migration"
+
+  /// The folder inside the chosen one that holds the copies written before updates. The
+  /// retention of every version of the app — 1.0.0's included — lists only the top of a folder,
+  /// so nothing ever prunes a copy there, also after going back to an older version.
+  static let beforeMigrationFolder = "before-migration"
+
+  /// Puts into `<chosen folder>/before-migration/` every copy written before an update that is
+  /// not there yet, the way every copy reaches the folder — under a name no list shows, renamed
+  /// once whole. Returns how many arrived; nil without a folder. A copy that did not arrive is
+  /// in the journal (`backup.mirrorFailed`) and in `lastFailure` (`.notMirrored`), and is tried
+  /// again the next time a folder is set — at the next launch.
+  @discardableResult
+  public func mirrorCopiesBeforeUpdates() -> Int? {
+    guard let mirror else { return nil }
+    let manager = FileManager.default
+    let names = ((try? manager.contentsOfDirectory(atPath: directory.path)) ?? [])
+      .filter { $0.hasPrefix("finance-") && $0.hasSuffix("-\(Self.beforeMigration).sqlite") }
+      .sorted()
+    let target = mirror.appendingPathComponent(Self.beforeMigrationFolder, isDirectory: true)
+    var arrived = 0
+    var missed = 0
+    for name in names {
+      let source = directory.appendingPathComponent(name)
+      let there = target.appendingPathComponent(name)
+      if Self.size(of: there) != nil, Self.size(of: there) == Self.size(of: source) { continue }
+      do {
+        try manager.createDirectory(at: target, withIntermediateDirectories: true)
+      } catch {
+        AppLog.error(
+          "backup.mirrorFailed", .backup, "a copy did not reach the chosen folder",
+          [LogPair("error", .error(error))])
+        missed += 1
+        continue
+      }
+      if copy(source, into: target) { arrived += 1 } else { missed += 1 }
+    }
+    if missed > 0 { lastFailure = .notMirrored }
+    if arrived > 0 || missed > 0 {
+      AppLog.info(
+        "backup.preUpdateMirrored", .backup,
+        "copies made before updates were put into the chosen folder",
+        [LogPair("copies", .count(arrived)), LogPair("missed", .count(missed))])
+    }
+    return arrived
+  }
+
+  /// The size of a file in bytes; nil when there is none.
+  private static func size(of url: URL) -> Int? {
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+      return nil
+    }
+    return (attributes[.size] as? NSNumber)?.intValue
+  }
 
   /// A copy of the database file as it is, written before a newer build migrates it: the way
   /// back to the older version of the app, which refuses the migrated file. Nobody has the file

@@ -60,27 +60,41 @@ extension TransactionRepository {
   /// day the bank never publishes writes the rate the operation already carries: only the
   /// flag and `updated_at` change.
   ///
-  /// Reimbursement links are not touched: they hold the rubles that came back, fixed when
-  /// the money arrived, and the reimbursement sheet does not close a part whose rate is
-  /// still provisional. Money back typed part by part can still reach such a part; when its
-  /// refined rubles leave nothing more to wait for, it is settled (`settleCoveredParts`).
+  /// The money that came back for a refined part is balanced again in the same write
+  /// (`settle(partIds:…)`, `MoneyBackSettlement`): a part the money now covers closes and what
+  /// came back above it is income in «Доплаты» — `surplusNote` is that income's note, in the
+  /// interface language —; one missing its rubles by no more than the drift of the rate closes
+  /// with nothing written; a closed part's links and surplus follow its new rubles.
   ///
   /// What a ruble account was charged is the operation's rubles, so a charge in rubles follows
   /// the refined rubles; a rate typed from the statement is a manual one, never refined. A
   /// charge in another currency is never refined. The refunds taken back from a refined
   /// purchase take its rate too, and their stored rubles are worked out again from its parts,
-  /// oldest refund first (`RefundRules.rubles`): they are for display, the figures follow the
-  /// purchase anyway.
+  /// oldest refund first (`RefundRules.following`): they are for display, the figures follow
+  /// the purchase anyway.
+  ///
+  /// A charge in rubles that follows the refined rate moves money on its account: the counts
+  /// whose windows hold a refined operation, or one of its refunds, follow the books in the same
+  /// write (`LiveCounts`). The write is the pipeline's, so it is no step of ⌘Z.
+  ///
+  /// `settled` is told, after the write, how much the money back of the refined parts moved.
   @discardableResult
   public func applyRefinements(
     _ refinements: [RateTable.RateRefinement],
     of usages: [RateTable.RateUsage],
     calendar: CalendarContext,
-    at instant: Date = Date()
+    at instant: Date = Date(),
+    surplusNote: String? = nil,
+    settled: (SettlementCounts) -> Void = { _ in }
   ) throws -> Int {
     let usageById = Dictionary(usages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-    return try writer.write { db in
+    var counts = SettlementCounts()
+    let context = liveCounts
+    let applied = try writer.write { db in
+      counts = SettlementCounts()
       var applied = 0
+      // What the refinements moved, as it was and as it is, for the counts.
+      var moved: [(before: TransactionEntry?, after: TransactionEntry?)] = []
       for refinement in refinements {
         guard let usage = usageById[refinement.usageId],
           refinement.rate.currency == usage.currency,
@@ -110,90 +124,69 @@ extension TransactionRepository {
 
         let shares = rubles.allocated(
           proportionallyTo: fresh.parts.map(\.amountE4), outOf: fresh.transaction.amountE4)
-        var refined: [TransactionPart] = []
-        for (part, share) in zip(fresh.parts, shares) {
-          var part = part
-          if part.amountRubE4 != share {
-            try db.execute(
-              sql: "UPDATE transaction_parts SET amount_rub_e4 = ? WHERE id = ?",
-              arguments: [share.raw, part.id.uuidString])
-            part.amountRubE4 = share
-          }
-          refined.append(part)
+        for (part, share) in zip(fresh.parts, shares) where part.amountRubE4 != share {
+          try db.execute(
+            sql: "UPDATE transaction_parts SET amount_rub_e4 = ? WHERE id = ?",
+            arguments: [share.raw, part.id.uuidString])
         }
-        try Self.settleCoveredParts(refined, db: db)
-        if fresh.transaction.kind == .expense {
-          try Self.refineRefunds(
-            of: refined, rate: refinement.rate, isProvisional: refinement.isProvisional,
-            at: instant, db: db)
+        let settlement = try Self.settle(
+          partIds: fresh.parts.filter(\.reimbursable).map(\.id),
+          rublesBefore: Dictionary(
+            fresh.parts.map { ($0.id, $0.amountRubE4) }, uniquingKeysWith: { first, _ in first }),
+          setting: SettlementSetting(surplusNote: surplusNote), at: instant, db: db)
+        counts = counts + settlement.counts
+        let refined = try Self.entry(id: fresh.id, db: db)
+        moved.append((fresh, refined))
+        moved +=
+          settlement.operationsBefore.map { ($0, nil) } + settlement.written.map { (nil, $0) }
+        if fresh.transaction.kind == .expense, let refined {
+          let refunds = try Self.followingRefunds(of: refined, at: instant, db: db)
+          moved += refunds.map { ($0, nil) }
+          moved += try Self.entries(ids: refunds.map(\.id), db: db).map { (nil, $0) }
         }
         applied += 1
       }
+      let touch = try LiveCountsWriter.touch(
+        entries: moved, calendar: context.calendar, lookups: WriteLookups(), db: db)
+      _ = try LiveCountsWriter.settle(touch, context: context, now: instant, db: db)
       return applied
     }
+    settled(counts)
+    return applied
   }
 
-  /// A part some money already came back for, which its refined rubles leave with nothing more
-  /// to wait for, is settled: `returned`. A lower rate of the day can take the part's rubles to
-  /// what came back or below; left waiting, the part would be owed nothing and could be neither
-  /// closed nor written off. The drift of a rate is neither spending nor income, so nothing else
-  /// is written, and deleting the money back reopens the part as it reopens any part it closed.
-  /// A part the new rubles still leave something of keeps waiting for the rest.
-  private static func settleCoveredParts(_ parts: [TransactionPart], db: Database) throws {
-    for part in parts
-    where part.reimbursable && (part.reimbursementStatus ?? .expected) == .expected {
-      let back = try returnedRub(ofPart: part.id, db: db)
-      guard back.raw > 0, part.amountRubE4 <= back else { continue }
-      try db.execute(
-        sql: "UPDATE transaction_parts SET reimbursement_status = ? WHERE id = ?",
-        arguments: [ReimbursementStatus.returned.rawValue, part.id.uuidString])
+  /// The live refunds taken back from `purchase` written again as they follow it
+  /// (`RefundRules.following`): its rate, and rubles worked out again from its parts, oldest
+  /// refund first. Returns them as they were, for undo; only the ones that changed.
+  static func followingRefunds(
+    of purchase: TransactionEntry, at instant: Date, db: Database
+  ) throws -> [TransactionEntry] {
+    let partIds = purchase.parts.map(\.id.uuidString)
+    guard !partIds.isEmpty else { return [] }
+    let marks = databaseQuestionMarks(count: partIds.count)
+    let ids = try String.fetchAll(
+      db,
+      sql: """
+        SELECT t.id FROM transactions t
+        WHERE t.deleted_at IS NULL AND t.kind = ?
+          AND t.id IN (
+            SELECT transaction_id FROM transaction_parts WHERE refund_of_part_id IN (\(marks)))
+        ORDER BY t.occurred_at, t.rowid
+        """,
+      arguments: [TransactionKind.refund.rawValue] + StatementArguments(partIds)
+    ).compactMap(UUID.init(uuidString:))
+    let refunds = try ids.compactMap { try entry(id: $0, db: db) }
+    let followed = RefundRules.following(purchase: purchase, refunds: refunds)
+    let before = Dictionary(refunds.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    var previous: [TransactionEntry] = []
+    for refund in followed {
+      guard let old = before[refund.id] else { continue }
+      var next = refund
+      next.transaction.updatedAt = instant
+      try write(next, over: old, db: db)
+      previous.append(old)
     }
-  }
-
-  /// The refunds taken back from these parts of a refined purchase take its rate, and store
-  /// rubles worked out again from the parts, oldest refund first.
-  private static func refineRefunds(
-    of parts: [TransactionPart], rate: Rate, isProvisional: Bool, at instant: Date,
-    db: Database
-  ) throws {
-    var touched: [UUID] = []
-    for part in parts {
-      let refundParts = try TransactionPart.fetchAll(
-        db,
-        sql: """
-          SELECT p.* FROM transaction_parts p JOIN transactions t ON t.id = p.transaction_id
-          WHERE p.refund_of_part_id = ? AND t.deleted_at IS NULL AND t.kind = ?
-          ORDER BY t.occurred_at, t.rowid, p.rowid
-          """,
-        arguments: [part.id.uuidString, TransactionKind.refund.rawValue])
-      var before = (amount: AmountE4.zero, rub: AmountE4.zero)
-      for refundPart in refundParts {
-        let rubles = RefundRules.rubles(
-          refundAmount: refundPart.amountE4, part: part, refundedBefore: before)
-        before = (before.amount + refundPart.amountE4, before.rub + rubles)
-        if refundPart.amountRubE4 != rubles {
-          try db.execute(
-            sql: "UPDATE transaction_parts SET amount_rub_e4 = ? WHERE id = ?",
-            arguments: [rubles.raw, refundPart.id.uuidString])
-        }
-        if !touched.contains(refundPart.transactionId) { touched.append(refundPart.transactionId) }
-      }
-    }
-    for refundId in touched {
-      try db.execute(
-        sql: """
-          UPDATE transactions
-          SET rate = ?, rate_date = ?, rate_source = ?, rate_provisional = ?, updated_at = ?,
-              amount_rub_e4 = (
-                SELECT COALESCE(SUM(amount_rub_e4), 0) FROM transaction_parts
-                WHERE transaction_id = transactions.id)
-          WHERE id = ?
-          """,
-        arguments: [
-          RowMapping.string(rate.perUnit), rate.date.iso, rate.source.rawValue, isProvisional,
-          StoredInstant.databaseValue(instant), refundId.uuidString,
-        ])
-    }
+    return previous
   }
 
   /// Sources whose rates are never overwritten automatically — a rate entered by hand or

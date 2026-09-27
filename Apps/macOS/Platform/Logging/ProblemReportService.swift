@@ -101,9 +101,11 @@ enum ProblemReportService {
   ]
 
   /// Planning settings that are lists of ids of what they are about — reminders put off,
-  /// operations said not to pay a due date — and go in as a count only.
+  /// operations said not to pay a due date, counts whose difference the owner called real,
+  /// answers about a count remembered — and go in as a count only.
   private static let countedOnly: Set = [
     PlanningSettings.dismissedRemindersKey, PlanningSettings.scheduledMatchRejectionsKey,
+    PlanningSettings.firstCountKeptKey, PlanningSettings.beforeCountAnswersKey,
   ]
 
   /// The settings of a report («настройки без личных данных: язык, валюты, пороги,
@@ -112,7 +114,8 @@ enum ProblemReportService {
   ///
   /// Every value added here is a number, a switch, a level, a currency code, a state or the id
   /// of a category. The captions of «для кого» are the owner's own words and stay out; the
-  /// dismissed reminders and the operations said not to pay a due date are ids of what they
+  /// dismissed reminders, the operations said not to pay a due date, the counts whose
+  /// difference was called real and the answers about a count remembered are ids of what they
   /// were about, and go in as a count.
   static func settings(of environment: AppEnvironment) -> [String: String] {
     var values = environment.portableSettings()
@@ -129,6 +132,8 @@ enum ProblemReportService {
     values["reminders.dismissed.count"] = String(planning.dismissedReminders.count)
     values["planning.scheduledMatchRejections.count"] = String(
       planning.scheduledMatchRejections.count)
+    values["reconcile.firstCountKept.count"] = String(planning.firstCountKept.count)
+    values["reconcile.beforeCountAnswers.count"] = String(planning.beforeCountAnswers.count)
     var accountRows: [String: String] = [:]
     for key in AccountSettings.storageKeys { accountRows[key] = stored(key) }
     let accounts = AccountSettings(storedValues: accountRows)

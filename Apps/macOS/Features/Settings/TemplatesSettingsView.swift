@@ -95,7 +95,8 @@ struct TemplatesSettingsView: View {
         }
       } label: {
         Image(systemName: "ellipsis.circle")
-          .accessibilityLabel(Text(verbatim: t("templates.rowMenu")))
+          .accessibilityLabel(
+            Text(verbatim: SettingsRowMenu.label(template.wrappedValue.text, environment)))
       }
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
@@ -119,7 +120,7 @@ struct TemplatesSettingsView: View {
         Button(environment.language("action.delete"), role: .destructive) { delete(template) }
       } label: {
         Image(systemName: "ellipsis.circle")
-          .accessibilityLabel(Text(verbatim: t("templates.rowMenu")))
+          .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(template.text, environment)))
       }
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)

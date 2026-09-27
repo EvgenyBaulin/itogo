@@ -8,18 +8,24 @@ import Testing
 
 /// An account is deleted only while nothing points at it — found here from the schema itself:
 /// every column of every table that points at the accounts, the bin included, but the balances
-/// counted on it, which are its own and go with it. The deletion takes along exactly those
-/// balances and a reconciliation of accounts it leaves with no balance at all; a total of the
-/// time before accounts stays whatever it counted. The main account is never deleted while no
+/// counted on it, its cards and the cashback rules on it, which are its own and go with it, and
+/// an income expected on it, which lets go of it. The deletion takes along exactly those
+/// balances, cards and rules and a reconciliation of accounts it leaves with no balance at all;
+/// a total of the time before accounts stays whatever it counted. The main account is never deleted while no
 /// other live account is main. A refused deletion writes nothing. Checked on every account of a
 /// history with accounts, in a drawn order, with unused accounts made on purpose among them.
 @Suite("An account is deleted only when nothing points at it")
 struct AccountDeletionPropertyTests {
-  /// Whether a column of the schema, the counted balances aside, points at the account.
+  /// The tables whose rows go with the account or let go of it, and never keep it.
+  private static let ownRows: Set = [
+    "reconciliation_balances", "cards", "cashback_rules", "expected_income",
+  ]
+
+  /// Whether a column of the schema, the account's own rows aside, points at the account.
   private static func isPointedAt(_ id: UUID, db: Database) throws -> Bool {
     let tables = try String.fetchAll(
       db, sql: "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
-    for child in tables where child != "reconciliation_balances" {
+    for child in tables where !ownRows.contains(child) {
       for key in try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(\(child))")
       where (key["table"] as String) == "payment_methods" {
         let column: String = key["from"]
@@ -36,7 +42,9 @@ struct AccountDeletionPropertyTests {
 
   /// A history with accounts and, among its accounts, unused ones counted in every way: alone in
   /// a reconciliation of accounts, beside a used account in one, in an opening count, in a total
-  /// of the older time; one used only by an operation in the bin, one only by a payment.
+  /// of the older time; one used only by an operation in the bin, one only by a payment. The
+  /// lonely one has a card with its rules and a rule of its own, the opened one an income
+  /// expected on it.
   private static func stack() throws -> DatabaseStack {
     let stack = try PlanningUndoPropertyTests.stack()
     let at = Date(timeIntervalSince1970: 1_789_000_000)
@@ -54,6 +62,18 @@ struct AccountDeletionPropertyTests {
       for account in [lonely, shared, opened, older, binned, planned, plain] {
         try account.insert(db)
       }
+      let card = PaymentCard(accountId: lonely.id, name: "Lonely card")
+      try card.insert(db)
+      try CashbackRule(
+        accountId: lonely.id, cardId: card.id, percent: CashbackPercent(e4: 15_000) ?? .zero
+      ).insert(db)
+      try CashbackRule(
+        accountId: lonely.id, month: MonthKey(year: 2026, month: 9),
+        percent: CashbackPercent(e4: 50_000) ?? .zero
+      ).insert(db)
+      try ExpectedIncome(
+        name: "Deposit back", totalE4: AmountE4(whole: 100), paymentMethodId: opened.id
+      ).insert(db)
 
       func count(_ kind: ReconciliationKind, _ accounts: [PaymentMethod]) throws {
         let reconciliation = Reconciliation(
@@ -140,6 +160,21 @@ struct AccountDeletionPropertyTests {
       expected["reconciliations"]?.rows.removeAll { row in
         counted.contains(row[reconciliationId]) && !left.contains(row[reconciliationId])
           && row[kind] != "'total'"
+      }
+      // Its cards and the rules on it and on its cards go; an income expected on it stays,
+      // on no account.
+      let cardAccount = column("cards", "payment_method_id")
+      let ruleAccount = column("cashback_rules", "payment_method_id")
+      let incomeAccount = column("expected_income", "payment_method_id")
+      expected["cards"]?.rows.removeAll { $0[cardAccount] == quoted }
+      expected["cashback_rules"]?.rows.removeAll { $0[ruleAccount] == quoted }
+      if var incomes = expected["expected_income"] {
+        incomes.rows = incomes.rows.map { row in
+          var row = row
+          if row[incomeAccount] == quoted { row[incomeAccount] = "NULL" }
+          return row
+        }
+        expected["expected_income"] = incomes
       }
       let after = try stack.writer.read { db in try ExactTables.read(db) }
       #expect(

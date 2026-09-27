@@ -52,6 +52,40 @@
         }
       }
     },
+    "overview.archivedMoney": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%1$@» is archived but holds %2$@ — move it to another account?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На «%1$@» в архиве %2$@ — перевести на другой счёт?"
+          }
+        }
+      }
+    },
+    "overview.archivedMoney.move": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перевести…"
+          }
+        }
+      }
+    },
     "overview.badChange": {
       "extractionState": "manual",
       "localizations": {
@@ -205,6 +239,40 @@
         }
       }
     },
+    "overview.goalsExceed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spent a goal's money? Press «Withdraw»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Потратили деньги цели? Нажмите «Забрать»"
+          }
+        }
+      }
+    },
+    "overview.goalsExceedDetail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The goals hold %1$@, the accounts in the summary %2$@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На целях %1$@, а на счетах в сводке — %2$@."
+          }
+        }
+      }
+    },
     "overview.income": {
       "extractionState": "manual",
       "localizations": {
@@ -218,6 +286,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "Доходы"
+          }
+        }
+      }
+    },
+    "overview.lastRecord.on": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last entry: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последняя запись: %@"
+          }
+        }
+      }
+    },
+    "overview.lastRecord.today": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last entry: today, %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последняя запись: сегодня, %@"
+          }
+        }
+      }
+    },
+    "overview.lastRecord.yesterday": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last entry: yesterday, %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последняя запись: вчера, %@"
           }
         }
       }
@@ -269,6 +388,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "В этом месяце ещё нет расходов"
+          }
+        }
+      }
+    },
+    "overview.openGoals": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Go to goals"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "К целям"
           }
         }
       }
@@ -354,6 +490,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сверок ещё не было"
+          }
+        }
+      }
+    },
+    "overview.reconciliationTotal": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "one total, before accounts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "одной суммой, до счетов"
           }
         }
       }

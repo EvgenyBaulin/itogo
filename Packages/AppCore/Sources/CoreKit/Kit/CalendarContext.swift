@@ -52,6 +52,30 @@ public struct CalendarContext: Sendable {
     startOfDay(adding(days: 1, to: day)).addingTimeInterval(-0.001)
   }
 
+  /// The moment of `day` at `hour`:`minute`:00 in this calendar — the time the owner chose on
+  /// a clock. On a day the clocks move, a time that does not exist there is read as the
+  /// calendar reads it (the hour after the gap); the day itself is never left.
+  public func moment(_ day: DateOnly, hour: Int, minute: Int) -> Date {
+    var parts = DateComponents()
+    parts.year = day.year
+    parts.month = day.month
+    parts.day = day.day
+    parts.hour = min(max(hour, 0), 23)
+    parts.minute = min(max(minute, 0), 59)
+    parts.second = 0
+    parts.timeZone = timeZone
+    guard let moment = calendar.date(from: parts), self.day(of: moment) == day else {
+      return startOfDay(day)
+    }
+    return moment
+  }
+
+  /// The hour and the minute `instant` shows on a clock in this calendar; seconds are dropped.
+  public func timeOfDay(_ instant: Date) -> TimeOfDay {
+    let parts = calendar.dateComponents([.hour, .minute], from: instant)
+    return TimeOfDay(hour: parts.hour ?? 0, minute: parts.minute ?? 0)
+  }
+
   public func adding(days: Int, to origin: DateOnly) -> DateOnly {
     let shifted = calendar.date(byAdding: .day, value: days, to: startOfDay(origin))
     return day(of: shifted ?? startOfDay(origin))
@@ -67,6 +91,19 @@ public struct CalendarContext: Sendable {
   public func weekdayIndex(_ day: DateOnly) -> Int {
     let weekday = calendar.component(.weekday, from: startOfDay(day))
     return ((weekday + 5) % 7) + 1
+  }
+}
+
+/// A time on a clock, without a day: what the owner picks for a moment of a known day.
+public struct TimeOfDay: Hashable, Sendable {
+  /// 0…23.
+  public var hour: Int
+  /// 0…59.
+  public var minute: Int
+
+  public init(hour: Int, minute: Int) {
+    self.hour = min(max(hour, 0), 23)
+    self.minute = min(max(minute, 0), 59)
   }
 }
 
