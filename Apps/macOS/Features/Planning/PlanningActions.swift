@@ -350,11 +350,19 @@ struct PlanningActions {
     return goal
   }
 
-  /// The goal's own subcategory is named after it, so the name loses its spaces first.
+  /// The goal's own subcategory is named after it, so the name loses its spaces first. A live
+  /// goal does not take the name another live goal has — a new one, a rename or one brought back
+  /// from the archive — and nothing is written then.
   @discardableResult
   func save(_ goal: Goal) -> Bool {
     var goal = goal
     goal.name = Self.trimmed(goal.name)
+    if !goal.archived,
+      let all = try? environment.references?.goals(includeArchived: true),
+      GoalRules.liveNamesake(of: goal.name, excluding: goal.id, among: all) != nil
+    {
+      return false
+    }
     var rows = PlanningRows.empty
     rows.goals = [withSubcategory(goal, rows: &rows)]
     return apply(PlanningChange(upsert: rows))

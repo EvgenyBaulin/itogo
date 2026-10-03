@@ -307,6 +307,159 @@
         }
       }
     },
+    "entry.ahead.income": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Income"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поступление"
+          }
+        }
+      }
+    },
+    "entry.ahead.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record it as it is, or plan it? A plan waits in Planning for its day."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать как есть или запланировать? План ждёт своего дня в «Планировании»."
+          }
+        }
+      }
+    },
+    "entry.ahead.payment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Payment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платёж"
+          }
+        }
+      }
+    },
+    "entry.ahead.planIncome": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plan an Income"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запланировать поступление"
+          }
+        }
+      }
+    },
+    "entry.ahead.planPayment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plan a Payment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запланировать платёж"
+          }
+        }
+      }
+    },
+    "entry.ahead.planned.income": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An income is expected on %@ — it is in Planning, ⌘Z takes it back"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поступление ожидается %@ — оно в «Планировании», ⌘Z вернёт"
+          }
+        }
+      }
+    },
+    "entry.ahead.planned.payment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A payment is planned for %@ — it is in Planning, ⌘Z takes it back"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платёж запланирован на %@ — он в «Планировании», ⌘Z вернёт"
+          }
+        }
+      }
+    },
+    "entry.ahead.record": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record as Is"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать как есть"
+          }
+        }
+      }
+    },
+    "entry.ahead.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The operation is dated %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Операция на %@"
+          }
+        }
+      }
+    },
     "entry.amount": {
       "extractionState": "manual",
       "localizations": {
@@ -1463,6 +1616,40 @@
         }
       }
     },
+    "entry.form.clear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Очистить"
+          }
+        }
+      }
+    },
+    "entry.form.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New Operation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новая операция"
+          }
+        }
+      }
+    },
     "entry.fromWhom": {
       "extractionState": "manual",
       "localizations": {
@@ -1486,13 +1673,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The line does not say the category — choose it in the panel, or with ↓ ↑ here, and press Return"
+            "value": "Choose a category or “Unknown” — in the panel, or with ↓ ↑ here — and press Return"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Категорию по строке не определить — выберите её в панели или стрелками ↓ ↑ здесь и нажмите Return"
+            "value": "Выберите категорию или «Не помню» — в панели или стрелками ↓ ↑ здесь — и нажмите Return"
           }
         }
       }
@@ -1905,6 +2092,74 @@
         }
       }
     },
+    "entry.repeat.add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить"
+          }
+        }
+      }
+    },
+    "entry.repeat.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — recorded at %@. Add another one?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — записана в %@. Добавить ещё одну?"
+          }
+        }
+      }
+    },
+    "entry.repeat.skip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don’t Add"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не добавлять"
+          }
+        }
+      }
+    },
+    "entry.repeat.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The same operation was just recorded"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Такая же операция уже записана"
+          }
+        }
+      }
+    },
     "entry.save": {
       "extractionState": "manual",
       "localizations": {
@@ -1986,6 +2241,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Шаблоны"
+          }
+        }
+      }
+    },
+    "entry.transfer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перевести…"
+          }
+        }
+      }
+    },
+    "entry.transfer.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A transfer from account to account, started with the amount, the account and the date of this form"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перевод со счёта на счёт: сумма, счёт и дата отсюда попадут в форму перевода"
           }
         }
       }

@@ -497,11 +497,11 @@ final class EditingKeepsOriginTests: XCTestCase {
   }
 }
 
-/// The ↓ panel's keys: ↓ opens, ↑ and Esc close, and with the
-/// panel closed ↑ and Esc are left to the list and the window.
+/// The ↓ panel's keys: ↓ is the list's and leaves the panel as it is, ↑ and Esc close an open
+/// panel, and with the panel closed ↑ and Esc are left to the list and the window.
 final class DetailsPanelKeyTests: XCTestCase {
-  func testDownOpensThePanel() {
-    XCTAssertTrue(DetailsPanelKey.down.outcome(showing: false) == (true, true))
+  func testDownOpensNothingAndClosesNothing() {
+    XCTAssertTrue(DetailsPanelKey.down.outcome(showing: false) == (false, true))
     XCTAssertTrue(DetailsPanelKey.down.outcome(showing: true) == (true, true))
   }
 
@@ -610,6 +610,9 @@ final class EntryBarFocusTests: XCTestCase {
       try DatabaseStack(inMemory: BundleSchemaSource(bundle: .main))
     })
     let transactions = try XCTUnwrap(environment.transactions)
+    // One category for the panel to choose: without any an operation cannot be filed.
+    try XCTUnwrap(environment.references).save(
+      CoreKit.Category(kind: .expense, name: "Cafe", quality: .neutral))
     let store = TransactionsStore()
     store.attach(
       transactions, references: try XCTUnwrap(environment.references),
@@ -641,11 +644,21 @@ final class EntryBarFocusTests: XCTestCase {
     let editor = try XCTUnwrap(window.firstResponder as? NSTextView, "the field editor")
     editor.insertText("250", replacementRange: editor.selectedRange())
     settle(0.1)
-    // The panel alone says no category: the first Return asks for it, the next one saves.
+    // The panel alone says no category: the first Return asks for it, and the next one saves
+    // only once one is chosen — ↓ in the line chooses the first of the menu.
     editor.insertNewline(nil)
     settle()
     XCTAssertEqual(try transactions.count(), 0, "the first Return asked for the category")
-    let still = try XCTUnwrap(window.firstResponder as? NSTextView, "the amount keeps the focus")
+    XCTAssertTrue(window.makeFirstResponder(line))
+    let arrow = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+    window.sendEvent(
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: [.function, .numericPad], timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, characters: arrow,
+        charactersIgnoringModifiers: arrow, isARepeat: false, keyCode: 125)!)
+    settle(0.1)
+    XCTAssertTrue(window.makeFirstResponder(amount))
+    let still = try XCTUnwrap(window.firstResponder as? NSTextView, "the amount field")
     still.insertNewline(nil)
     settle()
 

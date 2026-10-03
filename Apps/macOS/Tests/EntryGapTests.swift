@@ -6,7 +6,8 @@ import XCTest
 
 /// When the line alone does not tell the category — or the model filed it under a category with
 /// subcategories without saying which — Enter does not save the words into the note alone: it
-/// opens the ↓ panel on the missing field, marked, once per line; the next Return saves.
+/// opens the ↓ panel on the missing field, marked. A missing category is asked until one is
+/// chosen («Не помню» is the way out for «I do not know»); a missing subcategory once per line.
 @MainActor
 final class EntryGapTests: XCTestCase {
   private var stack: DatabaseStack!
@@ -49,14 +50,33 @@ final class EntryGapTests: XCTestCase {
     model.apply(parsed, amount: try AmountE4(decimal: try XCTUnwrap(parsed.amount)), today: today)
   }
 
-  func testALineWithoutACategoryIsAskedOnce() throws {
+  func testALineWithoutACategoryIsAskedUntilOneIsChosen() throws {
     let model = makeModel()
     try enter("coffee 250", into: model)
     XCTAssertEqual(model.gapToAsk(), .category)
     XCTAssertEqual(model.markedGap, .category)
-    // Enter on the same line goes on: the operation may stay uncategorised.
+    // Enter on the same line does not go on: the operation is filed under a category, and
+    // «Не помню» is there for what the owner does not remember.
     try enter("coffee 250", into: model)
+    XCTAssertEqual(model.gapToAsk(), .category)
+    XCTAssertEqual(model.markedGap, .category)
+    model.setCategory(cafe.id, forPartAt: 0)
     XCTAssertNil(model.gapToAsk())
+    XCTAssertNil(model.markedGap)
+  }
+
+  /// «Не помню» is a category like another one for the stop: choosing it fills the gap, and the
+  /// operation is saved under it.
+  func testUnknownFillsTheGap() throws {
+    let unknown = CoreKit.Category(
+      kind: .expense, name: "Unknown", sort: -1, quality: .neutral, systemRole: .unknown)
+    try references.save(unknown)
+    let model = makeModel()
+    try enter("coffee 250", into: model)
+    XCTAssertEqual(model.gapToAsk(), .category)
+    model.setCategory(unknown.id, forPartAt: 0)
+    XCTAssertNil(model.gapToAsk())
+    XCTAssertEqual(model.draft.parts[0].categoryId, unknown.id)
   }
 
   func testAnotherLineIsAskedAgain() throws {
@@ -68,7 +88,8 @@ final class EntryGapTests: XCTestCase {
   }
 
   /// The stop is remembered by the text of the line: once a name in it is made known, the same
-  /// text parses anew, and it is still the line the stop was for.
+  /// text parses anew, and it is still the line the stop was for — the arrows go on walking
+  /// the menu it asked for, and the category is still the one thing missing.
   func testTheStopIsRememberedByTheTextOfTheLine() throws {
     let text = "coffee 300 at Nowhere"
     let model = makeModel()
@@ -84,8 +105,10 @@ final class EntryGapTests: XCTestCase {
     ).parse(text, today: today)
     XCTAssertNotEqual(after, before, "the place is known now")
     model.apply(after, amount: AmountE4(whole: 300), today: today, text: text)
-    XCTAssertNil(model.gapToAsk())
     XCTAssertEqual(model.draft.placeId, nowhere.id)
+    XCTAssertEqual(model.gapToAsk(), .category, "a place does not say the category")
+    XCTAssertTrue(model.stepTheAskedMenu(by: 1, today: today), "still the line the stop was for")
+    XCTAssertNil(model.gapToAsk())
   }
 
   /// ↓ and ↑ while the stop stands walk the menu it asked for, «—» first, as choices made in the
@@ -110,6 +133,34 @@ final class EntryGapTests: XCTestCase {
 
     try enter("tea 150", into: model)
     XCTAssertFalse(model.stepTheAskedMenu(by: 1, today: today), "no stop for this line")
+  }
+
+  /// The categories of the app stand at the end of the walk, whatever place the dictionary
+  /// gave them: the owner's own categories are what the arrows reach first.
+  func testTheArrowsReachTheCategoriesOfTheAppLast() throws {
+    let unknown = CoreKit.Category(
+      kind: .expense, name: "Unknown", sort: -3, quality: .neutral, systemRole: .unknown)
+    let goals = CoreKit.Category(
+      kind: .expense, name: "Goals", sort: -2, quality: .good, systemRole: .goals)
+    let loans = CoreKit.Category(
+      kind: .expense, name: "Loans", sort: -1, quality: .neutral, systemRole: .loans)
+    for category in [unknown, goals, loans] { try references.save(category) }
+    let model = makeModel()
+    try enter("coffee 250", into: model)
+    XCTAssertEqual(model.gapToAsk(), .category)
+    let own = model.categoryOptions(forPartAt: 0).filter {
+      $0.systemRole == nil
+    }.map(\.id)
+    XCTAssertEqual(own.count, 2, "cafe and transport")
+
+    var walked: [UUID?] = []
+    for _ in 0..<(own.count + 3) {
+      XCTAssertTrue(model.stepTheAskedMenu(by: 1, today: today))
+      walked.append(model.draft.parts[0].categoryId)
+    }
+    XCTAssertEqual(walked, own + [goals.id, loans.id, unknown.id])
+    XCTAssertTrue(model.stepTheAskedMenu(by: 1, today: today), "nothing after the last one")
+    XCTAssertEqual(model.draft.parts[0].categoryId, unknown.id)
   }
 
   func testAChosenCategoryIsNotAsked() throws {
@@ -196,11 +247,24 @@ final class EntryGapTests: XCTestCase {
     XCTAssertNil(model.gapToAsk(), "the income the confirmation made is saved as it is")
   }
 
+  /// Return in the line, with the focus put back there first: what the next Enter does.
+  private func returnInTheLine(of host: EntryHost) throws {
+    host.settle(0.3)
+    XCTAssertTrue(host.window.makeFirstResponder(try host.line()))
+    try XCTUnwrap(host.window.firstResponder as? NSTextView).insertNewline(nil)
+    host.settle()
+  }
+
   /// In the window: Enter on a line of new words saves nothing, opens the panel and says why;
-  /// the next Return saves the operation uncategorised, its words in the note.
-  func testEnterOpensThePanelOnTheCategoryAndTheNextReturnSaves() async throws {
+  /// the next Return saves nothing either — an operation is filed under a category, or under
+  /// «Не помню» — until one is chosen, and then Return saves it, its words in the note.
+  func testEnterOpensThePanelOnTheCategoryAndTheNextReturnWaitsForOne() async throws {
     let host = try await EntryHost(opensDetails: false)
     self.host = host
+    let first = try XCTUnwrap(
+      try host.references.categories().first {
+        $0.parentId == nil && $0.kind == .expense && $0.systemRole == nil
+      }, "the first category of the menu")
     let editor = try host.type("coffee 250", into: try host.line())
     editor.insertNewline(nil)
     host.settle()
@@ -208,19 +272,21 @@ final class EntryGapTests: XCTestCase {
     XCTAssertNotNil(
       host.textFields().first { $0.placeholderString == "0" }, "the panel is open")
 
-    host.settle(0.3)
-    let line = try host.line()
-    XCTAssertTrue(host.window.makeFirstResponder(line))
-    let again = try XCTUnwrap(host.window.firstResponder as? NSTextView)
-    again.insertNewline(nil)
-    host.settle()
+    try returnInTheLine(of: host)
+    XCTAssertEqual(try host.transactions.count(), 0, "the second Return waits for a category")
+    XCTAssertNotNil(
+      host.textFields().first { $0.placeholderString == "0" }, "the panel stays open")
+
+    try host.pressDown()
+    try returnInTheLine(of: host)
     let saved = try XCTUnwrap(try host.transactions.recentEntries(limit: 5).first)
-    XCTAssertNil(saved.parts.first?.categoryId)
+    XCTAssertEqual(saved.parts.first?.categoryId, first.id)
     XCTAssertEqual(saved.transaction.note, "coffee")
   }
 
-  /// The stop opened the panel on the category; the owner corrects the amount there too, and
-  /// Return in the field saves the amount the panel shows, not the one the line still says.
+  /// The stop opened the panel on the category; the owner chooses it, corrects the amount there
+  /// too, and Return in the field saves the amount the panel shows, not the one the line still
+  /// says.
   func testAnAmountCorrectedInThePanelAfterTheStopIsSaved() async throws {
     let host = try await EntryHost(opensDetails: false)
     self.host = host
@@ -230,6 +296,7 @@ final class EntryGapTests: XCTestCase {
     XCTAssertEqual(try host.transactions.count(), 0, "the first Enter stops for the category")
 
     host.settle(0.3)
+    try host.pressDown()
     // The field selects what it holds as it takes the focus: typing replaces «250».
     let amount = try host.type("260", into: try host.field(prompt: "0"))
     amount.insertNewline(nil)
@@ -246,24 +313,16 @@ final class EntryGapTests: XCTestCase {
     let host = try await EntryHost(opensDetails: false)
     self.host = host
     let first = try XCTUnwrap(
-      try host.references.categories().first { $0.parentId == nil && $0.kind == .expense },
-      "the first category of the menu")
+      try host.references.categories().first {
+        $0.parentId == nil && $0.kind == .expense && $0.systemRole == nil
+      }, "the first category of the menu")
     let editor = try host.type("coffee 250", into: try host.line())
     editor.insertNewline(nil)
     host.settle()
     XCTAssertEqual(try host.transactions.count(), 0, "the first Enter stops for the category")
 
     host.settle(0.3)
-    XCTAssertTrue(host.window.makeFirstResponder(try host.line()))
-    // ↓ as the window hands a key press to the line: the line's own handler of keys is reached
-    // this way, not through its editor.
-    let arrow = String(UnicodeScalar(NSDownArrowFunctionKey)!)
-    host.window.sendEvent(
-      NSEvent.keyEvent(
-        with: .keyDown, location: .zero, modifierFlags: [.function, .numericPad], timestamp: 0,
-        windowNumber: host.window.windowNumber, context: nil, characters: arrow,
-        charactersIgnoringModifiers: arrow, isARepeat: false, keyCode: 125)!)
-    host.settle()
+    try host.pressDown()
     XCTAssertTrue(
       ((host.window.firstResponder as? NSTextView)?.delegate as? NSTextField)
         === (try host.line()), "the focus stays in the line")
@@ -274,9 +333,9 @@ final class EntryGapTests: XCTestCase {
   }
 
   /// A place the line names that nobody has made yet is made with «Добавить…» after the stop:
-  /// the same line now reads with the place, and is still the line the stop was for — Return
-  /// saves it instead of asking again.
-  func testAddingThePlaceOfTheLineDoesNotAskAgain() async throws {
+  /// the same line now reads with the place, and is still the line the stop was for — the
+  /// category is still what is missing, and once it is chosen Return saves the place with it.
+  func testAddingThePlaceOfTheLineKeepsTheStopForTheCategory() async throws {
     let host = try await EntryHost(opensDetails: false)
     self.host = host
     let editor = try host.type("coffee 300 at Nowhere", into: try host.line())
@@ -288,12 +347,13 @@ final class EntryGapTests: XCTestCase {
     let nowhere = Place(name: "Nowhere")
     try host.references.save(nowhere)
     host.environment.refreshVocabulary()
-    host.settle(0.3)
-    XCTAssertTrue(host.window.makeFirstResponder(try host.line()))
-    try XCTUnwrap(host.window.firstResponder as? NSTextView).insertNewline(nil)
-    host.settle()
+    try returnInTheLine(of: host)
+    XCTAssertEqual(try host.transactions.count(), 0, "a place does not say the category")
+
+    try host.pressDown()
+    try returnInTheLine(of: host)
     let saved = try host.transactions.recentEntries(limit: 5)
-    XCTAssertEqual(saved.count, 1, "the second Return saves")
+    XCTAssertEqual(saved.count, 1, "the Return after the choice saves")
     XCTAssertEqual(saved.first?.transaction.placeId, nowhere.id)
   }
 }

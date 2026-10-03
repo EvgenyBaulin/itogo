@@ -397,34 +397,32 @@ struct MainWindow: View {
         // them over again here; below the root nothing has to trust the environment.
         .appDependencies(deps)
     } detail: {
-      // The entry bar takes its width from the whole window, and the detail column it
-      // floats over only keeps it clear of its sides.
-      GeometryReader { proxy in
-        content
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-          // The bar floats over the last rows and keeps them clear of it. The room it needs
-          // is left to the safe area and never measured back into `@State`: a height handed
-          // back into the layout of its own branch is what kept the window of Transactions
-          // asking for another Update Constraints pass until AppKit threw.
-          .safeAreaInset(edge: .bottom, spacing: 0) {
-            EntryBar(
-              windowWidth: windowWidth, detailWidth: proxy.size.width, opensDetails: opensDetails
-            ) {
-              if showsOperations {
-                SelectionBar(actions: overviewActions)
-              }
+      HStack(spacing: 0) {
+        // The entry bar takes its width from the whole window, and the detail column it
+        // floats over only keeps it clear of its sides.
+        GeometryReader { proxy in
+          content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The bar floats over the last rows and keeps them clear of it. The room it needs
+            // is left to the safe area and never measured back into `@State`: a height handed
+            // back into the layout of its own branch is what kept the window of Transactions
+            // asking for another Update Constraints pass until AppKit threw.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+              entryDock(detailWidth: proxy.size.width)
             }
-            // The selection bar morphs out of the capsule and back only inside an animated
-            // change, and the selection changes in many places — the native list, ×, Esc, a
-            // popover, a deletion — besides a large write that holds the bar with nothing
-            // selected. Animating by its visibility here covers them all, moves the chips
-            // above it smoothly, and leaves a selection that merely grows alone.
-            .animation(.snappy, value: showsSelectionBar)
-          }
-          // The root of the screen: the selection bar reports its frame in this space, and
-          // the sheets, popovers and confirmations of the list hang here, not on its rows.
-          .coordinateSpace(.named(OperationActions.coordinateSpace))
-          .operationPresentations(overviewActions)
+            // The root of the screen: the selection bar reports its frame in this space, and
+            // the sheets, popovers and confirmations of the list hang here, not on its rows.
+            .coordinateSpace(.named(OperationActions.coordinateSpace))
+            .operationPresentations(overviewActions)
+        }
+        // The form of a new operation, when the owner chose it in Settings → «Ввод»: a column
+        // of its own at the right, always there, in place of the line (`EntryStyle.form`).
+        if environment.entryStyle == .form, environment.state == .ready {
+          Divider()
+          EntryBar(windowWidth: windowWidth, detailWidth: 0, style: .form) { EmptyView() }
+            .frame(width: Self.entryFormWidth)
+            .background(.background)
+        }
       }
       // The other column of the same split, for the same reason.
       .appDependencies(deps)
@@ -541,6 +539,37 @@ struct MainWindow: View {
     .modifier(CurrencyNotice(deps: deps, waits: remindersShown != nil || asksSetup))
     .onChange(of: environment.currenciesMissingAtBank) { _, missing in
       if missing.isEmpty { showRemindersOnce() }
+    }
+  }
+
+  /// The width of the form of a new operation at the right of the window.
+  static let entryFormWidth: CGFloat = 380
+
+  /// What stands at the bottom of the list: the entry line with the selection bar in its glass
+  /// container, or — with the form at the side, which has no line to carry it — the selection bar
+  /// alone.
+  @ViewBuilder
+  private func entryDock(detailWidth: CGFloat) -> some View {
+    switch environment.entryStyle {
+    case .line:
+      EntryBar(
+        windowWidth: windowWidth, detailWidth: detailWidth, opensDetails: opensDetails
+      ) {
+        if showsOperations {
+          SelectionBar(actions: overviewActions)
+        }
+      }
+      // The selection bar morphs out of the capsule and back only inside an animated
+      // change, and the selection changes in many places — the native list, ×, Esc, a
+      // popover, a deletion — besides a large write that holds the bar with nothing
+      // selected. Animating by its visibility here covers them all, moves the chips
+      // above it smoothly, and leaves a selection that merely grows alone.
+      .animation(.snappy, value: showsSelectionBar)
+    case .form:
+      if showsSelectionBar {
+        SelectionDock(actions: overviewActions)
+          .transition(.opacity.combined(with: .move(edge: .bottom)))
+      }
     }
   }
 

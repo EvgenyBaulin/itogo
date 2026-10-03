@@ -64,6 +64,10 @@ struct EntryBar<Accessory: View>: View {
   let windowWidth: CGFloat
   /// Width of the column the bar floats over: the bar never reaches its sides.
   let detailWidth: CGFloat
+  /// How a new operation is filled in (`EntryStyle`): the floating line with the ↓ panel above
+  /// it, or the form of every field in a column of its own — no line, no suggestions, the panel
+  /// always open and saved with its own button.
+  var style: EntryStyle = .line
   /// The ↓ panel is open from the start. A test opens it this way: a key press needs a key
   /// window, and a test host is not always given one.
   var opensDetails: Bool = false
@@ -82,6 +86,9 @@ struct EntryBar<Accessory: View>: View {
 
   @State private var text = ""
   @State private var showsDetails = false
+  /// A field of the form has the keyboard: «Save» answers Return then, and only then — the rest
+  /// of the time Return belongs to whatever else in the window has the focus.
+  @State private var formFocused = false
   /// The caption above the line: why it was not saved, or what the panel asks for.
   @State private var message: EntryLineMessage?
   /// One keystroke of Return saves once, however many ways AppKit hands it over.
@@ -97,6 +104,12 @@ struct EntryBar<Accessory: View>: View {
   @State private var countQuestion: BeforeTheCountQuestion?
   /// The picker of purchases a refund takes money back from, while it is open.
   @State private var refundRequest: RefundPickerRequest?
+  /// «Такая же операция уже записана — добавить ещё?», waiting for the owner's answer.
+  @State private var repeatQuestion: RepeatQuestion?
+  /// «Запись или план?» for an operation dated after today, waiting for the owner's answer.
+  @State private var aheadQuestion: AheadQuestion?
+  /// The transfer sheet «Перевести…» of the panel opened, while it is open.
+  @State private var transfer: TransferRequest?
   /// The chips under the line.
   @State private var templates = TemplatesModel()
   @Namespace private var glass
@@ -106,6 +119,209 @@ struct EntryBar<Accessory: View>: View {
   }
 
   var body: some View {
+    Group {
+      switch style {
+      case .line: lineBody
+      case .form: formBody
+      }
+    }
+    .onAppear {
+      focused = style == .line
+      prepareModel()
+      templates.attach(environment.references)
+      if opensDetails || style == .form { showsDetails = true }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .focusEntryLine)) { _ in
+      startNewOperation()
+    }
+    // ↑ on the newest row of the list, or Esc in it: the keyboard comes back to the line.
+    .onReceive(NotificationCenter.default.publisher(for: .returnToEntryLine)) { _ in
+      focused = style == .line
+    }
+    // Goals and debts made in Planning or Debts belong in the pickers of the ↓ panel at once
+    // (review of the app, 19.09): read again when the panel opens and after each write. The
+    // defaults are laid as it opens too: an operation entered in the panel alone never passes
+    // through the line, and is not saved without the default payment method.
+    .onChange(of: showsDetails) { _, shown in
+      guard shown else { return }
+      model?.prepareForPanel(today: environment.today)
+      readTheLineIntoThePanel()
+    }
+    // The open panel shows what the line says as it is typed, not only after Enter. The notice
+    // that an operation became a plan has said what it had to: the next line starts clean.
+    .onChange(of: text) { _, _ in
+      if case .planned = message { message = nil }
+      readTheLineIntoThePanel()
+    }
+    .onChange(of: compute.generation) { _, _ in
+      if showsDetails { model?.reload() }
+      // The chips too: a restore or an archive brought in replaces them.
+      templates.reload()
+    }
+    // Cancelled, the confirmation leaves the line as it was; recorded, it clears it like a
+    // save. A person who owes nothing, or owes on a debt, sends the money back to the line as
+    // income or as that debt's repayment.
+    .sheet(
+      item: $moneyBack,
+      onDismiss: {
+        // One sheet at a time: the payment form of the debt opens once the confirmation is gone.
+        repayment = pendingRepayment
+        pendingRepayment = nil
+      }
+    ) { prefill in
+      MoneyBackConfirmSheet(
+        prefill: prefill,
+        recordAsIncome: { recordMoneyBack(.income, from: $0) },
+        recordAsDebtRepayment: { recordMoneyBack(.debtRepayment($0), from: $1) },
+        recorded: { if let model { finishSaving(model) } }
+      )
+      .handingOver(dependencies)
+    }
+    // Written there, the repayment clears the line like a save; cancelled, the line stays.
+    .sheet(item: $repayment) { form in
+      DebtSheetView(sheet: form, onDone: { if let model { finishSaving(model) } })
+        .handingOver(dependencies)
+    }
+    // The ↓ panel asks for the picker through the model: read here, in the body, so the ask
+    // is seen, and handed to the sheet.
+    .onChange(of: model?.refundPicking) { _, request in
+      guard let request else { return }
+      model?.refundPicking = nil
+      refundRequest = request
+    }
+    // A refund picks the purchase it takes money back from; asked by Enter, the save goes on
+    // once one is picked — or «Без покупки».
+    .sheet(item: $refundRequest) { request in
+      if let model {
+        RefundPicker(entry: model) {
+          guard request.savesAfterChoice else { return }
+          Task { @MainActor in commit(model) }
+        }
+        .handingOver(dependencies)
+      }
+    }
+    // The answers date the operation before or after each count of its day, and the save
+    // goes on at the moment they give.
+    .beforeTheCountQuestions($countQuestion) { moment in
+      guard let model else { return }
+      model.stampCount(moment)
+      commit(model)
+    }
+    // «Перевести…» of the panel: the sheet of a transfer started with what the panel holds. Once
+    // a transfer is written the line and the panel start over; cancelled, they stay as they were.
+    .sheet(item: $transfer) { request in
+      TransferSheet(form: request.form) { written in
+        transfer = nil
+        if written, let model { finishSaving(model) }
+      }
+      .handingOver(dependencies)
+    }
+    // Two questions before a new operation is written, each on a view of its own: a record or a
+    // plan, for a date after today; and «такая же уже записана», for a repeat of the last minutes.
+    .background {
+      Color.clear.confirmationDialog(
+        aheadQuestion.map { $0.title(environment) } ?? "",
+        isPresented: Binding(
+          get: { aheadQuestion != nil }, set: { if !$0 { aheadQuestion = nil } }),
+        titleVisibility: .visible, presenting: aheadQuestion
+      ) { question in
+        Button(environment.language("entry.ahead.record", table: "Entry")) { recordAhead() }
+        Button(environment.language(question.planKey, table: "Entry")) { makeAPlan(of: question) }
+        Button(environment.language("action.cancel"), role: .cancel) {}
+      } message: { _ in
+        Text(verbatim: environment.language("entry.ahead.message", table: "Entry"))
+      }
+    }
+    .background {
+      Color.clear.confirmationDialog(
+        environment.language("entry.repeat.title", table: "Entry"),
+        isPresented: Binding(
+          get: { repeatQuestion != nil }, set: { if !$0 { repeatQuestion = nil } }),
+        titleVisibility: .visible, presenting: repeatQuestion
+      ) { _ in
+        Button(environment.language("entry.repeat.add", table: "Entry")) { addTheRepeat() }
+        Button(environment.language("entry.repeat.skip", table: "Entry"), role: .cancel) {}
+      } message: { question in
+        Text(verbatim: question.message(environment))
+      }
+    }
+  }
+
+  /// «Очистить» of the form: what was typed is dropped and the defaults are laid again.
+  private func clearTheForm() {
+    guard let model else { return }
+    model.reset()
+    model.reload()
+    model.prepareForPanel(today: environment.today)
+    message = nil
+    model.focusRequest = .first
+  }
+
+  /// «Перевести…»: the transfer sheet with what the panel holds — the amount, its currency, the
+  /// account, the day and the note (`TransferForm.init(fromThePanel:…)`).
+  private func startTransfer() {
+    guard let model else { return }
+    transfer = TransferRequest(
+      form: TransferForm(
+        fromThePanel: model.draft, account: model.selectedAccount,
+        accounts: model.paymentMethods, calendar: environment.calendar))
+  }
+
+  /// «Записать как есть»: the operation dated ahead is written on its date; the question is not
+  /// asked again for it.
+  private func recordAhead() {
+    guard let model else { return }
+    AppLog.info("entry.aheadRecorded", .ui, "an operation dated ahead was recorded as it is")
+    model.aheadAnswered = true
+    continueSaving(model)
+  }
+
+  /// The plan the question offered, written instead of the operation — one step of ⌘Z — and the
+  /// line cleared; a plan that was not written leaves the line as it was.
+  private func makeAPlan(of question: AheadQuestion) {
+    guard let model, let dependencies else { return }
+    let actions = PlanningActions(dependencies)
+    let saved: Bool
+    switch question.plan {
+    case .payment:
+      let name =
+        model.planName ?? environment.language("entry.ahead.payment", table: "Entry")
+      saved = actions.save(model.plannedPayment(named: name), previous: nil)
+    case .income:
+      let name =
+        model.planName ?? environment.language("entry.ahead.income", table: "Entry")
+      saved = actions.save(model.plannedIncome(named: name))
+    }
+    guard saved else {
+      message = .error("entry.error.notSaved")
+      return
+    }
+    AppLog.info(
+      "entry.aheadPlanned", .ui, "an operation dated ahead became a plan",
+      [LogPair("plan", .token("\(question.plan)"))])
+    finishSaving(model, then: .planned(question.plan, question.day))
+  }
+
+  /// «Добавить»: the repeat is written; the question is not asked again for it.
+  private func addTheRepeat() {
+    guard let model else { return }
+    AppLog.info("entry.repeatAdded", .ui, "a repeat of an operation just written was added")
+    model.repeatConfirmed = true
+    continueSaving(model)
+  }
+
+  /// The save goes on after the dialog that asked has gone: the next question it may ask — the
+  /// counts of the day — is presented by a window that has just closed one, and a window takes
+  /// the next only once the first is gone.
+  private func continueSaving(_ model: EntryDraftModel) {
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(300))
+      commit(model)
+    }
+  }
+
+  /// The floating glass capsule with the chips above it and the ↓ panel over them.
+  private var lineBody: some View {
     GlassEffectContainer(spacing: 12) {
       VStack(alignment: .leading, spacing: EntryBarMetrics.spacing) {
         TemplatesStrip(
@@ -133,15 +349,17 @@ struct EntryBar<Accessory: View>: View {
             .focused($focused)
             .accessibilityIdentifier("entry.line")
             .onSubmit(save)
-            // ↓ opens the panel only while the line has focus: a window-wide shortcut
-            // would swallow arrow keys meant for the list.
+            // ↓ walks the list of operations from the newest, and only while the line has
+            // focus: a window-wide shortcut would swallow arrow keys meant for the list.
+            // It opens nothing — the panel opens with Tab and the chevron.
             .onKeyPress(.downArrow) { press(.down) }
             .onKeyPress(.upArrow) { press(.up) }
             // Esc closes the panel and keeps the draft. With the panel closed it is not
             // ours, so it goes on to whatever else wants it.
             .onKeyPress(.escape) { press(.escape) }
-            // Tab with the panel open goes to the first field of the owner's order, Shift-Tab
-            // to the last; with the panel closed Tab is the window's, as before.
+            // Tab opens the panel and goes to the first field of the owner's order, and with the
+            // panel open it goes there too, Shift-Tab to the last; with the panel closed
+            // Shift-Tab is the window's.
             .onKeyPress(keys: [.tab, PanelTabOrder.backTab]) { key in tab(key) }
 
             Button(action: toggleDetails) {
@@ -205,76 +423,43 @@ struct EntryBar<Accessory: View>: View {
     // safe area it asks for.
     .padding(.top, EntryBarMetrics.contentGap)
     .padding(.bottom, EntryBarMetrics.bottomInset)
-    .onAppear {
-      focused = true
-      prepareModel()
-      templates.attach(environment.references)
-      if opensDetails { showsDetails = true }
-    }
-    .onReceive(NotificationCenter.default.publisher(for: .focusEntryLine)) { _ in
-      startNewOperation()
-    }
-    // Goals and debts made in Planning or Debts belong in the pickers of the ↓ panel at once
-    // (review of the app, 19.09): read again when the panel opens and after each write. The
-    // defaults are laid as it opens too: an operation entered in the panel alone never passes
-    // through the line, and is not saved without the default payment method.
-    .onChange(of: showsDetails) { _, shown in
-      if shown { model?.prepareForPanel(today: environment.today) }
-    }
-    .onChange(of: compute.generation) { _, _ in
-      if showsDetails { model?.reload() }
-      // The chips too: a restore or an archive brought in replaces them.
-      templates.reload()
-    }
-    // Cancelled, the confirmation leaves the line as it was; recorded, it clears it like a
-    // save. A person who owes nothing, or owes on a debt, sends the money back to the line as
-    // income or as that debt's repayment.
-    .sheet(
-      item: $moneyBack,
-      onDismiss: {
-        // One sheet at a time: the payment form of the debt opens once the confirmation is gone.
-        repayment = pendingRepayment
-        pendingRepayment = nil
+  }
+
+  /// The form at the side of the window (`EntryStyle.form`): every field of the panel, always
+  /// open, with a button of its own to save and one to clear. No line, no chips, no suggestions.
+  private var formBody: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack {
+        Text(verbatim: environment.language("entry.form.title", table: "Entry"))
+          .font(.headline)
+        Spacer()
+        Button(environment.language("entry.form.clear", table: "Entry"), action: clearTheForm)
+          .buttonStyle(.borderless)
+          .accessibilityIdentifier("entry.form.clear")
       }
-    ) { prefill in
-      MoneyBackConfirmSheet(
-        prefill: prefill,
-        recordAsIncome: { recordMoneyBack(.income, from: $0) },
-        recordAsDebtRepayment: { recordMoneyBack(.debtRepayment($0), from: $1) },
-        recorded: { if let model { finishSaving(model) } }
-      )
-      .handingOver(dependencies)
-    }
-    // Written there, the repayment clears the line like a save; cancelled, the line stays.
-    .sheet(item: $repayment) { form in
-      DebtSheetView(sheet: form, onDone: { if let model { finishSaving(model) } })
-        .handingOver(dependencies)
-    }
-    // The ↓ panel asks for the picker through the model: read here, in the body, so the ask
-    // is seen, and handed to the sheet.
-    .onChange(of: model?.refundPicking) { _, request in
-      guard let request else { return }
-      model?.refundPicking = nil
-      refundRequest = request
-    }
-    // A refund picks the purchase it takes money back from; asked by Enter, the save goes on
-    // once one is picked — or «Без покупки».
-    .sheet(item: $refundRequest) { request in
       if let model {
-        RefundPicker(entry: model) {
-          guard request.savesAfterChoice else { return }
-          Task { @MainActor in commit(model) }
+        ScrollView {
+          DetailsPanel(
+            model: model, submit: save, onTransfer: startTransfer, focusedInside: $formFocused
+          )
+          .padding(.trailing, 4)
         }
-        .handingOver(dependencies)
+      } else {
+        Spacer()
+      }
+      caption
+        .frame(maxWidth: .infinity, alignment: .leading)
+      HStack {
+        Spacer()
+        Button(environment.language("entry.save", table: "Entry"), action: save)
+          .buttonStyle(.borderedProminent)
+          // Return saves from any field of the form — a menu, the date, a checkbox — while the
+          // focus is in it; with the focus in the list beside it Return is the list's.
+          .keyboardShortcut(formFocused ? .defaultAction : nil)
+          .accessibilityIdentifier("entry.form.save")
       }
     }
-    // The answers date the operation before or after each count of its day, and the save
-    // goes on at the moment they give.
-    .beforeTheCountQuestions($countQuestion) { moment in
-      guard let model else { return }
-      model.stampCount(moment)
-      commit(model)
-    }
+    .padding(14)
   }
 
   /// Money back of a person who owes nothing is income; of one who owes on a debt, that debt's
@@ -332,7 +517,7 @@ struct EntryBar<Accessory: View>: View {
         }
         ScrollView {
           // Return in a field of the panel saves, as Return in the line does.
-          DetailsPanel(model: model, submit: save)
+          DetailsPanel(model: model, submit: save, onTransfer: startTransfer)
             .padding(.trailing, 4)
         }
         .frame(maxHeight: 420)
@@ -357,7 +542,7 @@ struct EntryBar<Accessory: View>: View {
       Label {
         Text(verbatim: message.text(environment))
       } icon: {
-        Image(systemName: "exclamationmark.circle")
+        Image(systemName: message.symbol)
       }
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -408,6 +593,11 @@ struct EntryBar<Accessory: View>: View {
   private func startNewOperation() {
     message = nil
     prepareModel()
+    // The form is always open: a new operation puts the keyboard on its first field.
+    if style == .form {
+      model?.focusRequest = .first
+      return
+    }
     if !showsDetails { withAnimation(.snappy) { showsDetails = true } }
     focused = true
     Task { @MainActor in
@@ -416,10 +606,16 @@ struct EntryBar<Accessory: View>: View {
     }
   }
 
-  /// Tab and Shift-Tab of the line: into the panel while it is open.
+  /// Tab and Shift-Tab of the line: into the panel. Tab opens a closed panel on its first field;
+  /// Shift-Tab with the panel closed is not ours.
   private func tab(_ key: KeyPress) -> KeyPress.Result {
-    guard showsDetails, let model else { return .ignored }
     let backwards = key.key == PanelTabOrder.backTab || key.modifiers.contains(.shift)
+    if !showsDetails {
+      guard !backwards else { return .ignored }
+      prepareModel()
+      withAnimation(.snappy) { showsDetails = true }
+    }
+    guard let model else { return .ignored }
     model.focusRequest = backwards ? .last : .first
     return .handled
   }
@@ -432,20 +628,22 @@ struct EntryBar<Accessory: View>: View {
     {
       return .handled
     }
+    // ↓ is the list's: it walks the operations from the newest and leaves the panel as it is.
+    if key == .down {
+      NotificationCenter.default.post(name: .walkOperationsList, object: nil)
+      return .handled
+    }
     let outcome = key.outcome(showing: showsDetails)
     guard outcome.handled else { return .ignored }
-    if outcome.showing {
-      prepareModel()
-      withAnimation(.snappy) { showsDetails = true }
-    } else {
-      closeDetails()
-    }
+    if !outcome.showing { closeDetails() }
     return .handled
   }
 
   /// Closing only hides the panel: the draft stays for the next ↓, and typing goes on in
   /// the line.
   private func closeDetails() {
+    // The form has no line to go back to, and nothing to close.
+    guard style == .line else { return }
     withAnimation(.snappy) { showsDetails = false }
     focused = true
   }
@@ -471,9 +669,30 @@ struct EntryBar<Accessory: View>: View {
     return "\(expression) = \(environment.money.exact(value, currency: currency))"
   }
 
+  /// The line read into the open panel at every change of it: the amount, the currency, the
+  /// date, the place and the words show there, and the chips under «Категория» follow them —
+  /// before Enter, which reads the line again and saves. What the owner chose in the panel
+  /// itself stays over the line (`EntryDraftModel.apply`). A line that cannot be read yet — an
+  /// unfinished formula, a day the calendar does not have — leaves the panel as it is: Enter says
+  /// what is wrong with it.
+  private func readTheLineIntoThePanel() {
+    guard showsDetails, let model else { return }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    let parsed = interpreter.interpret(trimmed, today: environment.today, kind: model.draft.kind)
+    guard parsed.dateProblem == nil else { return }
+    var amount = model.draft.amount
+    if let typed = parsed.amount {
+      guard let read = try? AmountE4(decimal: typed) else { return }
+      amount = read
+    }
+    model.apply(parsed, amount: amount, today: environment.today, text: trimmed)
+  }
+
   private func prepareModel() {
     guard model == nil else { return }
     let model = EntryDraftModel(environment: environment)
+    model.assisted = style.assists
     model.reload()
     self.model = model
   }
@@ -580,6 +799,21 @@ struct EntryBar<Accessory: View>: View {
         [LogPair("field", .token(gap.rawValue))])
       return
     }
+    // A date after today: a record, or a plan of Planning's? Asked once.
+    if askingForGaps, let plan = model.planAhead(today: environment.today) {
+      aheadQuestion = AheadQuestion(
+        plan: plan, day: environment.calendar.day(of: model.draft.occurredAt))
+      AppLog.info(
+        "entry.aheadAsked", .ui, "an operation dated ahead was asked about",
+        [LogPair("plan", .token("\(plan)"))])
+      return
+    }
+    // What was written a moment ago with the same amount is shown before it is written again.
+    if askingForGaps, let same = model.repeatedOperation() {
+      repeatQuestion = RepeatQuestion(entry: same)
+      AppLog.info("entry.repeatAsked", .ui, "a repeat of an operation just written was asked about")
+      return
+    }
     // Dated on the day of counts of its balances and saved after them: whether its money was
     // already counted is asked about each count of the day, oldest first, before anything is
     // written. An answer remembered for a count («Больше не спрашивать для этой сверки») is used
@@ -628,14 +862,20 @@ struct EntryBar<Accessory: View>: View {
 
   /// The operation went in — here, or in the reimbursement sheet: the line, the panel and the
   /// draft start over.
-  private func finishSaving(_ model: EntryDraftModel) {
+  private func finishSaving(_ model: EntryDraftModel, then notice: EntryLineMessage? = nil) {
     model.reset()
     // A rating just given by hand is history now (rule 2 of the qualities): the next
     // operation described the same way should find it.
     model.reload()
     text = ""
-    message = nil
-    withAnimation(.snappy) { showsDetails = false }
+    message = notice
+    // The form stays open over a fresh draft, with the defaults laid as they are when a panel
+    // opens; the line's panel closes.
+    if style == .form {
+      model.prepareForPanel(today: environment.today)
+    } else {
+      withAnimation(.snappy) { showsDetails = false }
+    }
     // The field of the panel that had the focus — Return in it, or «Save» clicked while it
     // was being typed in — goes with the panel: without this the window kept no first
     // responder and the next line was typed into nothing. `closeDetails` does the same.
@@ -756,9 +996,10 @@ enum EntrySave {
 }
 
 /// What a key of the entry line does to the ↓ panel, apart from the view so a test reads it
-/// without a window: ↓ opens it, ↑ and Esc close it (the draft stays), and with the panel
-/// closed ↑ and Esc are not ours and go on to whatever else wants them. The × of the panel
-/// and Esc inside it close it the same way (`closeDetails`).
+/// without a window: ↓ is the list's — it walks the operations from the newest and leaves the
+/// panel as it is —, ↑ and Esc close an open panel (the draft stays), and with the panel closed
+/// ↑ and Esc are not ours and go on to whatever else wants them. The × of the panel and Esc
+/// inside it close it the same way (`closeDetails`).
 /// When the bar saves («Сохранение — Enter»): a line to read, or the ↓ panel open. «Save» is
 /// active exactly then, and Return — in the line, or anywhere in the open panel — saves the
 /// same way (`EntryBar.save`), with the save or with the reason there is none: a Return that
@@ -793,7 +1034,7 @@ enum DetailsPanelKey {
 
   func outcome(showing: Bool) -> (showing: Bool, handled: Bool) {
     switch self {
-    case .down: (true, true)
+    case .down: (showing, true)
     case .up, .escape: showing ? (false, true) : (false, false)
     }
   }

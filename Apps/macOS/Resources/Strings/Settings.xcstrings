@@ -4880,6 +4880,74 @@
         }
       }
     },
+    "settings.entry.style": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New operation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ввод операции"
+          }
+        }
+      }
+    },
+    "settings.entry.style.form": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detailed form at the right, no suggestions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подробная форма справа, без подсказок"
+          }
+        }
+      }
+    },
+    "settings.entry.style.line": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Line at the bottom of the window"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Строка внизу окна"
+          }
+        }
+      }
+    },
+    "settings.entry.styleHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The line reads «coffee 250» and suggests the category, the place and the account from what you entered before; ↓ walks the list, Tab opens the panel. The form stands at the right of the window all the time: the same fields, no line and no suggestions — you choose the category, the people and the account yourself; Return saves."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Строка понимает «кофе 250» и подсказывает категорию, место и счёт по тому, что вы вводили раньше; ↓ листает список, Tab открывает панель. Форма стоит справа всегда: те же поля, но без строки и без подсказок — категорию, людей и счёт выбираете вы сами; Return сохраняет."
+          }
+        }
+      }
+    },
     "settings.events": {
       "extractionState": "manual",
       "localizations": {

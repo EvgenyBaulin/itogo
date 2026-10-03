@@ -333,7 +333,8 @@ final class GoalsArchiveTests: XCTestCase {
   }
 
   /// Nothing comes back while a live goal has the name, and an edit of a saved goal is only
-  /// that edit: the archive is asked about new goals only.
+  /// that edit: the archive is asked about new goals only. A new goal of a live goal's name is
+  /// refused instead (`testALiveGoalNameIsTakenOnce`).
   func testALiveNameOrAnEditBringsNothingBackFromTheArchive() throws {
     let old = Goal(name: "Машина", targetE4: AmountE4(whole: 900_000), archived: true)
     let live = Goal(name: "Машина", targetE4: AmountE4(whole: 1_000_000))
@@ -347,10 +348,43 @@ final class GoalsArchiveTests: XCTestCase {
       try references.goals(includeArchived: true).first { $0.id == old.id }?.archived, true)
 
     let another = Goal(name: "машина", targetE4: AmountE4(whole: 500_000))
-    XCTAssertTrue(GoalForm.save(another, isNew: true, with: actions, references: references))
+    XCTAssertFalse(GoalForm.save(another, isNew: true, with: actions, references: references))
     let all = try references.goals(includeArchived: true)
-    XCTAssertEqual(all.count, 3, "a goal was brought back beside a live one of its name")
+    XCTAssertEqual(all.count, 2, "a goal was made beside a live one of its name")
     XCTAssertEqual(all.first { $0.id == old.id }?.archived, true)
+  }
+
+  /// A live goal's name is taken once: a new goal of it, a rename to it and an archived goal
+  /// brought back under it are all refused, nothing is written and no step of ⌘Z is left.
+  func testALiveGoalNameIsTakenOnce() throws {
+    let live = Goal(name: "Машина", targetE4: AmountE4(whole: 1_000_000))
+    let other = Goal(name: "Дача", targetE4: AmountE4(whole: 300_000))
+    let old = Goal(name: "ОТПУСК", targetE4: AmountE4(whole: 90_000), archived: true)
+    let tripNow = Goal(name: "отпуск", targetE4: AmountE4(whole: 80_000))
+    for goal in [live, other, old, tripNow] { try references.save(goal) }
+
+    let again = Goal(name: " машина ", targetE4: AmountE4(whole: 500_000))
+    XCTAssertEqual(GoalForm.liveNamesake(of: again, among: try references.goals())?.id, live.id)
+    XCTAssertFalse(GoalForm.save(again, isNew: true, with: actions, references: references))
+
+    var renamed = other
+    renamed.name = "МАШИНА"
+    XCTAssertEqual(GoalForm.liveNamesake(of: renamed, among: try references.goals())?.id, live.id)
+    XCTAssertFalse(GoalForm.save(renamed, isNew: false, with: actions, references: references))
+
+    XCTAssertFalse(GoalsBlock.restore(old.id, with: actions, references: references))
+
+    let all = try references.goals(includeArchived: true)
+    XCTAssertEqual(all.count, 4)
+    XCTAssertEqual(all.first { $0.id == other.id }?.name, "Дача")
+    XCTAssertEqual(all.first { $0.id == old.id }?.archived, true)
+    XCTAssertFalse(store.canUndo, "a step of ⌘Z was left for nothing written")
+
+    // A goal saved under its own name is no namesake of itself, and a free name is saved.
+    XCTAssertNil(GoalForm.liveNamesake(of: live, among: try references.goals()))
+    var fresh = other
+    fresh.name = "Дача у моря"
+    XCTAssertTrue(GoalForm.save(fresh, isNew: false, with: actions, references: references))
   }
 
   /// A goal deleted meanwhile is not written back.

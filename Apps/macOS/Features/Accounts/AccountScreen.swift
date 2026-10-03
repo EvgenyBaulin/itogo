@@ -183,7 +183,16 @@ struct AccountHistoryList<Header: View>: View {
     } primaryAction: { ids in
       actions.edit(ids, store: store)
     }
-    .onExitCommand { actions.selection = [] }
+    // ↓ in the entry line walks the list from its newest row; Esc clears the selection and
+    // hands the keyboard back to the line.
+    .walkedFromTheEntryLine(
+      firstRow: OperationsWalk.firstRow(of: (history?.days ?? []).map(\.items)),
+      selection: $actions.selection
+    )
+    .onExitCommand {
+      actions.selection = []
+      NotificationCenter.default.post(name: .returnToEntryLine, object: nil)
+    }
     .onDeleteCommand {
       guard !actions.selection.isEmpty else { return }
       actions.requestDeletion(of: actions.selection, store: store)

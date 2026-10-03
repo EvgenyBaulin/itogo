@@ -127,6 +127,25 @@ public final class AppEnvironment {
     EntryFieldOrder.decode(defaults.string(forKey: entryFieldOrderKey))
   }
 
+  /// How a new operation is filled in, chosen in Settings → «Ввод»: the line at the bottom of the
+  /// window, or the form of every field at the right (`EntryStyle`). A habit of the owner, kept in
+  /// `UserDefaults` beside the order of the fields, carried by the archive (`portableSettings`),
+  /// never a step of ⌘Z.
+  public var entryStyle: EntryStyle = AppEnvironment.storedEntryStyle() {
+    didSet {
+      guard entryStyle != oldValue else { return }
+      UserDefaults.standard.set(entryStyle.rawValue, forKey: Self.entryStyleKey)
+    }
+  }
+
+  /// The key of `entryStyle` in `UserDefaults` and in the archive's `settings.json`.
+  nonisolated static let entryStyleKey = "entry.style"
+
+  /// The style `UserDefaults` keeps; the line when there is none or the word is not known.
+  nonisolated static func storedEntryStyle(in defaults: UserDefaults = .standard) -> EntryStyle {
+    EntryStyle(stored: defaults.string(forKey: entryStyleKey))
+  }
+
   /// «Найти пропущенные…» of a reconciliation: the Transactions window shows these days as
   /// soon as it is there, then clears this.
   public var pendingTransactionsRange: DayRange?
@@ -473,6 +492,7 @@ public final class AppEnvironment {
       "theme.scheme": theme.scheme.rawValue,
       "theme.accent": theme.accent.rawValue,
       Self.entryFieldOrderKey: EntryFieldOrder.encode(entryFieldOrder),
+      Self.entryStyleKey: entryStyle.rawValue,
     ]
     if let currencies = try? settings?.enabledCurrencies() {
       values["currencies"] = currencies.map(\.code).joined(separator: ",")

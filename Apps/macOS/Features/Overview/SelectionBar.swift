@@ -150,3 +150,20 @@ struct SelectionBar: View {
 
   private func t(_ key: String) -> String { environment.language(key, table: "Transactions") }
 }
+
+/// The bar of a selection in the main window when there is no entry line to carry it — the form
+/// of a new operation stands at the side instead (`EntryStyle.form`): it floats alone at the
+/// bottom of the list, in a container of its own, as wide as what it says, as in the window of
+/// Transactions.
+struct SelectionDock: View {
+  let actions: OperationActions
+
+  var body: some View {
+    GlassEffectContainer {
+      SelectionBar(actions: actions, hugsContent: true)
+    }
+    .frame(maxWidth: 560)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 12)
+  }
+}

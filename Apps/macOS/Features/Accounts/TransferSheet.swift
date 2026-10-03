@@ -143,11 +143,9 @@ struct TransferSheet: View {
             .font(.caption)
             .foregroundStyle(.secondary)
           }
-          DatePicker(selection: dayBinding, displayedComponents: .date) {
+          // The date and the time in one line, as for an expense and an income.
+          DatePicker(selection: momentBinding, displayedComponents: [.date, .hourAndMinute]) {
             Text(verbatim: t("transfer.sheet.date"))
-          }
-          DatePicker(selection: timeBinding, displayedComponents: .hourAndMinute) {
-            Text(verbatim: t("transfer.sheet.time"))
           }
           .environment(\.locale, environment.language.locale)
           TextField(text: $form.note) {
@@ -299,18 +297,16 @@ struct TransferSheet: View {
     }
   }
 
-  private var dayBinding: Binding<Date> {
-    Binding(
-      get: { environment.calendar.noon(of: form.day) },
-      set: { form.day = environment.calendar.day(of: $0) })
-  }
-
-  /// The time of the transfer: until the owner picks one, the moment it would get — now for
-  /// today, noon for another day, its own for an edit that keeps the day.
-  private var timeBinding: Binding<Date> {
+  /// The moment of the transfer: until the owner picks a time, the one it would get — now for
+  /// today, noon for another day, its own for an edit that keeps the day. Picking another day
+  /// alone chooses no time (`TransferForm.choose`).
+  private var momentBinding: Binding<Date> {
     Binding(
       get: { form.occurredAt(now: environment.now(), calendar: environment.calendar) },
-      set: { form.time = environment.calendar.timeOfDay($0) })
+      set: { picked in
+        let shown = form.occurredAt(now: environment.now(), calendar: environment.calendar)
+        form.choose(moment: picked, shown: shown, calendar: environment.calendar)
+      })
   }
 
   /// «Курс обмена: 1 € = 98.5 ₽».

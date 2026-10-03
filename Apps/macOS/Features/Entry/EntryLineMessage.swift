@@ -10,6 +10,8 @@ enum EntryLineMessage: Equatable {
   case date(ParsedInput.DateProblem)
   /// The line did not say the category, or the subcategory: the panel asks for it.
   case gap(EntryGap)
+  /// An operation dated ahead became a plan instead of a record: what it became, and its day.
+  case planned(OperationAhead.Plan, DateOnly)
 
   /// The words on screen.
   @MainActor func text(_ environment: AppEnvironment) -> String {
@@ -25,7 +27,17 @@ enum EntryLineMessage: Equatable {
       return environment.language("entry.gap.category", table: "Entry")
     case .gap(.subcategory):
       return environment.language("entry.gap.subcategory", table: "Entry")
+    case .planned(let plan, let day):
+      return environment.language.format(
+        plan == .payment ? "entry.ahead.planned.payment" : "entry.ahead.planned.income",
+        table: "Entry", environment.dates.longDay(day))
     }
+  }
+
+  /// The symbol before a message that is not an error.
+  var symbol: String {
+    if case .planned = self { return "calendar.badge.plus" }
+    return "exclamationmark.circle"
   }
 
   /// The words beside the picker the panel marks.
@@ -39,7 +51,9 @@ enum EntryLineMessage: Equatable {
   /// An error is red; a question of the panel is not — the line is not wrong, it is short of a
   /// choice, and the panel says which one.
   var isError: Bool {
-    if case .gap = self { return false }
-    return true
+    switch self {
+    case .gap, .planned: false
+    case .error, .date: true
+    }
   }
 }

@@ -40,7 +40,15 @@ struct DayList<Header: View, MenuItems: View>: View {
     List(selection: $selection) { rows }
       .listStyle(.inset)
       .contextMenu(forSelectionType: UUID.self, menu: menu, primaryAction: primaryAction)
-      .onExitCommand { selection = [] }
+      // ↓ in the entry line walks the list from its newest row; Esc clears the selection and
+      // hands the keyboard back to the line.
+      .walkedFromTheEntryLine(
+        firstRow: OperationsWalk.firstRow(of: groups.map(\.items)), selection: $selection
+      )
+      .onExitCommand {
+        selection = []
+        NotificationCenter.default.post(name: .returnToEntryLine, object: nil)
+      }
       // ⌘A is the system «Select All», and a focused list answers it by itself. This is the
       // way back when it does not reach the list: the same thing, done by hand.
       .onCommand(#selector(NSResponder.selectAll(_:))) {

@@ -82,7 +82,8 @@ struct GoalDeletionTests: SavingsFixtures {
     #expect(GoalRules.archivedNamesake(of: "  ", among: goals) == nil)
   }
 
-  /// A live goal of the name: nothing to repeat — the name is simply taken twice, as before.
+  /// A live goal of the name: the archive is not asked — the live goal is the namesake
+  /// (`GoalRules.liveNamesake`).
   @Test func noNamesakeWhileALiveGoalHasTheName() {
     let goals = [goal("Отпуск", archived: true, id: 1), goal("отпуск", id: 2)]
     #expect(GoalRules.archivedNamesake(of: "Отпуск", among: goals) == nil)

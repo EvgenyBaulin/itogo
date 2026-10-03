@@ -12,8 +12,8 @@ import Foundation
 extension GoalRules {
   /// The archived goal a new goal named `name` would repeat, the names compared as the entry
   /// line compares them (case, «ё»/«е», the spaces around). Nil when there is none, when the
-  /// name says nothing, or when a live goal has the name — two live goals of one name stay
-  /// possible, as before.
+  /// name says nothing, or when a live goal has the name — that goal is the namesake then
+  /// (`liveNamesake`), and the archive is not asked.
   public static func archivedNamesake(of name: String, among goals: [Goal]) -> Goal? {
     let key = NameKey.fold(name)
     guard !key.isEmpty else { return nil }

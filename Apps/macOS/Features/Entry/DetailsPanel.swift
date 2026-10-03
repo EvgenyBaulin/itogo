@@ -23,6 +23,12 @@ struct DetailsPanel: View {
   /// Return in a text field of the panel («Сохранение — Enter»). The ↓ panel
   /// of the entry line saves with it; the editor of a saved operation has «Save» of its own.
   var submit: (() -> Void)? = nil
+  /// «Перевести…»: the panel of a new operation offers the transfer sheet, started with what the
+  /// panel holds. The editor of a saved operation has none.
+  var onTransfer: (() -> Void)? = nil
+  /// Told whether a field of the panel has the keyboard: the form at the side of the window
+  /// answers Return with «Save» only while one does.
+  var focusedInside: Binding<Bool>? = nil
   /// The control of the panel that has the keyboard focus, when it is one of the fields.
   @FocusState private var focus: PanelFocus?
 
@@ -70,6 +76,7 @@ struct DetailsPanel: View {
     }
     .frame(maxWidth: 720, alignment: .leading)
     .onSubmit { submit?() }
+    .onChange(of: focus) { _, field in focusedInside?.wrappedValue = field != nil }
     // The panel is asked to put the focus somewhere: the first or the last field of the order —
     // Tab and Shift-Tab in the line — or the field Enter asks for. Asked on the next turn: the
     // panel may be appearing just now.
@@ -718,6 +725,13 @@ struct DetailsPanel: View {
           .disabled(!model.canChangeCredit)
         }
 
+        if let onTransfer {
+          Button(t("entry.transfer"), action: onTransfer)
+            .buttonStyle(.bordered)
+            .help(t("entry.transfer.help"))
+            .accessibilityIdentifier("entry.transfer")
+        }
+
         Spacer()
       }
 
@@ -812,6 +826,7 @@ struct DetailsPanel: View {
       Text(verbatim: t("entry.category"))
     }
     .labelsHidden()
+    .accessibilityIdentifier("entry.category")
   }
 
   /// The subcategory of a part: only children of the chosen category, plus the dash, which

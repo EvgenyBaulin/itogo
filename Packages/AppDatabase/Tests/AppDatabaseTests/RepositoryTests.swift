@@ -62,6 +62,29 @@ struct RepositoryTests {
     #expect(try repository.count() == 1)
   }
 
+  /// What the entry line compares a new operation with: the operations written (by their own
+  /// `created_at`, whatever date they carry) since a moment, the deleted ones left out.
+  @Test func operationsWrittenSinceAMomentAreReadWhateverDateTheyCarry() throws {
+    let stack = try TestSupport.makeStack()
+    let repository = TransactionRepository(writer: stack.writer)
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    // Dated a month ago, written a minute ago: written recently all the same.
+    var backdated = try TestSupport.makeEntry(
+      occurredAt: now.addingTimeInterval(-30 * 86_400), note: "backdated")
+    backdated.transaction.createdAt = now.addingTimeInterval(-60)
+    var old = try TestSupport.makeEntry(occurredAt: now.addingTimeInterval(-60), note: "old")
+    old.transaction.createdAt = now.addingTimeInterval(-600)
+    var deleted = try TestSupport.makeEntry(occurredAt: now, note: "deleted")
+    deleted.transaction.createdAt = now.addingTimeInterval(-30)
+    for entry in [backdated, old, deleted] { try repository.save(entry) }
+    try repository.softDelete(id: deleted.id)
+
+    let recent = try repository.entries(recordedSince: now.addingTimeInterval(-300))
+    #expect(recent.map(\.transaction.note) == ["backdated"])
+    #expect(recent.first?.parts.count == 1, "the parts come with it")
+    #expect(try repository.entries(recordedSince: now.addingTimeInterval(-3_600)).count == 2)
+  }
+
   /// Rule 2 of the qualities only needs the operations I rated by hand, and a deleted one
   /// no longer counts.
   @Test func onlyOperationsRatedByHandAreReadForTheQualityHistory() throws {

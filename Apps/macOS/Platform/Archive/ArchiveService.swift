@@ -364,6 +364,10 @@ enum ArchiveImportFlow {
         EntryFieldOrder.encode(EntryFieldOrder.decode(order)),
         forKey: AppEnvironment.entryFieldOrderKey)
     }
+    // The style of the entry is kept when this build knows the word.
+    if let style = values[AppEnvironment.entryStyleKey], EntryStyle(rawValue: style) != nil {
+      defaults.set(style, forKey: AppEnvironment.entryStyleKey)
+    }
   }
 
   /// What an import asks the owner and what it tells them. Alerts in the app; a test answers

@@ -27,12 +27,21 @@ struct GoalForm: View {
 
   var body: some View {
     let namesake = Self.namesake(of: goal, isNew: original == nil, among: goals)
+    let taken = Self.liveNamesake(of: goal, among: goals)
     VStack(alignment: .leading) {
       Text(verbatim: t(original == nil ? "form.goal.new" : "form.goal.edit")).font(.headline)
       Form {
         TextField(t("form.name"), text: $goal.name)
           .onChange(of: goal.name) { _, _ in deletionNote = nil }
-        if let namesake {
+        if taken != nil {
+          Label {
+            Text(verbatim: t("form.goal.liveNamesake"))
+          } icon: {
+            Image(systemName: "exclamationmark.circle")
+          }
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("goal.liveNamesake")
+        } else if let namesake {
           namesakeRow(namesake)
         }
         LabeledContent(t("form.goal.target")) {
@@ -87,7 +96,7 @@ struct GoalForm: View {
       FormButtons(
         title: environment.language("action.save"),
         enabled: !goal.name.trimmingCharacters(in: .whitespaces).isEmpty && goal.targetE4.raw > 0
-          && namesake == nil
+          && namesake == nil && taken == nil
       ) {
         guard let dependencies else { return false }
         return Self.save(
@@ -216,6 +225,12 @@ struct GoalForm: View {
     return GoalRules.archivedNamesake(of: goal.name, among: goals)
   }
 
+  /// The live goal that already has the name the form holds — for a new goal, a rename and a
+  /// goal brought back alike; the goal itself is never its own namesake. «Такая цель уже есть».
+  static func liveNamesake(of goal: Goal, among goals: [Goal]) -> Goal? {
+    GoalRules.liveNamesake(of: goal.name, excluding: goal.id, among: goals)
+  }
+
   /// The goal as «Сохранить» writes it: no date unless it has one, and the month its plan
   /// counts from — this month for a plan that appears, none for a plan removed, the stored one
   /// otherwise (`GoalRules.withPlanStart`).
@@ -227,7 +242,8 @@ struct GoalForm: View {
 
   /// «Сохранить» of the form, one step of ⌘Z. A name the archive holds is never made a second
   /// time: a new goal named as an archived one — compared the way the entry line compares
-  /// names — is not saved; the form offers to bring that goal back or to delete it first.
+  /// names — is not saved; the form offers to bring that goal back or to delete it first. A name
+  /// a live goal has is refused by the write itself (`PlanningActions.save`).
   @discardableResult
   static func save(
     _ goal: Goal, isNew: Bool, with actions: PlanningActions, references: ReferenceRepository?

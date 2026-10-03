@@ -5676,23 +5676,6 @@
         }
       }
     },
-    "transfer.sheet.time": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Time"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Время"
-          }
-        }
-      }
-    },
     "transfer.sheet.title": {
       "extractionState": "manual",
       "localizations": {

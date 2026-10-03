@@ -17,7 +17,7 @@ final class EntryHost {
 
   /// `prepare` writes what the book holds before the bar appears.
   init(
-    opensDetails: Bool = true, width: CGFloat = 900,
+    opensDetails: Bool = true, width: CGFloat = 900, style: EntryStyle = .line,
     prepare: (AppEnvironment) throws -> Void = { _ in }
   ) async throws {
     directory = FileManager.default.temporaryDirectory
@@ -40,7 +40,9 @@ final class EntryHost {
       backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.contentView = NSHostingView(
-      rootView: EntryBar(windowWidth: width, detailWidth: width, opensDetails: opensDetails) {
+      rootView: EntryBar(
+        windowWidth: width, detailWidth: width, style: style, opensDetails: opensDetails
+      ) {
         EmptyView()
       }
       .appDependencies(deps))
@@ -57,6 +59,7 @@ final class EntryHost {
 
   var transactions: TransactionRepository { environment.transactions! }
   var references: ReferenceRepository { environment.references! }
+  var planning: PlanningRepository { environment.planning! }
 
   func settle(_ seconds: TimeInterval = 0.3) {
     RunLoop.main.run(until: Date().addingTimeInterval(seconds))
@@ -110,6 +113,28 @@ final class EntryHost {
   /// Return as the window's key equivalent: what reaches the default button.
   func returnAsKeyEquivalent() -> Bool {
     window.performKeyEquivalent(with: Self.key("\r", code: 36))
+  }
+
+  /// A key as the window hands a key press to the line: the line's own handler of keys
+  /// (`onKeyPress`) is reached this way, not through the field editor's `keyDown`. The focus is
+  /// put on the line first.
+  func pressKey(
+    _ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = []
+  ) throws {
+    XCTAssertTrue(window.makeFirstResponder(try line()))
+    window.sendEvent(
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, characters: characters,
+        charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
+    settle()
+  }
+
+  /// ↓ in the line.
+  func pressDown() throws {
+    try pressKey(
+      String(UnicodeScalar(NSDownArrowFunctionKey)!), code: 125,
+      modifiers: [.function, .numericPad])
   }
 
   static func key(
@@ -180,7 +205,7 @@ final class EntryReturnTests: XCTestCase {
   // MARK: In the window
 
   /// The panel alone: an amount typed, the focus on the date, Return — the operation is saved
-  /// (after the one stop for the category the panel does not have yet).
+  /// (after the stop for the category the panel does not have yet, and the choice of one).
   func testReturnOnTheDatePickerSavesThePanel() async throws {
     let host = try await EntryHost()
     self.host = host
@@ -193,6 +218,7 @@ final class EntryReturnTests: XCTestCase {
     host.settle()
     XCTAssertEqual(try host.transactions.count(), 0, "the first Return asks for the category")
     host.settle(0.3)
+    try host.pressDown()
     if !(host.window.firstResponder is NSDatePicker) {
       XCTAssertTrue(host.window.makeFirstResponder(picker))
     }
@@ -223,9 +249,9 @@ final class EntryReturnTests: XCTestCase {
     XCTAssertFalse(host.store.canUndo, "one step, and nothing after it")
   }
 
-  /// A line that does not tell its category stops once to ask for it. One Return handed to the
+  /// A line that does not tell its category stops to ask for it. One Return handed to the
   /// line's own action and to the default button at once is that one stop, not the stop and
-  /// then a save; the next keystroke saves.
+  /// then a save; once the category is chosen the next keystroke saves.
   func testOneReturnOnALineThatStopsForItsCategoryDoesNotSaveAtOnce() async throws {
     let host = try await EntryHost()
     self.host = host
@@ -236,7 +262,7 @@ final class EntryReturnTests: XCTestCase {
     XCTAssertEqual(try host.transactions.count(), 0, "the stop for the category holds")
 
     host.settle(0.3)
-    XCTAssertTrue(host.window.makeFirstResponder(try host.line()))
+    try host.pressDown()
     try XCTUnwrap(host.window.firstResponder as? NSTextView).insertNewline(nil)
     host.settle()
     XCTAssertEqual(try host.transactions.count(), 1, "the next Return saves")

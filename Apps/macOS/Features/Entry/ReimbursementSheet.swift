@@ -227,8 +227,10 @@ struct ReimbursementSheet: View {
       HStack {
         Spacer()
         Button(environment.language("action.cancel"), role: .cancel) { dismiss() }
+          .keyboardShortcut(.cancelAction)
         Button(environment.language("action.save"), action: record)
           .buttonStyle(.borderedProminent)
+          .keyboardShortcut(.defaultAction)
           .disabled(
             !Self.canRecord(closing: selectedParts, chosen: personId, received: amountValue))
       }

@@ -2,10 +2,11 @@ import AppCore
 import AppKit
 import SwiftUI
 
-/// Settings → «Ввод»: the order of the fields of the ↓ panel. The panel of the entry line and the
-/// editor of a saved operation lay their rows in it, and Tab walks them in it. A preference of
-/// the owner's, like the theme: kept in `UserDefaults`, carried by the transfer archive, not a
-/// step of ⌘Z.
+/// Settings → «Ввод»: how a new operation is filled in — the line at the bottom of the window,
+/// or the form of every field at the right, without a line and without suggestions — and the
+/// order of the fields of the ↓ panel. The panel of the entry line, the form and the editor of a
+/// saved operation lay their rows in it, and Tab walks them in it. A preference of the owner's,
+/// like the theme: kept in `UserDefaults`, carried by the transfer archive, not a step of ⌘Z.
 struct EntrySettingsView: View {
   @Dependency(\.environment) private var environment
   /// Read again whenever the app comes back to the front: the owner may have just turned
@@ -14,6 +15,21 @@ struct EntrySettingsView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
+      Picker(
+        selection: Binding(
+          get: { environment.entryStyle }, set: { environment.entryStyle = $0 })
+      ) {
+        Text(verbatim: t("settings.entry.style.line")).tag(EntryStyle.line)
+        Text(verbatim: t("settings.entry.style.form")).tag(EntryStyle.form)
+      } label: {
+        Text(verbatim: t("settings.entry.style"))
+      }
+      .pickerStyle(.menu)
+      .fixedSize()
+      .accessibilityIdentifier("settings.entry.style")
+      hint("settings.entry.styleHint")
+      Divider()
+
       List {
         Section {
           ForEach(environment.entryFieldOrder, id: \.self) { field in
@@ -26,7 +42,7 @@ struct EntrySettingsView: View {
           Text(verbatim: t("settings.entry.order"))
         }
       }
-      .frame(minHeight: 280)
+      .frame(minHeight: 200)
 
       HStack {
         Button(t("settings.entry.reset")) { EntrySettingsActions.reset(environment) }

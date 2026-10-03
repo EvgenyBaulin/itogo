@@ -389,7 +389,8 @@ struct TransactionEditor: View {
     VStack(alignment: .leading, spacing: style == .sheet ? 16 : 12) {
       header
       ScrollView {
-        DetailsPanel(model: editor.draft)
+        // Return in a text field saves, as «Save» does when it is on.
+        DetailsPanel(model: editor.draft, submit: saveOnReturn)
           .padding(.vertical, 2)
       }
       .frame(minWidth: style == .sheet ? 620 : nil, minHeight: style == .sheet ? 360 : nil)
@@ -425,6 +426,10 @@ struct TransactionEditor: View {
           .accessibilityIdentifier("editor.cancel")
         Button(environment.language("action.save")) { save() }
           .buttonStyle(.borderedProminent)
+          // The sheet is the window's own question, and Return answers it wherever the focus is —
+          // a date, a menu. The inspector is a column beside the table, whose Return is the
+          // table's: there only a text field's Return saves.
+          .keyboardShortcut(style == .sheet ? .defaultAction : nil)
           .disabled(!editor.canSave(in: store))
           .accessibilityIdentifier("editor.save")
       }
@@ -467,6 +472,12 @@ struct TransactionEditor: View {
       editor.balancesNow = { compute.snapshot?.planning.accounts.balances ?? .empty }
     }
     .onDisappear { editor.balancesNow = nil }
+  }
+
+  /// Return in a text field of the panel: the save, when «Save» is on.
+  private func saveOnReturn() {
+    guard editor.canSave(in: store) else { return }
+    save()
   }
 
   private func save(settling: [Transfer]? = nil) {

@@ -388,6 +388,90 @@ final class MainWindowLayoutTests: XCTestCase {
     probe.assertQuiet(about: loopMessages, comparedWith: before, "narrow, with the bar shown")
   }
 
+  // MARK: - The form at the side
+
+  /// The form of a new operation (`EntryStyle.form`) stands at the right of the detail column:
+  /// a fixed width beside the list, nothing measured back, and the window settles as it does with
+  /// the line.
+  func testTheMainWindowSettlesWithTheFormAtTheSide() throws {
+    environment.entryStyle = .form
+    let window = makeWindow()
+    try waitForList(window)
+    let probe = LogProbe()
+    let before = probe.counts(of: loopMessages)
+    let records = settle(window, "with the form at the side")
+
+    assertSettled(records, window, "with the form at the side")
+    probe.assertQuiet(
+      about: loopMessages, comparedWith: before, "with the form at the side")
+    XCTAssertEqual(AppDependencies.missingReaders, [])
+  }
+
+  /// The selection bar floats alone over the list, in a container of its own, as in the
+  /// window of Transactions — there is no line to carry it.
+  func testTheMainWindowSettlesWithTheFormAndTheSelectionBarShown() throws {
+    environment.entryStyle = .form
+    let window = makeWindow()
+    try waitForList(window)
+    settle(window, passes: 10, "before the selection")
+
+    let probe = LogProbe()
+    let before = probe.counts(of: loopMessages)
+    watched(30, "showing the selection bar beside the form") {
+      actions.selection = [first.transaction.id]
+      for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    }
+    let records = settle(window, passes: 40, "with the form and the selection bar shown")
+
+    assertSettled(records, window, "with the form and the selection bar shown")
+    probe.assertQuiet(
+      about: loopMessages, comparedWith: before, "with the form and the selection bar shown")
+    XCTAssertEqual(AppDependencies.missingReaders, [])
+  }
+
+  func testTheMainWindowSettlesNarrowWithTheFormAtTheSide() throws {
+    environment.entryStyle = .form
+    let window = makeWindow(width: 820, height: 480)
+    try waitForList(window)
+
+    let probe = LogProbe()
+    let before = probe.counts(of: loopMessages)
+    watched(30, "narrow window with the form and a selection") {
+      actions.selection = [first.transaction.id]
+      for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    }
+    let records = settle(window, passes: 40, "narrow, with the form and the bar shown")
+
+    assertSettled(records, window, "narrow, with the form and the bar shown")
+    probe.assertQuiet(
+      about: loopMessages, comparedWith: before, "narrow, with the form and the bar shown")
+  }
+
+  /// The choice in Settings moves the entry at once: the line is there with the line style, the
+  /// form's fields with the form, and each leaves nothing of the other.
+  func testTheChoiceInSettingsMovesTheEntryAtOnce() throws {
+    let window = makeWindow()
+    try waitForList(window)
+    let prompt = environment.language("entry.placeholder", table: "Entry")
+    func textFields() -> [NSTextField] {
+      var found: [NSTextField] = []
+      Self.allSubviews(of: window.contentView!, into: &found)
+      return found
+    }
+    XCTAssertNotNil(textFields().first { $0.placeholderString == prompt }, "the line")
+    XCTAssertNil(textFields().first { $0.placeholderString == "0" }, "no form yet")
+
+    environment.entryStyle = .form
+    settle(window, passes: 20, "after choosing the form")
+    XCTAssertNil(textFields().first { $0.placeholderString == prompt }, "the line is gone")
+    XCTAssertNotNil(textFields().first { $0.placeholderString == "0" }, "the form's amount")
+
+    environment.entryStyle = .line
+    settle(window, passes: 20, "after choosing the line again")
+    XCTAssertNotNil(textFields().first { $0.placeholderString == prompt }, "the line is back")
+    XCTAssertNil(textFields().first { $0.placeholderString == "0" }, "the form is gone")
+  }
+
   // MARK: - Where the room under the bar comes from
 
   /// The room the list keeps at its bottom for the floating bar. AppKit holds it as the

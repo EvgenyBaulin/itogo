@@ -14,6 +14,9 @@ public enum EntryGap: String, Sendable, Hashable, CaseIterable {
 /// is applied, the first part carries every source the app has — a goal or a debt the line
 /// named, the operation most like it (history), the model when it is sure, a chip, a template or
 /// the owner's own choice in the panel. What is still missing then is the owner's to choose.
+///
+/// A missing category is asked until one is chosen — «Не помню» is the way out for «I do not
+/// know» —, a missing subcategory once (`EntryDraftModel.gapToAsk`).
 public enum EntryCompleteness {
   /// The field a new operation still lacks, or nil. Rules, the first that applies wins:
   /// 1. a kind without a category field (money back) — nil;
@@ -46,5 +49,27 @@ public enum EntryCompleteness {
     }
     guard !liveChildren.isEmpty else { return nil }
     return part.categorySource == .model ? .subcategory : nil
+  }
+}
+
+extension EntryCompleteness {
+  /// What ↓ and ↑ walk while the stop for a category stands, as the id each stop stores: nothing
+  /// chosen first, then what the chips `suggested` — a subcategory is a stop of its own —, then
+  /// the other categories of the `menu` in its order, and last the categories of the app in the
+  /// order Goals, Loans, «Не помню» (then «Доплаты» of income). A category is walked once.
+  public static func stopChoices(
+    suggested: [UUID], menu: [CoreKit.Category], tree: CategoryTree
+  ) -> [UUID?] {
+    var seen = Set<UUID>()
+    var choices: [UUID?] = [nil]
+    func walk(_ id: UUID) {
+      if seen.insert(id).inserted { choices.append(id) }
+    }
+    suggested.forEach(walk)
+    menu.filter { tree.systemRole(of: $0.id) == nil }.forEach { walk($0.id) }
+    for role in SystemRole.allCases {
+      menu.filter { tree.systemRole(of: $0.id) == role }.forEach { walk($0.id) }
+    }
+    return choices
   }
 }

@@ -75,6 +75,24 @@ struct TransferForm: Hashable, Sendable {
     received = owed.magnitude
   }
 
+  /// «Перевести…» in the ↓ panel: what the panel holds starts a new transfer — the amount is
+  /// what leaves, in the panel's currency when the account holds it (else in the account's own),
+  /// from the account the panel names, on the day of its date, with its note as the comment. The
+  /// other side is the main account, as in every new transfer. No time is chosen.
+  init(
+    fromThePanel draft: TransactionDraft, account: PaymentMethod?, accounts: [PaymentMethod],
+    calendar: CalendarContext
+  ) {
+    self.init(from: account, accounts: accounts, day: calendar.day(of: draft.occurredAt))
+    fromCurrency = draft.currency
+    if let account { chooseFrom(account) }
+    if let toAccountId, let target = accounts.first(where: { $0.id == toAccountId }) {
+      chooseTo(target)
+    }
+    if draft.amount > .zero { sent = draft.amount }
+    note = (draft.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   /// The form of a saved transfer and its fee.
   init(editing transfer: Transfer, fee: AmountE4?, calendar: CalendarContext) {
     previous = transfer
@@ -138,6 +156,16 @@ struct TransferForm: Hashable, Sendable {
       fromAmountE4: sent, toAccountId: toAccountId, toCurrency: toCurrency,
       toAmountE4: receivedAmount, note: trimmed.isEmpty ? nil : trimmed,
       createdAt: previous?.createdAt ?? now, updatedAt: now)
+  }
+
+  /// The one field of date and time gives back the moment `picked`, where `shown` is the moment
+  /// it showed (`occurredAt`): the day is the one picked, and the time is chosen only when the
+  /// clock part of `picked` is not the one `shown` had — moving to another day alone chooses no
+  /// time, and the transfer is still asked about the counts of its day (`asksAboutTheCount`).
+  mutating func choose(moment picked: Date, shown: Date, calendar: CalendarContext) {
+    day = calendar.day(of: picked)
+    let clock = calendar.timeOfDay(picked)
+    if clock != calendar.timeOfDay(shown) { time = clock }
   }
 
   /// The moment of the transfer before the question about a count: the time the owner chose

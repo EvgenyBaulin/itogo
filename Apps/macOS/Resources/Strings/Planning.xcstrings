@@ -3464,6 +3464,23 @@
         }
       }
     },
+    "form.goal.liveNamesake": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A goal with this name already exists"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Такая цель уже есть"
+          }
+        }
+      }
+    },
     "form.goal.new": {
       "extractionState": "manual",
       "localizations": {

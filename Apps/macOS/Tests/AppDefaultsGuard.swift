@@ -14,7 +14,8 @@ final class TestBundlePrincipal: NSObject {
   }
 }
 
-/// The owner's interface language, theme and order of the ↓ panel survive the tests.
+/// The owner's interface language, theme, order of the ↓ panel and style of the entry survive the
+/// tests.
 ///
 /// The test host is the app itself, in the container of the Debug and Release builds: its
 /// `UserDefaults.standard` is the owner's. A test that sets `AppLanguage.choice` writes
@@ -22,8 +23,8 @@ final class TestBundlePrincipal: NSObject {
 /// after `make test` the app opened in English, with the language of the last test left in
 /// `AppleLanguages` (the live run of 19 September). A test that sets `AppTheme.scheme` or
 /// `.accent` writes two more keys, and would leave the owner in the theme of the last test;
-/// one that moves a field of the ↓ panel writes the order of the fields — so the guard holds
-/// all five.
+/// one that moves a field of the ↓ panel writes the order of the fields, and one that picks the
+/// form writes the style — so the guard holds all six.
 ///
 /// The guard takes the keys from the app's own domain before the first test — not through
 /// `UserDefaults`, which would answer `AppleLanguages` from the system's global domain when
@@ -47,6 +48,8 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
   static let themeAccentKey = AppTheme.accentKey
   /// The key the order of the fields of the ↓ panel writes (`AppEnvironment.entryFieldOrder`).
   static let entryFieldOrderKey = AppEnvironment.entryFieldOrderKey
+  /// The key the style of the entry writes (`AppEnvironment.entryStyle`).
+  static let entryStyleKey = AppEnvironment.entryStyleKey
 
   static let shared = AppDefaultsGuard(
     defaults: .standard, domain: Bundle.main.bundleIdentifier ?? "io.github.EvgenyBaulin.itogo")
@@ -62,16 +65,18 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
     var themeScheme: String?
     var themeAccent: String?
     var entryFieldOrder: String?
+    var entryStyle: String?
 
     init(
       language: String? = nil, appleLanguages: [String]? = nil, themeScheme: String? = nil,
-      themeAccent: String? = nil, entryFieldOrder: String? = nil
+      themeAccent: String? = nil, entryFieldOrder: String? = nil, entryStyle: String? = nil
     ) {
       self.language = language
       self.appleLanguages = appleLanguages
       self.themeScheme = themeScheme
       self.themeAccent = themeAccent
       self.entryFieldOrder = entryFieldOrder
+      self.entryStyle = entryStyle
     }
 
     /// Only what `domain` itself holds: neither the global domain nor the arguments.
@@ -82,6 +87,7 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
       themeScheme = values[AppDefaultsGuard.themeSchemeKey] as? String
       themeAccent = values[AppDefaultsGuard.themeAccentKey] as? String
       entryFieldOrder = values[AppDefaultsGuard.entryFieldOrderKey] as? String
+      entryStyle = values[AppDefaultsGuard.entryStyleKey] as? String
     }
 
     /// Writes the values back; a key that was missing is removed.
@@ -91,6 +97,7 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
       Self.put(themeScheme, forKey: AppDefaultsGuard.themeSchemeKey, in: defaults)
       Self.put(themeAccent, forKey: AppDefaultsGuard.themeAccentKey, in: defaults)
       Self.put(entryFieldOrder, forKey: AppDefaultsGuard.entryFieldOrderKey, in: defaults)
+      Self.put(entryStyle, forKey: AppDefaultsGuard.entryStyleKey, in: defaults)
     }
 
     private static func put(_ value: Any?, forKey key: String, in defaults: UserDefaults) {

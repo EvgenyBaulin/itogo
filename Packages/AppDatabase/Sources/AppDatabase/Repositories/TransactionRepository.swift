@@ -361,6 +361,18 @@ public struct TransactionRepository: Sendable {
     }
   }
 
+  /// The operations written at `moment` or later — by their own `created_at`, whatever date they
+  /// carry — newest first, the deleted ones left out: what the entry line compares a new
+  /// operation with before it is added.
+  public func entries(recordedSince moment: Date) throws -> [TransactionEntry] {
+    try writer.read { db in
+      try Self.entries(
+        where: "deleted_at IS NULL AND created_at >= ?",
+        arguments: [StoredInstant.databaseValue(moment)],
+        order: "created_at DESC, id DESC", db: db)
+    }
+  }
+
   /// The latest operations, newest first; ties go by the time they were written, then by id.
   public func recentEntries(limit: Int = 200) throws -> [TransactionEntry] {
     try writer.read { db in

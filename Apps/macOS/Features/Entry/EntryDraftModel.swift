@@ -687,6 +687,11 @@ public final class EntryDraftModel {
     KindFields.stripped(draft, tree: categoryTree).draft
   }
 
+  /// Whether the model suggests and files from history and from the category model: the line
+  /// does, and the form at the side of the window never does — its category, people and account
+  /// are what the owner chooses (`EntryStyle`).
+  public var assisted = true
+
   /// Defaults from history and from the dictionaries, in the order the specification lists.
   public func applyDefaults(today: DateOnly) {
     guard !draft.parts.isEmpty else { return }
@@ -702,7 +707,7 @@ public final class EntryDraftModel {
     // category («1. история: то же место или то же описание → последняя категория»), only
     // while none is chosen, and only one that can still be chosen: of the right kind and not
     // retired since.
-    let history = otherOperations()
+    let history = assisted ? otherOperations() : []
     if let alike = mostAlike(in: history), draft.parts[0].categoryId == nil,
       let categoryId = alike.parts.first?.categoryId, isOffered(categoryId)
     {
@@ -988,9 +993,11 @@ public final class EntryDraftModel {
   public private(set) var suggestionSources: [UUID: CategorySource] = [:]
 
   private func refreshSuggestions() {
-    guard let transactions else {
+    guard assisted, let transactions else {
       categorySuggestions = []
       suggestionSources = [:]
+      lastQuestion = nil
+      lastPrediction = nil
       return
     }
     let words = wordsOfTheDraft
@@ -2030,6 +2037,9 @@ public final class EntryDraftModel {
     let gap: EntryGap
     let line: ParsedInput?
     var text: String? = nil
+    /// The owner confirmed a form instead (the money back recorded as income): nothing is asked
+    /// of this line, and the panel marks nothing.
+    var waived = false
   }
   private var gapStop: GapStop?
 
@@ -2037,14 +2047,16 @@ public final class EntryDraftModel {
   var focusRequest: PanelFocusRequest?
 
   /// The field Enter asks for before a new operation is saved (`EntryCompleteness`): the
-  /// category the line did not say, or the subcategory the model left open. Asked once per
-  /// line: the same line again, or Return in the panel, saves the draft as it stands — an
-  /// operation may stay uncategorised. Nil for a saved operation.
+  /// category the line did not say, or the subcategory the model left open. A category is asked
+  /// until one is chosen — the same line again, or Return in the panel, saves nothing without
+  /// it, and «Не помню» is the way out for what the owner does not remember. A subcategory is
+  /// asked once per line: the same line again saves the draft in its category. Nil for a saved
+  /// operation, which may stay as it is.
   public func gapToAsk() -> EntryGap? {
     guard !editsSavedOperation,
       let gap = EntryCompleteness.gap(of: draftForSaving, tree: categoryTree)
     else { return nil }
-    if let gapStop, isTheLine(of: gapStop) { return nil }
+    if let gapStop, isTheLine(of: gapStop), gapStop.waived || gap == .subcategory { return nil }
     gapStop = GapStop(gap: gap, line: lastLine, text: lastLineText)
     return gap
   }
@@ -2057,17 +2069,22 @@ public final class EntryDraftModel {
   }
 
   /// ↓ and ↑ in the line while Enter's stop for that line stands: the next or the previous choice
-  /// of the menu the stop asked for — «—», then the menu's own items in its order — as a choice
-  /// made in the menu. Where macOS keeps the focus off menus («Навигация с клавиатуры» off), this
-  /// is how the keyboard chooses. False when no stop stands: the arrows keep their meaning.
+  /// of the menu the stop asked for, as a choice made in the menu. For a category the walk is «—»,
+  /// then the chips under the line (up to three), then the other categories in the menu's order,
+  /// and last the categories of the app — Goals, Loans, «Не помню» (`EntryCompleteness.stopChoices`);
+  /// for a subcategory «—», then the menu's own items. Where macOS keeps the focus off menus
+  /// («Навигация с клавиатуры» off), this is how the keyboard chooses. False when no stop stands:
+  /// the arrows keep their meaning.
   public func stepTheAskedMenu(by step: Int, today: DateOnly) -> Bool {
     guard let gapStop, isTheLine(of: gapStop), !isSplit else { return false }
     let current: UUID?
     let choices: [UUID?]
     switch gapStop.gap {
     case .category:
-      current = categoryOfPart(part(at: 0))
-      choices = [nil] + categoryOptions(forPartAt: 0).map(\.id)
+      current = part(at: 0).categoryId
+      choices = EntryCompleteness.stopChoices(
+        suggested: categorySuggestions.map(\.id), menu: categoryOptions(forPartAt: 0),
+        tree: categoryTree)
     case .subcategory:
       current = subcategoryOfPart(part(at: 0))
       choices = [nil] + subcategoryOptions(forPartAt: 0).map(\.id)
@@ -2076,7 +2093,12 @@ public final class EntryDraftModel {
     let next = min(max(at + step, 0), choices.count - 1)
     guard next != at else { return true }
     switch gapStop.gap {
-    case .category: setCategory(choices[next], forPartAt: 0)
+    case .category:
+      if let chip = categorySuggestions.first(where: { $0.id == choices[next] }) {
+        applySuggestion(chip, forPartAt: 0)
+      } else {
+        setCategory(choices[next], forPartAt: 0)
+      }
     case .subcategory: setSubcategory(choices[next], forPartAt: 0)
     }
     applyDefaults(today: today)
@@ -2085,9 +2107,60 @@ public final class EntryDraftModel {
 
   /// The gap the panel marks: the one asked, while it is still missing.
   public var markedGap: EntryGap? {
-    guard let gapStop, EntryCompleteness.gap(of: draftForSaving, tree: categoryTree) == gapStop.gap
+    guard let gapStop, !gapStop.waived,
+      EntryCompleteness.gap(of: draftForSaving, tree: categoryTree) == gapStop.gap
     else { return nil }
     return gapStop.gap
+  }
+
+  // MARK: Before it is written
+
+  /// «Добавить» of the question about a repeat, kept until the operation is saved: the counts of
+  /// its day may be asked about after that question, and it is not asked twice. Cleared with the
+  /// draft (`reset`).
+  var repeatConfirmed = false
+
+  /// «Записать как есть» of the question about a date ahead, kept the same way.
+  var aheadAnswered = false
+
+  /// The operation written in the last five minutes that this one repeats — the same kind, amount
+  /// and currency (`RecentDuplicate`) —, read from the database as it is now. Nil for a saved
+  /// operation being edited, and once «Добавить» was said.
+  public func repeatedOperation(now: Date = Date()) -> TransactionEntry? {
+    guard !editsSavedOperation, !repeatConfirmed, let transactions else { return nil }
+    let since = now.addingTimeInterval(-RecentDuplicate.window)
+    let recent = (try? transactions.entries(recordedSince: since)) ?? []
+    return RecentDuplicate.match(of: draftForSaving, among: recent, now: now)
+  }
+
+  /// The plan a new operation dated after today may become — a payment from an expense, an
+  /// expected income from an income (`OperationAhead`) —, asked once: nil for a saved operation,
+  /// a purchase on credit, the difference of a count, and once «Записать как есть» was said.
+  public func planAhead(today: DateOnly) -> OperationAhead.Plan? {
+    guard !editsSavedOperation, !aheadAnswered, !isOnCredit, !isReconcileDifference else {
+      return nil
+    }
+    return OperationAhead.plan(for: draftForSaving, today: today, calendar: calendar)
+  }
+
+  /// What a plan made of this operation is called: its note, else its category; nil when it has
+  /// neither, and the caller says «Платёж» or «Поступление».
+  public var planName: String? {
+    if let note = draft.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+      return note
+    }
+    guard let categoryId = part(at: 0).categoryId else { return nil }
+    return category(withId: categoryId)?.name
+  }
+
+  /// The payment this expense becomes as a plan.
+  public func plannedPayment(named name: String) -> ScheduledPayment {
+    OperationAhead.scheduledPayment(from: draftForSaving, named: name, calendar: calendar)
+  }
+
+  /// The expected income this income becomes as a plan.
+  public func plannedIncome(named name: String) -> ExpectedIncome {
+    OperationAhead.expectedIncome(from: draftForSaving, named: name, calendar: calendar)
   }
 
   /// Saving is only allowed when nothing stops it.
@@ -2238,7 +2311,7 @@ public final class EntryDraftModel {
     if let received = sheet.accountAmount, !received.isZero { setCharge(received) }
     // The owner has just confirmed a form: Enter does not stop to ask for a category of it.
     if let gap = EntryCompleteness.gap(of: draftForSaving, tree: categoryTree) {
-      gapStop = GapStop(gap: gap, line: lastLine, text: lastLineText)
+      gapStop = GapStop(gap: gap, line: lastLine, text: lastLineText, waived: true)
     }
   }
 
@@ -2440,6 +2513,8 @@ public final class EntryDraftModel {
     gapStop = nil
     focusRequest = nil
     stampedAt = nil
+    repeatConfirmed = false
+    aheadAnswered = false
   }
 
   // MARK: Refund of a purchase
