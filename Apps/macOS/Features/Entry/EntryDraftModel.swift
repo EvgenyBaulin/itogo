@@ -53,6 +53,9 @@ public final class EntryDraftModel {
   /// Every card, archived ones too: the account picker offers the live cards of the live
   /// accounts, and a saved operation keeps the card it names whatever became of it.
   public private(set) var cards: [PaymentCard] = []
+  /// The banks the accounts are filed under, archived ones included: they name the accounts in the
+  /// account picker (`AccountLabels`).
+  public private(set) var banks: [Bank] = []
   /// Every cashback rule, for what the ↓ panel expects an operation to earn.
   public private(set) var cashbackRules: [CashbackRule] = []
 
@@ -281,6 +284,7 @@ public final class EntryDraftModel {
     places = everyPlace.filter { !$0.archived }
     archivedPlaces = everyPlace.filter(\.archived)
     allAccounts = (try? references.paymentMethods(includeArchived: true)) ?? []
+    banks = (try? references.banks(includeArchived: true)) ?? []
     paymentMethods = allAccounts.filter { !$0.archived }
     events = (try? references.events()) ?? []
     goals = (try? references.goals()) ?? []
@@ -346,7 +350,7 @@ public final class EntryDraftModel {
   /// A choice of the account picker: an account, or a card under it.
   public struct AccountChoice: Hashable, Sendable {
     public let id: UUID
-    /// «Т-Банк», «Т-Банк · Black».
+    /// «Т-Банк», «Т-Банк › Black».
     public let name: String
     public let isCard: Bool
     /// A card gone to the archive, shown only for the operation that names it.
@@ -354,21 +358,23 @@ public final class EntryDraftModel {
   }
 
   /// What the account picker offers: each account as `accountChoices` gives it, followed by its
-  /// live cards as «Т-Банк · Black». The card the operation names when it has gone to the
+  /// live cards as «Т-Банк › Black». The card the operation names when it has gone to the
   /// archive since stays under its account, and says so. A kind that names no card — money
   /// back — is offered the accounts alone.
   public func accountCardChoices(locale: Locale) -> [AccountChoice] {
     let accounts = accountChoices(locale: locale)
     let offered = has(.card) ? cards : []
-    var items = AccountCardChoices.items(accounts: accounts, cards: offered, locale: locale).map {
+    var items = AccountCardChoices.items(
+      accounts: accounts, cards: offered, banks: banks, among: allAccounts, locale: locale
+    ).map {
       AccountChoice(id: $0.id, name: $0.name, isCard: $0.isCard, archived: false)
     }
     if has(.card), let cardId = draft.cardId,
       !items.contains(where: { $0.id == cardId && $0.isCard }),
-      let card = cards.first(where: { $0.id == cardId }),
+      let card = cards.first(where: { $0.id == cardId }), card.archived,
       let index = items.firstIndex(where: { $0.id == card.accountId && !$0.isCard })
     {
-      let name = items[index].name + " · " + card.name
+      let name = items[index].name + AccountLabels.separator + card.name
       items.insert(
         AccountChoice(id: card.id, name: name, isCard: true, archived: true), at: index + 1)
     }
@@ -382,7 +388,9 @@ public final class EntryDraftModel {
     guard has(.card), let cardId = draft.cardId,
       cards.contains(where: { $0.id == cardId && $0.accountId == account })
     else { return account }
-    return cardId
+    // A card the list does not offer as a choice of its own — the only card of its account, one
+    // called like its account or its bank — is shown as the account (`AccountLabels`).
+    return accountCardChoices(locale: .current).contains { $0.id == cardId } ? cardId : account
   }
 
   /// A choice of the account picker: a card brings its account, an account names no card. Either
@@ -1821,20 +1829,27 @@ public final class EntryDraftModel {
 
   /// Adds a payment method of `kind` and returns its id. The first one in the book becomes the
   /// default, as it does in Settings. A card or a bank account comes with a card named like it,
-  /// in the same write (`CardRules.startingCard`).
+  /// in the same write (`CardRules.startingCard`), and every account stands under a bank: the live
+  /// bank of its name, else a new one written with it (`BankRules.bank(forNewAccountNamed:)`).
   public func createPaymentMethod(named name: String, kind: PaymentMethodKind) -> UUID? {
     guard let references else { return nil }
-    return createPaymentMethod(named: name, kind: kind) { method in
-      try references.save(method, startingCard: CardRules.startingCard(for: method))
+    return createPaymentMethod(named: name, kind: kind) { method, bank in
+      try references.save(
+        method, startingCard: CardRules.startingCard(for: method), bank: bank)
     }
   }
 
   func createPaymentMethod(
-    named name: String, kind: PaymentMethodKind, saving save: (PaymentMethod) throws -> Void
+    named name: String, kind: PaymentMethodKind,
+    saving save: (PaymentMethod, Bank?) throws -> Void
   ) -> UUID? {
     let live = (try? references?.paymentMethods()) ?? paymentMethods
-    let method = NewReference.paymentMethod(named: name, kind: kind, among: live)
-    guard written({ try save(method) }, what: "paymentMethod") else {
+    var method = NewReference.paymentMethod(named: name, kind: kind, among: live)
+    let choice = BankRules.bank(
+      forNewAccountNamed: name, among: (try? references?.banks(includeArchived: true)) ?? banks)
+    method.bankId = choice.bank.id
+    guard written({ try save(method, choice.isNew ? choice.bank : nil) }, what: "paymentMethod")
+    else {
       creationFailureKey = "entry.error.paymentMethodNotCreated"
       return nil
     }

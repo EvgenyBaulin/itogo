@@ -716,6 +716,8 @@ struct TransactionListing: Sendable {
     let events: [UUID: String]
     let paymentMethods: [UUID: String]
     let cards: [UUID: String]
+    /// How the lists name an account and a card: the bank, when it has one account and one card.
+    let labels: AccountLabels
 
     init(_ dataset: Dataset) {
       func index<T>(
@@ -731,16 +733,16 @@ struct TransactionListing: Sendable {
       events = index(dataset.events, \.id, \.name)
       paymentMethods = index(dataset.paymentMethods, \.id, \.name)
       cards = index(dataset.cards, \.id, \.name)
+      labels = AccountLabels(
+        accounts: dataset.paymentMethods, cards: dataset.cards, banks: dataset.banks)
     }
 
-    /// The account column of an operation: «Т-Банк · Black» when it names a card, only «Сбер»
-    /// when its card is called like its account (`CardRules.displayName`).
+    /// The account column of an operation, as the lists name it: «Т-Банк › Black» when it names
+    /// a card of an account with two cards or more, only «Сбер» when its card is called like its
+    /// account or its bank, the bank alone for a bank with one account (`AccountLabels`).
     func account(of transaction: Transaction) -> String? {
-      guard let id = transaction.paymentMethodId, let account = paymentMethods[id] else {
-        return nil
-      }
-      return CardRules.displayName(
-        account: account, card: transaction.cardId.flatMap { cards[$0] })
+      guard let id = transaction.paymentMethodId, paymentMethods[id] != nil else { return nil }
+      return labels.label(account: id, card: transaction.cardId)
     }
   }
 }

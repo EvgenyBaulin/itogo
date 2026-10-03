@@ -2,7 +2,12 @@ import AppCore
 import AppDatabase
 import SwiftUI
 
-/// Settings → Счета: every account and group, the archived ones too.
+/// Settings → Счета: every bank, account and group, the archived ones too.
+///
+/// The banks come first, each with how many accounts and cards stand under it: «bank → account →
+/// card». A new bank brings its first account and card; an account is added to a bank from its
+/// menu; a bank goes to the archive once every account under it has, and is deleted only with no
+/// account under it — an account deleted leaves its bank where it was.
 ///
 /// The accounts are listed the way every menu lists them — the main account first and marked,
 /// then in the order the owner dragged them to, alphabetical until then — and can be dragged,
@@ -19,6 +24,7 @@ struct AccountsSettingsView: View {
 
   @State private var accounts: [PaymentMethod] = []
   @State private var groups: [AccountGroup] = []
+  @State private var banks: [Bank] = []
   @State private var cards: [PaymentCard] = []
   @State private var rules: [CashbackRule] = []
   /// The card the owner asked to delete, waiting for the answer.
@@ -35,12 +41,17 @@ struct AccountsSettingsView: View {
   @State private var deleting: Deletion?
   /// The group the owner asked to delete, waiting for the answer.
   @State private var deletingGroup: AccountGroup?
+  /// The bank the owner asked to delete, waiting for the answer.
+  @State private var deletingBank: Bank?
   /// A write the database refused; the alert says so.
   @State private var failed = false
 
   /// What the tab shows over itself.
   enum Sheet: Identifiable {
     case account(PaymentMethod?)
+    /// A new account added to this bank.
+    case accountInBank(UUID)
+    case bank(Bank?)
     case group(AccountGroup?)
     case merge(PaymentMethod, into: UUID?)
     case handOver(PaymentMethod, Hand, candidates: [PaymentMethod], preselected: UUID?)
@@ -61,6 +72,8 @@ struct AccountsSettingsView: View {
     var id: String {
       switch self {
       case .account(let account): "account.\(account?.id.uuidString ?? "new")"
+      case .accountInBank(let bank): "accountInBank.\(bank.uuidString)"
+      case .bank(let bank): "bank.\(bank?.id.uuidString ?? "new")"
       case .group(let group): "group.\(group?.id.uuidString ?? "new")"
       case .merge(let account, _): "merge.\(account.id.uuidString)"
       case .handOver(let account, _, _, _): "handOver.\(account.id.uuidString)"
@@ -105,6 +118,16 @@ struct AccountsSettingsView: View {
           }
         }
         Button {
+          sheet = .bank(nil)
+        } label: {
+          Label {
+            Text(verbatim: t("accounts.newBank"))
+          } icon: {
+            Image(systemName: "building.columns")
+          }
+        }
+        .accessibilityIdentifier("accounts.newBank")
+        Button {
           sheet = .account(nil)
         } label: {
           Label {
@@ -121,6 +144,7 @@ struct AccountsSettingsView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: t("accounts.orderHint"))
         Text(verbatim: t("accounts.groupsHint"))
+        Text(verbatim: t("accounts.banksHint"))
       }
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -142,6 +166,21 @@ struct AccountsSettingsView: View {
       Button(environment.language("action.cancel"), role: .cancel) {}
     } message: { question in
       Text(verbatim: deleteMessage(count: question.ids.count))
+    }
+    // A bank is deleted for good and the ⌘Z history with it: asked first, like a group.
+    .confirmationDialog(
+      deletingBank.map {
+        environment.format("accounts.deleteBank.title", table: "Accounts", $0.name)
+      } ?? "",
+      isPresented: isAskingToDeleteBank, titleVisibility: .visible, presenting: deletingBank
+    ) { bank in
+      Button(environment.language("action.delete"), role: .destructive) {
+        deletingBank = nil
+        perform(actions.deleteBank(bank.id))
+      }
+      Button(environment.language("action.cancel"), role: .cancel) {}
+    } message: { _ in
+      Text(verbatim: t("accounts.deleteBank.message"))
     }
     // A card goes with its rules; ⌘Z brings both back.
     .confirmationDialog(
@@ -166,6 +205,19 @@ struct AccountsSettingsView: View {
 
   private var list: some View {
     List(selection: $selection) {
+      Section {
+        if liveBanks.isEmpty {
+          Text(verbatim: t("accounts.noBanks"))
+            .foregroundStyle(.secondary)
+        }
+        ForEach(liveBanks, id: \.id) { bank in
+          bankRow(bank)
+            .selectionDisabled()
+        }
+      } header: {
+        Text(verbatim: t("accounts.section.banks"))
+      }
+
       Section {
         ForEach(live, id: \.id) { account in
           accountRow(account)
@@ -194,7 +246,9 @@ struct AccountsSettingsView: View {
 
       if showsArchive {
         Section {
-          if archived.isEmpty && archivedGroups.isEmpty && archivedCards.isEmpty {
+          if archived.isEmpty && archivedGroups.isEmpty && archivedCards.isEmpty
+            && archivedBanks.isEmpty
+          {
             Text(verbatim: t("accounts.archiveEmpty"))
               .foregroundStyle(.secondary)
           }
@@ -208,6 +262,10 @@ struct AccountsSettingsView: View {
           }
           ForEach(archivedGroups, id: \.id) { group in
             archivedGroupRow(group)
+              .selectionDisabled()
+          }
+          ForEach(archivedBanks, id: \.id) { bank in
+            archivedBankRow(bank)
               .selectionDisabled()
           }
         } header: {
@@ -356,7 +414,7 @@ struct AccountsSettingsView: View {
         .frame(width: 18)
         .accessibilityHidden(true)
       Label {
-        Text(verbatim: account + " · " + card.name)
+        Text(verbatim: account + AccountLabels.separator + card.name)
       } icon: {
         Image(systemName: "creditcard")
       }
@@ -382,12 +440,18 @@ struct AccountsSettingsView: View {
     }
   }
 
-  /// Its kind, currencies — the main one first — and group.
+  /// Its kind, currencies — the main one first —, group, and the bank when that is called
+  /// otherwise than the account.
   private func caption(of account: PaymentMethod) -> String {
     var parts = [t(AccountText.kindKey(account.kind))]
     parts.append(account.currencies.map(\.code).joined(separator: ", "))
     if let id = account.groupId, let group = groups.first(where: { $0.id == id }) {
       parts.append(AccountText.groupTitle(group, environment))
+    }
+    if let id = account.bankId, let bank = banks.first(where: { $0.id == id }),
+      NameKey.fold(bank.name) != NameKey.fold(account.name)
+    {
+      parts.append(environment.format("accounts.caption.bank", table: "Accounts", bank.name))
     }
     return parts.joined(separator: " · ")
   }
@@ -435,6 +499,69 @@ struct AccountsSettingsView: View {
     Divider()
     Button(t("accounts.archive")) { archive(account) }
     Button(t("accounts.delete"), role: .destructive) { askToDelete([account.id]) }
+  }
+
+  /// A bank: its name, how many accounts and cards stand under it, and its own «…».
+  private func bankRow(_ bank: Bank) -> some View {
+    let live = accounts.filter { $0.bankId == bank.id && !$0.archived }
+    let liveIds = Set(live.map(\.id))
+    let cardCount = cards.filter { !$0.archived && liveIds.contains($0.accountId) }.count
+    return HStack(spacing: 8) {
+      Image(systemName: "building.columns")
+        .foregroundStyle(.secondary)
+        .frame(width: 18)
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(verbatim: bank.name)
+        Text(verbatim: bankCaption(accounts: live.count, cards: cardCount))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Menu {
+        bankMenuItems(bank)
+      } label: {
+        Image(systemName: "ellipsis.circle")
+          .accessibilityLabel(Text(verbatim: SettingsRowMenu.label(bank.name, environment)))
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+    }
+    .contentShape(Rectangle())
+    .onTapGesture(count: 2) { sheet = .bank(bank) }
+    .contextMenu { bankMenuItems(bank) }
+  }
+
+  /// «2 счёта · 3 карты»; «Нет счетов» for a bank all of whose accounts are gone or archived.
+  private func bankCaption(accounts: Int, cards: Int) -> String {
+    guard accounts > 0 else { return t("bank.caption.none") }
+    return [
+      environment.format("bank.caption.accounts", table: "Accounts", counts: accounts),
+      environment.format("bank.caption.cards", table: "Accounts", counts: cards),
+    ].joined(separator: " · ")
+  }
+
+  @ViewBuilder
+  private func bankMenuItems(_ bank: Bank) -> some View {
+    Button(t("accounts.edit")) { sheet = .bank(bank) }
+    Button(t("bank.addAccount")) { sheet = .accountInBank(bank.id) }
+    Divider()
+    Button(t("accounts.archive")) { perform(actions.archiveBank(bank.id)) }
+    Button(t("accounts.delete"), role: .destructive) { askToDelete(bank) }
+  }
+
+  private func archivedBankRow(_ bank: Bank) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: "archivebox")
+        .foregroundStyle(.secondary)
+        .frame(width: 18)
+        .accessibilityHidden(true)
+      Text(verbatim: environment.format("accounts.archivedBank", table: "Accounts", bank.name))
+      Spacer()
+      Button(t("accounts.restore")) { perform(actions.restoreBank(bank.id)) }
+      Button(t("accounts.delete"), role: .destructive) { askToDelete(bank) }
+    }
   }
 
   private func groupRow(_ group: AccountGroup) -> some View {
@@ -593,6 +720,19 @@ struct AccountsSettingsView: View {
         if saved != nil { refusal = nil }
         reload()
       }
+    case .accountInBank(let bank):
+      AccountEditor(previous: nil, defaultCurrency: environment.defaultCurrency, bank: bank) {
+        saved in
+        self.sheet = nil
+        if saved != nil { refusal = nil }
+        reload()
+      }
+    case .bank(let bank):
+      BankEditor(previous: bank) { saved in
+        self.sheet = nil
+        if saved != nil { refusal = nil }
+        reload()
+      }
     case .group(let group):
       AccountGroupEditor(previous: group) { saved in
         self.sheet = nil
@@ -733,6 +873,19 @@ struct AccountsSettingsView: View {
     Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } })
   }
 
+  /// A bank is asked about only when it can go: an account under it, archived ones too, keeps it.
+  private func askToDelete(_ bank: Bank) {
+    guard BankRules.canBeDeleted(bank.id, among: accounts) else {
+      refusal = .bankInUse
+      return
+    }
+    deletingBank = bank
+  }
+
+  private var isAskingToDeleteBank: Binding<Bool> {
+    Binding(get: { deletingBank != nil }, set: { if !$0 { deletingBank = nil } })
+  }
+
   /// That nothing refers to the account — or to the accounts — and that a deletion is not
   /// undone.
   private func deleteMessage(count: Int) -> String {
@@ -784,6 +937,13 @@ struct AccountsSettingsView: View {
   private var liveGroups: [AccountGroup] { groups.filter { !$0.archived } }
   private var archivedGroups: [AccountGroup] { groups.filter(\.archived) }
 
+  private var liveBanks: [Bank] { BankRules.ordered(banks, locale: environment.language.locale) }
+  private var archivedBanks: [Bank] {
+    banks.filter(\.archived).sorted {
+      BankRules.precedes($0, $1, locale: environment.language.locale)
+    }
+  }
+
   /// The live cards of an account, in the order of the lists.
   private func liveCards(of accountId: UUID) -> [PaymentCard] {
     CardRules.ordered(cards, of: accountId, locale: environment.language.locale)
@@ -800,6 +960,7 @@ struct AccountsSettingsView: View {
   private func reload() {
     accounts = actions.all
     groups = actions.groups
+    banks = actions.banks
     cards = cardActions.cards
     rules = cardActions.rules
     selection = selection.filter { id in accounts.contains { $0.id == id } }

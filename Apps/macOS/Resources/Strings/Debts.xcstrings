@@ -1626,6 +1626,23 @@
         }
       }
     },
+    "form.name.isAnAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» is an account already. A credit card is kept as an account with a minus balance, not as a debt — or its debt is taken off twice. A debt is for a loan or an instalment."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» — это уже счёт. Кредитную карту ведут счётом с отрицательным остатком, а не долгом: иначе её долг вычтется дважды. Долг заводят для кредита или рассрочки."
+          }
+        }
+      }
+    },
     "form.note": {
       "extractionState": "manual",
       "localizations": {

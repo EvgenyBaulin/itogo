@@ -29,7 +29,8 @@ public struct DatasetRepository: Sendable {
   ///   apart (`Dataset.deletedDebts`): no list or figure of the debts shows them, and the
   ///   operations that point at them still find them.
   /// - The cards of the accounts, archived ones included, in the owner's order, and the
-  ///   cashback rules in the order they were made.
+  ///   cashback rules in the order they were made; the banks the accounts are filed under,
+  ///   archived ones included, in the owner's order.
   /// - The planning book comes in the same read: scheduled payments, prices, expected income
   ///   and its links, limits, reconciliations oldest first with the balances they counted,
   ///   the journals of every debt and the planning settings (`PlanningRepository.book`).
@@ -87,6 +88,7 @@ public struct DatasetRepository: Sendable {
       storedValues: try SettingsRepository.values(of: AccountSettings.storageKeys, db: db))
     let cards = try PaymentCard.order(Column("sort"), Column("name")).fetchAll(db)
     let cashbackRules = try CashbackRule.order(Column.rowID).fetchAll(db)
+    let banks = try Bank.order(Column("sort"), Column("name")).fetchAll(db)
     try Task.checkCancellation()
     return Dataset(
       entries: entries,
@@ -110,6 +112,7 @@ public struct DatasetRepository: Sendable {
       version: version,
       cards: cards,
       cashbackRules: cashbackRules,
-      deletedDebts: allDebts.filter(\.isDeleted))
+      deletedDebts: allDebts.filter(\.isDeleted),
+      banks: banks)
   }
 }

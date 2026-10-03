@@ -106,11 +106,14 @@ public struct AccountSetupPlan: Hashable, Sendable {
   public var at: Date
   /// The cards the accounts start with, written after the accounts.
   public var cards: [PaymentCard]
+  /// The banks the accounts are filed under, written before the accounts.
+  public var banks: [Bank]
 
   public init(
     accounts: [PaymentMethod], groups: [AccountGroup] = [], mainAccountId: UUID,
     openingBalances: [BalanceKey: AmountE4] = [:], expected: [BalanceKey: AmountE4] = [:],
-    defaultCurrency: CurrencyCode? = nil, at: Date, cards: [PaymentCard] = []
+    defaultCurrency: CurrencyCode? = nil, at: Date, cards: [PaymentCard] = [],
+    banks: [Bank] = []
   ) {
     self.accounts = accounts
     self.groups = groups
@@ -120,6 +123,7 @@ public struct AccountSetupPlan: Hashable, Sendable {
     self.defaultCurrency = defaultCurrency
     self.at = at
     self.cards = cards
+    self.banks = banks
   }
 }
 

@@ -193,6 +193,29 @@ final class AddFromPickerTests: XCTestCase {
     XCTAssertTrue(model.carriesChoices, "the method added is not the owner's choice")
   }
 
+  /// An account made from the panel stands under a bank like every account: a bank of its name
+  /// written in the same step, or the live bank of that name when there is one.
+  func testAnAccountAddedFromThePanelStandsUnderABank() throws {
+    let model = makeModel()
+    var cash = form(.paymentMethod, model, name: "Cash")
+    cash.paymentKind = .cash
+    XCTAssertTrue(cash.save(into: model, today: today))
+    let account = try XCTUnwrap(try references.paymentMethods().first { $0.name == "Cash" })
+    let banks = try references.banks()
+    XCTAssertEqual(banks.map(\.name), ["Cash"])
+    XCTAssertEqual(account.bankId, banks.first?.id)
+
+    // A bank that is there already takes the account whose name it is, and no second one is made.
+    let sber = Bank(name: "Сбер")
+    _ = try PlanningRepository(writer: stack.writer).apply(
+      PlanningChange(upsert: PlanningRows(banks: [sber])))
+    model.reload()
+    XCTAssertTrue(form(.paymentMethod, model, name: "сбер").save(into: model, today: today))
+    let joined = try XCTUnwrap(try references.paymentMethods().first { $0.name == "сбер" })
+    XCTAssertEqual(joined.bankId, sber.id)
+    XCTAssertEqual(try references.banks().count, 2)
+  }
+
   // MARK: Refusals
 
   /// An empty name and a name the entry line could not tell from another are refused with a
@@ -277,7 +300,7 @@ final class AddFromPickerTests: XCTestCase {
       model.createEvent(named: "Trip", from: today, to: today, saving: { _ in throw Refused() }))
     XCTAssertEqual(model.creationFailureKey, "entry.error.eventNotCreated")
     XCTAssertNil(
-      model.createPaymentMethod(named: "Cash", kind: .cash, saving: { _ in throw Refused() }))
+      model.createPaymentMethod(named: "Cash", kind: .cash, saving: { _, _ in throw Refused() }))
     XCTAssertEqual(model.creationFailureKey, "entry.error.paymentMethodNotCreated")
     XCTAssertNil(model.draft.paymentMethodId)
     XCTAssertEqual(try references.categories().filter { $0.name == "Books" }.count, 0)

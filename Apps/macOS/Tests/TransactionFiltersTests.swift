@@ -41,8 +41,8 @@ final class TransactionFiltersArchiveTests: XCTestCase {
   }
 }
 
-/// The account filter with cards: each account is offered followed by its live cards,
-/// «Т-Банк · Black»; a card brings its account, an account drops the card, and a card archived
+/// The account filter with cards: each account is offered followed by its live cards when it
+/// has two or more, «Т-Банк › Black»; a card brings its account, an account drops the card, and a card archived
 /// since it was chosen leaves the account alone chosen.
 final class TransactionFiltersCardTests: XCTestCase {
   private let today = DateOnly(year: 2026, month: 9, day: 27)
@@ -60,9 +60,8 @@ final class TransactionFiltersCardTests: XCTestCase {
 
     XCTAssertEqual(
       choices.accountItems.map(\.name),
-      ["Сбер", "Сбер · Сбер", "Т-Банк", "Т-Банк · Black", "Т-Банк · Virtual"])
-    XCTAssertEqual(
-      choices.accountItems.filter(\.isCard).map(\.id), [sberCard.id, black.id, virtual.id])
+      ["Сбер", "Т-Банк", "Т-Банк › Black", "Т-Банк › Virtual"])
+    XCTAssertEqual(choices.accountItems.filter(\.isCard).map(\.id), [black.id, virtual.id])
   }
 
   func testACardBringsItsAccountAndAnAccountDropsTheCard() {

@@ -22,7 +22,7 @@ public struct ExportTable: Hashable, Sendable {
   }
 }
 
-/// The 23 files of Export, always in the same order.
+/// The 24 files of Export, always in the same order.
 public enum ExportTables {
   /// `account_currency` and `account_amount` came with `Schema/0004_accounts.sql`: what the
   /// account moved when it does not hold the operation's currency. `card_id`,
@@ -60,12 +60,13 @@ public enum ExportTables {
 
   /// The accounts. `group_id`, `sort` and `other_currencies` came with
   /// `Schema/0004_accounts.sql`; `other_currencies` holds the codes after the main one,
-  /// joined by commas as the database keeps them (`USD,RUB,KZT`).
+  /// joined by commas as the database keeps them (`USD,RUB,KZT`). `bank_id` came with
+  /// `Schema/0006_banks.sql`: the bank the account belongs to, empty for none.
   public static let paymentMethods = ExportTable(
     fileName: "payment_methods.csv",
     columns: [
       "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
-      "other_currencies",
+      "other_currencies", "bank_id",
     ])
 
   public static let places = ExportTable(
@@ -209,13 +210,18 @@ public enum ExportTables {
     fileName: "cashback_rules.csv",
     columns: ["id", "payment_method_id", "card_id", "category_id", "month", "percent"])
 
-  /// All 23 tables, in the fixed order of the export: the 18 of the first schema, then the
-  /// three the accounts brought, then the two of the cards.
+  /// Columns match `Schema/0006_banks.sql`: the banks the accounts belong to.
+  public static let banks = ExportTable(
+    fileName: "banks.csv",
+    columns: ["id", "name", "sort", "archived"])
+
+  /// All 24 tables, in the fixed order of the export: the 18 of the first schema, then the
+  /// three the accounts brought, then the two of the cards, then the banks.
   public static let all: [ExportTable] = [
     transactions, transactionParts, reimbursementLinks, people, paymentMethods, places,
     events, categories, templates, scheduledPayments, subscriptionPrices, expectedIncome,
     budgets, goals, debts, debtEntries, reconciliations, rates, accountGroups, transfers,
-    reconciliationBalances, cards, cashbackRules,
+    reconciliationBalances, cards, cashbackRules, banks,
   ]
 }
 
@@ -308,6 +314,7 @@ extension ExportTables {
       CSVValue.string(method.groupId),
       String(method.sort),
       method.otherCurrencies.map(\.code).joined(separator: ","),
+      CSVValue.string(method.bankId),
     ]
   }
 
@@ -569,6 +576,15 @@ extension ExportTables {
       CSVValue.string(rule.categoryId),
       CSVValue.string(month: rule.month),
       CSVValue.string(decimal: rule.percent.decimal),
+    ]
+  }
+
+  public static func row(_ bank: Bank) -> [String] {
+    [
+      bank.id.uuidString,
+      bank.name,
+      String(bank.sort),
+      CSVValue.string(bool: bank.archived),
     ]
   }
 }

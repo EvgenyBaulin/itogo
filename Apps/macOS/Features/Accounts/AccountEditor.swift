@@ -1,9 +1,9 @@
 import AppCore
 import SwiftUI
 
-/// An account as the editor holds it until «Сохранить»: its name and kind, its currencies in
-/// order — the first is the main one —, its group, whether it is main, its other names and
-/// the balances typed for currencies never counted.
+/// An account as the editor holds it until «Сохранить»: its name and kind, the bank it is under,
+/// its currencies in order — the first is the main one —, its group, whether it is main, its
+/// other names and the balances typed for currencies never counted.
 struct AccountDraft: Equatable {
   var id: UUID
   var name: String
@@ -12,6 +12,10 @@ struct AccountDraft: Equatable {
   /// charged in it.
   var currencies: [CurrencyCode]
   var groupId: UUID?
+  /// The bank the account is under; `nil`: a bank of its own, a new one named `newBankName` —
+  /// like the account when that is empty — or the live bank of that name.
+  var bankId: UUID?
+  var newBankName = ""
   var isMain: Bool
   var aliases: [String]
   /// «Остаток сейчас», as typed, by currency; an empty field counts nothing.
@@ -24,17 +28,20 @@ struct AccountDraft: Equatable {
     kind = account.kind
     currencies = account.currencies
     groupId = account.groupId
+    bankId = account.bankId
     isMain = account.isDefault
     aliases = account.aliases
   }
 
-  /// A new account: a bank account in the default currency, in no group.
-  init(newIn currency: CurrencyCode, kind: PaymentMethodKind = .card) {
+  /// A new account: a bank account in the default currency, in no group, under a bank — `bank`
+  /// when it is given (an account added from a bank), else a new one.
+  init(newIn currency: CurrencyCode, kind: PaymentMethodKind = .card, bank: UUID? = nil) {
     id = UUID()
     name = ""
     self.kind = kind
     currencies = [currency]
     groupId = nil
+    bankId = bank
     isMain = false
     aliases = []
   }
@@ -49,6 +56,7 @@ struct AccountDraft: Equatable {
     account.currency = currencies.first
     account.otherCurrencies = Array(currencies.dropFirst())
     account.groupId = groupId
+    account.bankId = bankId
     account.isDefault = isMain
     account.aliases = aliases
     return account
@@ -124,18 +132,21 @@ struct AccountEditor: View {
   @State private var draft: AccountDraft
   @State private var books: AccountBooks?
   @State private var groups: [AccountGroup] = []
+  @State private var banks: [Bank] = []
   @State private var enabled: [CurrencyCode] = []
   @State private var refusal: AccountRefusal?
   @State private var failed = false
 
+  /// `bank`: the bank a new account is added to, from the menu of a bank.
   init(
-    previous: PaymentMethod?, defaultCurrency: CurrencyCode,
+    previous: PaymentMethod?, defaultCurrency: CurrencyCode, bank: UUID? = nil,
     finish: @escaping (UUID?) -> Void
   ) {
     self.previous = previous
     self.finish = finish
     _draft = State(
-      initialValue: previous.map(AccountDraft.init) ?? AccountDraft(newIn: defaultCurrency))
+      initialValue: previous.map(AccountDraft.init)
+        ?? AccountDraft(newIn: defaultCurrency, bank: bank))
   }
 
   private var actions: AccountActions { AccountActions(environment: environment, store: store) }
@@ -158,6 +169,7 @@ struct AccountEditor: View {
         } label: {
           Text(verbatim: t("account.editor.kind"))
         }
+        bankSection
         currenciesSection
         Section {
           Picker(selection: $draft.groupId) {
@@ -201,9 +213,10 @@ struct AccountEditor: View {
       }
     }
     .padding(20)
-    .frame(width: 480, height: 620)
+    .frame(width: 480, height: 700)
     .task {
       groups = actions.groups
+      banks = actions.banks
       enabled = actions.enabledCurrencies
       books = await actions.books()
       // Without the books nothing can be checked or saved: said, not a greyed button alone.
@@ -211,6 +224,45 @@ struct AccountEditor: View {
     }
     .onChange(of: draft) { _, _ in refusal = nil }
     .refusedWriteAlert($failed, environment)
+  }
+
+  // MARK: The bank
+
+  /// The bank the account is under: one of the live banks, or a new one, called like the account
+  /// unless the owner names it. The bank the account is in is offered even from the archive.
+  private var bankSection: some View {
+    Section {
+      Picker(selection: $draft.bankId) {
+        Text(verbatim: t("account.editor.bank.new")).tag(UUID?.none)
+        ForEach(bankChoices, id: \.id) { bank in
+          Text(verbatim: bank.name).tag(UUID?.some(bank.id))
+        }
+      } label: {
+        Text(verbatim: t("account.editor.bank"))
+      }
+      .accessibilityIdentifier("account.editor.bank")
+      if draft.bankId == nil {
+        TextField(
+          text: $draft.newBankName,
+          prompt: Text(verbatim: draft.name.trimmingCharacters(in: .whitespaces))
+        ) {
+          Text(verbatim: t("account.editor.bank.newName"))
+        }
+        .accessibilityIdentifier("account.editor.newBankName")
+      }
+    } footer: {
+      Text(
+        verbatim: t(
+          draft.bankId == nil ? "account.editor.bank.newHint" : "account.editor.bank.hint")
+      )
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  /// The live banks, and the one the account is in even when it is in the archive.
+  private var bankChoices: [Bank] {
+    banks.filter { !$0.archived || $0.id == draft.bankId }
+      .sorted { BankRules.precedes($0, $1, locale: environment.language.locale) }
   }
 
   // MARK: Currencies
@@ -360,7 +412,10 @@ struct AccountEditor: View {
       return
     }
     let account = draft.account(over: previous)
-    switch actions.save(account, previous: previous, openings: openings, books: books) {
+    switch actions.save(
+      account, previous: previous, openings: openings, books: books,
+      newBankNamed: draft.bankId == nil ? draft.newBankName : nil)
+    {
     case .done: finish(account.id)
     case .refused(let reason): refusal = reason
     case .failed: failed = true

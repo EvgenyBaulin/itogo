@@ -66,7 +66,7 @@ struct LegacyMigrationPropertyTests {
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
-    #expect(stack.applied.applied == 2, "seed \(seed)")
+    #expect(stack.applied.applied == 3, "seed \(seed)")
 
     try stack.writer.read { db in
       let after = try ExactTables.read(db, columns: before.mapValues(\.columns))
@@ -179,7 +179,24 @@ struct LegacyMigrationPropertyTests {
     }
     #expect(TestSupport.accountsStep(stack.applied.dataSteps) == expected, "seed \(seed)")
     #expect(TestSupport.cardsStep(stack.applied.dataSteps) == cards, "seed \(seed)")
-    #expect(stack.applied.dataSteps.count == 10, "seed \(seed)")
+    #expect(stack.applied.dataSteps.count == 13, "seed \(seed)")
+    // Every account with a name sits under a bank, and the step counted exactly those.
+    let (banks, filed, loose) = try stack.writer.read { db in
+      (
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM banks") ?? -1,
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM payment_methods WHERE bank_id IS NOT NULL")
+          ?? -1,
+        try Int.fetchOne(
+          db,
+          sql: """
+            SELECT COUNT(*) FROM payment_methods
+            WHERE bank_id IS NULL AND length(trim(name)) > 0
+            """) ?? -1
+      )
+    }
+    #expect(stack.applied.dataSteps["banksCreated"] == banks, "seed \(seed)")
+    #expect(stack.applied.dataSteps["accountsFiled"] == filed, "seed \(seed)")
+    #expect(loose == 0, "seed \(seed)")
   }
 
   /// The counts the step of the cards gives a drawn file, read from it before the update: a card
@@ -357,7 +374,7 @@ struct LegacyMigrationPropertyTests {
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
-    #expect(try stack.appliedMigrations().count == 5)
+    #expect(try stack.appliedMigrations().count == 6)
     let after = try stack.writer.read { db in
       try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").count
     }

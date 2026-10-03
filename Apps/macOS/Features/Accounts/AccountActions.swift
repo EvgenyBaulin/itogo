@@ -47,6 +47,12 @@ enum AccountRefusal: Error, Hashable, Sendable {
   /// Accounts, archived ones included, are filed under the group.
   case groupInUse
   case groupNameTaken
+  /// A live bank is already called so.
+  case bankNameTaken
+  /// A bank goes to the archive once every account under it has.
+  case bankHasLiveAccounts
+  /// Accounts, archived ones included, are filed under the bank: it is not deleted.
+  case bankInUse
   case notFound
   /// The money on the key is not what the question showed any more — something was written
   /// meanwhile —: nothing was written, and the amounts are shown again.
@@ -200,9 +206,13 @@ struct AccountActions {
   /// сейчас» typed for currencies never counted and never moved: each becomes the starting
   /// point of its key, in one opening count written with the account. A new account of the kind
   /// card or account starts with a card named like it, in the same step of ⌘Z.
+  ///
+  /// The account goes under a bank: `account.bankId` when it names one, else the live bank
+  /// called `newBankNamed` — the account's own name when that is not given — or a new bank of
+  /// that name, written in the same step (`BankRules.bank(forNewAccountNamed:)`).
   func save(
     _ account: PaymentMethod, previous: PaymentMethod?, openings: [CurrencyCode: AmountE4] = [:],
-    books: AccountBooks
+    books: AccountBooks, newBankNamed: String? = nil
   ) -> AccountActionOutcome {
     let all = self.all
     var account = Self.tidied(account)
@@ -220,7 +230,25 @@ struct AccountActions {
       account.sort = AccountRules.sortForNewAccount(among: all.filter { !$0.archived })
     }
     let at = environment.now()
-    var rows = PlanningRows(paymentMethods: [account])
+    var bankRows: [Bank] = []
+    let banks = self.banks
+    if let id = account.bankId {
+      // A live account goes under a live bank; an account in the archive may stay under the
+      // bank it is in.
+      guard let bank = banks.first(where: { $0.id == id }),
+        !bank.archived || previous?.bankId == id || account.archived
+      else { return .refused(.notFound) }
+    } else {
+      let given = newBankNamed?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      let choice = BankRules.bank(
+        forNewAccountNamed: given.isEmpty ? account.name : given, among: banks)
+      if choice.isNew, let refusal = Self.refusal(saving: choice.bank, among: banks) {
+        return .refused(refusal)
+      }
+      account.bankId = choice.bank.id
+      if choice.isNew { bankRows = [choice.bank] }
+    }
+    var rows = PlanningRows(paymentMethods: [account], banks: bankRows)
     if previous == nil, let card = CardRules.startingCard(for: account) {
       rows.cards = [card]
     }
@@ -450,6 +478,13 @@ struct AccountActions {
     let liveNames = Set(live.map { Self.folded($0.name) })
     account.aliases.removeAll { liveNames.contains(Self.folded($0)) }
     let names = Set(([account.name] + account.aliases).map(Self.folded))
+    switch bank(forRestoring: account) {
+    case .success(let placed):
+      account.bankId = placed.bankId
+      rows.banks = placed.rows
+    case .failure(let refusal):
+      return .refused(refusal)
+    }
     account.archived = false
     account.isDefault = false
     account.sort = AccountRules.sortForNewAccount(among: live)
@@ -852,14 +887,14 @@ struct AccountActions {
     return .success(next)
   }
 
-  private func apply(_ change: PlanningChange) -> AccountActionOutcome {
+  func apply(_ change: PlanningChange) -> AccountActionOutcome {
     guard store.apply(change) else { return .failed }
     environment.refreshVocabulary()
     return .done
   }
 
   /// After a write that is not undone: the steps of ⌘Z taken before may name what it removed.
-  private func settleForGood() {
+  func settleForGood() {
     store.forgetUndoHistory()
     environment.scheduleBackup()
     environment.refreshVocabulary()
@@ -937,6 +972,9 @@ enum AccountText {
     case .groupHasLiveAccounts: return t("account.refusal.groupHasLiveAccounts")
     case .groupInUse: return t("account.refusal.groupInUse")
     case .groupNameTaken: return t("account.refusal.groupNameTaken")
+    case .bankNameTaken: return t("account.refusal.bankNameTaken")
+    case .bankHasLiveAccounts: return t("account.refusal.bankHasLiveAccounts")
+    case .bankInUse: return t("account.refusal.bankInUse")
     case .notFound: return t("account.refusal.notFound")
     case .balanceChanged(let key):
       let name =

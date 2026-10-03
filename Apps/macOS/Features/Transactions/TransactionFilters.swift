@@ -184,6 +184,10 @@ struct FilterChoices: Sendable {
   var paymentMethods: [PaymentMethod] = []
   /// The live cards of the accounts offered.
   var cards: [PaymentCard] = []
+  /// The banks the accounts are filed under, and every account there is: the lists name an account
+  /// as its bank does (`AccountLabels`).
+  var banks: [Bank] = []
+  var everyAccount: [PaymentMethod] = []
   /// The places of `places` that are in the archive, named «(архив)» by the picker.
   var archivedPlaceIds: Set<UUID> = []
 
@@ -203,6 +207,8 @@ struct FilterChoices: Sendable {
     paymentMethods = AccountRules.ordered(dataset.paymentMethods, locale: locale)
     let offered = Set(paymentMethods.map(\.id))
     cards = dataset.cards.filter { !$0.archived && offered.contains($0.accountId) }
+    banks = dataset.banks
+    everyAccount = dataset.paymentMethods
     self.locale = locale
   }
 
@@ -210,7 +216,8 @@ struct FilterChoices: Sendable {
 
   /// The account filter's choices: each account followed by its cards.
   var accountItems: [AccountCardChoices.Item] {
-    AccountCardChoices.items(accounts: paymentMethods, cards: cards, locale: locale)
+    AccountCardChoices.items(
+      accounts: paymentMethods, cards: cards, banks: banks, among: everyAccount, locale: locale)
   }
 
   func topLevel(for kind: TransactionKind?) -> [CoreKit.Category] {

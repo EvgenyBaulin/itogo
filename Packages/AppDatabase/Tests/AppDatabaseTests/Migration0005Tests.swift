@@ -16,6 +16,10 @@ import Testing
 struct Migration0005Tests {
   private static let context = MigrationContext.tests
 
+  /// The schema of 1.2: the update to it is the migrations up to `0005_cards`; what the update
+  /// to 1.3 does is `Migration0006Tests`.
+  private static let schema = FilteredSchemaSource(upTo: "0005_cards")
+
   /// The columns 0005 adds to the tables of 1.1, all empty on every older row but the two the
   /// step fills.
   private static let added: [String: [String]] = [
@@ -39,7 +43,7 @@ struct Migration0005Tests {
     }
 
     let stack = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+      url: book.url, schema: Self.schema, context: Self.context)
     defer { try? stack.close() }
     #expect(try stack.appliedMigrations().count == 5)
     #expect(try stack.appliedMigrations().last == "0005_cards")
@@ -60,12 +64,13 @@ struct Migration0005Tests {
       #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
       #expect(try Self.sums(db) == sums)
     }
-    #expect(try DatabaseStack.check(fileAt: book.url, schema: TestSupport.schemaSource) == .sound)
+    #expect(try DatabaseStack.check(fileAt: book.url, schema: Self.schema) == .sound)
     #expect(
-      try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource) == [])
-    // Every row of the new tables and columns reads.
-    _ = try stack.writer.read { db in try DatasetRepository.dataset(db, version: 0) }
+      try DatabaseStack.pendingMigrations(fileAt: book.url, schema: Self.schema) == [])
+    // Every row of the new tables and columns reads. (The whole snapshot is read from the file of
+    // 1.3, which has the banks it names: `Migration0006Tests`.)
     _ = try stack.writer.read { db in try PaymentCard.fetchAll(db) }
+    _ = try stack.writer.read { db in try CashbackRule.fetchAll(db) }
   }
 
   // MARK: 2. The money
@@ -76,6 +81,7 @@ struct Migration0005Tests {
   @Test func theMoneyOfEveryAccountStaysWhereItWas() async throws {
     let book = try OnePointOneBook(named: "money")
     defer { book.remove() }
+    // Read through the whole snapshot, which names the banks too: the file goes on to 1.3.
     let stack = try DatabaseStack(
       url: book.url, schema: TestSupport.schemaSource, context: Self.context)
     defer { try? stack.close() }
@@ -136,7 +142,7 @@ struct Migration0005Tests {
     #expect(!plan.cards.contains { $0.accountId == book.archivedCard.id })
 
     let stack = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+      url: book.url, schema: Self.schema, context: Self.context)
     defer { try? stack.close() }
     #expect(TestSupport.cardsStep(stack.applied.dataSteps) == book.cardsStep)
     #expect(stack.applied.dataSteps["cardsCreated"] == plan.cards.count)
@@ -191,7 +197,7 @@ struct Migration0005Tests {
     }
 
     let stack = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+      url: book.url, schema: Self.schema, context: Self.context)
     defer { try? stack.close() }
     let modes = try stack.writer.read { db in
       Dictionary(
@@ -248,7 +254,7 @@ struct Migration0005Tests {
     defer { book.remove() }
     let before = try book.read { db in try TestSupport.contents(db)["goals"] }
     let stack = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource,
+      url: book.url, schema: Self.schema,
       context: MigrationContext(mainAccountName: "Main account", updateMonth: "2026-09"))
     defer { try? stack.close() }
     let goals = try stack.writer.read { db in try Goal.fetchAll(db) }
@@ -278,7 +284,7 @@ struct Migration0005Tests {
     let book = try OnePointOneBook(named: "first-read")
     defer { book.remove() }
     let stack = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+      url: book.url, schema: Self.schema, context: Self.context)
     defer { try? stack.close() }
     let counts = try stack.writer.read { db in try ReconciledBalance.fetchAll(db) }
     let a = try #require(book.rows["A"])
@@ -300,7 +306,7 @@ struct Migration0005Tests {
     let failure = try #require(
       throws: DatabaseStack.MigrationFailure.self,
       performing: {
-        try DatabaseStack(url: book.url, schema: TestSupport.schemaSource, context: stopping)
+        try DatabaseStack(url: book.url, schema: Self.schema, context: stopping)
       })
     #expect(failure.migration == "0005_cards")
     #expect(failure.from == 4)
@@ -308,7 +314,7 @@ struct Migration0005Tests {
     #expect(failure.underlying is MigrationDataSteps.StoppedOnPurpose)
     #expect(try DatabaseStack.sameData(fileAt: before, as: book.url))
     #expect(
-      try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
+      try DatabaseStack.pendingMigrations(fileAt: book.url, schema: Self.schema)
         == ["0005_cards"])
   }
 
@@ -340,13 +346,13 @@ struct Migration0005Tests {
     var stopping = Self.context
     stopping.failAfterSQL = true
     #expect(throws: DatabaseStack.MigrationFailure.self) {
-      try DatabaseStack(url: book.url, schema: TestSupport.schemaSource, context: stopping)
+      try DatabaseStack(url: book.url, schema: Self.schema, context: stopping)
     }
 
     let retried = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+      url: book.url, schema: Self.schema, context: Self.context)
     let direct = try DatabaseStack(
-      url: twin, schema: TestSupport.schemaSource, context: Self.context)
+      url: twin, schema: Self.schema, context: Self.context)
     #expect(retried.applied.dataSteps == direct.applied.dataSteps)
     #expect(retried.applied.dataSteps["goalPlansStarted"] == book.cardsStep["goalPlansStarted"])
     let left = try retried.writer.read { db in try ExactTables.read(db) }
@@ -380,7 +386,7 @@ struct Migration0005Tests {
       })
 
     let stack = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+      url: book.url, schema: Self.schema, context: Self.context)
     defer { try? stack.close() }
     #expect(try stack.appliedMigrations().count == 5)
     #expect(stack.applied.applied == 2)
@@ -428,13 +434,13 @@ struct Migration0005Tests {
     let failure = try #require(
       throws: DatabaseStack.MigrationFailure.self,
       performing: {
-        try DatabaseStack(url: book.url, schema: TestSupport.schemaSource, context: stopping)
+        try DatabaseStack(url: book.url, schema: Self.schema, context: stopping)
       })
     #expect(failure.migration == "0005_cards")
     #expect(failure.from == 3)
     #expect(failure.to == 5)
     #expect(
-      try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
+      try DatabaseStack.pendingMigrations(fileAt: book.url, schema: Self.schema)
         == ["0005_cards"])
     try DatabaseStack(
       url: firstOnly, schema: FilteredSchemaSource(upTo: "0004_accounts"), context: context
@@ -442,9 +448,9 @@ struct Migration0005Tests {
     #expect(try DatabaseStack.sameData(fileAt: book.url, as: firstOnly))
 
     let retried = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: context)
+      url: book.url, schema: Self.schema, context: context)
     let direct = try DatabaseStack(
-      url: untouched, schema: TestSupport.schemaSource, context: context)
+      url: untouched, schema: Self.schema, context: context)
     #expect(
       TestSupport.cardsStep(retried.applied.dataSteps)
         == TestSupport.cardsStep(direct.applied.dataSteps))
@@ -508,14 +514,14 @@ struct Migration0005Tests {
 
     let staged = folder.appendingPathComponent("imported.sqlite")
     try (opened.database ?? Data()).write(to: staged)
-    #expect(try DatabaseStack.check(fileAt: staged, schema: TestSupport.schemaSource) == .sound)
+    #expect(try DatabaseStack.check(fileAt: staged, schema: Self.schema) == .sound)
     #expect(
-      try DatabaseStack.pendingMigrations(fileAt: staged, schema: TestSupport.schemaSource)
+      try DatabaseStack.pendingMigrations(fileAt: staged, schema: Self.schema)
         == ["0005_cards"])
     let imported = try DatabaseStack(
-      url: staged, schema: TestSupport.schemaSource, context: Self.context)
+      url: staged, schema: Self.schema, context: Self.context)
     let file = try DatabaseStack(
-      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+      url: book.url, schema: Self.schema, context: Self.context)
     #expect(imported.applied.dataSteps == file.applied.dataSteps)
     #expect(TestSupport.cardsStep(imported.applied.dataSteps) == book.cardsStep)
     let left = try imported.writer.read { db in try ExactTables.read(db) }
@@ -579,7 +585,7 @@ struct Migration0005Tests {
     }
     try old.close()
 
-    let stack = try DatabaseStack(url: url, schema: TestSupport.schemaSource, context: Self.context)
+    let stack = try DatabaseStack(url: url, schema: Self.schema, context: Self.context)
     defer { try? stack.close() }
     #expect(
       TestSupport.cardsStep(stack.applied.dataSteps)
@@ -661,7 +667,7 @@ private struct FailingAtTheEnd: SchemaSource {
   let migration: String
 
   func migrations() throws -> [SchemaMigration] {
-    try TestSupport.schemaSource.migrations().map { current in
+    try FilteredSchemaSource(upTo: "0005_cards").migrations().map { current in
       guard current.name == migration else { return current }
       return SchemaMigration(
         name: current.name,

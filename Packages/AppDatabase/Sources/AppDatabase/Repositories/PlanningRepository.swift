@@ -5,9 +5,11 @@ import GRDB
 
 /// Rows of the tables an action of the planning writes, one list per table. The reference
 /// books are here because the planning makes rows of them too: the subcategory of a new goal,
-/// of a new debt. So are the accounts and their groups, the cards of the accounts and their
-/// cashback rules, the transfers between them and the balances counted on them.
+/// of a new debt. So are the accounts and their groups, the banks above them, the cards of the
+/// accounts and their cashback rules, the transfers between them and the balances counted on
+/// them.
 public struct PlanningRows: Sendable, Hashable {
+  public var banks: [Bank]
   public var accountGroups: [AccountGroup]
   public var paymentMethods: [PaymentMethod]
   public var categories: [CoreKit.Category]
@@ -33,8 +35,9 @@ public struct PlanningRows: Sendable, Hashable {
     budgets: [Budget] = [], debtEntries: [DebtEntry] = [], reconciliations: [Reconciliation] = [],
     accountGroups: [AccountGroup] = [], paymentMethods: [PaymentMethod] = [],
     transfers: [Transfer] = [], reconciledBalances: [ReconciledBalance] = [],
-    cards: [PaymentCard] = [], cashbackRules: [CashbackRule] = []
+    cards: [PaymentCard] = [], cashbackRules: [CashbackRule] = [], banks: [Bank] = []
   ) {
+    self.banks = banks
     self.cards = cards
     self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
@@ -59,6 +62,7 @@ public struct PlanningRows: Sendable, Hashable {
 
 /// Ids of rows of the same tables as `PlanningRows`, one list per table.
 public struct PlanningRowIDs: Sendable, Hashable {
+  public var banks: [UUID]
   public var accountGroups: [UUID]
   public var paymentMethods: [UUID]
   public var categories: [UUID]
@@ -83,8 +87,9 @@ public struct PlanningRowIDs: Sendable, Hashable {
     expectedLinks: [UUID] = [], budgets: [UUID] = [], debtEntries: [UUID] = [],
     reconciliations: [UUID] = [], accountGroups: [UUID] = [], paymentMethods: [UUID] = [],
     transfers: [UUID] = [], reconciledBalances: [UUID] = [], cards: [UUID] = [],
-    cashbackRules: [UUID] = []
+    cashbackRules: [UUID] = [], banks: [UUID] = []
   ) {
+    self.banks = banks
     self.cards = cards
     self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
@@ -257,8 +262,9 @@ public enum PlanningWriteError: Error, Equatable, Sendable {
   /// deleted (the schema's rule). Deleting it would quietly clear the operations' references
   /// — a contribution would stop counting towards its goal — and undo could not put them
   /// back, since operations are not rows of the planning. The same holds for an account that
-  /// operations, transfers, scheduled payments or debt journal lines point at, and for a card
-  /// that operations or scheduled payments name.
+  /// operations, transfers, scheduled payments or debt journal lines point at, for a card
+  /// that operations or scheduled payments name, and for a bank that accounts — archived ones
+  /// too — are filed under.
   case referencedByOperations(UUID)
   /// The change asks to let go of links to rows other than goals.
   case unsupportedUnlinking
@@ -298,8 +304,8 @@ public struct PlanningRepository: Sendable {
   /// income, the journal of a debt, the limits and definitions filed under a category, the
   /// balances counted on an account or in a reconciliation — so undo gives them back as well.
   ///
-  /// Rows go in the order their foreign keys need: groups of accounts, accounts, their cards,
-  /// categories (parents first), events, goals, debts, scheduled payments, prices, expected
+  /// Rows go in the order their foreign keys need: groups of accounts, banks, accounts, their
+  /// cards, categories (parents first), events, goals, debts, scheduled payments, prices, expected
   /// income, limits, cashback rules, then the new operations with their parts and the
   /// operations rewritten, and after them the debt journal, the income links, the transfers,
   /// the reconciliations and the balances they counted, which may point at those operations.
@@ -406,6 +412,7 @@ public struct PlanningRepository: Sendable {
     var journal = UndoJournal()
     let rows = change.upsert
     try journal.upsert(rows.accountGroups, db: db)
+    try journal.upsert(rows.banks, db: db)
     try journal.upsert(rows.paymentMethods, db: db)
     // An account written as the main one takes the flag from every other, as a save of it
     // does (`ReferenceRepository.save`); of two written as main, the later one keeps it.
@@ -468,6 +475,7 @@ public struct PlanningRepository: Sendable {
       CoreKit.Category.self, ids: Self.childrenFirst(gone.categories, db: db), db: db)
     try journal.delete(PaymentCard.self, ids: gone.cards, db: db)
     try Self.deleteAccounts(gone.paymentMethods, journal: &journal, db: db)
+    try journal.delete(Bank.self, ids: gone.banks, db: db)
     try journal.delete(AccountGroup.self, ids: gone.accountGroups, db: db)
 
     let deletion =
@@ -655,8 +663,8 @@ public struct PlanningRepository: Sendable {
   /// moved by a payment that never happened. Then the rows it added go, in the reverse order
   /// of the foreign keys, and the rows it changed or removed are written back as they were, in
   /// the forward order, each at the rowid it had (`PlanningUndo.rowIDs`); the links it let go
-  /// of are set back after them, once what they point at is there again. The cards, accounts
-  /// and groups it added go only after that: a payment, a transfer or a journal line it moved
+  /// of are set back after them, once what they point at is there again. The cards, accounts,
+  /// banks and groups it added go only after that: a payment, a transfer or a journal line it moved
   /// onto a new account or card points at it until written back. The settings come last.
   /// `instant` stamps the operations brought back.
   ///
@@ -767,6 +775,7 @@ public struct PlanningRepository: Sendable {
 
     let before = undo.before
     for row in before.accountGroups { try row.save(db) }
+    for row in before.banks { try row.save(db) }
     for row in before.paymentMethods { try row.save(db) }
     for row in before.cards { try row.save(db) }
     for category in Self.parentsFirst(before.categories) { try category.save(db) }
@@ -800,8 +809,10 @@ public struct PlanningRepository: Sendable {
     // took.
     try Self.deleteAll(PaymentCard.self, ids: added.cards, db: db)
     try Self.deleteAll(PaymentMethod.self, ids: added.paymentMethods, db: db)
+    try Self.deleteAll(Bank.self, ids: added.banks, db: db)
     try Self.deleteAll(AccountGroup.self, ids: added.accountGroups, db: db)
     try Self.restoreRowIDs(before.accountGroups, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.banks, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.paymentMethods, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.cards, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.categories, undo.rowIDs, db: db)
@@ -1243,6 +1254,18 @@ extension Reconciliation: PlanningRow {
 extension ReconciledBalance: PlanningRow {
   static var rows: WritableKeyPath<PlanningRows, [Self]> { \.reconciledBalances }
   static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.reconciledBalances }
+}
+
+extension Bank: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.banks }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.banks }
+
+  /// A bank with an account under it — an archived one too — is never deleted: the account
+  /// would be left with no bank to name it.
+  static func refuseDeletion(of id: UUID, db: Database) throws {
+    try refuseIfOperations(
+      "SELECT 1 FROM payment_methods WHERE bank_id = :id", point: id, db: db)
+  }
 }
 
 extension AccountGroup: PlanningRow {

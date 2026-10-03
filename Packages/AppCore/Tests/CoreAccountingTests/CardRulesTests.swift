@@ -99,7 +99,7 @@ struct CardRulesTests {
   }
 
   @Test func displayNameJoinsAccountAndCard() {
-    #expect(CardRules.displayName(account: "T-Bank", card: "Black") == "T-Bank · Black")
+    #expect(CardRules.displayName(account: "T-Bank", card: "Black") == "T-Bank › Black")
     #expect(CardRules.displayName(account: "T-Bank", card: nil) == "T-Bank")
   }
 

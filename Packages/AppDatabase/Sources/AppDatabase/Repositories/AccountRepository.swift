@@ -48,6 +48,9 @@ public enum AccountWriteError: Error, Equatable, Sendable {
   case isMain
   /// Accounts are filed under the group, archived ones included.
   case groupInUse
+  /// Accounts are filed under the bank, archived ones included: an empty bank is deleted, one
+  /// with an account is not.
+  case bankInUse
   /// The accounts would need more currencies switched on than the ten allowed.
   case tooManyCurrencies
   /// An operation that moves money on an account that does not hold its currency, saved
@@ -57,6 +60,22 @@ public enum AccountWriteError: Error, Equatable, Sendable {
   case cardOfAnotherAccount
   /// The account or the group is not there.
   case notFound
+}
+
+/// What `AccountRepository.ensureBanks()` put right, for the journal: counts only.
+public struct BankRepair: Hashable, Sendable {
+  /// Banks made.
+  public var created: Int
+  /// Accounts put under a bank, an existing one included.
+  public var filed: Int
+  /// Accounts whose name is blank, which a bank cannot be named after.
+  public var skipped: Int
+
+  public init(created: Int, filed: Int, skipped: Int) {
+    self.created = created
+    self.filed = filed
+    self.skipped = skipped
+  }
 }
 
 /// The accounts and their groups: reading them, and the writes that cannot be undone — the
@@ -92,6 +111,15 @@ public struct AccountRepository: Sendable {
       var request = AccountGroup.all()
       if !includeArchived { request = request.filter(Column("archived") == false) }
       return try request.order(Column("sort"), Column("name")).fetchAll(db)
+    }
+  }
+
+  /// The banks in the owner's order, then by name.
+  public func banks(includeArchived: Bool = false) throws -> [Bank] {
+    try writer.read { db in
+      var request = Bank.all()
+      if !includeArchived { request = request.filter(Column("archived") == false) }
+      return try request.order(Column("sort"), Column("name"), Column.rowID).fetchAll(db)
     }
   }
 
@@ -171,6 +199,21 @@ public struct AccountRepository: Sendable {
     }
   }
 
+  /// Deletes a bank no account is filed under, archived accounts included, for good. An account
+  /// deleted leaves its bank where it was, so a bank may be empty. Throws
+  /// `AccountWriteError.bankInUse` or `.notFound`. Forget the ⌘Z history after it (see the type).
+  public func deleteBank(_ id: UUID) throws {
+    try writer.write { db in
+      guard try Bank.exists(db, key: id.uuidString) else { throw AccountWriteError.notFound }
+      let used =
+        try Bool.fetchOne(
+          db, sql: "SELECT EXISTS (SELECT 1 FROM payment_methods WHERE bank_id = ?)",
+          arguments: [id.uuidString]) ?? false
+      guard !used else { throw AccountWriteError.bankInUse }
+      _ = try Bank.deleteOne(db, key: id.uuidString)
+    }
+  }
+
   // MARK: Merging
 
   /// Merges one account into another in one write, for good (a merge is not undone, as with
@@ -242,7 +285,8 @@ public struct AccountRepository: Sendable {
 
   /// Writes the setup of the accounts in one write, for good:
   ///
-  /// 1. the groups and 2. the accounts, as the plan has them, then the cards of the plan;
+  /// 1. the groups and the banks, 2. the accounts, as the plan has them, then the cards of the
+  ///    plan;
   /// 3. the main account, and no other;
   /// 4. one reconciliation of kind `opening` at `at` with the balances counted, which says it
   ///    came from the setup (`ReconciliationOrigin.setup`) — the starting point of each account
@@ -260,6 +304,7 @@ public struct AccountRepository: Sendable {
   public func finishSetup(_ plan: AccountSetupPlan, calendar: CalendarContext) throws {
     try writer.write { db in
       for group in plan.groups { try group.save(db) }
+      for bank in plan.banks { try bank.save(db) }
       for account in plan.accounts { try account.save(db) }
       for card in plan.cards { try card.save(db) }
       guard try PaymentMethod.exists(db, key: plan.mainAccountId.uuidString) else {
@@ -387,6 +432,28 @@ public struct AccountRepository: Sendable {
         arguments: [main])
       return MainAccountRepair(
         mainId: repair.mainId, madeMain: db.changesCount > 0, cleared: cleared)
+    }
+  }
+
+  // MARK: Banks
+
+  /// Every account is under a bank. An account found without one — made by a hand edit, another
+  /// program, or a path of the app that did not file it — is put under the live bank of its name,
+  /// else under a bank made for it, called like it (`BanksMigration`): the same work the update
+  /// to 1.3 does, in one write. An account with a blank name is left without a bank, as the
+  /// table refuses such a name.
+  ///
+  /// The app runs it on every open, before anything reads the accounts. Returns `nil` when
+  /// nothing needed to change. Not a step of ⌘Z: it restores what every list assumes.
+  @discardableResult
+  public func ensureBanks() throws -> BankRepair? {
+    try writer.write { db in
+      let outcome = try BankFiling.file(db: db)
+      // An account with a blank name is met at every open and nothing is put right for it: it is
+      // told in the count, never a reason to say anything was done.
+      guard outcome.banksCreated + outcome.filed > 0 else { return nil }
+      return BankRepair(
+        created: outcome.banksCreated, filed: outcome.filed, skipped: outcome.skipped)
     }
   }
 

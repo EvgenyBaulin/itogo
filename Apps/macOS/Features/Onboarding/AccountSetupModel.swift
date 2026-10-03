@@ -123,6 +123,9 @@ struct AccountSetupModel: Equatable {
   /// The cards of every account, archived ones included: a live card keeps its name from being
   /// taken by another account.
   private(set) var cards: [PaymentCard] = []
+  /// The banks of the books, archived ones included: an account added here goes under the live
+  /// bank of its name, or under a bank the plan makes for it.
+  private(set) var banks: [Bank] = []
   /// What the books expect now for every key that has been counted before.
   private(set) var expected: [BalanceKey: AmountE4] = [:]
   /// Whether `expected` has been read. Until it has, a key counted before would look like a
@@ -138,10 +141,12 @@ struct AccountSetupModel: Equatable {
 
   /// `accounts` and `groups` as the database has them, archived ones included: the live ones
   /// are listed, the archived ones only keep their names from being taken. `locale` orders
-  /// the names. `cards` are the cards of the accounts, whose live names are taken too.
+  /// the names. `cards` are the cards of the accounts, whose live names are taken too; `banks`
+  /// are the banks they stand under.
   init(
     accounts: [PaymentMethod], groups: [AccountGroup], defaultCurrency: CurrencyCode,
-    enabled: [CurrencyCode], locale: Locale = Locale(identifier: "en"), cards: [PaymentCard] = []
+    enabled: [CurrencyCode], locale: Locale = Locale(identifier: "en"), cards: [PaymentCard] = [],
+    banks: [Bank] = []
   ) {
     // The order of every list of accounts: the main one first, then the owner's order.
     let live = AccountRules.ordered(accounts, locale: locale)
@@ -167,6 +172,7 @@ struct AccountSetupModel: Equatable {
     self.archivedAccounts = accounts.filter(\.archived)
     self.archivedGroups = groups.filter(\.archived)
     self.cards = cards
+    self.banks = banks
     self.highestSort = accounts.map(\.sort).max() ?? 0
     self.highestGroupSort = groups.map(\.sort).max() ?? 0
   }
@@ -416,18 +422,34 @@ struct AccountSetupModel: Equatable {
   /// read. A count for every balance typed, and only for those: a field left empty writes
   /// nothing — an account never counted stays uncounted, one counted before keeps its count.
   /// A key counted before and typed compares with what the books expected. Each new account of
-  /// the kind card or account comes with its card.
+  /// the kind card or account comes with its card, and every account stands under a bank: the live
+  /// bank of its name, else a bank the plan makes for it, called like it — its id is the
+  /// account's, masked, so the plan is the same every time it is asked for.
   func plan(at instant: Date) -> AccountSetupPlan? {
     guard hasExpected, issues.isEmpty, let mainId else { return nil }
     var nextSort = highestSort
     var methods: [PaymentMethod] = []
     var cards: [PaymentCard] = []
+    var newBanks: [Bank] = []
     var openings: [BalanceKey: AmountE4] = [:]
     for account in accounts {
       var method = row(account)
       if account.isNew, highestSort > 0 {
         nextSort += 1
         method.sort = nextSort
+      }
+      if method.bankId == nil {
+        let known = banks + newBanks
+        if let bank = BankRules.live(named: method.name, among: known) {
+          method.bankId = bank.id
+        } else {
+          let bank = Bank(
+            id: BanksMigration.bankId(forAccount: method.id),
+            name: method.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            sort: BankRules.sortForNewBank(among: known.filter { !$0.archived }))
+          newBanks.append(bank)
+          method.bankId = bank.id
+        }
       }
       methods.append(method)
       // A new card or bank account starts with a card named like it; one already stored keeps
@@ -456,7 +478,7 @@ struct AccountSetupModel: Equatable {
     return AccountSetupPlan(
       accounts: methods, groups: groups, mainAccountId: mainId, openingBalances: openings,
       expected: expected.filter { openings[$0.key] != nil }, defaultCurrency: defaultCurrency,
-      at: instant, cards: cards)
+      at: instant, cards: cards, banks: newBanks)
   }
 
   /// The live card of another account that the name of an account added or renamed here is
@@ -499,11 +521,11 @@ struct AccountSetupModel: Equatable {
   /// merged or deleted since leaves the list — written back live, merged money would count
   /// twice — and one made since joins it. Returns whether the list changed that way: the
   /// owner sees it before anything is written.
-  /// `cards`, when given, replace the cards read before.
+  /// `cards` and `banks`, when given, replace the ones read before.
   @discardableResult
   mutating func rebase(
     accounts fresh: [PaymentMethod], groups freshGroups: [AccountGroup],
-    cards freshCards: [PaymentCard]? = nil
+    cards freshCards: [PaymentCard]? = nil, banks freshBanks: [Bank]? = nil
   ) -> Bool {
     var changed = false
     let liveGroups = freshGroups.filter { !$0.archived }
@@ -574,6 +596,7 @@ struct AccountSetupModel: Equatable {
     archivedAccounts = fresh.filter(\.archived)
     archivedGroups = freshGroups.filter(\.archived)
     if let freshCards { cards = freshCards }
+    if let freshBanks { banks = freshBanks }
     highestSort = fresh.map(\.sort).max() ?? 0
     highestGroupSort = freshGroups.map(\.sort).max() ?? 0
     return changed
@@ -600,25 +623,27 @@ extension AccountSetupModel {
   /// cannot be read — an empty list would offer to make them again.
   @MainActor
   static func load(from environment: AppEnvironment) -> AccountSetupModel? {
-    guard let (accounts, groups, cards) = readAccounts(environment) else { return nil }
+    guard let (accounts, groups, cards, banks) = readAccounts(environment) else { return nil }
     let enabled = (try? environment.settings?.enabledCurrencies()) ?? CurrencyCode.defaultEnabled
     return AccountSetupModel(
       accounts: accounts, groups: groups, defaultCurrency: environment.defaultCurrency,
-      enabled: enabled, locale: environment.language.locale, cards: cards)
+      enabled: enabled, locale: environment.language.locale, cards: cards, banks: banks)
   }
 
   /// `rebase` on what the database has now; `nil` when it cannot be read.
   @MainActor
   mutating func rebase(on environment: AppEnvironment) -> Bool? {
-    guard let (accounts, groups, cards) = Self.readAccounts(environment) else { return nil }
-    return rebase(accounts: accounts, groups: groups, cards: cards)
+    guard let (accounts, groups, cards, banks) = Self.readAccounts(environment) else { return nil }
+    return rebase(accounts: accounts, groups: groups, cards: cards, banks: banks)
   }
 
-  /// The accounts, the groups and the cards, archived ones included.
+  /// The accounts, the groups, the cards and the banks, archived ones included.
   @MainActor
   private static func readAccounts(
     _ environment: AppEnvironment
-  ) -> (accounts: [PaymentMethod], groups: [AccountGroup], cards: [PaymentCard])? {
+  ) -> (
+    accounts: [PaymentMethod], groups: [AccountGroup], cards: [PaymentCard], banks: [Bank]
+  )? {
     guard let repository = environment.accounts, let stack = environment.stack else {
       return nil
     }
@@ -626,7 +651,8 @@ extension AccountSetupModel {
       return (
         try repository.accounts(includeArchived: true),
         try repository.groups(includeArchived: true),
-        try CardRepository(writer: stack.writer).cards(includeArchived: true)
+        try CardRepository(writer: stack.writer).cards(includeArchived: true),
+        try repository.banks(includeArchived: true)
       )
     } catch {
       AppLog.error(

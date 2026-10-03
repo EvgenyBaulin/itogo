@@ -58,15 +58,15 @@ final class ScheduledCardTests: XCTestCase {
 
   // MARK: The picker
 
-  /// Each live account, followed by its live cards in their order; an archived card is not
-  /// offered, and a card called like its account still says whose card it is.
+  /// Each live account, followed by its live cards in their order when it has two or more; an
+  /// archived card is not offered, and a card called like its account is the account itself.
   func testThePickerOffersEachAccountWithItsLiveCards() {
     let sberCard = PaymentCard(accountId: sber.id, name: "Сбер")
     let items = AccountCardChoices.items(
       accounts: FormAccounts.offered([tBank, sber], locale: Locale(identifier: "ru")),
       cards: cards + [sberCard], locale: Locale(identifier: "ru"))
     XCTAssertEqual(
-      items.map(\.name), ["Сбер", "Сбер · Сбер", "Т-Банк", "Т-Банк · Black", "Т-Банк · Virtual"])
+      items.map(\.name), ["Сбер", "Т-Банк", "Т-Банк › Black", "Т-Банк › Virtual"])
     XCTAssertEqual(
       AccountCardChoices.selection(accountId: tBank.id, cardId: black.id, items: items), black.id)
     XCTAssertEqual(
@@ -186,7 +186,7 @@ final class ScheduledCardTests: XCTestCase {
 
   // MARK: The row
 
-  /// «Т-Банк · Black»; only «Сбер» when the card is called like its account; «карта в архиве»
+  /// «Т-Банк › Black»; only «Сбер» when the card is called like its account; «карта в архиве»
   /// when the card is archived.
   func testTheRowNamesTheCardAndSaysWhenItIsArchived() {
     let sberCard = PaymentCard(accountId: sber.id, name: "Сбер")
@@ -197,11 +197,11 @@ final class ScheduledCardTests: XCTestCase {
           name: "x", amountE4: AmountE4(whole: 1), paymentMethodId: account, cardId: card),
         accounts: [sber, tBank], cards: all)
     }
-    XCTAssertEqual(paid(tBank.id, black.id).name, "Т-Банк · Black")
+    XCTAssertEqual(paid(tBank.id, black.id).name, "Т-Банк › Black")
     XCTAssertFalse(paid(tBank.id, black.id).cardArchived)
     XCTAssertEqual(paid(sber.id, sberCard.id).name, "Сбер")
     XCTAssertEqual(paid(tBank.id, nil).name, "Т-Банк")
-    XCTAssertEqual(paid(tBank.id, old.id).name, "Т-Банк · Old")
+    XCTAssertEqual(paid(tBank.id, old.id).name, "Т-Банк › Old")
     XCTAssertTrue(paid(tBank.id, old.id).cardArchived)
     XCTAssertNotEqual(
       environment.language("scheduled.cardArchived", table: "Planning"), "scheduled.cardArchived",

@@ -46,7 +46,7 @@ final class TransactionsAccountColumnTests: XCTestCase {
       calendar: calendar)
 
     let names = rows(TransactionListing.build([coffee.id, bread.id, taxi.id], ledger: ledger))
-    XCTAssertEqual(names[coffee.id], "Т-Банк · Black")
+    XCTAssertEqual(names[coffee.id], "Т-Банк › Black")
     XCTAssertEqual(names[bread.id], "Сбер", "«Сбер · Сбер» says nothing")
     XCTAssertEqual(names[taxi.id], "Т-Банк")
   }

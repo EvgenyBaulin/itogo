@@ -41,7 +41,7 @@ struct MigrationRollbackTests {
     #expect(try DatabaseStack.sameData(fileAt: before, as: book.url), "seed \(seed)")
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards"])
+        == ["0004_accounts", "0005_cards", "0006_banks"])
   }
 
   /// The SQL of the update itself fails at its very end, after every table and column it adds
@@ -59,7 +59,7 @@ struct MigrationRollbackTests {
       })
     #expect(failure.migration == "0004_accounts")
     #expect(failure.from == 3)
-    #expect(failure.to == 5)
+    #expect(failure.to == 6)
     #expect(try DatabaseStack.sameData(fileAt: before, as: book.url))
     let tables = try book.read { db in
       try String.fetchSet(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'")

@@ -1046,16 +1046,19 @@ enum FormAccounts {
 /// is no account at all.
 struct AccountPicker: View {
   @Dependency(\.environment) private var environment
+  @Dependency(\.compute) private var compute
   let title: String
   let accounts: [PaymentMethod]
-  /// The cards offered under their accounts, «Т-Банк · Black»; none — the accounts alone.
+  /// The cards offered under their accounts, «Т-Банк › Black»; none — the accounts alone.
   var cards: [PaymentCard] = []
   @Binding var selection: UUID?
 
   var body: some View {
     let locale = environment.language.locale
+    // The banks name the accounts as every list does: a bank with one account is told by its name.
     let offered = AccountCardChoices.items(
-      accounts: FormAccounts.offered(accounts, locale: locale), cards: cards, locale: locale)
+      accounts: FormAccounts.offered(accounts, locale: locale), cards: cards,
+      banks: compute.snapshot?.dataset.banks ?? [], among: accounts, locale: locale)
     Picker(title, selection: $selection) {
       if offered.isEmpty || !offered.contains(where: { $0.id == selection }) {
         Text(verbatim: "—").tag(UUID?.none)

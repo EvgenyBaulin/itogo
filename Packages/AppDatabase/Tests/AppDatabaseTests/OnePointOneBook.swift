@@ -422,6 +422,34 @@ extension TestSupport {
     "cardsCreated", "cardsSkipped", "countsRecorded", "countsKept", "goalPlansStarted",
   ]
 
+  /// The counts of the step of the banks (`0006_banks`).
+  static let banksStepKeys: Set<String> = ["banksCreated", "banksSkipped", "accountsFiled"]
+
+  /// What the step of the banks does to the accounts of a file as it is: the plan worked out
+  /// from every account in it.
+  static func banksStep(_ db: Database) throws -> [String: Int] {
+    var accounts: [MigratingBankAccount] = []
+    for row in try Row.fetchAll(
+      db, sql: "SELECT id, name, archived FROM payment_methods ORDER BY rowid")
+    {
+      guard let text: String = row["id"], let id = UUID(uuidString: text) else { continue }
+      let archived: Int64? = row["archived"]
+      accounts.append(
+        MigratingBankAccount(
+          id: id, name: row["name"] ?? "", archived: (archived ?? 0) != 0, hasBank: false))
+    }
+    let plan = BanksMigration.plan(accounts: accounts)
+    return [
+      "banksCreated": plan.banks.count, "banksSkipped": plan.skipped,
+      "accountsFiled": plan.assignments.count,
+    ]
+  }
+
+  /// What the step of the banks did, of all the steps of one open.
+  static func banksStep(_ steps: [String: Int]) -> [String: Int] {
+    steps.filter { banksStepKeys.contains($0.key) }
+  }
+
   /// What the step of the accounts did, of all the steps of one open.
   static func accountsStep(_ steps: [String: Int]) -> [String: Int] {
     steps.filter { accountsStepKeys.contains($0.key) }

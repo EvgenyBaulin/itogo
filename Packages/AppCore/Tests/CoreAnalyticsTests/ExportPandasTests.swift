@@ -34,7 +34,9 @@ struct ExportPandasTests {
     """
 
   /// The rows of each file, as the export writes them from a database holding the sample.
-  static func rows(of set: SampleDataSet) -> [ExportTable: [[String]]] {
+  static func rows(of given: SampleDataSet) -> [ExportTable: [[String]]] {
+    // The banks the accounts sit under, as the update of an older book leaves them.
+    let set = given.assigningBanks()
     let planning = set.planning
     var rows: [ExportTable: [[String]]] = [:]
     rows[ExportTables.transactions] = set.entries.map { ExportTables.row($0.transaction) }
@@ -62,6 +64,7 @@ struct ExportPandasTests {
     let (cards, rules) = Self.cardsAndRules(of: set)
     rows[ExportTables.cards] = cards.map(ExportTables.row)
     rows[ExportTables.cashbackRules] = rules.map(ExportTables.row)
+    rows[ExportTables.banks] = set.banks.map(ExportTables.row)
     return rows
   }
 
@@ -95,11 +98,11 @@ struct ExportPandasTests {
       months: 6, endingOn: Synthetic.endingOn, calendar: Synthetic.calendar, language: "ru"
     ).withAccounts(seed: 20_260_918, calendar: Synthetic.calendar, language: "ru")
     let rows = Self.rows(of: set)
-    #expect(ExportTables.all.count == 23)
+    #expect(ExportTables.all.count == 24)
     #expect(Set(rows.keys) == Set(ExportTables.all), "a file of Export has no rows here")
     for table in [
       ExportTables.accountGroups, ExportTables.transfers, ExportTables.reconciliationBalances,
-      ExportTables.cards, ExportTables.cashbackRules,
+      ExportTables.cards, ExportTables.cashbackRules, ExportTables.banks,
     ] {
       #expect(!(rows[table] ?? []).isEmpty, "\(table.fileName) is empty")
     }
@@ -126,7 +129,7 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: Reading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 23)
+    #expect(readings.count == 24)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")
@@ -233,7 +236,7 @@ struct ExportPandasTests {
     let texts: [String: [String?]]
   }
 
-  /// The same 23 files with every name and note of every row replaced by an awkward string —
+  /// The same 24 files with every name and note of every row replaced by an awkward string —
   /// the accounts' groups, transfers and counts among them — read by pandas with no
   /// parameters: no row is lost or split, the columns stay, and every name and note reads
   /// back as written, except the words pandas takes for a missing value.
@@ -281,7 +284,7 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: TextReading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 23)
+    #expect(readings.count == 24)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")

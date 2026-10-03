@@ -207,6 +207,8 @@ struct SamplePlanningStorageTests {
     #expect(batch.people == history.people)
     #expect(batch.places == history.places)
     #expect(batch.paymentMethods == history.paymentMethods)
+    #expect(batch.banks == history.banks)
+    #expect(batch.paymentMethods.allSatisfy { $0.bankId != nil })
     #expect(batch.events == history.events)
     #expect(batch.templates == history.templates)
     #expect(batch.goals == history.goals)

@@ -2,8 +2,27 @@ import CoreKit
 import Foundation
 import GRDB
 
-// The tables of the accounts (`Schema/0004_accounts.sql`), mapped by hand like every other
-// record (`RowMapping`).
+// The tables of the accounts (`Schema/0004_accounts.sql`) and of the banks above them
+// (`Schema/0006_banks.sql`), mapped by hand like every other record (`RowMapping`).
+
+extension Bank: @retroactive FetchableRecord, @retroactive PersistableRecord {
+  public static let databaseTableName = "banks"
+
+  public init(row: Row) throws {
+    self.init(
+      id: try RowMapping.uuid(row, "id"),
+      name: row["name"] ?? "",
+      sort: try RowMapping.optionalInteger(row, "sort") ?? 0,
+      archived: try RowMapping.flag(row, "archived", fallback: false))
+  }
+
+  public func encode(to container: inout PersistenceContainer) throws {
+    container["id"] = id.uuidString
+    container["name"] = name
+    container["sort"] = sort
+    container["archived"] = archived
+  }
+}
 
 extension AccountGroup: @retroactive FetchableRecord, @retroactive PersistableRecord {
   public static let databaseTableName = "account_groups"

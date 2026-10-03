@@ -38,6 +38,14 @@ struct ArchivedMoneyForm: Sendable {
     }
   }
 
+  /// The transfers the answer of the row will write, told one by one.
+  func legs(of row: Row, now: Date) -> [SettlingLeg] {
+    guard let chosen = row.chosen else { return [] }
+    let transfers = ArchivedMoney.settlingTransfers(
+      row.leftover, counterpart: chosen, now: now, note: nil)
+    return ArchivedMoney.legs(of: transfers, archived: row.leftover.key.accountId, now: now)
+  }
+
   /// The amounts the question is worked out on, per key: a write checks the books still hold
   /// them.
   var shown: [BalanceKey: AmountE4] {
@@ -49,6 +57,41 @@ struct ArchivedMoneyForm: Sendable {
     Dictionary(
       rows.compactMap { row in row.leftover.heldNow.map { (row.leftover.key, $0) } },
       uniquingKeysWith: { a, _ in a })
+  }
+}
+
+/// What the question says of the transfers it will write: one line for each, with its day, its
+/// amount and the two accounts. A settling can be two transfers — what the account holds now goes
+/// now, and what is typed ahead of today on it goes back and forth on its own day —, and the
+/// second must not be a surprise: «И 30 сентября — перевод 30,000 ₽ с «Сбер» обратно на
+/// «Наличные», чтобы покрыть записанное вперёд.»
+@MainActor
+enum ArchivedLegText {
+  /// The key of the Accounts table that words `leg`; `following` is a leg after the first.
+  static func key(for leg: SettlingLeg, following: Bool) -> String {
+    switch (leg.when, leg.returnsToArchived) {
+    case (.now, _): "archived.leftover.leg.now"
+    case (.later, true): following ? "archived.leftover.leg.back.and" : "archived.leftover.leg.back"
+    case (.later, false):
+      following ? "archived.leftover.leg.later.and" : "archived.leftover.leg.later"
+    }
+  }
+
+  /// A line for every leg, in order. `name` gives the name of an account by its id.
+  static func lines(
+    _ legs: [SettlingLeg], name: (UUID) -> String, _ environment: AppEnvironment
+  ) -> [String] {
+    legs.enumerated().map { index, leg in
+      let amount = environment.money.exact(leg.amount, currency: leg.currency)
+      let key = key(for: leg, following: index > 0)
+      if leg.when == .now {
+        return environment.format(
+          key, table: AccountText.table, amount, name(leg.from), name(leg.to))
+      }
+      let day = environment.dates.dayAndMonth(environment.calendar.day(of: leg.at))
+      return environment.format(
+        key, table: AccountText.table, day, amount, name(leg.from), name(leg.to))
+    }
   }
 }
 
@@ -182,10 +225,21 @@ struct ArchivedMoneySheet: View {
           Text(verbatim: t("transfer.sheet.account"))
         }
       }
-      Text(
-        verbatim: environment.format(
-          "archived.leftover.message", table: AccountText.table, name)
-      )
+      VStack(alignment: .leading, spacing: 4) {
+        Text(
+          verbatim: environment.format(
+            "archived.leftover.message", table: AccountText.table, name)
+        )
+        // Every transfer it will write, with its day: not one of them is a surprise.
+        ForEach(
+          ArchivedLegText.lines(
+            form?.legs(of: row, now: environment.now()) ?? [], name: accountName, environment),
+          id: \.self
+        ) { line in
+          Text(verbatim: line)
+            .monospacedDigit()
+        }
+      }
       .font(.caption)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)

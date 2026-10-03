@@ -46,6 +46,42 @@ public struct ArchivedMoneyCheck: Hashable, Sendable {
   public static let none = ArchivedMoneyCheck()
 }
 
+/// One transfer of a settling, told for the question that asks where the money goes: when it is
+/// dated, how much, between which accounts, and whether the money goes back into the account
+/// that is archived — to pay what is typed ahead there.
+public struct SettlingLeg: Hashable, Sendable {
+  public enum When: Hashable, Sendable {
+    /// Dated now or earlier: the money moves with the answer.
+    case now
+    /// Dated with an operation typed ahead.
+    case later
+  }
+
+  public var when: When
+  public var at: Date
+  /// The amount, above zero, in `currency`.
+  public var amount: AmountE4
+  public var currency: CurrencyCode
+  public var from: UUID
+  public var to: UUID
+  /// The money comes into the archived account: it is brought back to pay for what is typed
+  /// ahead on it.
+  public var returnsToArchived: Bool
+
+  public init(
+    when: When, at: Date, amount: AmountE4, currency: CurrencyCode, from: UUID, to: UUID,
+    returnsToArchived: Bool
+  ) {
+    self.when = when
+    self.at = at
+    self.amount = amount
+    self.currency = currency
+    self.from = from
+    self.to = to
+    self.returnsToArchived = returnsToArchived
+  }
+}
+
 /// An account in the archive stays at zero. No total counts it, so money left on it would
 /// leave «Всего» for good, and money taken from it would be made out of nothing. An edit or a
 /// deletion that would do either — or the archive of an account that still holds money — is
@@ -159,6 +195,21 @@ public enum ArchivedMoney {
       transfer(
         amount, of: leftover.key, counterpart: counterpart, at: at, now: now, note: note,
         id: ids())
+    }
+  }
+
+  /// The transfers of a settling told one by one, in the order given: each with when it is
+  /// dated against `now` and whether it brings money into `archived`. What the question says
+  /// before it writes them (`settlingTransfers`) — a settling can be two transfers, and the
+  /// second, dated with what is typed ahead, takes money back out of the account that was just
+  /// emptied.
+  public static func legs(of transfers: [Transfer], archived: UUID, now: Date) -> [SettlingLeg] {
+    transfers.map { transfer in
+      SettlingLeg(
+        when: transfer.occurredAt > now ? .later : .now, at: transfer.occurredAt,
+        amount: transfer.fromAmountE4, currency: transfer.fromCurrency,
+        from: transfer.fromAccountId, to: transfer.toAccountId,
+        returnsToArchived: transfer.toAccountId == archived)
     }
   }
 

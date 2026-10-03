@@ -56,7 +56,8 @@ public final class DatabaseStack: Sendable {
     /// What the data steps of the migrations applied this time did (`MigrationDataSteps`),
     /// counts only: `mainKept`, `mainChosen`, `mainCreated`, `defaultsCleared`, `assigned` of
     /// the accounts; `cardsCreated`, `cardsSkipped`, `countsRecorded`, `countsKept`,
-    /// `goalPlansStarted` of the cards. Empty when no migration with a step ran.
+    /// `goalPlansStarted` of the cards; `banksCreated`, `banksSkipped`, `accountsFiled` of the
+    /// banks. Empty when no migration with a step ran.
     public var dataSteps: [String: Int]
 
     public init(
@@ -239,16 +240,17 @@ public final class DatabaseStack: Sendable {
   /// are made of. The anomalies waved away come with the data too, so «Это нормально» is a
   /// change like any other, whoever writes it; so do the owner's choices of a category
   /// against the model, which «Качество модели» counts; so do the groups of the accounts,
-  /// the transfers between them and the balances counted on them; and so do the cards and
-  /// their cashback rules, which the cashback expected of every purchase is made of. A test
-  /// holds this list against the statements the load runs.
+  /// the transfers between them and the balances counted on them; so do the cards and
+  /// their cashback rules, which the cashback expected of every purchase is made of; and so do
+  /// the banks, which name the accounts in every list. A test holds this list against the
+  /// statements the load runs.
   static let ledgerTables = [
     "transactions", "transaction_parts", "reimbursement_links", "categories", "people",
     "places", "events", "payment_methods", "goals", "debts", "debt_entries", "rates",
     "settings", "scheduled_payments", "subscription_prices", "expected_income",
     "expected_income_links", "budgets", "reconciliations", "anomaly_dismissals",
     "category_feedback", "account_groups", "transfers", "reconciliation_balances", "cards",
-    "cashback_rules",
+    "cashback_rules", "banks",
   ]
 
   /// One element after every committed transaction that changed one of `ledgerTables` —

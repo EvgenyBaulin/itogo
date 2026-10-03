@@ -6,7 +6,7 @@ import Testing
 
 @testable import AppDatabase
 
-/// Every value of the database reaches the export and comes back from it: the 23 files are
+/// Every value of the database reaches the export and comes back from it: the 24 files are
 /// read back with the CSV reader, and each cell is checked against the raw value of its column
 /// in SQLite by a rule written apart from the export — an amount times 10 000 is the stored
 /// integer, a boolean is a word, an instant is the stored one to the second in UTC, a
@@ -148,7 +148,7 @@ struct ExportRoundTripPropertyTests {
     }
   }
 
-  /// A history with accounts — every one of the 23 tables has rows, and every column the cards
+  /// A history with accounts — every one of the 24 tables has rows, and every column the cards
   /// brought a value somewhere — whose texts carry what a CSV file must never break on.
   @Test func aHistoryWithAccountsAndOddTextsIsExportedValueForValue() throws {
     let stack = try PlanningUndoPropertyTests.stack()
@@ -236,17 +236,17 @@ struct ExportRoundTripPropertyTests {
     try builder.add(path: ArchivePaths.settings, data: settings)
     files[ArchivePaths.settings] = settings
 
-    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 5)
+    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 6)
     #expect(plain.files == files)
-    #expect(plain.csvTables.count == 23)
-    #expect(plain.manifest.schemaVersion == 5)
+    #expect(plain.csvTables.count == 24)
+    #expect(plain.manifest.schemaVersion == 6)
 
     var random = SeededRandom(seed: 7)
     let sealed = try builder.build(
       password: "пароль 🔑", cipher: RoundTripCipher(), random: &random, iterations: 1_000)
     #expect(ArchiveOpener.isEncrypted(sealed))
     let opened = try ArchiveOpener.open(
-      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 5)
+      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 6)
     #expect(opened.files == files)
 
     let inside = folder.appendingPathComponent("inside.sqlite")
@@ -272,6 +272,7 @@ struct ExportRoundTripPropertyTests {
         columns: table.columns.filter {
           !Self.addedByTheAccounts.contains("\(table.fileName):\($0)")
             && !Self.addedByTheCards.contains("\(table.fileName):\($0)")
+            && !Self.addedByTheBanks.contains("\(table.fileName):\($0)")
         })
     }
     var counts: [String: Int] = [:]
@@ -307,7 +308,7 @@ struct ExportRoundTripPropertyTests {
     }
     try builder.add(path: ArchivePaths.settings, text: #"{"language":"ru"}"#)
 
-    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 5)
+    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 6)
     #expect(opened.manifest.schemaVersion == 3)
     #expect(opened.csvTables.count == 18)
 
@@ -317,7 +318,7 @@ struct ExportRoundTripPropertyTests {
     #expect(try DatabaseStack.check(fileAt: staged, schema: TestSupport.schemaSource) == .sound)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: staged, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards"])
+        == ["0004_accounts", "0005_cards", "0006_banks"])
     let stack = try DatabaseStack(url: staged, schema: TestSupport.schemaSource)
     defer { try? stack.close() }
     let after = try ExportRepository(writer: stack.writer).rowCounts()
@@ -332,7 +333,7 @@ struct ExportRoundTripPropertyTests {
   }
 
   /// The archive checks its manifest against the rows it counts in each file, and it counts
-  /// them the way the reader reads them: for the 23 files of an export and for tables of drawn
+  /// them the way the reader reads them: for the 24 files of an export and for tables of drawn
   /// texts full of quotes and line breaks.
   @Test func theArchiveCountsTheRowsTheReaderReads() throws {
     let stack = try PlanningUndoPropertyTests.stack()
@@ -421,6 +422,9 @@ struct ExportRoundTripPropertyTests {
     "expected_income.csv:payment_method_id", "goals.csv:plan_start_month", "debts.csv:deleted_at",
     "reconciliations.csv:origin",
   ]
+
+  /// The columns the banks added to the files of the older build, file by file.
+  private static let addedByTheBanks: Set<String> = ["payment_methods.csv:bank_id"]
 
   /// Cards on two accounts of the history, one with other names that break a CSV cell; the
   /// cashback rules of one of them, a month and a category among them; operations and a payment

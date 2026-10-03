@@ -188,12 +188,12 @@ extension TestSupport {
   /// (`SampleDataSet.assigningAccounts`): every write names its account, and one in a currency
   /// its account does not hold says what the account was charged.
   static func batch(_ set: SampleDataSet) -> HistoryBatch {
-    let set = set.assigningAccounts()
+    let set = set.assigningAccounts().assigningBanks()
     return HistoryBatch(
       categories: set.categories, people: set.people, places: set.places,
       paymentMethods: set.paymentMethods, events: set.events, templates: set.templates,
       goals: set.goals, debts: set.debts, entries: set.entries, debtEntries: set.debtEntries,
-      links: set.links)
+      links: set.links, banks: set.banks)
   }
 
   /// The same history as the snapshot the core builds straight from the generator.

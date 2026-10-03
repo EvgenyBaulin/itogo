@@ -21,7 +21,7 @@ enum AnalyticsText {
     return names[cardId]?.text ?? "—"
   }
 
-  /// A choice of «Кэшбэк по месяцам»: «Все счета», an account, or «Т-Банк · Black».
+  /// A choice of «Кэшбэк по месяцам»: «Все счета», an account, or «Т-Банк › Black».
   static func cashbackChoice(
     _ choice: CashbackMonthsModel.Choice, model: CashbackMonthsModel, _ names: AnalyticsNames,
     _ environment: AppEnvironment
@@ -34,7 +34,7 @@ enum AnalyticsText {
       guard let account = model.cardAccounts[id].flatMap({ names[$0]?.text }) else {
         return card
       }
-      return account + " · " + card
+      return account + AccountLabels.separator + card
     }
   }
 

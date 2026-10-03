@@ -256,12 +256,12 @@ struct CardActions {
 
 // MARK: - Pickers
 
-/// The choices of a picker of accounts that also offers their cards: each account as the list
-/// gives it, followed by its live cards as «Т-Банк · Black», the card's order under its account.
-/// One `UUID` stands for either; `CardRules.resolve` turns it back into the account and the card.
-///
-/// A card always carries its account's name here, even the one called like its account
-/// («Сбер · Сбер»): the picker must tell the card from the account itself.
+/// The choices of a picker of accounts that also offers their cards, as the books are filed
+/// «bank → account → card» (`AccountLabels`): a bank with one account and one card is named by the
+/// bank alone, an account with two cards or more offers itself and each card under it —
+/// «Т-Банк › Black» —, a card called like its account or its bank is not offered a second time.
+/// One `UUID` stands for either, an account or a card; `CardRules.resolve` turns it back into the
+/// account and the card.
 enum AccountCardChoices {
   struct Item: Equatable, Identifiable {
     var id: UUID
@@ -271,16 +271,16 @@ enum AccountCardChoices {
   }
 
   /// `accounts` in the order to show them — archived ones are the caller's choice; an archived
-  /// card, and the cards of an account not listed, are not offered.
+  /// card, and the cards of an account not listed, are not offered. `every` is every account
+  /// there is, when `accounts` leaves some out: a bank is told to have as many accounts as the
+  /// live ones, not as are offered.
   static func items(
-    accounts: [PaymentMethod], cards: [PaymentCard], locale: Locale
+    accounts: [PaymentMethod], cards: [PaymentCard], banks: [Bank] = [],
+    among every: [PaymentMethod]? = nil, locale: Locale
   ) -> [Item] {
-    accounts.flatMap { account in
-      [Item(id: account.id, name: account.name, isCard: false)]
-        + CardRules.ordered(cards, of: account.id, locale: locale).map {
-          Item(id: $0.id, name: account.name + " · " + $0.name, isCard: true)
-        }
-    }
+    AccountLabels(accounts: every ?? accounts, cards: cards, banks: banks)
+      .entries(offering: accounts, withCards: true, locale: locale)
+      .map { Item(id: $0.id, name: $0.name, isCard: $0.isCard) }
   }
 
   /// What a picker shows for an account and a card: the card when it is among the choices,

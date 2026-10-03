@@ -396,9 +396,14 @@ struct NewRecordForm {
         return .failure(.key(failureKey))
       }
     }
-    let account = NewReference.paymentMethod(
+    var account = NewReference.paymentMethod(
       named: name, kind: paymentKind, currency: context.defaultCurrency,
       among: all.filter { !$0.archived })
+    // Under a bank, like every account: the live bank of its name, else a new one written with it.
+    let choice = BankRules.bank(
+      forNewAccountNamed: name,
+      among: (try? references.banks(includeArchived: true)) ?? model.banks)
+    account.bankId = choice.bank.id
     // A live card of an account in the archive keeps its name as well: the line reads it again
     // the day its account comes back.
     guard CardRules.cardTaking(name, except: account.id, cards: model.cards) == nil else {
@@ -409,7 +414,11 @@ struct NewRecordForm {
     guard
       AppEnvironment.attempt(
         "references.add", on: references,
-        { try $0.save(account, startingCard: CardRules.startingCard(for: account)) })
+        {
+          try $0.save(
+            account, startingCard: CardRules.startingCard(for: account),
+            bank: choice.isNew ? choice.bank : nil)
+        })
     else {
       return .failure(.key(failureKey))
     }

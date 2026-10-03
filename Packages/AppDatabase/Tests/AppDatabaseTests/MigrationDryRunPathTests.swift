@@ -39,7 +39,7 @@ struct MigrationDryRunPathTests {
   /// Every line the tool may print, each of its own shape.
   static var allowedLine: Regex<AnyRegexOutput> {
     try! Regex(
-      #"^(migration dry run on a copy; the original was not opened|schema: \d+ -> \d+ \(applied \d+\)|tables, rows before -> after:|  [a-z_]+ +(\d+|-) -> (\d+|-)(   differ)?|data step: (none|([a-zA-Z]+=\d+ ?)+)|accounts after: operations without an account \d+, live main \d+(   differ)?|sums:|  [a-z ]+: (equal|differ)|month totals by kind: (equal|differ) \(\d+ rows\)|foreign_key_check: \d+ before, \d+ after|operations on an account that is not there: \d+ before, \d+ after|loads: (ok|failed)|result: (equal|differ)|migration: failed, stopped at [0-9a-z_?]+ \((SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)\)|migration dry run: the (file could not be copied|copy could not be read): (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|after the update: the copy could not be read, (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|hint: (macOS privacy protection kept this program out of another app's data\. .+|the file's permissions do not let this user read it\.))$"#
+      #"^(migration dry run on a copy; the original was not opened|schema: \d+ -> \d+ \(applied \d+\)|tables, rows before -> after:|  [a-z_]+ +(\d+|-) -> (\d+|-)(   differ)?|data step: (none|([a-zA-Z]+=\d+ ?)+)|accounts after: operations without an account \d+, live main \d+(   differ)?|accounts without a bank after: \d+(   differ)?|sums:|  [a-z ]+: (equal|differ)|month totals by kind: (equal|differ) \(\d+ rows\)|foreign_key_check: \d+ before, \d+ after|operations on an account that is not there: \d+ before, \d+ after|loads: (ok|failed)|result: (equal|differ)|migration: failed, stopped at [0-9a-z_?]+ \((SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)\)|migration dry run: the (file could not be copied|copy could not be read): (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|after the update: the copy could not be read, (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|hint: (macOS privacy protection kept this program out of another app's data\. .+|the file's permissions do not let this user read it\.))$"#
     )
   }
 
@@ -141,7 +141,7 @@ struct MigrationDryRunPathTests {
     #expect(try DatabaseStack.sameData(fileAt: before, as: book.url))
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards"])
+        == ["0004_accounts", "0005_cards", "0006_banks"])
   }
 
   /// A database of 1.1 tried on a copy: one migration applied, a card for every live card
@@ -158,13 +158,22 @@ struct MigrationDryRunPathTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 4 -> 5 (applied 1)"), "\(output)")
+    #expect(output.contains("schema: 4 -> 6 (applied 2)"), "\(output)")
     let name = "cards".padding(toLength: 26, withPad: " ", startingAt: 0)
     let lines = output.split(separator: "\n").map(String.init)
     #expect(lines.contains("  \(name) - -> \(cards)"), "\(output)")
     #expect(!output.contains("differ"), "\(output)")
-    let steps = step.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+    // The step of the cards, and the step of the banks worked out from the same file.
+    let banks = try book.read { db in try TestSupport.banksStep(db) }
+    #expect(banks["banksCreated"] ?? 0 > 0)
+    #expect(
+      lines.contains(
+        "  " + "banks".padding(toLength: 26, withPad: " ", startingAt: 0)
+          + " - -> \(banks["banksCreated"] ?? -1)"), "\(output)")
+    let steps = step.merging(banks) { first, _ in first }
+      .sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
     #expect(lines.contains("data step: " + steps.joined(separator: " ")), "\(output)")
+    #expect(lines.contains("accounts without a bank after: 0"), "\(output)")
     #expect(step["cardsSkipped"] == 1)
     #expect(step["countsKept"] == 3)
     #expect(output.contains("result: equal"), "\(output)")

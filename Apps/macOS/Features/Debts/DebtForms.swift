@@ -228,6 +228,20 @@ struct DebtSheetView: View {
     switch sheet {
     case .create:
       TextField(t("form.name"), text: $debt.name)
+      // A credit card is an account with a minus, not a debt: a debt called like an account
+      // would take the same money off the free sum twice.
+      if let match = accountAnswering(to: debt.name) {
+        Label {
+          Text(
+            verbatim: environment.format("form.name.isAnAccount", table: "Debts", match.accountName)
+          )
+          .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+          Image(systemName: "info.circle")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
       Picker(t("form.direction"), selection: $debt.direction) {
         Text(verbatim: t("debts.iOwe")).tag(DebtDirection.iOwe)
         Text(verbatim: t("debts.owedToMe")).tag(DebtDirection.owedToMe)
@@ -637,6 +651,12 @@ struct DebtSheetView: View {
   private var people: [Person] { (compute.snapshot?.dataset.people ?? []).filter { !$0.archived } }
   private var methods: [PaymentMethod] {
     (compute.snapshot?.dataset.paymentMethods ?? []).filter { !$0.archived }
+  }
+  /// The live account, or the account of a live card, a new debt of this name is called after.
+  private func accountAnswering(to name: String) -> DebtNaming.Match? {
+    let dataset = compute.snapshot?.dataset
+    return DebtNaming.accountAnswering(
+      to: name, accounts: dataset?.paymentMethods ?? [], cards: dataset?.cards ?? [])
   }
   private var currencies: [CurrencyCode] {
     let enabled = PlanningChoices(compute, environment).currencies

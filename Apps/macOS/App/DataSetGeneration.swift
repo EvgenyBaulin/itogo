@@ -182,11 +182,15 @@
 
       // The old card, and its merge into the main card.
       let mergedAt = moment(daysBeforeEnd: 45, hour: 10)
+      // Under a bank of its own name, as every account is.
+      let oldBank = Bank(
+        id: BanksMigration.bankId(forAccount: ids.oldCard), name: word("Old card", "Старая карта"))
       let oldCard = PaymentMethod(
         id: ids.oldCard, name: word("Old card", "Старая карта"), kind: .card, currency: .rub,
-        groupId: roles.main.groupId)
+        groupId: roles.main.groupId, bankId: oldBank.id)
       _ = try planning.apply(
-        PlanningChange(upsert: PlanningRows(paymentMethods: [oldCard]), at: mergedAt))
+        PlanningChange(
+          upsert: PlanningRows(paymentMethods: [oldCard], banks: [oldBank]), at: mergedAt))
       let balances = AccountBalances.build(
         entries: set.entries, transfers: set.transfers, debtEntries: set.debtEntries,
         debts: Dictionary(set.debts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),

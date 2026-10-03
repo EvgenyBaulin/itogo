@@ -21,6 +21,7 @@ enum MigrationDataSteps {
     switch name {
     case "0004_accounts": try accounts(db: db, context: context)
     case "0005_cards": try cardsAndCounts(db: db, context: context)
+    case "0006_banks": try banks(db: db, context: context)
     default: [:]
     }
   }
@@ -117,6 +118,21 @@ enum MigrationDataSteps {
     }
     if stops("0004_accounts", context: context) { throw StoppedOnPurpose() }
     return counts
+  }
+
+  /// A bank for every account (`BanksMigration`): one bank for the accounts called alike, the
+  /// live account naming it. The only values the update fills are new — the rows of the table
+  /// `banks` and `bank_id` of the accounts —; nothing an older build wrote changes.
+  ///
+  /// The counts: `banksCreated`; `banksSkipped` — accounts whose name is blank, which a bank
+  /// refuses; `accountsFiled` — accounts put under a bank.
+  private static func banks(db: Database, context: MigrationContext) throws -> [String: Int] {
+    let outcome = try BankFiling.file(db: db)
+    if stops("0006_banks", context: context) { throw StoppedOnPurpose() }
+    return [
+      "banksCreated": outcome.banksCreated, "banksSkipped": outcome.skipped,
+      "accountsFiled": outcome.filed,
+    ]
   }
 
   /// A card for every live account of the kind «card» (`CardsMigration`), the mode of every

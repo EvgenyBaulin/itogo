@@ -4,23 +4,27 @@ import Testing
 
 @testable import CoreCSV
 
-/// The 23 file names of the export, in their one fixed order: the 18 of the first schema,
-/// then the three the accounts brought, then the cards and their cashback rules, at the end.
+/// The 24 file names of the export, in their one fixed order: the 18 of the first schema,
+/// then the three the accounts brought, then the cards and their cashback rules, then the banks,
+/// at the end.
 private let specifiedFileNames = [
   "transactions.csv", "transaction_parts.csv", "reimbursement_links.csv", "people.csv",
   "payment_methods.csv", "places.csv", "events.csv", "categories.csv", "templates.csv",
   "scheduled_payments.csv", "subscription_prices.csv", "expected_income.csv", "budgets.csv",
   "goals.csv", "debts.csv", "debt_entries.csv", "reconciliations.csv", "rates.csv",
   "account_groups.csv", "transfers.csv", "reconciliation_balances.csv", "cards.csv",
-  "cashback_rules.csv",
+  "cashback_rules.csv", "banks.csv",
 ]
 
-@Suite("ExportTables describes the 23 files of the export")
+@Suite("ExportTables describes the 24 files of the export")
 struct ExportTablesDescriptionTests {
-  @Test func theTwentyThreeFilesInTheirOrder() {
-    #expect(ExportTables.all.count == 23)
+  @Test func theTwentyFourFilesInTheirOrder() {
+    #expect(ExportTables.all.count == 24)
     #expect(ExportTables.all.map(\.fileName) == specifiedFileNames)
-    #expect(ExportTables.all.suffix(2) == [ExportTables.cards, ExportTables.cashbackRules])
+    #expect(
+      ExportTables.all.suffix(3) == [
+        ExportTables.cards, ExportTables.cashbackRules, ExportTables.banks,
+      ])
   }
 
   /// Every column the cards, the cashback, the events of payments, the plans of goals, the
@@ -78,6 +82,13 @@ struct ExportTablesDescriptionTests {
       ExportTables.cashbackRules.columns == [
         "id", "payment_method_id", "card_id", "category_id", "month", "percent",
       ])
+    #expect(ExportTables.banks.columns == ["id", "name", "sort", "archived"])
+    // The account of a bank: the one column the banks brought, after every older one.
+    #expect(
+      ExportTables.paymentMethods.columns == [
+        "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
+        "other_currencies", "bank_id",
+      ])
   }
 
   /// A column added later goes after every column an older export had, so an older reader
@@ -106,7 +117,7 @@ struct ExportTablesDescriptionTests {
     }
     #expect(ExportTables.transactions.columns.count == 27)
     #expect(ExportTables.transactionParts.columns.count == 17)
-    #expect(ExportTables.paymentMethods.columns.count == 10)
+    #expect(ExportTables.paymentMethods.columns.count == 11)
     #expect(ExportTables.templates.columns.count == 8)
     #expect(ExportTables.goals.columns.count == 9)
     #expect(ExportTables.debtEntries.columns.count == 15)
@@ -310,6 +321,23 @@ struct ExportTablesRowTests {
     #expect(read["group_id"] == "")
     #expect(read["sort"] == "0")
     #expect(read["other_currencies"] == "")
+    #expect(read["bank_id"] == "")
+  }
+
+  @Test func theBankOfAnAccountTravelsWithIt() throws {
+    let bank = Bank(name: "Т-Банк")
+    let method = PaymentMethod(name: "Black", bankId: bank.id)
+    let read = try roundTrip(ExportTables.paymentMethods, row: ExportTables.row(method))
+    #expect(read["bank_id"] == bank.id.uuidString)
+  }
+
+  @Test func bankRoundTrips() throws {
+    let bank = Bank(name: "Банк, «Мой»", sort: 4, archived: true)
+    let read = try roundTrip(ExportTables.banks, row: ExportTables.row(bank))
+    #expect(read["id"] == bank.id.uuidString)
+    #expect(read["name"] == "Банк, «Мой»")
+    #expect(read["sort"] == "4")
+    #expect(read["archived"] == "true")
   }
 
   /// The currencies after the main one travel as the database keeps them, joined by commas —

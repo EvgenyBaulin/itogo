@@ -42,6 +42,8 @@ public struct HistoryBatch: Sendable {
   /// The cards of the accounts, and the cashback rules on the cards and on the accounts.
   public var cards: [PaymentCard]
   public var cashbackRules: [CashbackRule]
+  /// The banks the accounts among `paymentMethods` are filed under.
+  public var banks: [Bank]
 
   public init(
     categories: [CoreKit.Category] = [],
@@ -66,8 +68,10 @@ public struct HistoryBatch: Sendable {
     reconciliations: [Reconciliation] = [],
     reconciledBalances: [ReconciledBalance] = [],
     cards: [PaymentCard] = [],
-    cashbackRules: [CashbackRule] = []
+    cashbackRules: [CashbackRule] = [],
+    banks: [Bank] = []
   ) {
+    self.banks = banks
     self.cards = cards
     self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
@@ -100,10 +104,11 @@ public struct HistoryBatch: Sendable {
   ///
   /// A history without its accounts is written the way accounts keep it
   /// (`SampleDataSet.assigningAccounts`): every operation on an account, and a charge wherever
-  /// the account does not hold the operation's currency. Nothing that was drawn changes, so it
-  /// is still the history the generator made.
+  /// the account does not hold the operation's currency; and under banks, one for every account
+  /// (`SampleDataSet.assigningBanks`). Nothing that was drawn changes, so it is still the
+  /// history the generator made.
   public init(sample: SampleDataSet) {
-    let set = sample.assigningAccounts()
+    let set = sample.assigningAccounts().assigningBanks()
     let planning = set.planning
     var settings = set.settings
     settings[AnalyticsSettings.cashbackCategoryKey] = set.cashbackCategoryId.uuidString
@@ -116,7 +121,7 @@ public struct HistoryBatch: Sendable {
       budgets: planning.budgets, settings: settings, accountGroups: set.accountGroups,
       transfers: set.transfers, reconciliations: set.reconciliations,
       reconciledBalances: set.reconciledBalances, cards: set.cards,
-      cashbackRules: set.cashbackRules)
+      cashbackRules: set.cashbackRules, banks: set.banks)
   }
 }
 
@@ -153,8 +158,8 @@ extension TransactionRepository {
     try write(batch, overExistingRows: true)
   }
 
-  /// Rows go in the order their foreign keys need: the groups of the accounts before the
-  /// accounts, the cards after their accounts, the reference books (parents before their
+  /// Rows go in the order their foreign keys need: the groups of the accounts and the banks
+  /// before the accounts, the cards after their accounts, the reference books (parents before their
   /// subcategories, since the table refers to itself), debts after the people and categories
   /// they name, the planning after the categories, people, accounts and cards it names, the
   /// cashback rules after the limits, operations after everything they point at, the journals
@@ -180,6 +185,7 @@ extension TransactionRepository {
         if overExistingRows { try record.save(db) } else { try record.insert(db) }
       }
       for group in batch.accountGroups { try put(group) }
+      for bank in batch.banks { try put(bank) }
       for category in batch.categories where category.parentId == nil { try put(category) }
       for category in batch.categories where category.parentId != nil { try put(category) }
       for person in batch.people { try put(person) }

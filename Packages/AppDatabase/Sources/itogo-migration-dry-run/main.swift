@@ -12,8 +12,9 @@ import GRDB
 // back the way the app reads it. What is printed is the shape of the data only: table names,
 // row counts, how many rows the data step changed, «equal» or «differ» for the sums of money
 // and the totals of every month, and what the update has to give — no operation without an
-// account, one live main account, the tables it adds empty but for the cards the data step
-// gives the card accounts. No amount, name, note or error message is ever printed — an error
+// account, one live main account, every account with a name under a bank, the tables it adds
+// empty but for the cards the data step gives the card accounts and the banks it gives the
+// accounts. No amount, name, note or error message is ever printed — an error
 // message of SQLite can quote a row, one of the file system a path: an error is said by its
 // domain and codes (`DryRunText`), with a line of advice when the codes say why — the privacy
 // protection of macOS keeping a terminal out of another app's data, or the file's permissions.
@@ -67,8 +68,11 @@ struct AccountsAfter {
   var withoutAnAccount = 0
   var liveMain = 0
   var live = 0
+  /// Accounts with a name that sit under no bank.
+  var withoutABank = 0
 
   var holds: Bool { withoutAnAccount == 0 && liveMain == (live > 0 ? 1 : 0) }
+  var filed: Bool { withoutABank == 0 }
 }
 
 func accountsAfter(_ url: URL) throws -> AccountsAfter {
@@ -83,7 +87,12 @@ func accountsAfter(_ url: URL) throws -> AccountsAfter {
         "SELECT COUNT(*) FROM transactions WHERE payment_method_id IS NULL"),
       liveMain: try count(
         "SELECT COUNT(*) FROM payment_methods WHERE archived = 0 AND is_default = 1"),
-      live: try count("SELECT COUNT(*) FROM payment_methods WHERE archived = 0"))
+      live: try count("SELECT COUNT(*) FROM payment_methods WHERE archived = 0"),
+      withoutABank: try count(
+        """
+        SELECT COUNT(*) FROM payment_methods
+        WHERE bank_id IS NULL AND length(trim(name)) > 0
+        """))
   }
 }
 
@@ -261,15 +270,17 @@ func run() async -> Int32 {
   var equal = true
   let created = applied.dataSteps["mainCreated"] ?? 0
   let cardsCreated = applied.dataSteps["cardsCreated"] ?? 0
+  let banksCreated = applied.dataSteps["banksCreated"] ?? 0
   for table in Set(countsBefore.keys).union(countsAfter.keys).sorted() {
     let old = countsBefore[table]
     let new = countsAfter[table]
     // Every table keeps its rows — the accounts gain the one the data step made, if it made
     // one — and a table the update adds starts empty: it only adds, and fills nothing new,
-    // except the cards, which hold the one card the data step gives every live card account.
+    // except the cards, which hold the one card the data step gives every live card account,
+    // and the banks, which hold the one bank the data step gives every name of an account.
     let expected =
       old.map { table == "payment_methods" ? $0 + created : $0 }
-      ?? (table == "cards" ? cardsCreated : 0)
+      ?? (table == "cards" ? cardsCreated : table == "banks" ? banksCreated : 0)
     let mark = new == expected ? "" : "   differ"
     if !mark.isEmpty { equal = false }
     let name = table.padding(toLength: 26, withPad: " ", startingAt: 0)
@@ -281,6 +292,10 @@ func run() async -> Int32 {
   say(
     "accounts after: operations without an account \(accounts.withoutAnAccount), live main "
       + "\(accounts.liveMain)\(accounts.holds ? "" : "   differ")")
+  if !accounts.filed { equal = false }
+  say(
+    "accounts without a bank after: \(accounts.withoutABank)"
+      + (accounts.filed ? "" : "   differ"))
   say("sums:")
   for label in Set(before.sums.keys).union(after.sums.keys).sorted() {
     let same = before.sums[label] == after.sums[label]

@@ -95,12 +95,12 @@ public enum CardRules {
     }
   }
 
-  /// «Сбер · Visa»; only «Сбер» when there is no card, or when the card is called like its
-  /// account — «Сбер · Сбер» would say nothing.
+  /// «Сбер › Visa»; only «Сбер» when there is no card, or when the card is called like its
+  /// account — «Сбер › Сбер» would say nothing.
   public static func displayName(account: String, card: String?) -> String {
     guard let card, !NameKey.fold(card).isEmpty, NameKey.fold(card) != NameKey.fold(account)
     else { return account }
-    return account + " · " + card
+    return account + AccountLabels.separator + card
   }
 
   /// A picker's choice — the id of an account or of a card — as the account and the card of an

@@ -52,6 +52,91 @@
         }
       }
     },
+    "account.editor.bank": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bank"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк"
+          }
+        }
+      }
+    },
+    "account.editor.bank.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account stands under this bank; in lists of choices the bank names it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт стоит под этим банком; в списках выбора его называет банк."
+          }
+        }
+      }
+    },
+    "account.editor.bank.new": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New bank"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новый банк"
+          }
+        }
+      }
+    },
+    "account.editor.bank.newHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A bank of its own, called like the account unless you name it. An account called like a bank that is there already joins that bank."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк под своим именем — как у счёта, если не назвать иначе. Счёт, названный как уже существующий банк, встаёт под него."
+          }
+        }
+      }
+    },
+    "account.editor.bank.newName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bank name"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название банка"
+          }
+        }
+      }
+    },
     "account.editor.currencies": {
       "extractionState": "manual",
       "localizations": {
@@ -1227,6 +1312,57 @@
         }
       }
     },
+    "account.refusal.bankHasLiveAccounts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bank still has accounts outside the archive: move them to the archive first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У банка есть счета не в архиве — сначала уберите в архив их."
+          }
+        }
+      }
+    },
+    "account.refusal.bankInUse": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accounts, archived ones too, are under the bank: it can go to the archive, not be deleted."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Под банком есть счета, в том числе архивные: его можно убрать в архив, но не удалить."
+          }
+        }
+      }
+    },
+    "account.refusal.bankNameTaken": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A bank with this name already exists."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк с таким названием уже есть."
+          }
+        }
+      }
+    },
     "account.refusal.currencyBalanceUnknown": {
       "extractionState": "manual",
       "localizations": {
@@ -1975,6 +2111,23 @@
         }
       }
     },
+    "accounts.archivedBank": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bank «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк «%@»"
+          }
+        }
+      }
+    },
     "accounts.archivedGroup": {
       "extractionState": "manual",
       "localizations": {
@@ -1988,6 +2141,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Группа «%@»"
+          }
+        }
+      }
+    },
+    "accounts.banksHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A bank is the top of «bank → account → card». A new bank brings its first account and card; a list of choices names a bank with one account and one card by the bank alone."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк — верхний уровень «банк → счёт → карта». Новый банк приносит первый счёт и карту; в списках выбора банк с одним счётом и одной картой назван просто по имени банка."
+          }
+        }
+      }
+    },
+    "accounts.caption.bank": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "bank «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "банк «%@»"
           }
         }
       }
@@ -2109,6 +2296,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Удалить счёт «%@»?"
+          }
+        }
+      }
+    },
+    "accounts.deleteBank.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No account is under it. Deleting cannot be undone."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Под ним нет ни одного счёта. Удаление не отменить."
+          }
+        }
+      }
+    },
+    "accounts.deleteBank.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete the bank «%@»?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить банк «%@»?"
           }
         }
       }
@@ -2406,6 +2627,23 @@
         }
       }
     },
+    "accounts.newBank": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New Bank…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новый банк…"
+          }
+        }
+      }
+    },
     "accounts.newGroup": {
       "extractionState": "manual",
       "localizations": {
@@ -2419,6 +2657,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Новая группа…"
+          }
+        }
+      }
+    },
+    "accounts.noBanks": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No banks yet"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банков пока нет"
           }
         }
       }
@@ -2521,6 +2776,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Архив"
+          }
+        }
+      }
+    },
+    "accounts.section.banks": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Banks"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банки"
           }
         }
       }
@@ -2697,19 +2969,104 @@
         }
       }
     },
+    "archived.leftover.leg.back": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On %1$@ — a transfer of %2$@ from «%3$@» back to «%4$@», to cover what is typed ahead."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — перевод %2$@ с «%3$@» обратно на «%4$@», чтобы покрыть записанное вперёд."
+          }
+        }
+      }
+    },
+    "archived.leftover.leg.back.and": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "And on %1$@ — a transfer of %2$@ from «%3$@» back to «%4$@», to cover what is typed ahead."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "И %1$@ — перевод %2$@ с «%3$@» обратно на «%4$@», чтобы покрыть записанное вперёд."
+          }
+        }
+      }
+    },
+    "archived.leftover.leg.later": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On %1$@ — a transfer of %2$@ from «%3$@» to «%4$@», for the money typed ahead."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — перевод %2$@ с «%3$@» на «%4$@»: так записаны деньги вперёд."
+          }
+        }
+      }
+    },
+    "archived.leftover.leg.later.and": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "And on %1$@ — a transfer of %2$@ from «%3$@» to «%4$@», for the money typed ahead."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "И %1$@ — перевод %2$@ с «%3$@» на «%4$@»: так записаны деньги вперёд."
+          }
+        }
+      }
+    },
+    "archived.leftover.leg.now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Now — a transfer of %1$@ from «%2$@» to «%3$@»."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сейчас — перевод %1$@ с «%2$@» на «%3$@»."
+          }
+        }
+      }
+    },
     "archived.leftover.message": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "«%@» is in the archive, and its balance has to stay at zero. A transfer of this amount will be recorded now."
+            "value": "«%@» is in the archive, and its balance has to stay at zero."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Счёт «%@» в архиве, и его остаток должен остаться нулём. Сейчас будет записан перевод на эту сумму."
+            "value": "Счёт «%@» в архиве, и его остаток должен остаться нулём."
           }
         }
       }
@@ -2778,6 +3135,231 @@
           "stringUnit": {
             "state": "translated",
             "value": "На какой счёт зачислить %1$@ с «%2$@»?"
+          }
+        }
+      }
+    },
+    "bank.addAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add Account…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить счёт…"
+          }
+        }
+      }
+    },
+    "bank.caption.accounts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld account"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld accounts"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld счёта"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld счетов"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld счёт"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld счёта"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "bank.caption.cards": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld card"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld cards"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld карты"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld карт"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld карта"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld карты"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "bank.caption.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No accounts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет счетов"
+          }
+        }
+      }
+    },
+    "bank.editor.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renaming the bank does not rename its accounts and cards: the entry line still knows them by their own names."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переименование банка не переименовывает его счета и карты: строка ввода по-прежнему знает их по их названиям."
+          }
+        }
+      }
+    },
+    "bank.editor.name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название"
+          }
+        }
+      }
+    },
+    "bank.editor.newHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bank comes with its first account and card, both called like it, in the default currency. The kind, the currencies and the balance of the account can be changed afterwards."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вместе с банком появятся первый счёт и карта с тем же названием, в валюте по умолчанию. Вид, валюты и остаток счёта можно поправить потом."
+          }
+        }
+      }
+    },
+    "bank.editor.newTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New Bank"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новый банк"
+          }
+        }
+      }
+    },
+    "bank.editor.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bank"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк"
           }
         }
       }

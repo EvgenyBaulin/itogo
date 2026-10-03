@@ -67,6 +67,8 @@ public struct Dataset: Sendable {
   /// The debts the owner deleted: gone from every list and figure of the debts, still there
   /// for the operations that point at them (`debtsById`).
   public var deletedDebts: [Debt]
+  /// The banks the accounts are filed under, archived ones included, in the owner's order.
+  public var banks: [Bank]
 
   public init(
     entries: [TransactionEntry] = [],
@@ -88,7 +90,8 @@ public struct Dataset: Sendable {
     version: Int = 0,
     cards: [PaymentCard] = [],
     cashbackRules: [CashbackRule] = [],
-    deletedDebts: [Debt] = []
+    deletedDebts: [Debt] = [],
+    banks: [Bank] = []
   ) {
     self.entries = entries
     self.links = links
@@ -110,6 +113,7 @@ public struct Dataset: Sendable {
     self.cards = cards
     self.cashbackRules = cashbackRules
     self.deletedDebts = deletedDebts
+    self.banks = banks
   }
 
   public static let empty = Dataset()

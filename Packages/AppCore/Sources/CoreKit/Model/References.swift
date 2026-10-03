@@ -96,12 +96,15 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
   public var sort: Int
   /// The currencies after the main one, in the owner's order.
   public var otherCurrencies: [CurrencyCode]
+  /// The bank the account belongs to. Every account the app or the update makes has one; `nil`
+  /// is an account a hand edit left without, which is read as a bank of its own name.
+  public var bankId: UUID?
 
   public init(
     id: UUID = UUID(), name: String, kind: PaymentMethodKind = .card,
     currency: CurrencyCode? = nil, aliases: [String] = [], isDefault: Bool = false,
     archived: Bool = false, groupId: UUID? = nil, sort: Int = 0,
-    otherCurrencies: [CurrencyCode] = []
+    otherCurrencies: [CurrencyCode] = [], bankId: UUID? = nil
   ) {
     self.id = id
     self.name = name
@@ -113,6 +116,7 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     self.groupId = groupId
     self.sort = sort
     self.otherCurrencies = otherCurrencies
+    self.bankId = bankId
   }
 
   /// The one account every operation without an account of its own belongs to.

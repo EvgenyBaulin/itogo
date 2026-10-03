@@ -53,12 +53,12 @@ final class ExportAndArchiveTests: XCTestCase {
     let target = directory.appendingPathComponent("export")
     let written = try service.export(to: target)
 
-    XCTAssertEqual(written.count, 23)
+    XCTAssertEqual(written.count, 24)
     XCTAssertEqual(
       Array(written.map(\.lastPathComponent).suffix(5)),
       [
-        "account_groups.csv", "transfers.csv", "reconciliation_balances.csv", "cards.csv",
-        "cashback_rules.csv",
+        "transfers.csv", "reconciliation_balances.csv", "cards.csv", "cashback_rules.csv",
+        "banks.csv",
       ])
     for url in written {
       let text = try String(contentsOf: url, encoding: .utf8)
@@ -146,9 +146,9 @@ final class ExportAndArchiveTests: XCTestCase {
   func testAnExportThatFinishesSaysHowManyFilesItWrote() throws {
     let service = CSVExportService(repository: ExportRepository(writer: stack.writer))
     let target = directory.appendingPathComponent("export")
-    XCTAssertEqual(FileCommands.exportCSV(with: service, to: target), .written(files: 23))
+    XCTAssertEqual(FileCommands.exportCSV(with: service, to: target), .written(files: 24))
     let names = try FileManager.default.contentsOfDirectory(atPath: target.path)
-    XCTAssertEqual(names.count, 23, "\(names)")
+    XCTAssertEqual(names.count, 24, "\(names)")
     XCTAssertTrue(names.allSatisfy { $0.hasSuffix(".csv") }, "\(names)")
   }
 
@@ -168,7 +168,7 @@ final class ExportAndArchiveTests: XCTestCase {
     XCTAssertTrue(done)
     let lines = Logbook.shared.lines()
     let line = try XCTUnwrap(lines.first { $0.contains("export.done") })
-    XCTAssertTrue(line.contains("files=23"), line)
+    XCTAssertTrue(line.contains("files=24"), line)
     XCTAssertTrue(line.contains("rows=\(records)"), line)
   }
 
@@ -190,7 +190,7 @@ final class ExportAndArchiveTests: XCTestCase {
 
     try FileManager.default.removeItem(at: target.appendingPathComponent("rates.csv"))
     try service.export(to: target)
-    XCTAssertEqual(service.filesItWouldReplace(in: target).count, 23)
+    XCTAssertEqual(service.filesItWouldReplace(in: target).count, 24)
   }
 
   /// The three files the accounts brought are asked about like the other eighteen: an export
@@ -277,25 +277,26 @@ final class ExportAndArchiveTests: XCTestCase {
     }
   }
 
-  /// With the cards the schema has five migrations: an archive says 5, this build opens an
-  /// archive of schema 5 — and of the four before it — and a build that knows only 4 refuses
+  /// With the banks the schema has six migrations: an archive says 6, this build opens an
+  /// archive of schema 6 — and of the five before it — and a build that knows only 5 refuses
   /// it.
-  func testAnArchiveOfSchemaFiveOpensWhereFiveIsSupported() throws {
-    XCTAssertEqual(stack.applied.onDisk, 5)
-    let service = ArchiveService(stack: stack, appVersion: "1.2.0")
-    let url = directory.appendingPathComponent("five.itogoarchive")
+  func testAnArchiveOfSchemaSixOpensWhereSixIsSupported() throws {
+    XCTAssertEqual(stack.applied.onDisk, 6)
+    let service = ArchiveService(stack: stack, appVersion: "1.3.0")
+    let url = directory.appendingPathComponent("six.itogoarchive")
     _ = try service.exportArchive(to: url)
     let data = try Data(contentsOf: url)
 
-    let opened = try ArchiveOpener.open(data, supportedSchemaVersion: 5)
-    XCTAssertEqual(opened.manifest.schemaVersion, 5)
-    XCTAssertEqual(opened.csvTables.count, 23)
+    let opened = try ArchiveOpener.open(data, supportedSchemaVersion: 6)
+    XCTAssertEqual(opened.manifest.schemaVersion, 6)
+    XCTAssertEqual(opened.csvTables.count, 24)
     XCTAssertTrue(opened.csvTables.contains("reconciliation_balances"))
     XCTAssertTrue(opened.csvTables.contains("cards"))
     XCTAssertTrue(opened.csvTables.contains("cashback_rules"))
-    XCTAssertThrowsError(try ArchiveOpener.open(data, supportedSchemaVersion: 4))
+    XCTAssertTrue(opened.csvTables.contains("banks"))
+    XCTAssertThrowsError(try ArchiveOpener.open(data, supportedSchemaVersion: 5))
 
-    for (version, name) in [(4, "four"), (3, "three")] {
+    for (version, name) in [(5, "five"), (4, "four"), (3, "three")] {
       let older = ArchiveService(stack: stack, appVersion: "1.1.2", schemaVersion: version)
       let olderURL = directory.appendingPathComponent("\(name).itogoarchive")
       _ = try older.exportArchive(to: olderURL)

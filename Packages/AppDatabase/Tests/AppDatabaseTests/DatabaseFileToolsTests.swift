@@ -76,7 +76,7 @@ struct DatabaseFileToolsTests {
     #expect(try DatabaseStack.sameData(fileAt: copy, as: crashed))
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: crashed, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards"])
+        == ["0004_accounts", "0005_cards", "0006_banks"])
   }
 
   /// The same with the log alone beside the file — its `-shm` lost, as a copy made by hand or
@@ -274,7 +274,7 @@ struct ReadingWithoutTheIndexTests {
     #expect(try DatabaseStack.check(fileAt: crashed, schema: TestSupport.schemaSource) == .sound)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: crashed, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards"])
+        == ["0004_accounts", "0005_cards", "0006_banks"])
 
     #expect(try Data(contentsOf: crashed) == main, "the main file was written into")
     #expect(

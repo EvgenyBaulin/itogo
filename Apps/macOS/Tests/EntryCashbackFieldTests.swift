@@ -43,7 +43,7 @@ final class EntryCashbackFieldTests: XCTestCase {
     XCTAssertEqual(
       model.cashbackContext.rules.filter { ids.contains($0.id) }.map(\.month), [month],
       "the month's rule of «Кафе и рестораны»")
-    XCTAssertEqual(model.cashbackContext.holderName, "Т-Банк · Black")
+    XCTAssertEqual(model.cashbackContext.holderName, "Т-Банк › Black")
     XCTAssertNil(model.draft.cashback, "an expectation is no figure of the operation")
     let saved = try book.save(model)
     XCTAssertNil(try book.stored(saved.id)?.transaction.cashback)

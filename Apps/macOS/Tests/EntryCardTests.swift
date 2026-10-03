@@ -183,22 +183,23 @@ final class EntryCardTests: XCTestCase {
     XCTAssertNil(account.draft.cardId)
   }
 
-  /// The picker lists every account followed by its live cards, «Т-Банк · Black»; a card picked
-  /// brings its account; an archived card is not offered to a new operation.
+  /// The picker lists every account followed by its live cards when it has two or more,
+  /// «Т-Банк › Black»; an account with one card is the account alone, and a card picked brings
+  /// its account; an archived card is not offered to a new operation.
   func testPickingACardPicksItsAccount() throws {
     let model = book.model()
     let names = model.accountCardChoices(locale: Locale(identifier: "ru_RU")).map(\.name)
     XCTAssertEqual(names.first, "Сбер", "the main account first")
-    XCTAssertEqual(names.count, 8)
+    XCTAssertEqual(names.count, 6)
     // Every account is followed by its own cards, and by nothing else's.
     for (account, cards) in [
-      ("Сбер", ["Сбер · Сбер"]), ("Т-Банк", ["Т-Банк · Black", "Т-Банк · Virtual"]),
-      ("Kaspi", ["Kaspi · Kaspi"]), ("Наличные", []),
-    ] {
+      ("Сбер", []), ("Т-Банк", ["Т-Банк › Black", "Т-Банк › Virtual"]), ("Kaspi", []),
+      ("Наличные", []),
+    ] as [(String, [String])] {
       let at = try XCTUnwrap(names.firstIndex(of: account), account)
       XCTAssertEqual(Array(names.dropFirst(at + 1).prefix(cards.count)), cards, account)
       let next = at + 1 + cards.count
-      if next < names.count { XCTAssertFalse(names[next].contains(" · "), account) }
+      if next < names.count { XCTAssertFalse(names[next].contains(" › "), account) }
     }
 
     model.setAccountOrCard(book.virtual.id)

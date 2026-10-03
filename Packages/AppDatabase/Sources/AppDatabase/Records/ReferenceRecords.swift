@@ -87,7 +87,8 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
       archived: try RowMapping.flag(row, "archived", fallback: false),
       groupId: RowMapping.optionalUUID(row, "group_id"),
       sort: try RowMapping.optionalInteger(row, "sort") ?? 0,
-      otherCurrencies: RowMapping.currencies(row, "other_currencies"))
+      otherCurrencies: RowMapping.currencies(row, "other_currencies"),
+      bankId: RowMapping.optionalUUID(row, "bank_id"))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -101,6 +102,7 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
     container["group_id"] = groupId?.uuidString
     container["sort"] = sort
     container["other_currencies"] = otherCurrencies.map(\.code).joined(separator: ",")
+    container["bank_id"] = bankId?.uuidString
   }
 }
 

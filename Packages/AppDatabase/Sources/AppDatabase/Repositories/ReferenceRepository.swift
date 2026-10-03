@@ -1,3 +1,4 @@
+import AppCore
 import CoreKit
 import Foundation
 import GRDB
@@ -122,6 +123,15 @@ public struct ReferenceRepository: Sendable {
     try fetchAll(Event.self, includeArchived: includeArchived)
   }
 
+  /// The banks the accounts are filed under, in the owner's order, then by name.
+  public func banks(includeArchived: Bool = false) throws -> [Bank] {
+    try writer.read { db in
+      var request = Bank.all()
+      if !includeArchived { request = request.filter(Column("archived") == false) }
+      return try request.order(Column("sort"), Column("name"), Column.rowID).fetchAll(db)
+    }
+  }
+
   public func goals(includeArchived: Bool = false) throws -> [Goal] {
     try fetchAll(Goal.self, includeArchived: includeArchived)
   }
@@ -165,8 +175,15 @@ public struct ReferenceRepository: Sendable {
 
   /// Saves a new account together with the card it starts with (`CardRules.startingCard`), in
   /// one write: both land, or neither. `nil`: the account alone, as `save(_:)`.
-  public func save(_ method: PaymentMethod, startingCard: PaymentCard?) throws {
+  ///
+  /// `bank` is a bank made for the account (`BankRules.bank(forNewAccountNamed:)`): written
+  /// first, in the same write, since the account stands under it. An account whose bank is an
+  /// existing one needs no bank here.
+  public func save(
+    _ method: PaymentMethod, startingCard: PaymentCard?, bank: Bank? = nil
+  ) throws {
     try writer.write { db in
+      try bank?.save(db)
       try Self.save(method, db: db)
       if var card = startingCard {
         card.accountId = method.id
@@ -619,21 +636,27 @@ public struct ReferenceRepository: Sendable {
   /// Everything the entry-line parser needs to recognise names and aliases — the cards too,
   /// each with the account it puts the operation on.
   public func vocabulary(enabledCurrencies: [CurrencyCode]) throws -> ParserVocabulary {
-    ParserVocabulary(
+    let accounts = try paymentMethods()
+    let cards = try liveCards()
+    // The name of a bank is another name of its first account, unless the word is taken.
+    let bankNames = BankVocabulary.spellings(
+      banks: try banks(), accounts: accounts, cards: cards)
+    return ParserVocabulary(
       people: try people().map {
         ParserVocabulary.Entry(id: $0.id, name: $0.name, aliases: $0.aliases)
       },
       places: try places().map {
         ParserVocabulary.Entry(id: $0.id, name: $0.name, aliases: $0.aliases)
       },
-      paymentMethods: try paymentMethods().map {
-        ParserVocabulary.Entry(id: $0.id, name: $0.name, aliases: $0.aliases)
+      paymentMethods: accounts.map {
+        ParserVocabulary.Entry(
+          id: $0.id, name: $0.name, aliases: $0.aliases + (bankNames[$0.id].map { [$0] } ?? []))
       },
       events: try events().map { ParserVocabulary.Entry(id: $0.id, name: $0.name) },
       goals: try goals().map { ParserVocabulary.Entry(id: $0.id, name: $0.name) },
       debts: try debts().map { ParserVocabulary.Entry(id: $0.id, name: $0.name) },
       enabledCurrencies: enabledCurrencies,
-      cards: try liveCards().map {
+      cards: cards.map {
         ParserVocabulary.CardEntry(
           entry: ParserVocabulary.Entry(id: $0.id, name: $0.name, aliases: $0.aliases),
           accountId: $0.accountId)

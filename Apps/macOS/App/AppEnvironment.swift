@@ -784,6 +784,7 @@ public final class AppEnvironment {
     // The accounts first: every repair of the open after this one may write operations, and
     // an operation written without an account is given the main one.
     ensureMainAccount()
+    ensureBanks()
     refreshAccountSettings()
     dropFormulasThatNoLongerAddUp()
     chooseCashbackCategoryIfMissing()
@@ -824,6 +825,26 @@ public final class AppEnvironment {
     } catch {
       AppLog.error(
         "accounts.repairFailed", .db, "the main account could not be checked",
+        [LogPair("error", .error(error))])
+    }
+  }
+
+  /// Every account is under a bank at every open (`AccountRepository.ensureBanks`): a hand edit,
+  /// another program or a path that did not file an account leaves one without. A failure costs
+  /// nothing but the repair, which the next open makes again; it is in the journal.
+  private func ensureBanks() {
+    guard let accounts else { return }
+    do {
+      guard let repair = try accounts.ensureBanks() else { return }
+      AppLog.info(
+        "accounts.banksFiled", .db, "accounts found without a bank were put under one",
+        [
+          LogPair("created", .count(repair.created)), LogPair("filed", .count(repair.filed)),
+          LogPair("skipped", .count(repair.skipped)),
+        ])
+    } catch {
+      AppLog.error(
+        "accounts.banksFailed", .db, "the banks of the accounts could not be checked",
         [LogPair("error", .error(error))])
     }
   }
