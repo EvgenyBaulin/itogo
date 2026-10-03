@@ -13,15 +13,23 @@ public struct AccountUsage: Hashable, Sendable {
   public var scheduled: Int
   /// Lines of debt journals that moved money on it.
   public var debtEntries: Int
+  /// Accounts whose cashback comes to it as points: it is their points account.
+  public var cashbackPoints: Int
 
-  public init(operations: Int = 0, transfers: Int = 0, scheduled: Int = 0, debtEntries: Int = 0) {
+  public init(
+    operations: Int = 0, transfers: Int = 0, scheduled: Int = 0, debtEntries: Int = 0,
+    cashbackPoints: Int = 0
+  ) {
     self.operations = operations
     self.transfers = transfers
     self.scheduled = scheduled
     self.debtEntries = debtEntries
+    self.cashbackPoints = cashbackPoints
   }
 
-  public var isUsed: Bool { operations + transfers + scheduled + debtEntries > 0 }
+  public var isUsed: Bool {
+    operations + transfers + scheduled + debtEntries + cashbackPoints > 0
+  }
 }
 
 /// What `AccountRepository.ensureMainAccount()` put right, for the journal.
@@ -142,7 +150,9 @@ public struct AccountRepository: Sendable {
         """),
       scheduled: try count(
         "SELECT COUNT(*) FROM scheduled_payments WHERE payment_method_id = :id"),
-      debtEntries: try count("SELECT COUNT(*) FROM debt_entries WHERE payment_method_id = :id"))
+      debtEntries: try count("SELECT COUNT(*) FROM debt_entries WHERE payment_method_id = :id"),
+      cashbackPoints: try count(
+        "SELECT COUNT(*) FROM payment_methods WHERE cashback_points_account_id = :id"))
   }
 
   // MARK: Deleting
@@ -264,10 +274,18 @@ public struct AccountRepository: Sendable {
       }
       _ = try Transfer.deleteAll(db, keys: plan.deletedTransferIds.map(\.uuidString))
       try Self.dropCollidingRules(of: plan.sourceId, into: plan.target.id, db: db)
+      // An account cannot be its own points account: if the one that stays took its points to
+      // the one merged away, it takes them as money now.
+      try db.execute(
+        sql: """
+          UPDATE payment_methods SET cashback_points_account_id = NULL
+          WHERE id = ? AND cashback_points_account_id = ?
+          """, arguments: [plan.target.id.uuidString, plan.sourceId.uuidString])
       try ReferenceRepository.repoint(
         "payment_methods", from: plan.sourceId, to: plan.target.id, db: db)
       var target = plan.target
       target.isDefault = target.isDefault || wasMain
+      if target.cashbackPointsAccountId == plan.sourceId { target.cashbackPointsAccountId = nil }
       try ReferenceRepository.save(target, db: db)
       try db.execute(
         sql: "UPDATE payment_methods SET archived = 1, is_default = 0 WHERE id = ?",

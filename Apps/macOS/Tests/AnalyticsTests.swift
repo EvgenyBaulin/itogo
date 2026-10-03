@@ -1277,12 +1277,16 @@ final class AnalyticsRenderingTests: XCTestCase {
 
 /// «Оборот и кэшбэк» with the cards' rules, and «Кэшбэк по месяцам»: the expected cashback
 /// beside the received, a line per card under an account with several, and each month's
-/// difference received − expected worked out exactly and rounded once.
+/// difference received − expected worked out exactly and rounded once. Both accounts round the
+/// cashback of a purchase to the kopeck, so the sums below are the exact ones.
 final class AnalyticsCashbackTests: XCTestCase {
   private let calendar = CalendarContext.utc
   private let september = MonthKey(year: 2026, month: 9)
-  private let tBank = PaymentMethod(name: "Т-Банк", kind: .card, currency: .rub)
-  private let sber = PaymentMethod(name: "Сбер", kind: .card, currency: .rub, isDefault: true)
+  private let kopecks = CashbackRounding(precision: .cents)
+  private lazy var tBank = PaymentMethod(
+    name: "Т-Банк", kind: .card, currency: .rub, cashbackRounding: kopecks)
+  private lazy var sber = PaymentMethod(
+    name: "Сбер", kind: .card, currency: .rub, isDefault: true, cashbackRounding: kopecks)
   private let cafes = CoreKit.Category(kind: .expense, name: "Кафе")
   private let cashback = CoreKit.Category(kind: .income, name: "Кэшбэк")
   private lazy var black = PaymentCard(accountId: tBank.id, name: "Black")

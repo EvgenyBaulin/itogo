@@ -357,10 +357,11 @@ struct SampleFeatureCoverageTests {
     let own = try #require(set.cards.first { $0.id == CardsMigration.cardId(forAccount: main.id) })
     #expect(set.cards.filter { $0.accountId == main.id }.count == 2, "\(label)")
 
-    // Cashback rules of both kinds on the main card, a purchase with the cashback typed over
-    // them, and the cashback received naming the card it came to.
+    // Cashback rules of both kinds on the main account, which its cards follow, a purchase with
+    // the cashback typed over them, and the cashback received naming the card it came to.
     let month = set.lastDay.monthKey
-    #expect(set.cashbackRules.allSatisfy { $0.cardId == own.id }, "\(label)")
+    #expect(
+      set.cashbackRules.allSatisfy { $0.accountId == main.id && $0.cardId == nil }, "\(label)")
     #expect(set.cashbackRules.contains { $0.month == nil && $0.categoryId == nil }, "\(label)")
     #expect(set.cashbackRules.contains { $0.month == nil && $0.categoryId != nil }, "\(label)")
     #expect(set.cashbackRules.contains { $0.month == month }, "\(label)")

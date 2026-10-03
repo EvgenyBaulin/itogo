@@ -1567,6 +1567,40 @@
         }
       }
     },
+    "account.refusal.inUseAlsoPoints": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It is also the points account of the cashback of %lld accounts."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Он же — счёт для баллов кэшбэка у счетов: %lld."
+          }
+        }
+      }
+    },
+    "account.refusal.inUsePoints": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It is the points account of the cashback of %lld accounts. It cannot be deleted: choose another points account in their “Cashback rules…”, merge it with another account or move it to the archive."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это счёт для баллов кэшбэка у счетов: %lld. Удалить его нельзя: выберите другой счёт для баллов в их «Правилах кэшбэка…», объедините его с другим счётом или уберите в архив."
+          }
+        }
+      }
+    },
     "account.refusal.lastLiveAccount": {
       "extractionState": "manual",
       "localizations": {
@@ -1811,30 +1845,81 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No card"
+            "value": "Account"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Без карты"
+            "value": "Счёт"
           }
         }
       }
     },
-    "account.screen.cashbackLine": {
+    "account.screen.cashbackApproximate": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "expected ≈ %1$@ · received %2$@"
+            "value": "Approximate income: ≈ %1$@, of it by the rules and unconfirmed — %2$@. Nothing to confirm."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "ожидается ≈ %1$@ · получено %2$@"
+            "value": "Примерный доход: ≈ %1$@, из них по правилам, без подтверждения, — %2$@. Подтверждать не нужно."
+          }
+        }
+      }
+    },
+    "account.screen.cashbackApproximateTyped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approximate income: ≈ %1$@, all of it the figures you typed."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Примерный доход: ≈ %1$@ — по суммам, которые вы вписали."
+          }
+        }
+      }
+    },
+    "account.screen.cashbackExpected": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "expected ≈ %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ожидается ≈ %@"
+          }
+        }
+      }
+    },
+    "account.screen.cashbackLate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback for the purchases %1$@ has not come: expected ≈ %2$@, due by %3$@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк за покупки %1$@ не пришёл: ждали ≈ %2$@, срок был %3$@."
           }
         }
       }
@@ -1852,6 +1937,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "Правил нет, и кэшбэка в этом месяце не было."
+          }
+        }
+      }
+    },
+    "account.screen.cashbackPayoutDue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bank pays this month’s cashback by %@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк платит кэшбэк за этот месяц до %@."
+          }
+        }
+      }
+    },
+    "account.screen.cashbackPayoutImmediately": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bank pays the cashback with the purchase."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк платит кэшбэк сразу."
+          }
+        }
+      }
+    },
+    "account.screen.cashbackPoints": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The cashback comes as points to “%@”."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк приходит баллами на «%@»."
+          }
+        }
+      }
+    },
+    "account.screen.cashbackReceived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "received %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "получено %@"
           }
         }
       }
@@ -3421,13 +3574,30 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "cashback rules: %lld"
+            "value": "own cashback rules: %lld"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "правил кэшбэка: %lld"
+            "value": "своих правил кэшбэка: %lld"
+          }
+        }
+      }
+    },
+    "card.captionFollows": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "follows the account’s rules"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "правила — как у счёта"
           }
         }
       }
@@ -3472,13 +3642,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Its cashback rules go with it. ⌘Z brings everything back."
+            "value": "Its own cashback rules go with it. ⌘Z brings everything back."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Её правила кэшбэка удалятся вместе с ней. ⌘Z вернёт всё."
+            "value": "Её собственные правила кэшбэка удалятся вместе с ней. ⌘Z вернёт всё."
           }
         }
       }
@@ -3523,13 +3693,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Money and balance belong to the account; a card says what paid and keeps its own cashback rules."
+            "value": "Money and balance belong to the account; a card says what paid, and follows the account’s cashback rules unless it keeps some of its own."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Деньги и остаток — у счёта; карта говорит, чем заплатили, и держит свои правила кэшбэка."
+            "value": "Деньги и остаток — у счёта; карта говорит, чем заплатили, и берёт правила кэшбэка у счёта, если не держит своих."
           }
         }
       }
@@ -3789,6 +3959,176 @@
         }
       }
     },
+    "cashback.payout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Payout"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выплата"
+          }
+        }
+      }
+    },
+    "cashback.payout.day": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld"
+          }
+        }
+      }
+    },
+    "cashback.payout.dayLabel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "By the day"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "До числа"
+          }
+        }
+      }
+    },
+    "cashback.payout.immediately": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "With the purchase"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сразу"
+          }
+        }
+      }
+    },
+    "cashback.payout.lastDay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "End of the month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Конец месяца"
+          }
+        }
+      }
+    },
+    "cashback.payout.later": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В следующем месяце"
+          }
+        }
+      }
+    },
+    "cashback.payout.unknown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not set"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не указано"
+          }
+        }
+      }
+    },
+    "cashback.points": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback comes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк приходит"
+          }
+        }
+      }
+    },
+    "cashback.points.money": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As money to this account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньгами на этот счёт"
+          }
+        }
+      }
+    },
+    "cashback.points.on": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As points to “%@”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Баллами на «%@»"
+          }
+        }
+      }
+    },
     "cashback.refusal.category": {
       "extractionState": "manual",
       "localizations": {
@@ -3823,19 +4163,19 @@
         }
       }
     },
-    "cashback.refusal.holderHasCards": {
+    "cashback.refusal.loan": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The account has cards — its rules are set on each card."
+            "value": "A payment on a debt earns no cashback, so there is no rule for “Loans”."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "У счёта есть карты — правила задаются на каждой карте."
+            "value": "За платёж по долгу кэшбэк не платят, поэтому правила для «Кредитов» нет."
           }
         }
       }
@@ -3853,6 +4193,176 @@
           "stringUnit": {
             "state": "translated",
             "value": "Процент — от 0 до 100, не больше четырёх знаков после точки."
+          }
+        }
+      }
+    },
+    "cashback.refusal.pointsArchived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The points account is in the archive: bring it back first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт для баллов в архиве: сначала верните его."
+          }
+        }
+      }
+    },
+    "cashback.refusal.pointsItself": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An account cannot be its own points account."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт не может быть своим счётом для баллов."
+          }
+        }
+      }
+    },
+    "cashback.refusal.pointsMissing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The points account is not there."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёта для баллов нет."
+          }
+        }
+      }
+    },
+    "cashback.rounding.cents": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cents"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "До копеек"
+          }
+        }
+      }
+    },
+    "cashback.rounding.direction": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rounded"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Как округляет"
+          }
+        }
+      }
+    },
+    "cashback.rounding.down": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Down"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вниз"
+          }
+        }
+      }
+    },
+    "cashback.rounding.nearest": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To the nearest"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По правилам математики"
+          }
+        }
+      }
+    },
+    "cashback.rounding.precision": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rounded to"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Округление"
+          }
+        }
+      }
+    },
+    "cashback.rounding.up": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вверх"
+          }
+        }
+      }
+    },
+    "cashback.rounding.whole": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Whole units"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "До целых"
           }
         }
       }
@@ -3925,6 +4435,57 @@
         }
       }
     },
+    "cashback.settings.header": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How the bank pays"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Как банк платит"
+          }
+        }
+      }
+    },
+    "cashback.settings.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rounding is applied to the cashback of each purchase. The day is the day of the next month the bank pays by. Points count as the currency of their account, one to one."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Округление применяется к кэшбэку каждой покупки. День — до какого числа следующего месяца банк платит. Баллы считаются в валюте их счёта, один к одному."
+          }
+        }
+      }
+    },
+    "cashback.sheet.accountHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The account’s rules hold for all its cards, unless a card has a rule of its own for the same month and category."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правила счёта действуют для всех его карт, если у карты нет своего правила на тот же месяц и категорию."
+          }
+        }
+      }
+    },
     "cashback.sheet.addRule": {
       "extractionState": "manual",
       "localizations": {
@@ -3955,6 +4516,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Всегда"
+          }
+        }
+      }
+    },
+    "cashback.sheet.cardHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A card keeps only what differs from its account; the rest it takes from the account’s rules."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карта держит только то, чем отличается от счёта; остальное берёт из правил счёта."
           }
         }
       }
@@ -4033,13 +4611,47 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Card"
+            "value": "Rules for"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Карта"
+            "value": "Правила для"
+          }
+        }
+      }
+    },
+    "cashback.sheet.holderAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account “%@” and its cards"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт «%@» и его карты"
+          }
+        }
+      }
+    },
+    "cashback.sheet.holderCard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only the card “%@”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Только карта «%@»"
           }
         }
       }

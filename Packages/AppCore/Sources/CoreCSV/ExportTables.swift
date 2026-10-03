@@ -66,7 +66,8 @@ public enum ExportTables {
     fileName: "payment_methods.csv",
     columns: [
       "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
-      "other_currencies", "bank_id",
+      "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
+      "cashback_payout", "cashback_payout_day", "cashback_points_account_id",
     ])
 
   public static let places = ExportTable(
@@ -315,6 +316,11 @@ extension ExportTables {
       String(method.sort),
       method.otherCurrencies.map(\.code).joined(separator: ","),
       CSVValue.string(method.bankId),
+      method.cashbackRounding.precision.rawValue,
+      method.cashbackRounding.direction.rawValue,
+      method.cashbackPayout?.timing.rawValue ?? "",
+      method.cashbackPayout?.day.map(String.init) ?? "",
+      CSVValue.string(method.cashbackPointsAccountId),
     ]
   }
 

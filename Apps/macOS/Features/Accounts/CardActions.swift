@@ -10,6 +10,8 @@ enum CardRefusal: Error, Hashable, Sendable {
   /// Operations or scheduled payments name the card: it can only go to the archive.
   case inUse(CardUsage)
   case rules(CashbackRuleIssue)
+  /// The account the cashback comes to as points.
+  case points(CashbackPointsIssue)
   case notFound
 }
 
@@ -68,8 +70,8 @@ struct CardActions {
 
   // MARK: Cards
 
-  /// Saves a new card (`previous == nil`) or an edit of one. The first live card of an account
-  /// takes the account's own rules in the same step: rules follow what pays.
+  /// Saves a new card (`previous == nil`) or an edit of one. A card keeps no rules of its own to
+  /// begin with: it follows the rules of its account, whatever cards the account has had.
   func save(_ card: PaymentCard, previous: PaymentCard?) -> CardActionOutcome {
     var card = card
     card.name = card.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,24 +79,19 @@ struct CardActions {
     let cards = self.cards
     let issues = CardRules.validate(card, previous: previous, cards: cards, accounts: accounts)
     if let issue = issues.first { return refuse(.card(issue)) }
-    var rows = PlanningRows(cards: [card])
     if previous == nil {
       let siblings = cards.filter { $0.accountId == card.accountId }
       if siblings.contains(where: { $0.sort > 0 }) {
         card.sort = (siblings.map(\.sort).max() ?? 0) + 1
-        rows.cards = [card]
-      }
-      if !card.archived, !siblings.contains(where: { !$0.archived }) {
-        rows.cashbackRules = CashbackRules.movedToFirstCard(card, rules: rules)
       }
     }
-    let outcome = apply(PlanningChange(upsert: rows, at: environment.now()))
+    let outcome = apply(
+      PlanningChange(upsert: PlanningRows(cards: [card]), at: environment.now()))
     if outcome == .done {
       AppLog.info(
         "cards.saved", .db, "a card was saved",
         [
           LogPair("card", .id(card.id)), LogPair("new", .flag(previous == nil)),
-          LogPair("rulesMoved", .count(rows.cashbackRules.count)),
         ])
     }
     return outcome
@@ -109,10 +106,7 @@ struct CardActions {
   }
 
   /// «Вернуть»: refused while another account or live card has taken the name, or while the
-  /// account is in the archive. A card that comes back as the account's only live card takes the
-  /// rules the account kept for itself meanwhile, in the same step — rules follow what pays, and
-  /// the account's own rules would otherwise neither price anything nor show in the sheet. Where
-  /// the card already has a rule of the same key, the card's rule stays and the account's goes.
+  /// account is in the archive. The card comes back with the rules of its own it kept.
   func restore(_ id: UUID) -> CardActionOutcome {
     let cards = self.cards
     guard let previous = cards.first(where: { $0.id == id }) else { return refuse(.notFound) }
@@ -121,34 +115,7 @@ struct CardActions {
     card.archived = false
     let issues = CardRules.validate(card, previous: previous, cards: cards, accounts: accounts)
     if let issue = issues.first { return refuse(.card(issue)) }
-    var rows = PlanningRows(cards: [card])
-    var dropped: [UUID] = []
-    let othersLive = cards.contains {
-      $0.accountId == card.accountId && $0.id != card.id && !$0.archived
-    }
-    if !othersLive {
-      let all = rules
-      let held = Set(all.filter { $0.cardId == card.id }.map(\.key))
-      for rule in CashbackRules.movedToFirstCard(card, rules: all) {
-        if held.contains(rule.key) {
-          dropped.append(rule.id)
-        } else {
-          rows.cashbackRules.append(rule)
-        }
-      }
-    }
-    let outcome = apply(
-      PlanningChange(
-        upsert: rows, delete: PlanningRowIDs(cashbackRules: dropped), at: environment.now()))
-    if outcome == .done, !rows.cashbackRules.isEmpty || !dropped.isEmpty {
-      AppLog.info(
-        "cards.restored", .db, "a card came back and took the account's own rules",
-        [
-          LogPair("card", .id(card.id)), LogPair("rulesMoved", .count(rows.cashbackRules.count)),
-          LogPair("rulesDropped", .count(dropped.count)),
-        ])
-    }
-    return outcome
+    return apply(PlanningChange(upsert: PlanningRows(cards: [card]), at: environment.now()))
   }
 
   /// Deletes a card nothing names, with its rules; ⌘Z brings both back. A card an operation — in
@@ -171,20 +138,36 @@ struct CardActions {
 
   /// The save of the rules sheet: `edited` are the rules of `holders` as the sheet holds them.
   /// They are written by key (`CashbackRules.diff`), in one step; nothing changed, nothing is
-  /// written.
-  func saveRules(of holders: [CashbackHolder], _ edited: [CashbackRule]) -> CardActionOutcome {
+  /// written. `account` is the account with the settings of its cashback the sheet holds
+  /// (`CashbackAccountSettings`), written in the same step when they differ from what is stored.
+  func saveRules(
+    of holders: [CashbackHolder], _ edited: [CashbackRule], account: PaymentMethod? = nil
+  ) -> CardActionOutcome {
     let all = rules
     let old = all.filter { holders.contains($0.holder) }
-    let cards = self.cards
     let issues = CashbackRules.issues(
-      edited, tree: CategoryTree(categories), cards: cards,
-      reconcileCategoryIds: reconcileCategoryIds)
+      edited, tree: CategoryTree(categories), reconcileCategoryIds: reconcileCategoryIds)
     if let issue = issues.first { return refuse(.rules(issue)) }
+    let accounts = self.accounts
+    var changedAccount: PaymentMethod?
+    if let account, let stored = accounts.first(where: { $0.id == account.id }),
+      CashbackAccountSettings(account).differs(from: stored)
+    {
+      if let issue = CashbackPoints.issues(
+        for: account.id, pointsAccountId: account.cashbackPointsAccountId, accounts: accounts
+      ).first, account.cashbackPointsAccountId != stored.cashbackPointsAccountId {
+        return refuse(.points(issue))
+      }
+      changedAccount = CashbackAccountSettings(account).applied(to: stored)
+    }
     let diff = CashbackRules.diff(old: old, new: edited)
-    guard !diff.upserts.isEmpty || !diff.deletions.isEmpty else { return .done }
+    guard !diff.upserts.isEmpty || !diff.deletions.isEmpty || changedAccount != nil else {
+      return .done
+    }
     let outcome = apply(
       PlanningChange(
-        upsert: PlanningRows(cashbackRules: diff.upserts),
+        upsert: PlanningRows(
+          paymentMethods: changedAccount.map { [$0] } ?? [], cashbackRules: diff.upserts),
         delete: PlanningRowIDs(cashbackRules: diff.deletions), at: environment.now()))
     if outcome == .done {
       AppLog.info(
@@ -192,18 +175,20 @@ struct CardActions {
         [
           LogPair("upserted", .count(diff.upserts.count)),
           LogPair("deleted", .count(diff.deletions.count)),
+          LogPair("settings", .flag(changedAccount != nil)),
         ])
     }
     return outcome
   }
 
-  /// «Запомнить» of the ↓ panel: the typed percent becomes a rule of the card at once, its own
-  /// step of ⌘Z. A rule kept for the same card, month and category takes the new percent.
+  /// «Запомнить» of the ↓ panel: the typed percent becomes a rule at once, its own step of ⌘Z —
+  /// the account's, or the card's own where the card already differs from its account for that
+  /// month and category. A rule kept for the same holder, month and category takes the new
+  /// percent.
   func remember(_ rule: CashbackRule) -> CardActionOutcome {
     let written = CashbackRules.upserting(rule, into: rules)
     let issues = CashbackRules.issues(
-      [written], tree: CategoryTree(categories), cards: cards,
-      reconcileCategoryIds: reconcileCategoryIds)
+      [written], tree: CategoryTree(categories), reconcileCategoryIds: reconcileCategoryIds)
     if let issue = issues.first { return refuse(.rules(issue)) }
     let outcome = apply(
       PlanningChange(upsert: PlanningRows(cashbackRules: [written]), at: environment.now()))
@@ -242,7 +227,10 @@ struct CardActions {
     case .rules(.categoryNotExpense): "notExpense"
     case .rules(.categoryIsGoal): "goal"
     case .rules(.categoryIsReconciliation): "reconciliation"
-    case .rules(.holderHasCards): "holderHasCards"
+    case .rules(.categoryIsLoan): "loan"
+    case .points(.isItself): "pointsItself"
+    case .points(.notFound): "pointsMissing"
+    case .points(.archived): "pointsArchived"
     case .notFound: "notFound"
     }
   }
@@ -355,7 +343,10 @@ enum CardText {
       return environment.format("cashback.refusal.duplicate", table: table, name)
     case .rules(.categoryNotExpense), .rules(.categoryIsGoal), .rules(.categoryIsReconciliation):
       return t("cashback.refusal.category")
-    case .rules(.holderHasCards): return t("cashback.refusal.holderHasCards")
+    case .rules(.categoryIsLoan): return t("cashback.refusal.loan")
+    case .points(.isItself): return t("cashback.refusal.pointsItself")
+    case .points(.notFound): return t("cashback.refusal.pointsMissing")
+    case .points(.archived): return t("cashback.refusal.pointsArchived")
     case .notFound: return t("card.refusal.notFound")
     }
   }

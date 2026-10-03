@@ -6,17 +6,23 @@ import Testing
 
 /// The accounts, cards, categories and rules every cashback suite prices against (September
 /// 2026, rubles unless said). Synthetic names only.
+///
+/// T-Bank has two cards that hold rules of their own, Sber (main) has the rules on the account
+/// and the card the update gave it, Kaspi in tenge has its card with rules, cash has no card.
+/// Alfa has rules on the account for both its cards, and one card that differs. All of them
+/// round to the kopeck, as 1.2 did, but Alfa, which rounds the way a new account does.
 struct CashbackFixture {
-  // Accounts: T-Bank with two cards, Sber (main) with the card the update gave it, Kaspi in
-  // tenge with its card, cash without a card.
   let tBank = id(1)
   let sber = id(2)
   let kaspi = id(3)
   let cash = id(4)
+  let alfa = id(5)
   let black = id(11)
   let virtual = id(12)
   let sberCard = id(21)
   let kaspiCard = id(31)
+  let alfaCard = id(41)
+  let alfaVirtual = id(42)
 
   let cafes = id(200)
   let coffee = id(201)
@@ -57,20 +63,27 @@ struct CashbackFixture {
       CoreKit.Category(id: goalTrip, parentId: goals, kind: .expense, name: "Trip"),
       CoreKit.Category(id: salary, kind: .income, name: "Salary"),
     ])
+    let kopecks = CashbackRounding(precision: .cents)
     accounts = [
-      PaymentMethod(id: tBank, name: "T-Bank", kind: .card),
-      PaymentMethod(id: sber, name: "Sber", kind: .card, isDefault: true),
-      PaymentMethod(id: kaspi, name: "Kaspi", kind: .card, currency: CurrencyCode("KZT")),
-      PaymentMethod(id: cash, name: "Cash", kind: .cash),
+      PaymentMethod(id: tBank, name: "T-Bank", kind: .card, cashbackRounding: kopecks),
+      PaymentMethod(
+        id: sber, name: "Sber", kind: .card, isDefault: true, cashbackRounding: kopecks),
+      PaymentMethod(
+        id: kaspi, name: "Kaspi", kind: .card, currency: CurrencyCode("KZT"),
+        cashbackRounding: kopecks),
+      PaymentMethod(id: cash, name: "Cash", kind: .cash, cashbackRounding: kopecks),
+      PaymentMethod(id: alfa, name: "Alfa", kind: .card),
     ]
     cards = [
       PaymentCard(id: black, accountId: tBank, name: "Black"),
       PaymentCard(id: virtual, accountId: tBank, name: "Virtual", aliases: ["virt"]),
       PaymentCard(id: sberCard, accountId: sber, name: "Sber"),
       PaymentCard(id: kaspiCard, accountId: kaspi, name: "Kaspi"),
+      PaymentCard(id: alfaCard, accountId: alfa, name: "Alfa"),
+      PaymentCard(id: alfaVirtual, accountId: alfa, name: "Alfa Virtual"),
     ]
     func rule(
-      _ number: Int, _ account: UUID, _ card: UUID, _ category: UUID?, _ month: MonthKey?,
+      _ number: Int, _ account: UUID, _ card: UUID?, _ category: UUID?, _ month: MonthKey?,
       _ percent: String
     ) -> CashbackRule {
       CashbackRule(
@@ -87,10 +100,14 @@ struct CashbackFixture {
       rule(311, tBank, virtual, pharmacy, nil, "7"),
       rule(312, tBank, virtual, nil, september, "3"),
       rule(313, tBank, virtual, nil, nil, "1.5"),
-      rule(321, sber, sberCard, nil, nil, "0.5"),
-      rule(331, kaspi, kaspiCard, nil, nil, "2"),
+      rule(321, sber, nil, nil, nil, "0.5"),
+      rule(331, kaspi, nil, nil, nil, "2"),
+      rule(341, alfa, nil, cafes, nil, "5"),
+      rule(342, alfa, nil, supermarkets, september, "3"),
+      rule(343, alfa, nil, nil, nil, "1"),
+      rule(344, alfa, alfaVirtual, cafes, nil, "10"),
     ]
-    book = CashbackRuleBook(rules: rules, tree: tree)
+    book = CashbackRuleBook(rules: rules, tree: tree, cards: cards, accounts: accounts)
   }
 
   /// Noon UTC of a day of 2026: the tests price in UTC.
@@ -129,7 +146,7 @@ struct CashbackFixture {
   ) -> CashbackExpectation? {
     let holder = CashbackHolders.holder(
       accountId: entry.transaction.paymentMethodId, cardId: entry.transaction.cardId,
-      cards: cards, mainAccountId: sber)
+      mainAccountId: sber)
     return CashbackMath.expected(
       entry, holder: holder, book: book ?? self.book, tree: tree, calendar: .utc,
       refunded: { refunded[$0] ?? .zero })

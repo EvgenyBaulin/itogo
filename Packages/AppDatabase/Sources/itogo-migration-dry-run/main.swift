@@ -271,16 +271,21 @@ func run() async -> Int32 {
   let created = applied.dataSteps["mainCreated"] ?? 0
   let cardsCreated = applied.dataSteps["cardsCreated"] ?? 0
   let banksCreated = applied.dataSteps["banksCreated"] ?? 0
+  let rulesDropped = applied.dataSteps["cashbackRulesDropped"] ?? 0
   for table in Set(countsBefore.keys).union(countsAfter.keys).sorted() {
     let old = countsBefore[table]
     let new = countsAfter[table]
     // Every table keeps its rows — the accounts gain the one the data step made, if it made
-    // one — and a table the update adds starts empty: it only adds, and fills nothing new,
+    // one, and the cashback rules lose the ones the data step dropped: the copies of cards that
+    // held the same rules and the rules on loans, while the others only move up to their
+    // account — and a table the update adds starts empty: it only adds, and fills nothing new,
     // except the cards, which hold the one card the data step gives every live card account,
     // and the banks, which hold the one bank the data step gives every name of an account.
     let expected =
-      old.map { table == "payment_methods" ? $0 + created : $0 }
-      ?? (table == "cards" ? cardsCreated : table == "banks" ? banksCreated : 0)
+      old.map {
+        table == "payment_methods"
+          ? $0 + created : table == "cashback_rules" ? $0 - rulesDropped : $0
+      } ?? (table == "cards" ? cardsCreated : table == "banks" ? banksCreated : 0)
     let mark = new == expected ? "" : "   differ"
     if !mark.isEmpty { equal = false }
     let name = table.padding(toLength: 26, withPad: " ", startingAt: 0)

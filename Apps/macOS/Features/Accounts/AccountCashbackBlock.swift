@@ -1,34 +1,58 @@
 import AppCore
 import SwiftUI
 
-/// What «Кэшбэк · <месяц>» of an account's screen shows: for each card (or the account's own
-/// line) the cashback its rules promise for the month's purchases next to what was received for
-/// the month, exact, per currency, and the rules that apply this month.
+/// What «Кэшбэк · <месяц>» of an account's screen shows: the account's own line — its rules are
+/// the ones every card follows — and each card that keeps rules of its own or was named by a
+/// purchase, the cashback the rules promise for the month's purchases next to what was received
+/// for the month, exact, per currency, the rules that apply this month, and when the bank pays.
 struct AccountCashbackModel: Equatable, Sendable {
   struct Line: Equatable, Sendable, Identifiable {
-    /// `nil`: the account's own line — purchases of no card, or an account without cards.
+    /// `nil`: the account's own line — the purchases that name no card.
     var cardId: UUID?
     var cardName: String?
     var expected: [Money]
     var received: [Money]
-    /// The rules of the line that apply in the month: the month's first, then «always».
+    /// The rules the line keeps itself that apply in the month: the month's first, then
+    /// «always». A card's are only the ones in which it differs from its account.
     var rules: [CashbackRule]
     var id: String { cardId?.uuidString ?? "account" }
+  }
+
+  /// The month before, when its cashback was due and nothing came.
+  struct Late: Equatable, Sendable {
+    var month: MonthKey
+    var since: DateOnly
+    var expectedRub: AmountE4
   }
 
   var month: MonthKey
   var lines: [Line]
   /// The account's main currency: an empty side of a line is zero in it.
   var currency: CurrencyCode = .rub
+  /// When the bank pays, as the account says; `nil` when it has not said.
+  var payout: CashbackPayout?
+  /// Where the month's cashback stands against the payout day.
+  var status: CashbackPayoutStatus = .unknown
+  var late: Late?
+  /// The account the cashback comes to as points, by name.
+  var pointsAccountName: String?
+  /// All the lines together in rubles: what is expected, and of it what the rules gave where no
+  /// figure was typed — the part nobody has confirmed, which needs no confirming.
+  var expectedRub: AmountE4 = .zero
+  var unconfirmedRub: AmountE4 = .zero
 
   /// No rule applies and nothing was received: the block says so and offers the rules.
   var isEmpty: Bool {
     lines.allSatisfy { $0.rules.isEmpty && $0.received.isEmpty && $0.expected.isEmpty }
   }
 
-  static func build(month: MonthKey, accountId: UUID, ledger: Ledger) -> AccountCashbackModel {
+  static func build(
+    month: MonthKey, accountId: UUID, ledger: Ledger, today: DateOnly
+  ) -> AccountCashbackModel {
     let dataset = ledger.dataset
-    let book = CashbackRuleBook(rules: dataset.cashbackRules, tree: ledger.tree)
+    let book = CashbackRuleBook(
+      rules: dataset.cashbackRules, tree: ledger.tree, cards: dataset.cards,
+      accounts: dataset.paymentMethods)
     let cards = Dictionary(
       dataset.cards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     func money(_ amounts: [CurrencyCode: AmountE4]) -> [Money] {
@@ -36,8 +60,8 @@ struct AccountCashbackModel: Equatable, Sendable {
         .map { Money(amount: $0.value, currency: $0.key) }
         .sorted { $0.currency.code < $1.currency.code }
     }
-    let lines = AccountCashbackSummary.month(month, accountId: accountId, ledger: ledger).map {
-      cell in
+    let cells = AccountCashbackSummary.month(month, accountId: accountId, ledger: ledger)
+    let lines = cells.map { cell -> Line in
       let holder: CashbackHolder =
         cell.holder.cardId.map(CashbackHolder.card) ?? .account(accountId)
       let rules = book.rules(of: holder).filter { $0.month == month || $0.month == nil }
@@ -46,14 +70,40 @@ struct AccountCashbackModel: Equatable, Sendable {
         cardId: cell.holder.cardId, cardName: cell.holder.cardId.flatMap { cards[$0]?.name },
         expected: money(cell.expected), received: money(cell.received), rules: rules)
     }
-    let currency = dataset.paymentMethods.first { $0.id == accountId }?.currency ?? .rub
-    return AccountCashbackModel(month: month, lines: lines, currency: currency)
+    let account = dataset.paymentMethods.first { $0.id == accountId }
+    let payout = account?.cashbackPayout
+    let expectedRub = AmountE4.sum(cells.map(\.expectedRub))
+    let status = CashbackSchedule.status(
+      of: month, payout: payout, today: today, expectedRub: expectedRub,
+      receivedRub: AmountE4.sum(cells.map(\.receivedRub)), calendar: ledger.calendar)
+
+    var late: Late?
+    if payout != nil {
+      let before = AccountCashbackSummary.month(
+        month.previous, accountId: accountId, ledger: ledger)
+      let earlier = CashbackSchedule.status(
+        of: month.previous, payout: payout, today: today,
+        expectedRub: AmountE4.sum(before.map(\.expectedRub)),
+        receivedRub: AmountE4.sum(before.map(\.receivedRub)), calendar: ledger.calendar)
+      if case .late(let since, let expected) = earlier {
+        late = Late(month: month.previous, since: since, expectedRub: expected)
+      }
+    }
+    let points = account?.cashbackPointsAccountId.flatMap { id in
+      dataset.paymentMethods.first { $0.id == id }?.name
+    }
+    return AccountCashbackModel(
+      month: month, lines: lines, currency: account?.currency ?? .rub, payout: payout,
+      status: status, late: late, pointsAccountName: points, expectedRub: expectedRub,
+      unconfirmedRub: AmountE4.sum(cells.map(\.unconfirmedRub)))
   }
 }
 
 /// «Кэшбэк · Сентябрь 2026» on an account's screen, under its cards: expected is an
-/// expectation, never income; what was received is income in the cashback category, by the
-/// month it is for. «Правила кэшбэка…» opens the rules of the account's cards.
+/// expectation, never income — what the rules gave with no figure typed is gray and needs no
+/// confirming, and counts in the approximate income —; what was received is income in the
+/// cashback category, by the month it is for. «Правила кэшбэка…» opens the rules of the account,
+/// how its bank rounds and when it pays.
 struct AccountCashbackBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -86,7 +136,9 @@ struct AccountCashbackBlock: View {
           ForEach(model.lines) { line in
             lineView(line, currency: model.currency)
           }
+          approximateIncome(model)
         }
+        notes(model)
         Button(t("cashback.rules")) { editsRules = true }
           .accessibilityIdentifier("account.cashback.rules")
       }
@@ -97,8 +149,9 @@ struct AccountCashbackBlock: View {
       guard let ledger = compute.snapshot?.ledger else { return }
       let month = self.month
       let accountId = self.accountId
+      let today = environment.today
       model = await Task.detached(priority: .userInitiated) {
-        AccountCashbackModel.build(month: month, accountId: accountId, ledger: ledger)
+        AccountCashbackModel.build(month: month, accountId: accountId, ledger: ledger, today: today)
       }.value
     }
     .sheet(isPresented: $editsRules) {
@@ -119,10 +172,18 @@ struct AccountCashbackBlock: View {
         Text(verbatim: line.cardName ?? t("account.screen.cashbackAccountLine"))
           .fontWeight(.medium)
         Spacer()
+        // What is expected is an expectation: gray, with «≈» and the words, never by colour alone.
         Text(
           verbatim: environment.format(
-            "account.screen.cashbackLine", table: CardText.table,
-            amounts(line.expected, currency: currency), amounts(line.received, currency: currency))
+            "account.screen.cashbackExpected", table: CardText.table,
+            amounts(line.expected, currency: currency))
+        )
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        Text(
+          verbatim: environment.format(
+            "account.screen.cashbackReceived", table: CardText.table,
+            amounts(line.received, currency: currency))
         )
         .monospacedDigit()
       }
@@ -136,6 +197,67 @@ struct AccountCashbackBlock: View {
       }
     }
     .accessibilityElement(children: .combine)
+  }
+
+  /// «Примерный доход: ≈ 280 ₽, из них по правилам, без подтверждения, — 240 ₽».
+  @ViewBuilder
+  private func approximateIncome(_ model: AccountCashbackModel) -> some View {
+    if model.expectedRub > .zero {
+      let key =
+        model.unconfirmedRub > .zero
+        ? "account.screen.cashbackApproximate" : "account.screen.cashbackApproximateTyped"
+      Text(
+        verbatim: environment.format(
+          key, table: CardText.table, environment.money.exact(model.expectedRub),
+          environment.money.exact(model.unconfirmedRub))
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .accessibilityIdentifier("account.cashback.approximate")
+    }
+  }
+
+  /// When the bank pays, where the points go, and what is late from the month before.
+  @ViewBuilder
+  private func notes(_ model: AccountCashbackModel) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      switch model.status {
+      case .immediately:
+        note("bolt", t("account.screen.cashbackPayoutImmediately"))
+      case .due(let day), .paid(let day):
+        note(
+          "calendar",
+          environment.format(
+            "account.screen.cashbackPayoutDue", table: CardText.table,
+            environment.dates.dayAndMonth(day)))
+      case .unknown, .late:
+        EmptyView()
+      }
+      if let points = model.pointsAccountName {
+        note(
+          "star.circle",
+          environment.format("account.screen.cashbackPoints", table: CardText.table, points))
+      }
+      if let late = model.late {
+        note(
+          "exclamationmark.triangle",
+          environment.format(
+            "account.screen.cashbackLate", table: CardText.table,
+            environment.monthIn(late.month), environment.money.exact(late.expectedRub),
+            environment.dates.dayAndMonth(late.since)),
+          tint: .orange)
+      }
+    }
+    .font(.caption)
+  }
+
+  private func note(_ symbol: String, _ text: String, tint: Color = .secondary) -> some View {
+    Label {
+      Text(verbatim: text)
+    } icon: {
+      Image(systemName: symbol).foregroundStyle(tint)
+    }
+    .foregroundStyle(.secondary)
   }
 
   /// «280.55 ₽», «100 ₸, 18.50 ₽»; nothing — zero in the account's currency, «0.00 ₸».

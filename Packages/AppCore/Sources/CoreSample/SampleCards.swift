@@ -7,10 +7,10 @@ extension SampleDataSet {
   ///
   /// * every live account of the kind «card» has a card named like it, with the id the update
   ///   gives such a card (`CardsMigration`), and the main account a second one, «Virtual»;
-  /// * the main account's own card has the bank's rules: «Food out» 5 % and everything else 1 %
-  ///   always, «Groceries» 3 % in the month of the last day and «Transport» 5 % in the month
-  ///   before — rules of both kinds, so the account screen and Analytics show cashback expected
-  ///   next to cashback received;
+  /// * the main account has the bank's rules, which both its cards follow: «Food out» 5 % and
+  ///   everything else 1 % always, «Groceries» 3 % in the month of the last day and «Transport»
+  ///   5 % in the month before — rules of both kinds, so the account screen and Analytics show
+  ///   cashback expected next to cashback received;
   /// * about a third of the main account's own purchases name one of its cards, the own one four
   ///   times in five; the latest one in rubles on the own card has the cashback the bank showed
   ///   typed over the one its rules give;
@@ -39,7 +39,7 @@ extension SampleDataSet {
     let virtual = PaymentCard(
       id: virtualStream.nextUUID(), accountId: main.id, name: layer.word("Virtual", "Виртуальная"))
     set.cards.append(virtual)
-    set.cashbackRules = rules(on: own, layer: layer)
+    set.cashbackRules = rules(on: main, layer: layer)
 
     let cardOfAccount = Dictionary(
       set.cards.filter { $0.id != virtual.id }.map { ($0.accountId, $0.id) },
@@ -73,9 +73,9 @@ extension SampleDataSet {
       && !entry.parts.isEmpty && !entry.parts.contains { $0.goalId != nil }
   }
 
-  /// The bank's rules on the main card: two that always hold, one of this month and one of the
-  /// month before.
-  private func rules(on card: PaymentCard, layer: SampleLayer) -> [CashbackRule] {
+  /// The bank's rules on the main account: two that always hold, one of this month and one of
+  /// the month before.
+  private func rules(on account: PaymentMethod, layer: SampleLayer) -> [CashbackRule] {
     let month = lastDay.monthKey
     let specs: [(key: String, english: String?, month: MonthKey?, percent: Int64)] = [
       ("always food out", "Food out", nil, 5),
@@ -93,8 +93,8 @@ extension SampleDataSet {
       guard let percent = CashbackPercent(e4: spec.percent * CashbackPercent.unitsPerPercent)
       else { return nil }
       return CashbackRule(
-        id: rng.nextUUID(), accountId: card.accountId, cardId: card.id, categoryId: categoryId,
-        month: spec.month, percent: percent)
+        id: rng.nextUUID(), accountId: account.id, categoryId: categoryId, month: spec.month,
+        percent: percent)
     }
   }
 

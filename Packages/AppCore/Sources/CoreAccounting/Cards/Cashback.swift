@@ -8,26 +8,27 @@ public enum CashbackHolder: Hashable, Sendable {
 }
 
 /// Which holder's rules apply.
+///
+/// The rules of the bank belong to the account, and its cards follow them: a card may keep rules
+/// of its own, which are only the places where it differs (`CashbackRuleBook`). So an operation
+/// that names no card is priced by its account — a second card, a card put in the archive or
+/// two accounts merged never change what the purchases of the past would have earned.
 public enum CashbackHolders {
   /// The card the operation names — live or archived: its past purchases keep their rules —;
-  /// else the only live card of its account; else the account itself. An operation that names
-  /// no account is the main account's. With two cards and none named nothing is guessed: the
-  /// account's own rules apply, which it usually has none of.
+  /// else its account. An operation that names no account is the main account's.
   public static func holder(
-    accountId: UUID?, cardId: UUID?, cards: [PaymentCard], mainAccountId: UUID?
+    accountId: UUID?, cardId: UUID?, mainAccountId: UUID?
   ) -> CashbackHolder? {
     if let cardId { return .card(cardId) }
     guard let account = accountId ?? mainAccountId else { return nil }
-    let live = cards.filter { $0.accountId == account && !$0.archived }
-    if live.count == 1, let only = live.first { return .card(only.id) }
     return .account(account)
   }
 
-  /// Where the rules of an account are edited now: each of its live cards, or the account
-  /// itself while it has none.
+  /// Where the rules of an account are edited: the account itself, then each of its live cards,
+  /// whose own rules are what differs from the account's.
   public static func editableHolders(of accountId: UUID, cards: [PaymentCard]) -> [CashbackHolder] {
     let live = CardRules.ordered(cards, of: accountId, locale: Locale(identifier: "en_US_POSIX"))
-    return live.isEmpty ? [.account(accountId)] : live.map { .card($0.id) }
+    return [.account(accountId)] + live.map { .card($0.id) }
   }
 
   /// The account a holder belongs to.
@@ -47,6 +48,10 @@ extension CashbackRule {
 }
 
 /// Every rule of every holder, indexed once, and the order they are chosen in.
+///
+/// A card prices a purchase with its own rules and the rules of its account together: the card's
+/// own rule wins where both have one for the same month and category, and the account's rules
+/// cover everything else. The book also knows how each account rounds, as the account says.
 public struct CashbackRuleBook: Sendable {
   private struct Key: Hashable {
     var holder: CashbackHolder
@@ -57,8 +62,15 @@ public struct CashbackRuleBook: Sendable {
   private let byKey: [Key: CashbackRule]
   private let byHolder: [CashbackHolder: [CashbackRule]]
   private let tree: CategoryTree
+  private let accountOfCard: [UUID: UUID]
+  private let roundingOfAccount: [UUID: CashbackRounding]
 
-  public init(rules: [CashbackRule], tree: CategoryTree) {
+  /// `cards` tell which account a card follows, `accounts` how each rounds; a card or account
+  /// that is not given has no account above it, and rounds as `CashbackRounding.standard`.
+  public init(
+    rules: [CashbackRule], tree: CategoryTree, cards: [PaymentCard] = [],
+    accounts: [PaymentMethod] = []
+  ) {
     var byKey: [Key: CashbackRule] = [:]
     var byHolder: [CashbackHolder: [CashbackRule]] = [:]
     for rule in rules {
@@ -71,32 +83,71 @@ public struct CashbackRuleBook: Sendable {
     self.byKey = byKey
     self.byHolder = byHolder
     self.tree = tree
+    self.accountOfCard = Dictionary(
+      cards.map { ($0.id, $0.accountId) }, uniquingKeysWith: { first, _ in first })
+    self.roundingOfAccount = Dictionary(
+      accounts.map { ($0.id, $0.cashbackRounding) }, uniquingKeysWith: { first, _ in first })
   }
 
   public var isEmpty: Bool { byKey.isEmpty }
 
-  /// The rules of one holder, in the order they were given.
+  /// The rules of one holder, in the order they were given: a card's own, an account's own.
   public func rules(of holder: CashbackHolder) -> [CashbackRule] { byHolder[holder] ?? [] }
+
+  /// The rules that price a holder: its own, and for a card the rules of its account that the
+  /// card has no rule of its own for (the same month and category).
+  public func effectiveRules(of holder: CashbackHolder) -> [CashbackRule] {
+    let own = rules(of: holder)
+    guard case .card(let id) = holder, let account = accountOfCard[id] else { return own }
+    let taken = Set(
+      own.map { Key(holder: .account(account), month: $0.month, categoryId: $0.categoryId) })
+    return own
+      + rules(of: .account(account)).filter {
+        !taken.contains(Key(holder: .account(account), month: $0.month, categoryId: $0.categoryId))
+      }
+  }
+
+  /// The account a holder follows, when the book knows it.
+  public func account(of holder: CashbackHolder) -> UUID? {
+    switch holder {
+    case .account(let id): id
+    case .card(let id): accountOfCard[id]
+    }
+  }
+
+  /// How the bank of the holder's account rounds the cashback of one purchase.
+  public func rounding(for holder: CashbackHolder?) -> CashbackRounding {
+    holder.flatMap { account(of: $0) }.flatMap { roundingOfAccount[$0] } ?? .standard
+  }
 
   /// The rule that prices a purchase of `categoryId` in `month`, the first found of: the month's
   /// rule of the subcategory, the month's of its category, the «always» of the subcategory, the
   /// «always» of the category, the month's «everything else», the «always» «everything else».
   /// The bank's categories of the month win over a standing rate on the same purchase, and
-  /// «everything else» is the last word of both.
+  /// «everything else» is the last word of both. Where a card and its account both have the rule
+  /// of a step, the card's is taken.
   public func rule(
     for holder: CashbackHolder, categoryId: UUID?, month: MonthKey
   ) -> CashbackRule? {
-    guard byHolder[holder] != nil else { return nil }
+    var holders = [holder]
+    if case .card(let id) = holder, let account = accountOfCard[id] {
+      holders.append(.account(account))
+    }
+    guard holders.contains(where: { byHolder[$0] != nil }) else { return nil }
     let path = categoryPath(categoryId)
     for scope in [month, nil] as [MonthKey?] {
       for category in path {
-        if let rule = byKey[Key(holder: holder, month: scope, categoryId: category)] {
-          return rule
+        for held in holders {
+          if let rule = byKey[Key(holder: held, month: scope, categoryId: category)] {
+            return rule
+          }
         }
       }
     }
     for scope in [month, nil] as [MonthKey?] {
-      if let rule = byKey[Key(holder: holder, month: scope, categoryId: nil)] { return rule }
+      for held in holders {
+        if let rule = byKey[Key(holder: held, month: scope, categoryId: nil)] { return rule }
+      }
     }
     return nil
   }
@@ -185,8 +236,9 @@ public struct CashbackExpectation: Hashable, Sendable {
 public enum CashbackMath {
   /// Whether an operation can earn cashback at all: a purchase, or a refund of no purchase
   /// (it takes back what its money had earned). Not income, not money back, not a contribution
-  /// to a goal, not a purchase on credit — the lender paid —, not what the app writes to keep
-  /// the books, not the fee of a transfer.
+  /// to a goal, not a payment on a debt — the bank pays nothing for those —, not a purchase on
+  /// credit — the lender paid —, not what the app writes to keep the books, not the fee of a
+  /// transfer.
   public static func earns(_ entry: TransactionEntry, tree: CategoryTree) -> Bool {
     let transaction = entry.transaction
     switch transaction.kind {
@@ -195,9 +247,9 @@ public enum CashbackMath {
       guard !entry.parts.contains(where: { $0.refundOfPartId != nil }) else { return false }
     case .income, .reimbursement: return false
     }
-    guard transaction.creditDebtId == nil, !KindFields.isGoalOnly(entry, tree: tree) else {
-      return false
-    }
+    guard transaction.creditDebtId == nil, !KindFields.isGoalOnly(entry, tree: tree),
+      !entry.parts.allSatisfy({ tree.isLoanCategory($0.categoryId) })
+    else { return false }
     switch OperationLink(externalId: transaction.externalId) {
     case .some(.transferFee): return false
     case .some(let link) where link.isBookkeeping: return false
@@ -211,9 +263,10 @@ public enum CashbackMath {
   /// The base is the money that moved on the account, the whole receipt with the parts paid for
   /// others: the bank pays on what the card was charged. It is spread over the parts in their
   /// proportions; what refunds took back from a part (`refunded`, in the operation's currency)
-  /// makes that part cheaper. Each part takes the rule of its own category; the sum is rounded
-  /// once, to the kopeck, half away from zero. A figure the owner typed wins over the rules and
-  /// shrinks with the refunds the same way.
+  /// makes that part cheaper. Each part takes the rule of its own category — a part that pays a
+  /// debt takes none —; the sum is rounded once, the way the account's bank rounds
+  /// (`CashbackRounding`), half away from zero by default. A figure the owner typed wins over
+  /// the rules and shrinks with the refunds the same way, to the kopeck.
   public static func expected(
     _ entry: TransactionEntry, holder: CashbackHolder?, book: CashbackRuleBook,
     tree: CategoryTree, calendar: CalendarContext, refunded: (UUID) -> AmountE4
@@ -230,16 +283,17 @@ public enum CashbackMath {
       let refundedTotal = AmountE4.sum(entry.parts.map { refunded($0.id) })
       let kept = total.isZero ? 1 : max(0, (total - refundedTotal).decimal / total.decimal)
       return expectation(
-        sign * typed.amount.decimal * kept, of: transaction, holder: holder, source: .override)
+        sign * typed.amount.decimal * kept, of: transaction, holder: holder, source: .override,
+        rounding: CashbackRounding(precision: .cents))
     }
     guard let holder else { return nil }
     let month = calendar.day(of: transaction.occurredAt).monthKey
     var value = Decimal(0)
     var used: [UUID] = []
     for (part, base) in zip(entry.parts, bases) {
-      guard let rule = book.rule(for: holder, categoryId: part.categoryId, month: month) else {
-        continue
-      }
+      guard !tree.isLoanCategory(part.categoryId),
+        let rule = book.rule(for: holder, categoryId: part.categoryId, month: month)
+      else { continue }
       if !used.contains(rule.id) { used.append(rule.id) }
       let amount = part.amountE4.decimal
       let left =
@@ -247,7 +301,9 @@ public enum CashbackMath {
       value += base.decimal * left * rule.percent.fraction
     }
     guard !used.isEmpty else { return nil }
-    return expectation(sign * value, of: transaction, holder: holder, source: .rules(used))
+    return expectation(
+      sign * value, of: transaction, holder: holder, source: .rules(used),
+      rounding: book.rounding(for: holder))
   }
 
   /// The same for the ↓ panel, before anything is saved: nothing refunded yet, the typed
@@ -261,10 +317,14 @@ public enum CashbackMath {
       entry, holder: holder, book: book, tree: tree, calendar: calendar, refunded: { _ in .zero })
   }
 
-  /// A typed percent of the draft's base — the money that moves on the account —, to the kopeck.
-  public static func amount(of percent: CashbackPercent, on draft: TransactionDraft) -> Money? {
+  /// A typed percent of the draft's base — the money that moves on the account —, rounded the
+  /// way the account's bank rounds.
+  public static func amount(
+    of percent: CashbackPercent, on draft: TransactionDraft,
+    rounding: CashbackRounding = .standard
+  ) -> Money? {
     let moved = movedMoney(of: draft)
-    let value = DecimalMath.round(moved.amount.decimal.magnitude * percent.fraction, scale: 2)
+    let value = rounding.apply(moved.amount.decimal.magnitude * percent.fraction)
     guard let amount = try? AmountE4(decimal: value) else { return nil }
     return Money(amount: amount, currency: moved.currency)
   }
@@ -291,10 +351,10 @@ public enum CashbackMath {
 
   private static func expectation(
     _ value: Decimal, of transaction: Transaction, holder: CashbackHolder?,
-    source: CashbackExpectation.Source
+    source: CashbackExpectation.Source, rounding: CashbackRounding
   ) -> CashbackExpectation? {
     let moved = transaction.movedMoney
-    let rounded = DecimalMath.round(value, scale: 2)
+    let rounded = rounding.apply(value)
     guard let amount = try? AmountE4(decimal: rounded) else { return nil }
     let rubles: AmountE4
     if moved.currency == .rub {

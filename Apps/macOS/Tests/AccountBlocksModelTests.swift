@@ -79,14 +79,148 @@ final class AccountBlocksModelTests: XCTestCase {
       settings: AnalyticsSettings(cashbackCategoryId: cashback), cards: cards,
       cashbackRules: rules)
     let model = AccountCashbackModel.build(
-      month: september, accountId: tBank, ledger: Ledger(dataset: dataset, calendar: calendar))
-    XCTAssertEqual(model.lines.map(\.cardId), [black, virtual])
-    let line = try XCTUnwrap(model.lines.first)
+      month: september, accountId: tBank, ledger: Ledger(dataset: dataset, calendar: calendar),
+      today: DateOnly(year: 2026, month: 9, day: 20))
+    // The account's own line first, then Black, which keeps rules of its own; Virtual keeps none
+    // and was not named, so it has no line.
+    XCTAssertEqual(model.lines.map(\.cardId), [nil, black])
+    let line = try XCTUnwrap(model.lines.last)
     XCTAssertEqual(line.expected, [Money(amount: AmountE4(whole: 35), currency: .rub)])
     XCTAssertEqual(line.received, [Money(amount: AmountE4(whole: 20), currency: .rub)])
     XCTAssertEqual(line.rules.map(\.month), [september, nil], "the month's rule first")
     XCTAssertFalse(model.isEmpty)
-    XCTAssertTrue(model.lines[1].expected.isEmpty && model.lines[1].rules.isEmpty)
+    XCTAssertTrue(model.lines[0].expected.isEmpty && model.lines[0].rules.isEmpty)
+  }
+
+  // MARK: The rules of the account, when the bank pays, the points
+
+  private let bonus = UUID()
+
+  /// Purchases in September that name no card on an account that keeps the rules: the cafes
+  /// 1,000 at 5 % and a coffee 350 with 40 typed over it.
+  private func septemberOfAnAccount(
+    payout: CashbackPayout?, points: UUID? = nil, receivedInOctober: Int64? = nil
+  ) -> Dataset {
+    func operation(
+      _ kind: TransactionKind, on day: DateOnly, _ category: UUID, _ amount: Int64,
+      account: UUID, period: MonthKey? = nil, cashback: Int64? = nil
+    ) -> TransactionEntry {
+      let at = calendar.noon(of: day)
+      let transaction = Transaction(
+        kind: kind, occurredAt: at, amountE4: AmountE4(whole: amount), paymentMethodId: account,
+        periodMonth: period, createdAt: at, updatedAt: at,
+        cashback: cashback.map { Money(amount: AmountE4(whole: $0), currency: .rub) })
+      return TransactionEntry(
+        transaction: transaction,
+        parts: [
+          TransactionPart(
+            transactionId: transaction.id, categoryId: category,
+            amountE4: AmountE4(whole: amount))
+        ])
+    }
+    var entries = [
+      operation(
+        .expense, on: DateOnly(year: 2026, month: 9, day: 12), cafes, 1_000, account: tBank),
+      operation(
+        .expense, on: DateOnly(year: 2026, month: 9, day: 13), cafes, 350, account: tBank,
+        cashback: 40),
+    ]
+    if let received = receivedInOctober {
+      entries.append(
+        operation(
+          .income, on: DateOnly(year: 2026, month: 10, day: 8), cashback, received,
+          account: points ?? tBank, period: september))
+    }
+    return Dataset(
+      entries: entries,
+      categories: [
+        CoreKit.Category(id: cafes, kind: .expense, name: "Cafes"),
+        CoreKit.Category(id: cashback, kind: .income, name: "Cashback"),
+      ],
+      paymentMethods: [
+        PaymentMethod(
+          id: tBank, name: "T-Bank", kind: .card, cashbackPayout: payout,
+          cashbackPointsAccountId: points),
+        PaymentMethod(id: bonus, name: "Bonus", kind: .other),
+      ],
+      settings: AnalyticsSettings(cashbackCategoryId: cashback), cards: cards,
+      cashbackRules: [
+        CashbackRule(
+          accountId: tBank, categoryId: cafes, percent: CashbackPercent(e4: 50_000)!)
+      ])
+  }
+
+  private func block(
+    _ dataset: Dataset, month: MonthKey, today: DateOnly
+  ) -> AccountCashbackModel {
+    AccountCashbackModel.build(
+      month: month, accountId: tBank, ledger: Ledger(dataset: dataset, calendar: calendar),
+      today: today)
+  }
+
+  /// The rules of the account price the purchases that name no card, on the account's own line;
+  /// what only the rules gave is the part nobody has confirmed, and it still counts.
+  func testThePurchasesWithoutACardAreTheAccountsLineAndTheRulesPartIsUnconfirmed() throws {
+    let model = block(
+      septemberOfAnAccount(payout: nil), month: september,
+      today: DateOnly(year: 2026, month: 9, day: 20))
+    XCTAssertEqual(model.lines.map(\.cardId), [nil], "no card keeps rules of its own")
+    let line = try XCTUnwrap(model.lines.first)
+    // 5 % of 1,000 = 50 by the rules, and the 40 typed for the coffee.
+    XCTAssertEqual(line.expected, [Money(amount: AmountE4(whole: 90), currency: .rub)])
+    XCTAssertEqual(line.rules.map(\.percent.e4), [50_000])
+    XCTAssertEqual(model.expectedRub, AmountE4(whole: 90))
+    XCTAssertEqual(model.unconfirmedRub, AmountE4(whole: 50), "the rules' part, no figure typed")
+    XCTAssertEqual(model.status, .unknown, "the account has not said when its bank pays")
+    XCTAssertNil(model.late)
+    XCTAssertNil(model.pointsAccountName)
+  }
+
+  /// The bank pays by the 10th of the next month: until then it is due; the month after, with
+  /// nothing received for September, the block says September's cashback is late.
+  func testTheBlockSaysWhenTheBankPaysAndWhatIsLate() throws {
+    let dataset = septemberOfAnAccount(payout: CashbackPayout.later(day: 10))
+    let inSeptember = block(
+      dataset, month: september, today: DateOnly(year: 2026, month: 9, day: 20))
+    XCTAssertEqual(inSeptember.status, .due(DateOnly(year: 2026, month: 10, day: 10)))
+    XCTAssertNil(inSeptember.late)
+
+    let inOctober = block(
+      dataset, month: MonthKey(year: 2026, month: 10),
+      today: DateOnly(year: 2026, month: 10, day: 12))
+    XCTAssertEqual(inOctober.status, .due(DateOnly(year: 2026, month: 11, day: 10)))
+    let late = try XCTUnwrap(inOctober.late)
+    XCTAssertEqual(late.month, september)
+    XCTAssertEqual(late.since, DateOnly(year: 2026, month: 10, day: 10))
+    XCTAssertEqual(late.expectedRub, AmountE4(whole: 90))
+
+    // Before the day it is not late yet.
+    let early = block(
+      dataset, month: MonthKey(year: 2026, month: 10),
+      today: DateOnly(year: 2026, month: 10, day: 9))
+    XCTAssertNil(early.late)
+  }
+
+  /// Anything that came for September, on the account or on its points account, ends the delay.
+  func testWhatCameEndsTheDelay() {
+    let october = MonthKey(year: 2026, month: 10)
+    let today = DateOnly(year: 2026, month: 10, day: 12)
+    let onTheAccount = septemberOfAnAccount(
+      payout: CashbackPayout.later(day: 10), receivedInOctober: 85)
+    XCTAssertNil(block(onTheAccount, month: october, today: today).late)
+    let asPoints = septemberOfAnAccount(
+      payout: CashbackPayout.later(day: 10), points: bonus, receivedInOctober: 85)
+    let model = block(asPoints, month: october, today: today)
+    XCTAssertNil(model.late, "the points on «Bonus» are T-Bank's cashback")
+    XCTAssertEqual(model.pointsAccountName, "Bonus")
+  }
+
+  func testAnImmediateBankIsToldAsSuch() {
+    let model = block(
+      septemberOfAnAccount(payout: .immediately), month: september,
+      today: DateOnly(year: 2026, month: 9, day: 20))
+    XCTAssertEqual(model.status, .immediately)
+    XCTAssertNil(model.late, "a bank that pays at once has no day to be late by")
   }
 
   /// A quiet month of a tenge account: the empty sides are printed in tenge, not rubles.
@@ -98,13 +232,15 @@ final class AccountBlocksModelTests: XCTestCase {
       paymentMethods: [PaymentMethod(id: kaspi, name: "Kaspi", kind: .card, currency: tenge)],
       cards: [PaymentCard(accountId: kaspi, name: "Gold")])
     let model = AccountCashbackModel.build(
-      month: september, accountId: kaspi, ledger: Ledger(dataset: dataset, calendar: calendar))
+      month: september, accountId: kaspi, ledger: Ledger(dataset: dataset, calendar: calendar),
+      today: DateOnly(year: 2026, month: 9, day: 20))
     XCTAssertEqual(model.currency, tenge)
     let rubles = Dataset(
       entries: [], paymentMethods: [PaymentMethod(id: kaspi, name: "Cash", kind: .cash)])
     XCTAssertEqual(
       AccountCashbackModel.build(
-        month: september, accountId: kaspi, ledger: Ledger(dataset: rubles, calendar: calendar)
+        month: september, accountId: kaspi, ledger: Ledger(dataset: rubles, calendar: calendar),
+        today: DateOnly(year: 2026, month: 9, day: 20)
       ).currency, .rub, "an account saved without a currency counts in rubles")
   }
 

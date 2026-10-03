@@ -9,14 +9,15 @@ struct CashbackFieldState: Equatable {
   var input: CashbackInput? { CashbackInput.read(text) }
 
   /// What the operation keeps: a typed amount in the money that moves on the account, a typed
-  /// percent of that money to the kopeck; `nil` when the field is empty or does not read — an
-  /// unreadable figure never stops the save, the rules then say what to expect.
-  func value(on draft: TransactionDraft) -> Money? {
+  /// percent of that money rounded the way the account's bank rounds; `nil` when the field is
+  /// empty or does not read — an unreadable figure never stops the save, the rules then say what
+  /// to expect.
+  func value(on draft: TransactionDraft, rounding: CashbackRounding = .standard) -> Money? {
     switch input {
     case .amount(let amount):
       return Money(amount: amount, currency: CashbackMath.movedMoney(of: draft).currency)
     case .percent(let percent):
-      return CashbackMath.amount(of: percent, on: draft)
+      return CashbackMath.amount(of: percent, on: draft, rounding: rounding)
     case .unreadable, nil:
       return nil
     }
@@ -45,10 +46,8 @@ extension CashbackFieldState {
 /// What the field needs to know of the operation: whose rules price it, its month and category.
 struct CashbackFieldContext: Equatable {
   var holder: CashbackHolder?
-  /// «Black», «Т-Банк · Black»: named in the captions.
+  /// «Black», «Т-Банк › Black»: named in the captions.
   var holderName: String?
-  /// The account has several live cards and the operation names none: nothing is guessed.
-  var severalCards: Bool
   var month: MonthKey
   /// The one category of every part; `nil` when there is none or the parts differ.
   var categoryId: UUID?
@@ -56,36 +55,51 @@ struct CashbackFieldContext: Equatable {
   var movedCurrency: CurrencyCode
   /// The parts are filed under different categories: a rule of one category cannot be meant.
   var mixedCategories: Bool = false
-  /// The rules of the holder, to say which one priced the operation.
+  /// The rules that price the holder: its own and, for a card, its account's — to say which one
+  /// priced the operation.
   var rules: [CashbackRule] = []
+  /// The rules the holder keeps itself: a card's own, which differ from its account's.
+  var ownRules: [CashbackRule] = []
+  /// How the bank of the account rounds, for a typed percent.
+  var rounding: CashbackRounding = .standard
   /// The names of the categories, for the captions.
   var categoryNames: [UUID: String] = [:]
   /// The operation's year is not this one: «только в сентябре 2025».
   var thisYear: Int? = nil
 
-  /// The rule «Запомнить» writes for `percent`: always, or only in the operation's month.
+  /// The account a rule is written for: an account holder names itself, a card holder its
+  /// account.
+  private var ruleAccountId: UUID? {
+    if case .account(let id) = holder { return id }
+    return accountId
+  }
+
+  /// The rule «Запомнить» writes for `percent`: always, or only in the operation's month. It is
+  /// the account's rule — the card follows it —, except where the card already keeps a rule of
+  /// its own for that month and category: that one would hide the account's, so it is the one
+  /// that changes.
   func rule(_ percent: CashbackPercent, onlyThisMonth: Bool) -> CashbackRule? {
-    guard let holder, let categoryId, !mixedCategories else { return nil }
-    switch holder {
-    case .card(let cardId):
-      guard let accountId else { return nil }
-      return CashbackRule(
-        accountId: accountId, cardId: cardId, categoryId: categoryId,
-        month: onlyThisMonth ? month : nil, percent: percent)
-    case .account(let accountId):
-      return CashbackRule(
-        accountId: accountId, categoryId: categoryId, month: onlyThisMonth ? month : nil,
-        percent: percent)
+    guard holder != nil, let accountId = ruleAccountId, let categoryId, !mixedCategories else {
+      return nil
     }
+    let month = onlyThisMonth ? self.month : nil
+    var cardId: UUID?
+    if case .card(let id) = holder,
+      ownRules.contains(where: { $0.month == month && $0.categoryId == categoryId })
+    {
+      cardId = id
+    }
+    return CashbackRule(
+      accountId: accountId, cardId: cardId, categoryId: categoryId, month: month,
+      percent: percent)
   }
 
   /// Why «Запомнить» is off, as a key of Entry; `nil` when it is on. It is on only when a rule
-  /// can be written: a card whose account is not known holds none.
+  /// can be written: a holder whose account is known, and one category.
   var rememberRefusalKey: String? {
-    if holder == nil || severalCards { return "entry.cashback.chooseCard" }
+    if holder == nil || ruleAccountId == nil { return "entry.cashback.noAccount" }
     if mixedCategories { return "entry.cashback.rememberSplit" }
     if categoryId == nil { return "entry.cashback.rememberNoCategory" }
-    if rule(.zero, onlyThisMonth: false) == nil { return "entry.cashback.chooseCard" }
     return nil
   }
 }
@@ -139,10 +153,14 @@ struct CashbackField: View {
     }
   }
 
-  /// «≈ 35.00» from the rules, «—» without.
+  /// «≈ 35» from the rules of an account that rounds to whole units, «≈ 35.50» to the kopeck or
+  /// from a figure typed for the operation, «—» without.
   private var placeholder: String {
     guard let expectation else { return "—" }
-    return "≈ " + NumberText.decimal(expectation.money.amount.decimal, fractionDigits: 2...2)
+    var whole = context.rounding.precision == .whole
+    if case .override = expectation.source { whole = false }
+    let digits = whole ? 0...0 : 2...2
+    return "≈ " + NumberText.decimal(expectation.money.amount.decimal, fractionDigits: digits)
   }
 
   @ViewBuilder
@@ -179,8 +197,6 @@ struct CashbackField: View {
     if case .override = expectation?.source {
       // The placeholder shows the figure kept with the operation, not what the rules give.
       note("pencil", t("entry.cashback.typed"))
-    } else if context.severalCards {
-      note("creditcard", t("entry.cashback.chooseCard"))
     } else if let expectation, case .rules(let ids) = expectation.source {
       let used = context.rules.filter { ids.contains($0.id) }
       if used.count == 1, let rule = used.first {
@@ -201,7 +217,7 @@ struct CashbackField: View {
   private func typedPercentLine(_ percent: CashbackPercent) -> String {
     let moved = CashbackMath.movedMoney(of: draft)
     let result =
-      CashbackMath.amount(of: percent, on: draft)
+      CashbackMath.amount(of: percent, on: draft, rounding: context.rounding)
       ?? Money(amount: .zero, currency: moved.currency)
     return environment.format(
       "entry.cashback.ofBase", table: "Entry", environment.money.percent(percent),

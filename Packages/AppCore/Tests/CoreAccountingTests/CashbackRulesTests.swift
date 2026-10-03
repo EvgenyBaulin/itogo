@@ -4,8 +4,8 @@ import Testing
 
 @testable import CoreAccounting
 
-/// Editing the rules: «Запомнить», the sheet's save by key, what a rule may name, the first card
-/// of an account, «Как в прошлом месяце».
+/// Editing the rules: «Запомнить», the sheet's save by key, what a rule may name, «Как в
+/// прошлом месяце».
 @Suite("Editing cashback rules")
 struct CashbackRulesTests {
   let fixture = CashbackFixture()
@@ -98,7 +98,7 @@ struct CashbackRulesTests {
       rule(1, category: fixture.cafes, 50_000), rule(2, category: fixture.cafes, 70_000),
     ]
     #expect(
-      CashbackRules.issues(twice, tree: fixture.tree, cards: fixture.cards) == [
+      CashbackRules.issues(twice, tree: fixture.tree) == [
         .duplicate(twice[0].key)
       ])
   }
@@ -115,37 +115,35 @@ struct CashbackRulesTests {
       rule(3, category: reconcile, 10_000), rule(4, category: fixture.loans, 0),
     ]
     #expect(
-      CashbackRules.issues(
-        rules, tree: tree, cards: fixture.cards, reconcileCategoryIds: [reconcile]) == [
-          .categoryNotExpense(fixture.salary), .categoryIsGoal(fixture.goalTrip),
-          .categoryIsReconciliation(reconcile),
-        ])
+      CashbackRules.issues(rules, tree: tree, reconcileCategoryIds: [reconcile]) == [
+        .categoryNotExpense(fixture.salary), .categoryIsGoal(fixture.goalTrip),
+        .categoryIsReconciliation(reconcile), .categoryIsLoan(fixture.loans),
+      ])
   }
 
-  /// An account with live cards keeps its rules on the cards.
-  @Test func anAccountRuleWithCardsIsRefused() {
+  /// The rules belong to the account, whether it has cards or not: a rule of the account itself
+  /// is fine on an account with live cards.
+  @Test func anAccountRuleWithCardsIsFine() {
     let own = CashbackRule(
       accountId: fixture.tBank, categoryId: nil, percent: CashbackPercent(e4: 10_000)!)
-    #expect(
-      CashbackRules.issues([own], tree: fixture.tree, cards: fixture.cards) == [
-        .holderHasCards(fixture.tBank)
-      ])
+    #expect(CashbackRules.issues([own], tree: fixture.tree).isEmpty)
     let cash = CashbackRule(accountId: fixture.cash, percent: CashbackPercent(e4: 10_000)!)
-    #expect(CashbackRules.issues([cash], tree: fixture.tree, cards: fixture.cards).isEmpty)
+    #expect(CashbackRules.issues([cash], tree: fixture.tree).isEmpty)
   }
 
-  @Test func firstCardTakesTheAccountsRules() {
-    let own = [
-      CashbackRule(
-        id: id(1), accountId: fixture.cash, categoryId: fixture.cafes,
-        percent: CashbackPercent(e4: 50_000)!),
-      CashbackRule(id: id(2), accountId: fixture.cash, percent: CashbackPercent(e4: 10_000)!),
-      rule(3, category: nil, 10_000),
+  /// A payment on a debt earns nothing, so no rule may name «Кредиты» or what is under it.
+  @Test func aRuleOnLoansIsRefused() {
+    let sub = id(260)
+    let tree = CategoryTree(
+      [CoreKit.Category(id: sub, parentId: fixture.loans, kind: .expense, name: "Mortgage")]
+        + [fixture.loans].compactMap { fixture.tree.category($0) })
+    let rules = [
+      rule(1, category: fixture.loans, 0), rule(2, category: sub, 10_000),
     ]
-    let card = PaymentCard(id: id(40), accountId: fixture.cash, name: "Wallet card")
-    let moved = CashbackRules.movedToFirstCard(card, rules: own)
-    #expect(moved.map(\.id) == [id(1), id(2)])
-    #expect(moved.allSatisfy { $0.cardId == id(40) && $0.accountId == fixture.cash })
+    #expect(
+      CashbackRules.issues(rules, tree: tree) == [
+        .categoryIsLoan(fixture.loans), .categoryIsLoan(sub),
+      ])
   }
 
   @Test func copyLastMonthSkipsExistingKeys() {
@@ -174,6 +172,6 @@ struct CashbackRulesTests {
     let tree = CategoryTree(categories)
     let choices = CashbackRules.categoryChoices(
       tree: tree, categories: categories, reconcileCategoryIds: [reconcile])
-    #expect(choices.map(\.id) == [fixture.cafes, fixture.coffee, fixture.loans])
+    #expect(choices.map(\.id) == [fixture.cafes, fixture.coffee])
   }
 }

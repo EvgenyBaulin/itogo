@@ -965,9 +965,23 @@ enum AccountText {
     case .noSuccessor: return t("account.refusal.noSuccessor")
     case .mainInExcludedGroup: return t("account.refusal.mainInExcludedGroup")
     case .inUse(_, let usage):
+      // An account that is only the points account of another account's cashback has no
+      // operations to count: it says what it is.
+      let busy = usage.operations + usage.transfers + usage.scheduled + usage.debtEntries > 0
+      guard usage.cashbackPoints > 0 else {
+        return environment.format(
+          "account.refusal.inUse", table: table,
+          counts: usage.operations, usage.transfers, usage.scheduled, usage.debtEntries)
+      }
+      guard busy else {
+        return environment.format(
+          "account.refusal.inUsePoints", table: table, counts: usage.cashbackPoints)
+      }
       return environment.format(
         "account.refusal.inUse", table: table,
-        counts: usage.operations, usage.transfers, usage.scheduled, usage.debtEntries)
+        counts: usage.operations, usage.transfers, usage.scheduled, usage.debtEntries) + " "
+        + environment.format(
+          "account.refusal.inUseAlsoPoints", table: table, counts: usage.cashbackPoints)
     case .groupHoldsMain: return t("account.refusal.groupHoldsMain")
     case .groupHasLiveAccounts: return t("account.refusal.groupHasLiveAccounts")
     case .groupInUse: return t("account.refusal.groupInUse")

@@ -55,7 +55,7 @@ struct CashbackMathTests {
     let expected = try #require(fixture.expected(taxi))
     #expect(expected.money == Money(amount: money(100), currency: kzt))
     #expect(expected.rubles == money(18))
-    #expect(expected.holder == .card(fixture.kaspiCard))
+    #expect(expected.holder == .account(fixture.kaspi))
   }
 
   /// 50 $ = 30 $ cafes + 20 $ home, 4,600 ₽ charged: 2,760 ₽ × 10 % + 1,840 ₽ × 1 % = 294.40.
@@ -78,7 +78,7 @@ struct CashbackMathTests {
         CashbackRule(
           accountId: fixture.tBank, cardId: fixture.black,
           percent: try #require(CashbackPercent(e4: 100)))
-      ], tree: fixture.tree)
+      ], tree: fixture.tree, cards: fixture.cards, accounts: fixture.accounts)
     let bread = fixture.operation(
       on: "09-14", parts: [(fixture.home, money(50))], account: fixture.tBank,
       card: fixture.black)
@@ -192,11 +192,14 @@ struct CashbackMathTests {
       occurredAt: fixture.at("09-14"), amount: money(1000), paymentMethodId: fixture.tBank,
       parts: [PartDraft(categoryId: fixture.pharmacy, amount: money(1000))])
     let seven = try #require(CashbackPercent(e4: 70_000))
-    #expect(CashbackMath.amount(of: seven, on: draft) == rub("70"))
+    let kopecks = CashbackRounding(precision: .cents)
+    #expect(CashbackMath.amount(of: seven, on: draft, rounding: kopecks) == rub("70"))
     draft.currency = .usd
     draft.amount = money(20)
     draft.accountCurrency = .rub
     draft.accountAmount = money(1850)
-    #expect(CashbackMath.amount(of: seven, on: draft) == rub("129.5"))
+    #expect(CashbackMath.amount(of: seven, on: draft, rounding: kopecks) == rub("129.5"))
+    // An account that rounds to whole rubles, as a new one does, gets 130.
+    #expect(CashbackMath.amount(of: seven, on: draft) == rub("130"))
   }
 }

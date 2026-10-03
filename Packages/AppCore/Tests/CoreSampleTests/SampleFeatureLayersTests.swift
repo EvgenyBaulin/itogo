@@ -90,7 +90,7 @@ struct SampleFeatureLayersTests {
     #expect(set.entries.count - accounts.entries.count == 9, "the number of added operations")
     #expect(
       Self.digest(set, over: accounts)
-        == "fef6a7f4decc58a55aa8cc64c47e2242cfcec400d92efe8aab5349fb30d47b3d",
+        == "514ead3a369a14c2db621607d44a0eec8eab9ae3a7681c6670d8d90443a7740b",
       """
       The layers after the accounts drew a different sequence. If this was meant — a new
       feature, another amount — put the digest printed by the failure here and say why in the

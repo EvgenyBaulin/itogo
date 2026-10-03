@@ -147,6 +147,30 @@ struct MigrationDryRunPathTests {
   /// A database of 1.1 tried on a copy: one migration applied, a card for every live card
   /// account in a table that was not there, the counts of the step by name, and everything
   /// else equal — in lines that name no value of the database.
+  /// A file of 1.2 whose cards hold cashback rules: the rules that go up to their account are
+  /// the same rows, the copies and the rules on loans go, and the run counts exactly the rows
+  /// the data step says — «equal», with the rule table shorter by the ones dropped.
+  @Test func aOnePointTwoFileMovesItsRulesAndComesOutEqual() throws {
+    let (book, _) = try Migration0006CashbackTests.book(named: "dry-run-rules")
+    defer { book.remove() }
+    let bytes = try Data(contentsOf: book.url)
+
+    let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
+
+    #expect(status == 0, "\(output)")
+    #expect(output.contains("schema: 5 -> 6 (applied 1)"), "\(output)")
+    #expect(output.contains(" cashbackRulesMoved=4"), "\(output)")
+    #expect(output.contains(" cashbackRulesDropped=3"), "\(output)")
+    #expect(output.contains(" cashbackRulesVoided=1"), "\(output)")
+    let rules = "cashback_rules".padding(toLength: 26, withPad: " ", startingAt: 0)
+    // Twelve rules before: three, four, two, two and one; three of them go.
+    #expect(output.contains("  \(rules) 12 -> 9\n"), "\(output)")
+    #expect(!output.contains("differ"), "\(output)")
+    #expect(output.contains("result: equal"), "\(output)")
+    expectNothingLeaks(output, ["Shape", "Card"], "a 1.2 file with rules")
+    #expect(try Data(contentsOf: book.url) == bytes)
+  }
+
   @Test func aOnePointOneFileCountsItsCards() throws {
     let book = try OnePointOneBook(named: "dry-run")
     defer { book.remove() }

@@ -112,4 +112,74 @@ final class CashbackRulesSheetTests: XCTestCase {
     XCTAssertTrue(months.contains(august))
     XCTAssertEqual(months.count, 15)
   }
+
+  // MARK: The account and its settings
+
+  private let bonus = UUID()
+
+  /// The account first, then its cards: the account's rules are the ones every card follows,
+  /// and the settings of its cashback are shown with them.
+  private func draftWithTheAccount(
+    settings: CashbackAccountSettings = CashbackAccountSettings()
+  ) -> CashbackRulesDraft {
+    let own = CashbackRule(
+      accountId: account, categoryId: groceries, percent: CashbackPercent(e4: 30_000)!)
+    return CashbackRulesDraft(
+      holders: [.account(account), .card(black), .card(virtual)], accountId: account,
+      rules: rules + [own], month: september, settings: settings)
+  }
+
+  func testTheAccountIsShownFirstWithItsOwnRules() {
+    let sheet = draftWithTheAccount()
+    XCTAssertEqual(sheet.holder, .account(account))
+    XCTAssertTrue(sheet.isAccountShown)
+    XCTAssertEqual(sheet.always.map(\.percentText), ["3"])
+    var onCard = draftWithTheAccount()
+    onCard.holder = .card(black)
+    XCTAssertFalse(onCard.isAccountShown, "the settings are the account's: not shown on a card")
+    // Every holder's rules are saved together, the account's among them.
+    let saved = sheet.rules
+    XCTAssertEqual(saved?.count, rules.count + 1)
+    XCTAssertEqual(saved?.filter { $0.cardId == nil }.count, 1)
+  }
+
+  func testTheSettingsAreReadFromTheAccountAndPutBack() {
+    let settings = CashbackAccountSettings(
+      rounding: CashbackRounding(precision: .cents, direction: .down),
+      payout: CashbackPayout.later(day: 5), pointsAccountId: bonus)
+    let sheet = draftWithTheAccount(settings: settings)
+    XCTAssertEqual(sheet.settings, settings)
+    XCTAssertEqual(sheet.payoutChoice, .later)
+    XCTAssertEqual(sheet.payoutDay, 5)
+    let account = PaymentMethod(id: account, name: "Т-Банк")
+    XCTAssertTrue(sheet.settings.differs(from: account))
+    let applied = sheet.settings.applied(to: account)
+    XCTAssertEqual(applied.cashbackRounding, settings.rounding)
+    XCTAssertEqual(applied.cashbackPayout, settings.payout)
+    XCTAssertEqual(applied.cashbackPointsAccountId, bonus)
+    XCTAssertEqual(applied.name, "Т-Банк", "nothing else of the account changes")
+    XCTAssertFalse(CashbackAccountSettings(applied).differs(from: applied))
+  }
+
+  /// The payout picker keeps the day while the owner looks at the other choices.
+  func testThePayoutChoicesKeepTheDay() {
+    var sheet = draftWithTheAccount()
+    XCTAssertEqual(sheet.payoutChoice, .unknown)
+    XCTAssertNil(sheet.settings.payout)
+    sheet.choosePayout(.later)
+    XCTAssertEqual(sheet.settings.payout, CashbackPayout.later(day: 10), "10 is where it starts")
+    sheet.chooseDay(31)
+    XCTAssertEqual(sheet.settings.payout, CashbackPayout.later(day: 31))
+    sheet.choosePayout(.immediately)
+    XCTAssertEqual(sheet.settings.payout, .immediately)
+    sheet.chooseDay(7)
+    XCTAssertEqual(sheet.settings.payout, .immediately, "a day goes with «later» only")
+    sheet.choosePayout(.later)
+    XCTAssertEqual(sheet.settings.payout, CashbackPayout.later(day: 7), "the last day looked at")
+    sheet.chooseDay(0)
+    XCTAssertEqual(sheet.settings.payout, CashbackPayout.later(day: 7), "not a day of a month")
+    sheet.choosePayout(.unknown)
+    XCTAssertNil(sheet.settings.payout)
+    XCTAssertEqual(sheet.payoutDay, 7)
+  }
 }

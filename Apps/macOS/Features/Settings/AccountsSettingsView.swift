@@ -352,8 +352,8 @@ struct AccountsSettingsView: View {
     }
   }
 
-  /// A card inside its account's row: its name, how many cashback rules it holds, and its own
-  /// «…».
+  /// A card inside its account's row: its name, how many cashback rules it keeps of its own —
+  /// none, it follows its account's —, and its own «…».
   private func cardLine(_ card: PaymentCard) -> some View {
     HStack(spacing: 8) {
       Image(systemName: "creditcard")
@@ -364,11 +364,7 @@ struct AccountsSettingsView: View {
         Text(verbatim: card.name)
         Text(
           verbatim: ([card.aliases.isEmpty ? nil : card.aliases.joined(separator: ", ")]
-            + [
-              environment.format(
-                "card.caption", table: CardText.table,
-                counts: rules.filter { $0.cardId == card.id }.count)
-            ]).compactMap { $0 }.joined(separator: " · ")
+            + [cardRulesCaption(card)]).compactMap { $0 }.joined(separator: " · ")
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -386,6 +382,13 @@ struct AccountsSettingsView: View {
     }
     .padding(.leading, 26)
     .contextMenu { cardMenuItems(card) }
+  }
+
+  /// «своих правил кэшбэка: 2», or «правила — как у счёта» for a card with none of its own.
+  private func cardRulesCaption(_ card: PaymentCard) -> String {
+    let own = rules.filter { $0.cardId == card.id }.count
+    guard own > 0 else { return environment.language("card.captionFollows", table: CardText.table) }
+    return environment.format("card.caption", table: CardText.table, counts: own)
   }
 
   @ViewBuilder
@@ -489,12 +492,9 @@ struct AccountsSettingsView: View {
     Button(environment.language("card.add", table: CardText.table)) {
       sheet = .card(nil, accountId: account.id)
     }
-    // Rules of the account itself only while it has no card: with cards, each card holds its
-    // own.
-    if liveCards(of: account.id).isEmpty {
-      Button(environment.language("card.cashback", table: CardText.table)) {
-        sheet = .cashback(accountId: account.id, .account(account.id))
-      }
+    // The rules belong to the account, whatever cards it has: its cards follow them.
+    Button(environment.language("card.cashback", table: CardText.table)) {
+      sheet = .cashback(accountId: account.id, .account(account.id))
     }
     Divider()
     Button(t("accounts.archive")) { archive(account) }

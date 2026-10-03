@@ -541,7 +541,7 @@ final class AccountScreenTests: XCTestCase {
     XCTAssertEqual(payments.rows.map(\.status.payment.name), ["Музыка"])
     XCTAssertEqual(payments.rows.first?.cardName, "Black")
     let cashbackLines = AccountCashbackModel.build(
-      month: today.monthKey, accountId: tBank.id, ledger: snapshot.ledger
+      month: today.monthKey, accountId: tBank.id, ledger: snapshot.ledger, today: today
     ).lines
     let line = try XCTUnwrap(cashbackLines.first { $0.cardId == black.id })
     XCTAssertEqual(line.expected, [Money(amount: AmountE4(whole: 35), currency: .rub)])

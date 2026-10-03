@@ -777,6 +777,10 @@ final class AccountRefusalWordsTests: XCTestCase {
         .inUse(UUID(), AccountUsage(operations: 1_234, transfers: 2, scheduled: 3, debtEntries: 4)),
         ["1,234", "2", "3", "4"]
       ),
+      // The points account of other accounts' cashback: alone it says so, with operations it
+      // says that too.
+      (.inUse(UUID(), AccountUsage(cashbackPoints: 2)), ["2"]),
+      (.inUse(UUID(), AccountUsage(operations: 7, cashbackPoints: 3)), ["7", "3"]),
       (.groupHoldsMain, []), (.groupHasLiveAccounts, []), (.groupInUse, []),
       (.groupNameTaken, []), (.notFound, []),
     ]

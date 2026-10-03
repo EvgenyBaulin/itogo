@@ -36,20 +36,35 @@ struct CashbackRuleRow: Identifiable, Equatable {
   }
 }
 
-/// What the rules sheet holds for each card (or account without cards) it edits, until
-/// «Сохранить». Saving writes the rules of every holder edited, by key, in one step of ⌘Z.
+/// What the payout picker of the sheet offers.
+enum CashbackPayoutChoice: Hashable, CaseIterable {
+  /// The account has not said.
+  case unknown
+  case immediately
+  /// By a day of the next month.
+  case later
+}
+
+/// What the rules sheet holds until «Сохранить»: the rules of the account and of each of its live
+/// cards — a card's are only the ones in which it differs from the account —, and the settings
+/// of the account's cashback: how its bank rounds, when it pays, where the points go. Saving
+/// writes the rules of every holder edited, by key, and the settings, in one step of ⌘Z.
 struct CashbackRulesDraft: Equatable {
-  /// Where the rules of the account live: its live cards, or the account itself.
+  /// Where the rules of the account live: the account itself, then its live cards.
   let holders: [CashbackHolder]
   let accountId: UUID
   var holder: CashbackHolder
   /// The month «Только в месяце» shows.
   var month: MonthKey
   private(set) var rows: [CashbackHolder: [CashbackRuleRow]]
+  /// The settings of the account's cashback as the sheet holds them.
+  var settings: CashbackAccountSettings
+  /// The day the payout picker offers while the bank pays «later».
+  private(set) var laterDay: Int
 
   init(
     holders: [CashbackHolder], accountId: UUID, holder: CashbackHolder? = nil,
-    rules: [CashbackRule], month: MonthKey
+    rules: [CashbackRule], month: MonthKey, settings: CashbackAccountSettings = .init()
   ) {
     self.holders = holders
     self.accountId = accountId
@@ -61,7 +76,39 @@ struct CashbackRulesDraft: Equatable {
       rows[held] = rules.filter { $0.holder == held }.map(CashbackRuleRow.init)
     }
     self.rows = rows
+    self.settings = settings
+    self.laterDay = settings.payout?.day ?? 10
   }
+
+  /// The rules shown are the account's own, and the settings with them.
+  var isAccountShown: Bool { holder == .account(accountId) }
+
+  // MARK: The settings
+
+  var payoutChoice: CashbackPayoutChoice {
+    switch settings.payout?.timing {
+    case nil: .unknown
+    case .immediately?: .immediately
+    case .later?: .later
+    }
+  }
+
+  mutating func choosePayout(_ choice: CashbackPayoutChoice) {
+    switch choice {
+    case .unknown: settings.payout = nil
+    case .immediately: settings.payout = .immediately
+    case .later: settings.payout = CashbackPayout.later(day: laterDay)
+    }
+  }
+
+  /// The day of the next month the bank pays by; 31 is the end of any month.
+  mutating func chooseDay(_ day: Int) {
+    guard let payout = CashbackPayout.later(day: day) else { return }
+    laterDay = day
+    if payoutChoice == .later { settings.payout = payout }
+  }
+
+  var payoutDay: Int { settings.payout?.day ?? laterDay }
 
   /// The rows of the holder shown.
   var current: [CashbackRuleRow] { rows[holder] ?? [] }
@@ -178,8 +225,9 @@ struct CashbackRulesDraft: Equatable {
   }
 }
 
-/// «Правила кэшбэка»: the rules of a card, or of an account without cards — «always» and «only
-/// in a month» —, with a picker of the card when the account has several. «Сохранить» writes one
+/// «Правила кэшбэка»: the rules of the account, which its cards follow — «always» and «only in a
+/// month» —, the rules a card keeps for itself where it differs, and, with the account's, how
+/// its bank rounds the cashback, when it pays it and where the points go. «Сохранить» writes one
 /// step of ⌘Z; a row that does not read is marked with a symbol and words and keeps the button
 /// off.
 struct CashbackRulesSheet: View {
@@ -263,7 +311,8 @@ struct CashbackRulesSheet: View {
     draft = CashbackRulesDraft(
       holders: CashbackHolders.editableHolders(of: accountId, cards: cards),
       accountId: accountId, holder: startHolder, rules: actions.rules,
-      month: environment.today.monthKey)
+      month: environment.today.monthKey,
+      settings: accounts.first { $0.id == accountId }.map(CashbackAccountSettings.init) ?? .init())
   }
 
   /// The draft of the sheet; `current` stands in only for the moment it is being replaced.
@@ -283,13 +332,19 @@ struct CashbackRulesSheet: View {
       if current.holders.count > 1 {
         Picker(selection: model.holder) {
           ForEach(current.holders, id: \.self) { holder in
-            Text(verbatim: CardText.holderName(holder, cards: cards, accounts: accounts))
-              .tag(holder)
+            Text(verbatim: holderLabel(holder)).tag(holder)
           }
         } label: {
           Text(verbatim: t("cashback.sheet.holder"))
         }
+        Text(
+          verbatim: t(
+            current.isAccountShown ? "cashback.sheet.accountHint" : "cashback.sheet.cardHint")
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
+      if current.isAccountShown { settingsSections(current, model: model) }
       Section {
         ForEach(current.always) { row in ruleRow(row, model: model) }
         Button(t("cashback.sheet.addRule")) { draft?.add(month: nil) }
@@ -340,6 +395,102 @@ struct CashbackRulesSheet: View {
       }
     }
     .formStyle(.grouped)
+  }
+
+  /// «Счёт «Сбер» и его карты» / «Только карта «Black»».
+  private func holderLabel(_ holder: CashbackHolder) -> String {
+    switch holder {
+    case .account(let id):
+      return environment.format(
+        "cashback.sheet.holderAccount", table: CardText.table,
+        accounts.first { $0.id == id }?.name ?? "")
+    case .card(let id):
+      return environment.format(
+        "cashback.sheet.holderCard", table: CardText.table,
+        cards.first { $0.id == id }?.name ?? "")
+    }
+  }
+
+  /// How the bank rounds the cashback of a purchase, when it pays, and where the points go.
+  @ViewBuilder
+  private func settingsSections(
+    _ current: CashbackRulesDraft, model: Binding<CashbackRulesDraft>
+  ) -> some View {
+    Section {
+      Picker(selection: model.settings.rounding.precision) {
+        Text(verbatim: t("cashback.rounding.whole")).tag(CashbackRounding.Precision.whole)
+        Text(verbatim: t("cashback.rounding.cents")).tag(CashbackRounding.Precision.cents)
+      } label: {
+        Text(verbatim: t("cashback.rounding.precision"))
+      }
+      .accessibilityIdentifier("cashback.rounding.precision")
+      Picker(selection: model.settings.rounding.direction) {
+        Text(verbatim: t("cashback.rounding.nearest")).tag(CashbackRounding.Direction.nearest)
+        Text(verbatim: t("cashback.rounding.down")).tag(CashbackRounding.Direction.down)
+        Text(verbatim: t("cashback.rounding.up")).tag(CashbackRounding.Direction.up)
+      } label: {
+        Text(verbatim: t("cashback.rounding.direction"))
+      }
+      .accessibilityIdentifier("cashback.rounding.direction")
+      Picker(
+        selection: Binding(
+          get: { current.payoutChoice },
+          set: { choice in draft?.choosePayout(choice) })
+      ) {
+        Text(verbatim: t("cashback.payout.unknown")).tag(CashbackPayoutChoice.unknown)
+        Text(verbatim: t("cashback.payout.immediately")).tag(CashbackPayoutChoice.immediately)
+        Text(verbatim: t("cashback.payout.later")).tag(CashbackPayoutChoice.later)
+      } label: {
+        Text(verbatim: t("cashback.payout"))
+      }
+      .accessibilityIdentifier("cashback.payout")
+      if current.payoutChoice == .later {
+        Picker(
+          selection: Binding(get: { current.payoutDay }, set: { draft?.chooseDay($0) })
+        ) {
+          ForEach(1...30, id: \.self) { day in
+            Text(verbatim: environment.format("cashback.payout.day", table: CardText.table, day))
+              .tag(day)
+          }
+          Text(verbatim: t("cashback.payout.lastDay")).tag(31)
+        } label: {
+          Text(verbatim: t("cashback.payout.dayLabel"))
+        }
+        .accessibilityIdentifier("cashback.payout.day")
+      }
+      pointsPicker(current, model: model)
+    } header: {
+      Text(verbatim: t("cashback.settings.header"))
+    } footer: {
+      Text(verbatim: t("cashback.settings.hint")).foregroundStyle(.secondary)
+    }
+  }
+
+  /// «Деньгами на этот счёт» or «Баллами на счёт …».
+  @ViewBuilder
+  private func pointsPicker(
+    _ current: CashbackRulesDraft, model: Binding<CashbackRulesDraft>
+  ) -> some View {
+    let chosen = current.settings.pointsAccountId
+    let others = CashbackPoints.choices(for: accountId, among: accounts)
+    let kept = chosen.flatMap { id in accounts.first { $0.id == id } }
+    Picker(selection: model.settings.pointsAccountId) {
+      Text(verbatim: t("cashback.points.money")).tag(UUID?.none)
+      ForEach(others, id: \.id) { account in
+        Text(
+          verbatim: environment.format("cashback.points.on", table: CardText.table, account.name)
+        )
+        .tag(UUID?.some(account.id))
+      }
+      // The account the points go to now, when it is in the archive: shown until another is taken.
+      if let kept, !others.contains(where: { $0.id == kept.id }) {
+        Text(verbatim: environment.format("cashback.points.on", table: CardText.table, kept.name))
+          .tag(UUID?.some(kept.id))
+      }
+    } label: {
+      Text(verbatim: t("cashback.points"))
+    }
+    .accessibilityIdentifier("cashback.points")
   }
 
   private func ruleRow(_ row: CashbackRuleRow, model: Binding<CashbackRulesDraft>) -> some View {
@@ -416,7 +567,10 @@ struct CashbackRulesSheet: View {
 
   private func save() {
     guard let draft, let rules = draft.rules else { return }
-    switch actions.saveRules(of: draft.holders, rules) {
+    let stored = accounts.first { $0.id == accountId }
+    switch actions.saveRules(
+      of: draft.holders, rules, account: stored.map { draft.settings.applied(to: $0) })
+    {
     case .done: finish()
     case .refused(let reason): refusal = reason
     case .failed: failed = true

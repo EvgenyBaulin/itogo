@@ -8,7 +8,7 @@ struct AccountCardsModel: Equatable {
     var card: PaymentCard
     /// The other names in one line: «виртуалка, virt».
     var otherNames: String?
-    /// How many cashback rules the card holds.
+    /// How many cashback rules the card keeps of its own; none — it follows its account's.
     var rules: Int
     var id: UUID { card.id }
   }
@@ -141,7 +141,9 @@ struct AccountCardsBlock: View {
         Text(
           verbatim: [
             item.otherNames,
-            environment.format("card.caption", table: CardText.table, counts: item.rules),
+            item.rules == 0
+              ? t("card.captionFollows")
+              : environment.format("card.caption", table: CardText.table, counts: item.rules),
           ].compactMap { $0 }.joined(separator: " · ")
         )
         .font(.caption)

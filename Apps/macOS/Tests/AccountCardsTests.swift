@@ -274,9 +274,9 @@ final class AccountCardsTests: XCTestCase {
 
   // MARK: Rules
 
-  /// «Наличные» kept its own rule while it had no card; its first card takes it in the same
-  /// step, and ⌘Z gives it back to the account.
-  func testTheFirstCardTakesTheAccountRules() throws {
+  /// «Наличные» keep a rule of their own, which every card follows: the first card changes
+  /// nothing about it, and ⌘Z takes the card away alone.
+  func testTheFirstCardLeavesTheAccountRulesWhereTheyAre() throws {
     let references = try XCTUnwrap(environment.references)
     let cash = PaymentMethod(name: "Наличные", kind: .cash, currency: .rub)
     try references.save(cash)
@@ -285,11 +285,11 @@ final class AccountCardsTests: XCTestCase {
 
     let first = PaymentCard(accountId: cash.id, name: "Карта к кошельку")
     XCTAssertEqual(cards.save(first, previous: nil), .done)
-    XCTAssertEqual(cards.rules.map(\.cardId), [first.id])
-    XCTAssertEqual(cards.rules.map(\.id), [rule.id], "the rule was written anew")
+    XCTAssertEqual(cards.rules.map(\.cardId), [nil], "the account's rule is still the account's")
+    XCTAssertEqual(cards.rules.map(\.id), [rule.id], "the same row")
 
     store.undo()
-    XCTAssertEqual(cards.rules.map(\.cardId), [nil])
-    XCTAssertTrue(cards.cards.isEmpty)
+    XCTAssertEqual(cards.rules.map(\.id), [rule.id])
+    XCTAssertTrue(cards.cards.isEmpty, "one step: the card alone")
   }
 }

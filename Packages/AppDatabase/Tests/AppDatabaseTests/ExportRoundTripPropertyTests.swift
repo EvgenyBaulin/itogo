@@ -423,8 +423,13 @@ struct ExportRoundTripPropertyTests {
     "reconciliations.csv:origin",
   ]
 
-  /// The columns the banks added to the files of the older build, file by file.
-  private static let addedByTheBanks: Set<String> = ["payment_methods.csv:bank_id"]
+  /// The columns the banks and the cashback settings of the accounts added to the files of the
+  /// older build, file by file.
+  private static let addedByTheBanks: Set<String> = [
+    "payment_methods.csv:bank_id", "payment_methods.csv:cashback_precision",
+    "payment_methods.csv:cashback_direction", "payment_methods.csv:cashback_payout",
+    "payment_methods.csv:cashback_payout_day", "payment_methods.csv:cashback_points_account_id",
+  ]
 
   /// Cards on two accounts of the history, one with other names that break a CSV cell; the
   /// cashback rules of one of them, a month and a category among them; operations and a payment

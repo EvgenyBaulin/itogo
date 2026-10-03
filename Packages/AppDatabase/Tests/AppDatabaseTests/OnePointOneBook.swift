@@ -422,11 +422,15 @@ extension TestSupport {
     "cardsCreated", "cardsSkipped", "countsRecorded", "countsKept", "goalPlansStarted",
   ]
 
-  /// The counts of the step of the banks (`0006_banks`).
-  static let banksStepKeys: Set<String> = ["banksCreated", "banksSkipped", "accountsFiled"]
+  /// The counts of the step of the banks and of the cashback rules (`0006_banks`).
+  static let banksStepKeys: Set<String> = [
+    "banksCreated", "banksSkipped", "accountsFiled", "cashbackRulesMoved",
+    "cashbackRulesDropped", "cashbackRulesVoided",
+  ]
 
   /// What the step of the banks does to the accounts of a file as it is: the plan worked out
-  /// from every account in it.
+  /// from every account in it. A file of 1.1 holds no cashback rules, so the step moves and
+  /// drops none.
   static func banksStep(_ db: Database) throws -> [String: Int] {
     var accounts: [MigratingBankAccount] = []
     for row in try Row.fetchAll(
@@ -441,7 +445,8 @@ extension TestSupport {
     let plan = BanksMigration.plan(accounts: accounts)
     return [
       "banksCreated": plan.banks.count, "banksSkipped": plan.skipped,
-      "accountsFiled": plan.assignments.count,
+      "accountsFiled": plan.assignments.count, "cashbackRulesMoved": 0,
+      "cashbackRulesDropped": 0, "cashbackRulesVoided": 0,
     ]
   }
 

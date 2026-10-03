@@ -842,13 +842,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "How much cashback to expect is set by the cards’ rules: on the account screen or in Settings → Accounts → “Cashback…”."
+            "value": "How much cashback to expect is set by the rules of the accounts: on the account screen or in Settings → Accounts → “Cashback…”. A payment on a debt earns none."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Сколько кэшбэка ждать, задают правила карт: экран счёта или «Настройки → Счета» → «Кэшбэк…»."
+            "value": "Сколько кэшбэка ждать, задают правила счетов: экран счёта или «Настройки → Счета» → «Кэшбэк…». За платёж по долгу кэшбэк не платят."
           }
         }
       }

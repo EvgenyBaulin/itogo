@@ -48,12 +48,72 @@ final class EntryCashbackFieldTests: XCTestCase {
     let saved = try book.save(model)
     XCTAssertNil(try book.stored(saved.id)?.transaction.cashback)
 
-    // «Т-Банк» alone has two cards: nothing is guessed.
+    // «Т-Банк» alone has two cards and no rules of its own: it is the account that prices the
+    // line, and it expects nothing.
     let account = book.model()
     try book.enter("кофе 350 т-банк", into: account)
     XCTAssertEqual(account.cashbackHolder, .account(book.tBank.id))
-    XCTAssertTrue(account.cashbackContext.severalCards)
     XCTAssertNil(account.cashbackExpectation)
+    XCTAssertEqual(account.cashbackContext.holderName, "Т-Банк")
+  }
+
+  /// «Т-Банк» has two cards and a rule of its own now: «кофе 500 т-банк» names no card and is
+  /// priced by the account; Virtual, which keeps nothing of its own, follows it too; Black, which
+  /// keeps its own rules, uses them.
+  func testAnOperationWithoutACardIsPricedByTheAccountsRules() throws {
+    let rule = CashbackRule(
+      accountId: book.tBank.id, categoryId: book.cafe.id, percent: CashbackPercent(e4: 40_000)!)
+    _ = try XCTUnwrap(book.environment.planning).apply(
+      PlanningChange(upsert: PlanningRows(cashbackRules: [rule])))
+
+    let plain = book.model()
+    try book.enter("кофе 500 т-банк", into: plain)
+    plain.setCategory(book.cafe.id, forPartAt: 0)
+    XCTAssertEqual(plain.cashbackHolder, .account(book.tBank.id))
+    XCTAssertEqual(plain.cashbackExpectation?.money, rub(20), "4 % of 500")
+    XCTAssertEqual(plain.cashbackContext.rules.map(\.id), [rule.id])
+
+    let virtual = book.model()
+    try book.enter("кофе 500 виртуалка", into: virtual)
+    virtual.setCategory(book.cafe.id, forPartAt: 0)
+    XCTAssertEqual(virtual.cashbackHolder, .card(book.virtual.id))
+    XCTAssertEqual(virtual.cashbackExpectation?.money, rub(20), "Virtual follows its account")
+    XCTAssertTrue(virtual.cashbackContext.ownRules.isEmpty)
+
+    let black = book.model()
+    try book.enter("кофе 500 black", into: black)
+    black.setCategory(book.cafe.id, forPartAt: 0)
+    XCTAssertEqual(black.cashbackExpectation?.money, rub(50), "Black's own 10 % of the month")
+    XCTAssertEqual(black.cashbackContext.ownRules.count, 4)
+    XCTAssertTrue(
+      black.cashbackContext.rules.contains { $0.id == rule.id } == false,
+      "the account's rule for «Кафе» is covered by Black's own")
+  }
+
+  /// A new account rounds the cashback to whole rubles: 4 % of 510 is 20.40 → 20; an account set
+  /// to kopecks keeps 20.40. The field says it as it will be paid.
+  func testTheExpectationIsRoundedAsTheAccountSays() throws {
+    let rule = CashbackRule(
+      accountId: book.tBank.id, categoryId: book.cafe.id, percent: CashbackPercent(e4: 40_000)!)
+    _ = try XCTUnwrap(book.environment.planning).apply(
+      PlanningChange(upsert: PlanningRows(cashbackRules: [rule])))
+    let whole = book.model()
+    try book.enter("кофе 510 т-банк", into: whole)
+    whole.setCategory(book.cafe.id, forPartAt: 0)
+    XCTAssertEqual(whole.cashbackExpectation?.money, rub(20))
+    XCTAssertEqual(whole.cashbackContext.rounding, .standard)
+
+    var tBank = book.tBank
+    tBank.cashbackRounding = CashbackRounding(precision: .cents)
+    try XCTUnwrap(book.environment.references).save(tBank)
+    let kopecks = book.model()
+    try book.enter("кофе 510 т-банк", into: kopecks)
+    kopecks.setCategory(book.cafe.id, forPartAt: 0)
+    XCTAssertEqual(kopecks.cashbackExpectation?.money, rub(20, 40))
+    XCTAssertEqual(kopecks.cashbackContext.rounding.precision, .cents)
+    // A percent typed over it is rounded the same way before it is saved.
+    kopecks.cashbackField.text = "7%"
+    XCTAssertEqual(kopecks.draft.cashback, rub(35, 70))
   }
 
   /// «40» typed: the operation keeps 40.00 ₽ as its own figure.
@@ -126,8 +186,9 @@ final class EntryCashbackFieldTests: XCTestCase {
     XCTAssertEqual(editor.draft.draft.cashback, rub(140), "the percent follows the amount")
   }
 
-  /// «Запомнить» → «Только в этом месяце»: the rule of Black is written at once as a step of ⌘Z
-  /// of its own, the field empties, and the rule prices the operation; ⌘Z takes the rule back.
+  /// «Запомнить» → «Только в этом месяце»: the rule of the account — Black follows it — is
+  /// written at once as a step of ⌘Z of its own, the field empties, and the rule prices the
+  /// operation; ⌘Z takes the rule back.
   func testRememberWritesARuleAsItsOwnStep() throws {
     let model = book.model()
     try book.enter("аптека 1000 black", into: model)
@@ -138,7 +199,7 @@ final class EntryCashbackFieldTests: XCTestCase {
     XCTAssertNil(context.rememberRefusalKey)
     let seven = try XCTUnwrap(CashbackPercent(e4: 70_000))
     let rule = try XCTUnwrap(context.rule(seven, onlyThisMonth: true))
-    XCTAssertEqual(rule.cardId, book.black.id)
+    XCTAssertNil(rule.cardId, "Black keeps no rule of its own here: the account's is written")
     XCTAssertEqual(rule.accountId, book.tBank.id)
     XCTAssertEqual(rule.categoryId, book.pharmacies.id)
 
@@ -154,6 +215,24 @@ final class EntryCashbackFieldTests: XCTestCase {
     book.store.undo()
     XCTAssertFalse(actions.rules.contains { $0.categoryId == book.pharmacies.id })
     XCTAssertFalse(book.store.canUndo, "one step")
+  }
+
+  /// Where Black already differs from its account for the month and category, «Запомнить» changes
+  /// Black's own rule: the account's would be hidden behind it.
+  func testRememberChangesTheCardsOwnRuleWhereItDiffers() throws {
+    let model = book.model()
+    try book.enter("кофе 350 black", into: model)
+    model.setCategory(book.cafe.id, forPartAt: 0)
+    model.cashbackField.text = "12%"
+    let twelve = try XCTUnwrap(CashbackPercent(e4: 120_000))
+    let rule = try XCTUnwrap(model.cashbackContext.rule(twelve, onlyThisMonth: true))
+    XCTAssertEqual(rule.cardId, book.black.id, "Black has its own rule for «Кафе» this month")
+    let actions = CardActions(environment: book.environment, store: book.store)
+    let before = actions.rules.count
+    XCTAssertEqual(model.rememberCashback(rule) { actions.remember($0) }, .done)
+    XCTAssertEqual(actions.rules.count, before, "the card's rule took the new percent")
+    XCTAssertEqual(
+      actions.rules.first { $0.cardId == book.black.id && $0.month != nil }?.percent, twelve)
   }
 
   /// A split over two categories cannot mean a rule of one: «Запомнить» is off and says why;
@@ -209,8 +288,8 @@ final class EntryCashbackFieldTests: XCTestCase {
     XCTAssertFalse(back.showsCashback)
   }
 
-  /// In the window: the panel shows «Кэшбэк» with what the rules of the main account's only card
-  /// expect as its placeholder.
+  /// In the window: the panel shows «Кэшбэк» with what the rules of the main account expect as
+  /// its placeholder — in whole rubles, as a new account rounds.
   func testThePanelShowsTheCashbackRow() async throws {
     let book = try XCTUnwrap(self.book)
     let host = try await EntryHost(prepare: { environment in
@@ -221,15 +300,13 @@ final class EntryCashbackFieldTests: XCTestCase {
           upsert: PlanningRows(
             cards: [book.sberCard, book.black, book.virtual],
             cashbackRules: [
-              CashbackRule(
-                accountId: book.sber.id, cardId: book.sberCard.id,
-                percent: CashbackPercent(e4: 5_000)!)
+              CashbackRule(accountId: book.sber.id, percent: CashbackPercent(e4: 5_000)!)
             ])))
     })
     self.host = host
     try host.type("350", into: try host.field(prompt: "0"))
     host.settle()
-    // «Сбер» is the main account with one card: its 0.5 % of 350 ₽.
-    XCTAssertNoThrow(try host.field(prompt: "≈ 1.75"), "the placeholder says the expectation")
+    // «Сбер» is the main account: its 0.5 % of 350 ₽ is 1.75, which it rounds to 2.
+    XCTAssertNoThrow(try host.field(prompt: "≈ 2"), "the placeholder says the expectation")
   }
 }

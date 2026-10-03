@@ -19,9 +19,18 @@ public enum DecimalMath {
 
   /// Rounds to a number of fraction digits, half away from zero.
   public static func round(_ value: Decimal, scale: Int) -> Decimal {
+    round(value, scale: scale, mode: .plain)
+  }
+
+  /// Rounds to a number of fraction digits the way `mode` says. For `.down` and `.up` the value
+  /// should not be below zero: they mean toward and away from zero only there, and the caller
+  /// rounds a magnitude and keeps the sign (`CashbackRounding`).
+  public static func round(
+    _ value: Decimal, scale: Int, mode: NSDecimalNumber.RoundingMode
+  ) -> Decimal {
     var source = value
     var rounded = Decimal()
-    NSDecimalRound(&rounded, &source, scale, .plain)
+    NSDecimalRound(&rounded, &source, scale, mode)
     return rounded
   }
 

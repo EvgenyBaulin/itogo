@@ -6,8 +6,8 @@ import XCTest
 
 /// The actions on the cards of an account and on their cashback rules, against a real
 /// database: each is one step of ⌘Z, a name another account or live card holds is refused in
-/// words, a used card only goes to the archive, the first card takes the account's own rules,
-/// and «Запомнить» is a step of its own.
+/// words, a used card only goes to the archive, a card takes no rules from its account, and
+/// «Запомнить» is a step of its own.
 @MainActor
 final class CardActionsTests: XCTestCase {
   private var environment: AppEnvironment!
@@ -135,25 +135,24 @@ final class CardActionsTests: XCTestCase {
     XCTAssertTrue(actions.cards.contains { $0.id == black.id })
   }
 
-  /// Cash had rules of its own; its first card takes them over in the same step.
-  func testTheFirstCardTakesTheAccountsRules() throws {
+  /// Cash had rules of its own; its first card changes nothing about them: the card follows
+  /// them, and ⌘Z takes the card away alone.
+  func testTheFirstCardLeavesTheAccountsRules() throws {
     let cash = try account("Кошелёк", kind: .other)
     let own = CashbackRule(accountId: cash.id, percent: percent(10_000))
     XCTAssertEqual(actions.saveRules(of: [.account(cash.id)], [own]), .done)
     let card = PaymentCard(accountId: cash.id, name: "Карта кошелька")
     XCTAssertEqual(actions.save(card, previous: nil), .done)
-    XCTAssertEqual(actions.rules.map(\.cardId), [card.id])
+    XCTAssertEqual(actions.rules.map(\.cardId), [nil])
     XCTAssertEqual(actions.rules.map(\.id), [own.id])
     store.undo()
-    XCTAssertEqual(actions.rules.map(\.cardId), [nil], "one step: card and rules go back")
+    XCTAssertEqual(actions.rules.map(\.cardId), [nil])
     XCTAssertTrue(actions.cards.isEmpty)
   }
 
-  /// An account whose only card is in the archive keeps rules of its own. «Вернуть» the card:
-  /// the account's rules move onto it in the same step — where the card has a rule of the same
-  /// key, the card's rule stays and the account's goes —, and one ⌘Z brings back the archive and
-  /// the account's rules.
-  func testRestoringTheOnlyCardTakesTheAccountsRules() throws {
+  /// A card in the archive comes back with the rules of its own it kept, and the account's rules
+  /// stay the account's: one ⌘Z puts the card back in the archive and touches nothing else.
+  func testRestoringACardLeavesTheRulesAlone() throws {
     let tBank = try account("Т-Банк")
     let cafes = try category("Кафе")
     let groceries = try category("Продукты")
@@ -173,15 +172,14 @@ final class CardActionsTests: XCTestCase {
     let before = Set(actions.rules)
 
     XCTAssertEqual(actions.restore(black.id), .done)
-    let after = actions.rules
-    XCTAssertTrue(after.allSatisfy { $0.cardId == black.id }, "no rule is left on the account")
+    XCTAssertEqual(Set(actions.rules), before, "no rule moved")
+    XCTAssertEqual(actions.rules.filter { $0.cardId == black.id }, [cardCafes])
     XCTAssertEqual(
-      Set(after.map { "\($0.categoryId!) \($0.percent.e4)" }),
-      ["\(cafes.id) 50000", "\(groceries.id) 30000"], "the card's own rule of a key wins")
-    XCTAssertEqual(after.first { $0.categoryId == groceries.id }?.id, ownGroceries.id)
+      CashbackHolders.editableHolders(of: tBank.id, cards: actions.cards),
+      [.account(tBank.id), .card(black.id)])
     store.undo()
     XCTAssertEqual(Set(actions.rules), before)
-    XCTAssertEqual(actions.cards.first?.archived, true, "one step: card and rules go back")
+    XCTAssertEqual(actions.cards.first?.archived, true, "one step: the card alone")
   }
 
   // MARK: Rules
@@ -215,6 +213,98 @@ final class CardActionsTests: XCTestCase {
     XCTAssertEqual(
       actions.saveRules(of: [.card(black.id)], [first, first.with(id: UUID())]),
       .refused(.rules(.duplicate(first.key))))
+  }
+
+  // MARK: Settings of the account
+
+  /// The rules and the settings of the account's cashback — rounding, payout, points — are saved
+  /// in one step, and ⌘Z gives both back.
+  func testTheSheetSavesTheSettingsWithTheRulesInOneStep() throws {
+    let tBank = try account("Т-Банк")
+    let bonus = try account("Бонусы", kind: .other)
+    let cafes = try category("Кафе")
+    let own = CashbackRule(
+      accountId: tBank.id, categoryId: cafes.id, percent: percent(50_000))
+    var edited = tBank
+    edited.cashbackRounding = CashbackRounding(precision: .cents, direction: .down)
+    edited.cashbackPayout = CashbackPayout.later(day: 10)
+    edited.cashbackPointsAccountId = bonus.id
+    XCTAssertEqual(actions.saveRules(of: [.account(tBank.id)], [own], account: edited), .done)
+    let stored = try XCTUnwrap(actions.accounts.first { $0.id == tBank.id })
+    XCTAssertEqual(stored.cashbackRounding, edited.cashbackRounding)
+    XCTAssertEqual(stored.cashbackPayout, CashbackPayout.later(day: 10))
+    XCTAssertEqual(stored.cashbackPointsAccountId, bonus.id)
+    XCTAssertEqual(actions.rules, [own])
+
+    store.undo()
+    let reverted = try XCTUnwrap(actions.accounts.first { $0.id == tBank.id })
+    XCTAssertEqual(reverted.cashbackRounding, .standard)
+    XCTAssertNil(reverted.cashbackPayout)
+    XCTAssertNil(reverted.cashbackPointsAccountId)
+    XCTAssertTrue(actions.rules.isEmpty, "one step: the rules and the settings")
+    XCTAssertFalse(store.canUndo)
+  }
+
+  /// Settings alone are a save too; a save that changes nothing writes nothing.
+  func testTheSettingsAloneAreSavedAndNothingChangedWritesNothing() throws {
+    let tBank = try account("Т-Банк")
+    XCTAssertEqual(actions.saveRules(of: [.account(tBank.id)], [], account: tBank), .done)
+    XCTAssertFalse(store.canUndo, "nothing changed, nothing written")
+    var edited = tBank
+    edited.cashbackPayout = .immediately
+    XCTAssertEqual(actions.saveRules(of: [.account(tBank.id)], [], account: edited), .done)
+    XCTAssertEqual(
+      actions.accounts.first { $0.id == tBank.id }?.cashbackPayout, .immediately)
+    XCTAssertTrue(store.canUndo)
+    // Nothing else of the account was touched.
+    XCTAssertEqual(actions.accounts.first { $0.id == tBank.id }?.name, "Т-Банк")
+  }
+
+  /// An account cannot take its own points, nor an account that is not there or is in the
+  /// archive; nothing is written.
+  func testThePointsAccountIsCheckedInWords() throws {
+    let tBank = try account("Т-Банк")
+    let old = try account("Старые бонусы", kind: .other)
+    var archived = old
+    archived.archived = true
+    try XCTUnwrap(environment.references).save(archived)
+    func points(_ id: UUID?) -> CardActionOutcome {
+      var edited = tBank
+      edited.cashbackPointsAccountId = id
+      return actions.saveRules(of: [.account(tBank.id)], [], account: edited)
+    }
+    XCTAssertEqual(points(tBank.id), .refused(.points(.isItself)))
+    XCTAssertEqual(points(UUID()), .refused(.points(.notFound)))
+    XCTAssertEqual(points(old.id), .refused(.points(.archived)))
+    XCTAssertNil(actions.accounts.first { $0.id == tBank.id }?.cashbackPointsAccountId)
+    XCTAssertFalse(store.canUndo)
+    for refusal in [CardRefusal.points(.isItself), .points(.notFound), .points(.archived)] {
+      let text = CardText.message(
+        refusal, cards: [], accounts: [], categories: [:], environment)
+      XCTAssertFalse(text.contains("cashback.refusal"), text)
+    }
+  }
+
+  /// A rule on «Кредиты» is refused in words: a payment on a debt earns nothing.
+  func testARuleOnLoansIsRefused() throws {
+    let tBank = try account("Т-Банк")
+    let loans: CoreKit.Category
+    if let seeded = actions.categories.first(where: { $0.systemRole == .loans }) {
+      loans = seeded
+    } else {
+      loans = CoreKit.Category(kind: .expense, name: "Кредиты", systemRole: .loans)
+      try XCTUnwrap(environment.references).save(loans)
+    }
+    let rule = CashbackRule(
+      accountId: tBank.id, categoryId: loans.id, percent: percent(0))
+    XCTAssertEqual(
+      actions.saveRules(of: [.account(tBank.id)], [rule]),
+      .refused(.rules(.categoryIsLoan(loans.id))))
+    XCTAssertEqual(actions.remember(rule), .refused(.rules(.categoryIsLoan(loans.id))))
+    XCTAssertTrue(actions.rules.isEmpty)
+    let text = CardText.message(
+      .rules(.categoryIsLoan(loans.id)), cards: [], accounts: [], categories: [:], environment)
+    XCTAssertFalse(text.contains("cashback.refusal"), text)
   }
 
   /// «Запомнить»: a typed 7 % becomes a rule of the card at once, one step of its own; a second

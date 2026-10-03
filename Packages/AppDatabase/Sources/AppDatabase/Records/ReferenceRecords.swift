@@ -88,7 +88,31 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
       groupId: RowMapping.optionalUUID(row, "group_id"),
       sort: try RowMapping.optionalInteger(row, "sort") ?? 0,
       otherCurrencies: RowMapping.currencies(row, "other_currencies"),
-      bankId: RowMapping.optionalUUID(row, "bank_id"))
+      bankId: RowMapping.optionalUUID(row, "bank_id"),
+      cashbackRounding: Self.cashbackRounding(row),
+      cashbackPayout: Self.cashbackPayout(row),
+      cashbackPointsAccountId: RowMapping.optionalUUID(row, "cashback_points_account_id"))
+  }
+
+  /// How the account's bank rounds. A word the app never writes — only a hand edit leaves one —
+  /// reads as the default: one damaged cell must not stop the history from being read.
+  private static func cashbackRounding(_ row: Row) -> CashbackRounding {
+    let precision = (row["cashback_precision"] as String?)
+      .flatMap(CashbackRounding.Precision.init(rawValue:))
+    let direction = (row["cashback_direction"] as String?)
+      .flatMap(CashbackRounding.Direction.init(rawValue:))
+    return CashbackRounding(precision: precision ?? .whole, direction: direction ?? .nearest)
+  }
+
+  /// When the bank pays. A word or a day that does not read, or a day that does not belong with
+  /// the word, reads as «not said».
+  private static func cashbackPayout(_ row: Row) -> CashbackPayout? {
+    guard
+      let timing = (row["cashback_payout"] as String?)
+        .flatMap(CashbackPayout.Timing.init(rawValue:))
+    else { return nil }
+    let day = (try? RowMapping.optionalInteger(row, "cashback_payout_day")) ?? nil
+    return CashbackPayout(timing: timing, storedDay: day)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -103,6 +127,11 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
     container["sort"] = sort
     container["other_currencies"] = otherCurrencies.map(\.code).joined(separator: ",")
     container["bank_id"] = bankId?.uuidString
+    container["cashback_precision"] = cashbackRounding.precision.rawValue
+    container["cashback_direction"] = cashbackRounding.direction.rawValue
+    container["cashback_payout"] = cashbackPayout?.timing.rawValue
+    container["cashback_payout_day"] = cashbackPayout?.day
+    container["cashback_points_account_id"] = cashbackPointsAccountId?.uuidString
   }
 }
 

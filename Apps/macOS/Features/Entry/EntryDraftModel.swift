@@ -411,7 +411,7 @@ public final class EntryDraftModel {
   /// alike — writes what the field says. An empty or unreadable field keeps no figure: the rules
   /// then say what to expect, and the operation is saved all the same.
   private func followTheCashbackField() {
-    let value = isOnCredit ? nil : cashbackField.value(on: draft)
+    let value = isOnCredit ? nil : cashbackField.value(on: draft, rounding: cashbackRounding)
     if draft.cashback != value { draft.cashback = value }
   }
 
@@ -423,38 +423,44 @@ public final class EntryDraftModel {
 
   private var mainAccountId: UUID? { paymentMethods.first(where: \.isDefault)?.id }
 
-  /// Whose rules price the operation: the card it names, else the only live card of its
-  /// account, else the account.
+  /// Whose rules price the operation: the card it names, else its account.
   public var cashbackHolder: CashbackHolder? {
     CashbackHolders.holder(
-      accountId: draft.paymentMethodId, cardId: draft.cardId, cards: cards,
-      mainAccountId: mainAccountId)
+      accountId: draft.paymentMethodId, cardId: draft.cardId, mainAccountId: mainAccountId)
+  }
+
+  /// How the bank of the operation's account rounds what it pays.
+  private var cashbackRounding: CashbackRounding {
+    let account = draft.paymentMethodId ?? mainAccountId
+    return allAccounts.first { $0.id == account }?.cashbackRounding ?? .standard
+  }
+
+  /// The rules of every account and card, with how each account rounds.
+  private func cashbackBook(tree: CategoryTree) -> CashbackRuleBook {
+    CashbackRuleBook(rules: cashbackRules, tree: tree, cards: cards, accounts: allAccounts)
   }
 
   /// What the field needs to know of the operation to say where a figure comes from.
   var cashbackContext: CashbackFieldContext {
     let holder = cashbackHolder
     let accountId = holder.flatMap { CashbackHolders.account(of: $0, cards: cards) }
-    var severalCards = false
-    if case .account(let id) = holder {
-      severalCards = liveCards.filter { $0.accountId == id }.count > 1
-    }
     let filed = Set(draft.parts.map(\.categoryId))
     let named = (filed.count == 1 ? filed.first : nil) ?? nil
     var names: [UUID: String] = [:]
     for category in categories + archivedCategories { names[category.id] = category.name }
+    let book = cashbackBook(tree: categoryTree)
     return CashbackFieldContext(
       holder: holder,
       holderName: holder.map {
         CardText.holderName($0, cards: cards, accounts: allAccounts)
       },
-      severalCards: severalCards, month: calendar.day(of: draft.occurredAt).monthKey,
+      month: calendar.day(of: draft.occurredAt).monthKey,
       categoryId: named, accountId: accountId,
       movedCurrency: CashbackMath.movedMoney(of: draft).currency,
       mixedCategories: filed.count > 1,
-      rules: holder.map { CashbackRuleBook(rules: cashbackRules, tree: categoryTree).rules(of: $0) }
-        ?? [],
-      categoryNames: names)
+      rules: holder.map { book.effectiveRules(of: $0) } ?? [],
+      ownRules: holder.map { book.rules(of: $0) } ?? [],
+      rounding: cashbackRounding, categoryNames: names)
   }
 
   /// What the operation is expected to earn: the figure typed for it, else what the rules of
@@ -462,12 +468,13 @@ public final class EntryDraftModel {
   public var cashbackExpectation: CashbackExpectation? {
     let tree = categoryTree
     return CashbackMath.expected(
-      draftForSaving, holder: cashbackHolder,
-      book: CashbackRuleBook(rules: cashbackRules, tree: tree), tree: tree, calendar: calendar)
+      draftForSaving, holder: cashbackHolder, book: cashbackBook(tree: tree), tree: tree,
+      calendar: calendar)
   }
 
-  /// «Запомнить»: the typed percent becomes a rule of the card, written by `write` as a step of
-  /// ⌘Z of its own; once it is, the field is emptied — the rule says it now.
+  /// «Запомнить»: the typed percent becomes a rule — of the account, or of the card where the
+  /// card differs from its account —, written by `write` as a step of ⌘Z of its own; once it
+  /// is, the field is emptied — the rule says it now.
   @discardableResult
   func rememberCashback(
     _ rule: CashbackRule, writing write: (CashbackRule) -> CardActionOutcome

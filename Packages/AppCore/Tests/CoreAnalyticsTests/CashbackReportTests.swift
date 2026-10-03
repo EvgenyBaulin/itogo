@@ -5,8 +5,9 @@ import Testing
 
 @testable import CoreAnalytics
 
-/// September 2026 of three card accounts, the rules of their cards and a cashback received in
-/// October for September. Synthetic names only; rubles unless said.
+/// September 2026 of three card accounts, the rules of their cards (T-Bank's cards keep rules of
+/// their own, Sber's and Kaspi's rules are the accounts') and a cashback received in October for
+/// September. All round to the kopeck, as 1.2 did. Synthetic names only; rubles unless said.
 struct CashbackBook {
   static let tBank = id(1)
   static let sber = id(2)
@@ -47,10 +48,13 @@ struct CashbackBook {
     CoreKit.Category(id: cashback, kind: .income, name: "Cashback"),
   ]
 
+  static let kopecks = CashbackRounding(precision: .cents)
+
   static let accounts = [
-    PaymentMethod(id: tBank, name: "T-Bank", kind: .card),
-    PaymentMethod(id: sber, name: "Sber", kind: .card, isDefault: true),
-    PaymentMethod(id: kaspi, name: "Kaspi", kind: .card, currency: kzt),
+    PaymentMethod(id: tBank, name: "T-Bank", kind: .card, cashbackRounding: kopecks),
+    PaymentMethod(
+      id: sber, name: "Sber", kind: .card, isDefault: true, cashbackRounding: kopecks),
+    PaymentMethod(id: kaspi, name: "Kaspi", kind: .card, currency: kzt, cashbackRounding: kopecks),
   ]
 
   static let cards = [
@@ -61,7 +65,7 @@ struct CashbackBook {
   ]
 
   static func rule(
-    _ number: Int, _ account: UUID, _ card: UUID, _ category: UUID?, _ month: MonthKey?,
+    _ number: Int, _ account: UUID, _ card: UUID?, _ category: UUID?, _ month: MonthKey?,
     _ e4: Int64
   ) -> CashbackRule {
     CashbackRule(
@@ -79,8 +83,8 @@ struct CashbackBook {
     rule(311, tBank, virtual, pharmacy, nil, 70_000),
     rule(312, tBank, virtual, nil, september, 30_000),
     rule(313, tBank, virtual, nil, nil, 15_000),
-    rule(321, sber, sberCard, nil, nil, 5_000),
-    rule(331, kaspi, kaspiCard, nil, nil, 20_000),
+    rule(321, sber, nil, nil, nil, 5_000),
+    rule(331, kaspi, nil, nil, nil, 20_000),
   ]
 
   static func at(_ dayAndMonth: String) -> Date {
@@ -114,7 +118,7 @@ struct CashbackBook {
   }
 
   /// Black: 35.00 + 89.70 + 12.35 + 70.00 + 18.50 + 60.00 − 5.00 + 0.00 = 280.55;
-  /// Virtual: 70.00 + 30.00 = 100.00; Sber's card: 0.30; Kaspi: 100 ₸ = 18.00 ₽.
+  /// Virtual: 70.00 + 30.00 = 100.00; Sber's account: 0.30; Kaspi's: 100 ₸ = 18.00 ₽.
   static let entries: [TransactionEntry] = [
     operation(1001, on: "09-12", parts: [(coffee, "350")], account: tBank, card: black),
     operation(1002, on: "09-13", parts: [(supermarkets, "2990")], account: tBank, card: black),
@@ -179,8 +183,10 @@ struct CashbackReportTests {
     #expect(virtual.expectedRub == money("100"))
     // Analytics shows whole rubles: 380.55 → 381.
     #expect(report.expectedRub(ofAccount: CashbackBook.tBank) == money("380.55"))
-    let kaspi = try #require(line(CashbackBook.kaspi, CashbackBook.kaspiCard))
+    // The purchases that name no card are the account's own line: Kaspi's rule is the account's.
+    let kaspi = try #require(line(CashbackBook.kaspi))
     #expect(kaspi.expected == [CashbackBook.kzt: money("100")] && kaspi.expectedRub == money("18"))
+    #expect(line(CashbackBook.kaspi, CashbackBook.kaspiCard) == nil)
     #expect(report.hasRules)
   }
 
@@ -190,11 +196,13 @@ struct CashbackReportTests {
     #expect(line(CashbackBook.tBank, CashbackBook.virtual)?.receivedRub == .zero)
   }
 
-  @Test func receivedWithoutCardOnSingleCardAccountGoesToTheCard() throws {
-    let sber = try #require(line(CashbackBook.sber, CashbackBook.sberCard))
+  /// Neither the purchases nor the income name a card: both are the account's own line, though
+  /// the account has a card — a card is only what paid.
+  @Test func receivedWithoutACardGoesToTheAccountsLine() throws {
+    let sber = try #require(line(CashbackBook.sber))
     #expect(sber.receivedRub == money("40"))
     #expect(sber.expectedRub == money("0.3"))
-    #expect(line(CashbackBook.sber) == nil)
+    #expect(line(CashbackBook.sber, CashbackBook.sberCard) == nil)
   }
 
   /// The lines of an account add up to its row of «Оборот и кэшбэк», and the expected column
@@ -251,13 +259,13 @@ struct CashbackReportTests {
     #expect(AmountE4.sum(bare.cells.map(\.receivedRub)) == money("290"))
   }
 
-  /// The block of T-Bank's screen: a line per live card, no line of the account itself while
-  /// nothing was bought without a card.
-  @Test func theAccountScreensLinesAreItsCards() {
+  /// The block of T-Bank's screen: the account's own line first — its rules are the ones every
+  /// card follows —, then a line for each live card that keeps rules of its own.
+  @Test func theAccountScreensLinesAreTheAccountThenItsCardsWithRulesOfTheirOwn() {
     let lines = AccountCashbackSummary.month(
       CashbackBook.september, accountId: CashbackBook.tBank, ledger: CashbackBook.ledger())
-    #expect(lines.map(\.holder.cardId) == [CashbackBook.black, CashbackBook.virtual])
-    #expect(lines.map(\.expectedRub) == [money("280.55"), money("100")])
+    #expect(lines.map(\.holder.cardId) == [nil, CashbackBook.black, CashbackBook.virtual])
+    #expect(lines.map(\.expectedRub) == [.zero, money("280.55"), money("100")])
     // A purchase naming no card on an account with two cards is the account's own line.
     let plain = CashbackBook.operation(
       1020, on: "09-18", parts: [(CashbackBook.home, "300")], account: CashbackBook.tBank)
@@ -266,9 +274,10 @@ struct CashbackReportTests {
       ledger: CashbackBook.ledger(entries: CashbackBook.entries + [plain]))
     #expect(more.map(\.holder.cardId) == [nil, CashbackBook.black, CashbackBook.virtual])
     #expect(more[0].turnover == money("300") && more[0].expected.isEmpty)
-    // A month with nothing in it still shows the line of the account's card.
+    // A month with nothing in it still shows the line of the account — and not its card, which
+    // holds no rules of its own and was not named.
     let quiet = AccountCashbackSummary.month(
       CashbackBook.october, accountId: CashbackBook.kaspi, ledger: CashbackBook.ledger())
-    #expect(quiet.map(\.holder.cardId) == [CashbackBook.kaspiCard])
+    #expect(quiet.map(\.holder.cardId) == [nil])
   }
 }

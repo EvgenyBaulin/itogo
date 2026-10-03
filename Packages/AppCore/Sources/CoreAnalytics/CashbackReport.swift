@@ -6,7 +6,7 @@ import Foundation
 public struct CashbackHolderKey: Hashable, Sendable {
   /// `nil`: operations that name no account.
   public var accountId: UUID?
-  /// `nil`: the account's own line — operations that name no card and are not priced by a card.
+  /// `nil`: the account's own line — operations that name no card.
   public var cardId: UUID?
 
   public init(accountId: UUID?, cardId: UUID? = nil) {
@@ -17,13 +17,16 @@ public struct CashbackHolderKey: Hashable, Sendable {
 
 /// Expected and received cashback by account, card and month.
 ///
-/// Expected: what the cards' rules (or the figure typed for an operation) promise for the
-/// purchases of the period, by the day of the purchase — a refund taken back from a purchase
-/// makes the purchase cheaper, on the purchase's day and card —, in the money that moved on the
-/// account and in rubles at the operation's own rate. An expectation, never income.
+/// Expected: what the rules of the account and its card (or the figure typed for an operation)
+/// promise for the purchases of the period, by the day of the purchase — a refund taken back
+/// from a purchase makes the purchase cheaper, on the purchase's day and card —, in the money
+/// that moved on the account and in rubles at the operation's own rate. An expectation, never
+/// income. What the rules gave, with no figure typed, is the part nobody has confirmed
+/// (`Cell.unconfirmedRub`); it needs no confirming and counts all the same.
 ///
 /// Received: income in the cashback category and its subcategories, by the month it is for,
-/// on the card it names — else the card that prices its account (`CashbackHolders`).
+/// on the card it names, else on the account — and the points an account's cashback comes as
+/// are the cashback of that account (`CashbackPoints`).
 ///
 /// The turnover and my spending of each line are counted as in «Оборот и кэшбэк»
 /// (`PaymentMethodsReport`), so the lines of an account add up to its row there.
@@ -37,6 +40,8 @@ public struct CashbackReport: Sendable {
     public var turnover: AmountE4
     public var expected: [CurrencyCode: AmountE4]
     public var expectedRub: AmountE4
+    /// The part of `expectedRub` the rules gave, where no figure was typed for the operation.
+    public var unconfirmedRub: AmountE4
     public var received: [CurrencyCode: AmountE4]
     public var receivedRub: AmountE4
 
@@ -47,6 +52,7 @@ public struct CashbackReport: Sendable {
       turnover = .zero
       expected = [:]
       expectedRub = .zero
+      unconfirmedRub = .zero
       received = [:]
       receivedRub = .zero
     }
@@ -63,6 +69,7 @@ public struct CashbackReport: Sendable {
       if let expectation {
         expected[expectation.money.currency, default: .zero] += expectation.money.amount
         expectedRub += expectation.rubles
+        if case .rules = expectation.source { unconfirmedRub += expectation.rubles }
       }
     }
 
@@ -75,6 +82,7 @@ public struct CashbackReport: Sendable {
       mySpending += other.mySpending
       turnover += other.turnover
       expectedRub += other.expectedRub
+      unconfirmedRub += other.unconfirmedRub
       receivedRub += other.receivedRub
       for (currency, amount) in other.expected { expected[currency, default: .zero] += amount }
       for (currency, amount) in other.received { received[currency, default: .zero] += amount }
@@ -89,8 +97,11 @@ public struct CashbackReport: Sendable {
   public init(ledger: Ledger, period: Period) {
     let dataset = ledger.dataset
     let cards = dataset.cards
-    let book = CashbackRuleBook(rules: dataset.cashbackRules, tree: ledger.tree)
+    let book = CashbackRuleBook(
+      rules: dataset.cashbackRules, tree: ledger.tree, cards: cards,
+      accounts: dataset.paymentMethods)
     let mainId = dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id
+    let pointsOwners = CashbackPoints.owners(among: dataset.paymentMethods)
     hasRules = !book.isEmpty
 
     // The line of an operation depends only on its account and card: worked out once each.
@@ -103,7 +114,7 @@ public struct CashbackReport: Sendable {
       let source = Source(accountId: row.paymentMethodId, cardId: row.cardId)
       if let known = lines[source] { return known }
       let holder = CashbackHolders.holder(
-        accountId: row.paymentMethodId, cardId: row.cardId, cards: cards, mainAccountId: mainId)
+        accountId: row.paymentMethodId, cardId: row.cardId, mainAccountId: mainId)
       var key = CashbackHolderKey(accountId: row.paymentMethodId)
       if row.paymentMethodId != nil, case .card(let cardId) = holder { key.cardId = cardId }
       lines[source] = (key, holder)
@@ -142,7 +153,11 @@ public struct CashbackReport: Sendable {
       let categories = Set([cashbackId] + ledger.tree.children(of: cashbackId).map(\.id))
       for row in ledger.incomeRows(in: period) {
         guard let categoryId = row.categoryId, categories.contains(categoryId) else { continue }
-        let holderKey = key(row).key
+        var holderKey = key(row).key
+        // Points that came to a points account are the cashback of the account that earned them.
+        if let account = row.paymentMethodId, let owner = pointsOwners[account] {
+          holderKey = CashbackHolderKey(accountId: owner)
+        }
         let slot = Slot(holder: holderKey, month: row.month)
         cells[slot, default: Cell(holder: holderKey, month: row.month)].receive(row)
       }
@@ -212,21 +227,20 @@ public struct CashbackReport: Sendable {
   }
 }
 
-/// The block «Кэшбэк» of an account's screen: a line for each place its rules live — each live
-/// card, or the account itself while it has none — and for any other line with cashback that
-/// month (an archived card, purchases of no card on an account with several).
+/// The block «Кэшбэк» of an account's screen: the account's own line first — its rules are the
+/// ones every card follows —, then each live card that keeps rules of its own, and any other
+/// line with cashback that month (a card the purchases named, an archived one).
 public enum AccountCashbackSummary {
   public static func month(
     _ month: MonthKey, accountId: UUID, ledger: Ledger
   ) -> [CashbackReport.Cell] {
     let report = CashbackReport(ledger: ledger, period: .month(month))
     let cards = ledger.dataset.cards
-    var lines: [CashbackHolderKey] = []
-    for holder in CashbackHolders.editableHolders(of: accountId, cards: cards) {
-      switch holder {
-      case .account(let id): lines.append(CashbackHolderKey(accountId: id))
-      case .card(let id): lines.append(CashbackHolderKey(accountId: accountId, cardId: id))
-      }
+    let withOwnRules = Set(ledger.dataset.cashbackRules.compactMap(\.cardId))
+    var lines: [CashbackHolderKey] = [CashbackHolderKey(accountId: accountId)]
+    for card in CardRules.ordered(cards, of: accountId, locale: Locale(identifier: "en_US_POSIX"))
+    where withOwnRules.contains(card.id) {
+      lines.append(CashbackHolderKey(accountId: accountId, cardId: card.id))
     }
     let active = report.cells.filter { $0.holder.accountId == accountId }
     for cell in active where !lines.contains(cell.holder) { lines.append(cell.holder) }

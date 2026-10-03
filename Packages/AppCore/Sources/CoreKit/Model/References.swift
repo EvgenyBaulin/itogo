@@ -99,12 +99,21 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
   /// The bank the account belongs to. Every account the app or the update makes has one; `nil`
   /// is an account a hand edit left without, which is read as a bank of its own name.
   public var bankId: UUID?
+  /// How the bank rounds the cashback of one purchase; the cards of the account follow it.
+  public var cashbackRounding: CashbackRounding
+  /// When the bank pays the cashback out; `nil`: not said.
+  public var cashbackPayout: CashbackPayout?
+  /// The account the cashback comes to as points, when the bank pays it so (points count as
+  /// the currency of that account, one to one); `nil`: it comes as money to this account.
+  public var cashbackPointsAccountId: UUID?
 
   public init(
     id: UUID = UUID(), name: String, kind: PaymentMethodKind = .card,
     currency: CurrencyCode? = nil, aliases: [String] = [], isDefault: Bool = false,
     archived: Bool = false, groupId: UUID? = nil, sort: Int = 0,
-    otherCurrencies: [CurrencyCode] = [], bankId: UUID? = nil
+    otherCurrencies: [CurrencyCode] = [], bankId: UUID? = nil,
+    cashbackRounding: CashbackRounding = .standard, cashbackPayout: CashbackPayout? = nil,
+    cashbackPointsAccountId: UUID? = nil
   ) {
     self.id = id
     self.name = name
@@ -117,6 +126,9 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     self.sort = sort
     self.otherCurrencies = otherCurrencies
     self.bankId = bankId
+    self.cashbackRounding = cashbackRounding
+    self.cashbackPayout = cashbackPayout
+    self.cashbackPointsAccountId = cashbackPointsAccountId
   }
 
   /// The one account every operation without an account of its own belongs to.

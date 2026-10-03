@@ -21,7 +21,7 @@ enum MigrationDataSteps {
     switch name {
     case "0004_accounts": try accounts(db: db, context: context)
     case "0005_cards": try cardsAndCounts(db: db, context: context)
-    case "0006_banks": try banks(db: db, context: context)
+    case "0006_banks": try banksAndCashback(db: db, context: context)
     default: [:]
     }
   }
@@ -121,17 +121,26 @@ enum MigrationDataSteps {
   }
 
   /// A bank for every account (`BanksMigration`): one bank for the accounts called alike, the
-  /// live account naming it. The only values the update fills are new — the rows of the table
-  /// `banks` and `bank_id` of the accounts —; nothing an older build wrote changes.
+  /// live account naming it. And the cashback rules on the account (`CashbackRulesMigration`):
+  /// the rules every card of an account would repeat go up to the account, and the rules on
+  /// «Кредиты» go. The only values the update fills are new — the rows of the table `banks`,
+  /// `bank_id` of the accounts and the settings of their cashback —; of the old ones only the
+  /// rules move, as the same rows, or go.
   ///
   /// The counts: `banksCreated`; `banksSkipped` — accounts whose name is blank, which a bank
-  /// refuses; `accountsFiled` — accounts put under a bank.
-  private static func banks(db: Database, context: MigrationContext) throws -> [String: Int] {
+  /// refuses; `accountsFiled` — accounts put under a bank; `cashbackRulesMoved` — rules that
+  /// went up to their account; `cashbackRulesDropped` — rules that went, `cashbackRulesVoided`
+  /// of them on «Кредиты».
+  private static func banksAndCashback(
+    db: Database, context: MigrationContext
+  ) throws -> [String: Int] {
     let outcome = try BankFiling.file(db: db)
+    let rules = try CashbackRulesFiling.file(db: db)
     if stops("0006_banks", context: context) { throw StoppedOnPurpose() }
     return [
       "banksCreated": outcome.banksCreated, "banksSkipped": outcome.skipped,
-      "accountsFiled": outcome.filed,
+      "accountsFiled": outcome.filed, "cashbackRulesMoved": rules.moved,
+      "cashbackRulesDropped": rules.dropped, "cashbackRulesVoided": rules.onLoans,
     ]
   }
 

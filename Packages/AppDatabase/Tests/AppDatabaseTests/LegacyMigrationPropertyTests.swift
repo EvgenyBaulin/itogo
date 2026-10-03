@@ -179,7 +179,7 @@ struct LegacyMigrationPropertyTests {
     }
     #expect(TestSupport.accountsStep(stack.applied.dataSteps) == expected, "seed \(seed)")
     #expect(TestSupport.cardsStep(stack.applied.dataSteps) == cards, "seed \(seed)")
-    #expect(stack.applied.dataSteps.count == 13, "seed \(seed)")
+    #expect(stack.applied.dataSteps.count == 16, "seed \(seed)")
     // Every account with a name sits under a bank, and the step counted exactly those.
     let (banks, filed, loose) = try stack.writer.read { db in
       (

@@ -11,12 +11,12 @@ public enum CashbackRuleIssue: Hashable, Sendable {
   case categoryIsGoal(UUID)
   /// A rule names the category of a reconciliation difference, which is bookkeeping.
   case categoryIsReconciliation(UUID)
-  /// A rule of the account itself, while the account has live cards: rules live on the cards.
-  case holderHasCards(UUID)
+  /// A rule names «Кредиты» or a subcategory under it: a payment on a debt earns no cashback.
+  case categoryIsLoan(UUID)
 }
 
-/// Editing the cashback rules: a sheet's save, «Запомнить» of the ↓ panel, the first card of an
-/// account, «Как в прошлом месяце».
+/// Editing the cashback rules: a sheet's save, «Запомнить» of the ↓ panel, «Как в прошлом
+/// месяце». The rules belong to the account; a card keeps only the rules in which it differs.
 public enum CashbackRules {
   /// The rule to write for «Запомнить»: a rule already kept for the same holder, month and
   /// category gives its id, so the one row takes the new percent and ⌘Z brings the old one back.
@@ -62,42 +62,27 @@ public enum CashbackRules {
     return (upserts, deletions)
   }
 
-  /// What is wrong with the rules about to be saved. `cards` are every card, to tell an account
-  /// with live cards; `reconcileCategoryIds` the categories of reconciliation differences.
+  /// What is wrong with the rules about to be saved. `reconcileCategoryIds` are the categories
+  /// of reconciliation differences.
   public static func issues(
-    _ rules: [CashbackRule], tree: CategoryTree, cards: [PaymentCard],
-    reconcileCategoryIds: Set<UUID> = []
+    _ rules: [CashbackRule], tree: CategoryTree, reconcileCategoryIds: Set<UUID> = []
   ) -> [CashbackRuleIssue] {
     var issues: [CashbackRuleIssue] = []
     var seen: Set<CashbackRuleKey> = []
     for rule in rules {
       if !seen.insert(rule.key).inserted { issues.append(.duplicate(rule.key)) }
-      if rule.cardId == nil,
-        cards.contains(where: { $0.accountId == rule.accountId && !$0.archived })
-      {
-        issues.append(.holderHasCards(rule.accountId))
-      }
       guard let categoryId = rule.categoryId else { continue }
       if let category = tree.category(categoryId), category.kind != .expense {
         issues.append(.categoryNotExpense(categoryId))
       } else if tree.isGoalCategory(categoryId) {
         issues.append(.categoryIsGoal(categoryId))
+      } else if tree.isLoanCategory(categoryId) {
+        issues.append(.categoryIsLoan(categoryId))
       } else if isReconciliation(categoryId, tree: tree, reconcileCategoryIds) {
         issues.append(.categoryIsReconciliation(categoryId))
       }
     }
     return issues
-  }
-
-  /// The first live card of an account takes the account's own rules: the same rows, moved onto
-  /// the card, so what the account earned it keeps earning with the card that now pays.
-  public static func movedToFirstCard(_ card: PaymentCard, rules: [CashbackRule]) -> [CashbackRule]
-  {
-    rules.filter { $0.accountId == card.accountId && $0.cardId == nil }.map { rule in
-      var moved = rule
-      moved.cardId = card.id
-      return moved
-    }
   }
 
   /// «Как в прошлом месяце»: the month rules of `holder` in `from`, copied into `to` with new
@@ -116,8 +101,8 @@ public enum CashbackRules {
     }
   }
 
-  /// The categories a rule may name: live expense categories, system ones included — «Кредиты
-  /// — 0 %» is how a loan payment is kept out —, without the tree of «Цели» and without the
+  /// The categories a rule may name: live expense categories, without the trees of «Цели» and
+  /// «Кредиты» — a contribution and a payment on a debt earn nothing — and without the
   /// categories of reconciliation differences. Parents first, each followed by its children, in
   /// the order of the tree.
   public static func categoryChoices(
@@ -125,6 +110,7 @@ public enum CashbackRules {
   ) -> [CoreKit.Category] {
     func allowed(_ category: CoreKit.Category) -> Bool {
       category.kind == .expense && !category.archived && !tree.isGoalCategory(category.id)
+        && !tree.isLoanCategory(category.id)
         && !isReconciliation(category.id, tree: tree, reconcileCategoryIds)
     }
     func order(_ left: CoreKit.Category, _ right: CoreKit.Category) -> Bool {

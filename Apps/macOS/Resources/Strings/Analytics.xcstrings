@@ -876,13 +876,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "turnover: whole receipts minus refunds, by the day of purchase; expected cashback by the cards’ rules, received by the month it is for"
+            "value": "turnover: whole receipts minus refunds, by the day of purchase; expected cashback by the rules of the accounts, received by the month it is for"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "оборот: чеки целиком минус возвраты, по дню покупки; ожидаемый кэшбэк — по правилам карт, полученный — по месяцу отнесения"
+            "value": "оборот: чеки целиком минус возвраты, по дню покупки; ожидаемый кэшбэк — по правилам счетов, полученный — по месяцу отнесения"
           }
         }
       }

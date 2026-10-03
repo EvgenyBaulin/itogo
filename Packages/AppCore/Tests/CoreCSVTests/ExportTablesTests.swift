@@ -83,11 +83,13 @@ struct ExportTablesDescriptionTests {
         "id", "payment_method_id", "card_id", "category_id", "month", "percent",
       ])
     #expect(ExportTables.banks.columns == ["id", "name", "sort", "archived"])
-    // The account of a bank: the one column the banks brought, after every older one.
+    // The account of a bank and the settings of its cashback: the columns they brought, after
+    // every older one.
     #expect(
       ExportTables.paymentMethods.columns == [
         "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
-        "other_currencies", "bank_id",
+        "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
+        "cashback_payout", "cashback_payout_day", "cashback_points_account_id",
       ])
   }
 
@@ -117,7 +119,7 @@ struct ExportTablesDescriptionTests {
     }
     #expect(ExportTables.transactions.columns.count == 27)
     #expect(ExportTables.transactionParts.columns.count == 17)
-    #expect(ExportTables.paymentMethods.columns.count == 11)
+    #expect(ExportTables.paymentMethods.columns.count == 16)
     #expect(ExportTables.templates.columns.count == 8)
     #expect(ExportTables.goals.columns.count == 9)
     #expect(ExportTables.debtEntries.columns.count == 15)
@@ -322,6 +324,30 @@ struct ExportTablesRowTests {
     #expect(read["sort"] == "0")
     #expect(read["other_currencies"] == "")
     #expect(read["bank_id"] == "")
+    // An account that has said nothing about its cashback starts with whole units and the
+    // nearest, and names no payout day and no points account.
+    #expect(read["cashback_precision"] == "whole")
+    #expect(read["cashback_direction"] == "nearest")
+    #expect(read["cashback_payout"] == "")
+    #expect(read["cashback_payout_day"] == "")
+    #expect(read["cashback_points_account_id"] == "")
+  }
+
+  @Test func theCashbackSettingsOfAnAccountTravelWithIt() throws {
+    let points = UUID()
+    let method = PaymentMethod(
+      name: "Black", cashbackRounding: CashbackRounding(precision: .cents, direction: .down),
+      cashbackPayout: CashbackPayout.later(day: 10), cashbackPointsAccountId: points)
+    let read = try roundTrip(ExportTables.paymentMethods, row: ExportTables.row(method))
+    #expect(read["cashback_precision"] == "cents")
+    #expect(read["cashback_direction"] == "down")
+    #expect(read["cashback_payout"] == "later")
+    #expect(read["cashback_payout_day"] == "10")
+    #expect(read["cashback_points_account_id"] == points.uuidString)
+    let immediate = PaymentMethod(name: "Cash", cashbackPayout: .immediately)
+    let second = try roundTrip(ExportTables.paymentMethods, row: ExportTables.row(immediate))
+    #expect(second["cashback_payout"] == "immediately")
+    #expect(second["cashback_payout_day"] == "")
   }
 
   @Test func theBankOfAnAccountTravelsWithIt() throws {

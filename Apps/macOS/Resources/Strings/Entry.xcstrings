@@ -443,23 +443,6 @@
         }
       }
     },
-    "entry.cashback.chooseCard": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The account has several cards — choose one to work out the cashback."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "У счёта несколько карт — выберите карту, чтобы посчитать кэшбэк."
-          }
-        }
-      }
-    },
     "entry.cashback.clear": {
       "extractionState": "manual",
       "localizations": {
@@ -490,6 +473,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Кэшбэк не записан: поле не читается."
+          }
+        }
+      }
+    },
+    "entry.cashback.noAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose an account first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала выберите счёт."
           }
         }
       }
