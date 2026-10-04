@@ -66,6 +66,11 @@ struct DebtSheetView: View {
   /// database, and the figure the card was drawn with stands in (`shown`).
   @State private var balance: AmountE4?
   @State private var closesDebt = true
+  /// «В этом месяце больше платежей не будет»: a payment smaller than the due closes it.
+  @State private var closesTerm = false
+  /// «Платёж за этот месяц уже сделан?» of a loan written on its payment day: unanswered until
+  /// the owner says; the form does not save before.
+  @State private var monthPaid: Bool?
   /// «Списано со счёта» of the money this form moves, when its account does not hold the
   /// debt's currency.
   @State private var charge = FormCharge()
@@ -287,6 +292,20 @@ struct DebtSheetView: View {
       if debt.direction == .iOwe {
         Toggle(t("debts.paymentsAreExpenses"), isOn: $debt.paymentsAreExpenses)
       }
+      // Written on the day its payment falls due: the balance is the one before or after the
+      // payment, and only the owner knows which. No answer is assumed.
+      if asksAboutThisMonth {
+        Picker(t("form.monthPaid"), selection: $monthPaid) {
+          Text(verbatim: "—").tag(Bool?.none)
+          Text(verbatim: t("form.monthPaid.yes")).tag(Bool?.some(true))
+          Text(verbatim: t("form.monthPaid.no")).tag(Bool?.some(false))
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("debt.create.monthPaid")
+        Text(verbatim: t(monthPaid == nil ? "form.monthPaid.ask" : "form.monthPaid.hint"))
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _), .offset(let debt):
       LabeledContent(t("form.amount")) { amountField($amount, currency: debt.currency) }
       DatePicker(t("form.date"), selection: $date)
@@ -299,6 +318,13 @@ struct DebtSheetView: View {
               : (debt.direction == .iOwe ? "form.pay.notExpense" : "form.pay.returned"))
         )
         .font(.caption).foregroundStyle(.secondary)
+        if offersClosingTerm {
+          Toggle(t("form.pay.closesTerm"), isOn: $closesTerm)
+            .accessibilityIdentifier("debt.pay.closesTerm")
+          Text(verbatim: t("form.pay.closesTermHint"))
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         if paysOff, let balance {
           let over = amount > balance
           let repaysOver = over && debt.direction == .owedToMe
@@ -421,22 +447,25 @@ struct DebtSheetView: View {
       made.interestRate = DebtPayoff.parseRate(rateText)
       made.paymentDay = Self.savedPaymentDay(monthly: made.monthlyPaymentE4, day: made.paymentDay)
       if made.direction == .owedToMe { made.paymentsAreExpenses = false }
+      let answered = !asksAboutThisMonth || monthPaid != nil
+      let termPaid = asksAboutThisMonth && monthPaid == true
       return (
-        t("form.save"), valid && complete,
+        t("form.save"), valid && complete && answered,
         { moment in
           actions.create(
             made, balance: amount, on: environment.today, moneyMovedNow: moneyMoved,
-            account: method, charged: charged, at: moment)
+            account: method, charged: charged, at: moment, termPaid: termPaid)
         }
       )
     case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _):
       let closing = paysOff && closesDebt
+      let closesTheTerm = offersClosingTerm && closesTerm
       return (
         t("debts.pay"), amount.raw > 0 && complete,
         { moment in
           actions.pay(
             debt, amount: amount, on: moment, paymentMethodId: method, closing: closing,
-            charged: charged)
+            charged: charged, closesTerm: closesTheTerm)
         }
       )
     case .offset(let debt):
@@ -515,13 +544,14 @@ struct DebtSheetView: View {
     nil
   }
 
-  /// What «Платёж» starts with, for `.pay` and `.payAt`: the debt, its monthly payment, the
+  /// What «Платёж» starts with, for `.pay` and `.payAt`: the debt, what is left of its earliest
+  /// unpaid due (the monthly payment when nothing is paid toward it), the
   /// moment — the one `.payAt` names, else `payDate`, `nil` being now — and the account — the
   /// one `.payAt` names while it is live, else the main one (`FormAccounts.account`). `nil` for
   /// every other sheet, a repayment included: that one starts with what came back.
   static func payStart(
     of sheet: DebtSheet, payDue: DateOnly?, today: DateOnly, calendar: CalendarContext,
-    methods: [PaymentMethod]
+    methods: [PaymentMethod], dues: DebtDueState? = nil
   ) -> (debt: Debt, amount: AmountE4, date: Date?, method: UUID?)? {
     let debt: Debt
     let moment: Date?
@@ -532,7 +562,7 @@ struct DebtSheetView: View {
     default: return nil
     }
     return (
-      debt, debt.monthlyPaymentE4 ?? .zero,
+      debt, DebtTerms.amountToPay(debt, dues: dues),
       moment ?? payDate(due: payDue, today: today, calendar: calendar),
       FormAccounts.account(account, among: methods)?.id
     )
@@ -561,6 +591,31 @@ struct DebtSheetView: View {
   /// What is left on the debt as the form shows it: the journal read when it opened, else the
   /// figure the card handed over.
   private func shown(_ carried: AmountE4) -> AmountE4 { balance ?? carried }
+
+  /// A loan written today on the day its payment falls due asks whether this month's payment is
+  /// made already (`DebtTerms.asksAboutThisMonth`).
+  private var asksAboutThisMonth: Bool {
+    guard case .create = sheet else { return false }
+    var made = debt
+    made.paymentDay = Self.savedPaymentDay(monthly: made.monthlyPaymentE4, day: made.paymentDay)
+    return DebtTerms.asksAboutThisMonth(made, balance: amount, today: environment.today)
+  }
+
+  /// The state of the dues of the debt the form pays, as the planning last worked them out.
+  private func dues(of debt: Debt) -> DebtDueState? {
+    compute.snapshot?.planning.debts.iOwe.first { $0.debt.id == debt.id }?.dues
+  }
+
+  /// «В этом месяце больше платежей не будет» is offered while the payment typed leaves part of
+  /// the due unpaid (`DebtTerms.offersClosing`); a repayment of a debt owed to me has no dues.
+  private var offersClosingTerm: Bool {
+    switch sheet {
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _):
+      return DebtTerms.offersClosing(debt, paying: amount, dues: dues(of: debt))
+    default:
+      return false
+    }
+  }
 
   /// The payment typed covers what is left on the debt.
   private var paysOff: Bool {
@@ -612,9 +667,14 @@ struct DebtSheetView: View {
     default:
       break
     }
+    var paidDebt: Debt?
+    switch sheet {
+    case .pay(let debt), .payAt(let debt, _, _): paidDebt = debt
+    default: break
+    }
     if let start = Self.payStart(
       of: sheet, payDue: payDue, today: environment.today, calendar: environment.calendar,
-      methods: methods)
+      methods: methods, dues: paidDebt.flatMap(dues(of:)))
     {
       amount = start.amount
       if let moment = start.date {

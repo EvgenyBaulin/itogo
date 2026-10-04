@@ -413,7 +413,7 @@ final class TransferListTests: XCTestCase {
     let actions = OperationActions()
     actions.requestDeletion(of: [toCash.id, coffee.id], store: setup.store)
     let both = try XCTUnwrap(actions.confirmation)
-    guard case .delete(let ids, _, _, _) = both else { return XCTFail("a deletion expected") }
+    guard case .delete(let ids, _, _, _, _) = both else { return XCTFail("a deletion expected") }
     XCTAssertEqual(Set(ids), [coffee.id, toCash.id], "the transfer of the archived cash goes too")
 
     // Without the transfer that keeps the cash at zero nothing is written.
@@ -471,7 +471,7 @@ final class TransferListTests: XCTestCase {
     let actions = OperationActions()
     actions.requestDeletion(of: [moved.id, coffee.id], store: setup.store)
     let confirmation = try XCTUnwrap(actions.confirmation)
-    guard case .delete(let ids, _, _, _) = confirmation else {
+    guard case .delete(let ids, _, _, _, _) = confirmation else {
       return XCTFail("a deletion expected")
     }
     XCTAssertEqual(ids, [coffee.id])
@@ -525,7 +525,7 @@ final class TransferListTests: XCTestCase {
     let actions = OperationActions()
     actions.requestDeletion(of: [moved.id, coffee.id], store: setup.store)
     let confirmation = try XCTUnwrap(actions.confirmation)
-    guard case .delete(let ids, _, _, _) = confirmation else {
+    guard case .delete(let ids, _, _, _, _) = confirmation else {
       return XCTFail("a deletion expected")
     }
     XCTAssertEqual(ids, [coffee.id], "the transfer whose fee came back is not asked about")

@@ -122,7 +122,7 @@ struct ExportTablesDescriptionTests {
     #expect(ExportTables.paymentMethods.columns.count == 16)
     #expect(ExportTables.templates.columns.count == 8)
     #expect(ExportTables.goals.columns.count == 9)
-    #expect(ExportTables.debtEntries.columns.count == 15)
+    #expect(ExportTables.debtEntries.columns.count == 16)
     #expect(ExportTables.reconciliations.columns.count == 10)
     #expect(
       ExportTables.accountGroups.columns == ["id", "name", "in_summary", "sort", "archived"])
@@ -495,6 +495,21 @@ struct ExportTablesRowTests {
     for column in ["payment_method_id", "occurred_at", "account_currency", "account_amount"] {
       #expect(read[column] == "", "\(column) is not empty")
     }
+  }
+
+  /// «В этом месяце больше платежей не будет» is the last column of the file: an older reader
+  /// still finds the others where they were.
+  @Test func aPaymentThatClosesItsTermSaysSoInTheLastColumn() throws {
+    #expect(ExportTables.debtEntries.columns.last == "closes_term")
+    let closing = DebtEntry(
+      debtId: UUID(), amountE4: AmountE4(whole: -4_000), kind: .payment, closesTerm: true)
+    let plain = DebtEntry(debtId: UUID(), amountE4: AmountE4(whole: 1_000), kind: .borrowed)
+    #expect(
+      try roundTrip(ExportTables.debtEntries, row: ExportTables.row(closing))["closes_term"]
+        == "true")
+    #expect(
+      try roundTrip(ExportTables.debtEntries, row: ExportTables.row(plain))["closes_term"]
+        == "false")
   }
 
   /// Money borrowed through the journal alone: the account it went into, when, and what the

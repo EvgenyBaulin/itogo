@@ -295,7 +295,8 @@ struct PlanningRecordTests {
 
     let chosen = PlanningSettings(
       reconcileEveryDays: 30, savingsTargetBp: 1_500, reserveGoalPlan: false,
-      reconcileIncludesGoalSavings: false, dismissedReminders: ["b:2", "a:1"])
+      reconcileIncludesGoalSavings: false, dismissedReminders: ["b:2", "a:1"],
+      reserveEventBudgets: false)
     _ = try repository.apply(PlanningChange(settings: chosen.storedValues))
     #expect(try repository.book().settings == chosen)
     let dismissed = try SettingsRepository(writer: stack.writer)
@@ -303,6 +304,9 @@ struct PlanningRecordTests {
     #expect(dismissed == "a:1\nb:2")
     #expect(
       try SettingsRepository(writer: stack.writer).string(PlanningSettings.reserveGoalPlanKey)
+        == "0")
+    #expect(
+      try SettingsRepository(writer: stack.writer).string(PlanningSettings.reserveEventBudgetsKey)
         == "0")
 
     // No dismissed reminder deletes the key rather than storing an empty value.
@@ -319,12 +323,14 @@ struct PlanningRecordTests {
       PlanningSettings.reconcileEveryDaysKey: "often",
       PlanningSettings.savingsTargetKey: " 2000 ",
       PlanningSettings.reserveGoalPlanKey: "maybe",
+      PlanningSettings.reserveEventBudgetsKey: "perhaps",
       PlanningSettings.reconcileIncludesGoalSavingsKey: "false",
       PlanningSettings.dismissedRemindersKey: "one\r\ntwo\n\n",
     ])
     #expect(settings.reconcileEveryDays == 14)
     #expect(settings.savingsTargetBp == 2_000)
     #expect(settings.reserveGoalPlan == true)
+    #expect(settings.reserveEventBudgets == true)
     #expect(settings.reconcileIncludesGoalSavings == false)
     #expect(settings.dismissedReminders == ["one", "two"])
 

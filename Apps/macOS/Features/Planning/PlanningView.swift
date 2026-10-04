@@ -67,12 +67,15 @@ enum PlanningSheet: Identifiable {
   case linkIncome(ExpectedIncomeStatus)
 
   /// «Завести» from a subscription candidate: the form filled in with what the purchases
-  /// suggest.
+  /// suggest — the amount, the category, the rhythm and the account (and card) the latest
+  /// purchase was paid from, so the payment shows on that account's screen.
   static func subscription(from candidate: SubscriptionCandidate, name: String) -> PlanningSheet {
     .newPayment(
       ScheduledPayment(
         name: name, kind: .subscription, amountE4: candidate.typicalAmount,
-        currency: candidate.currency, categoryId: candidate.categoryId, freq: candidate.freq))
+        currency: candidate.currency, categoryId: candidate.categoryId,
+        paymentMethodId: candidate.paymentMethodId, freq: candidate.freq,
+        cardId: candidate.cardId))
   }
 
   /// The payment the form edits — saved over it, with a price edit when the amount changed —

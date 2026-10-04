@@ -3226,6 +3226,91 @@
         }
       }
     },
+    "form.expected.termAdd": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another Date in the Month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ещё срок в месяце"
+          }
+        }
+      }
+    },
+    "form.expected.termDay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Also on day %lld of the month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ещё %lld-го числа"
+          }
+        }
+      }
+    },
+    "form.expected.termHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The money comes on another day of the month too — for example on the 15th and on the last day: each term is an income of its own"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги приходят и в другой день месяца — например 15-го и в последний день: каждый срок — отдельное поступление"
+          }
+        }
+      }
+    },
+    "form.expected.termLast": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Also on the last day of the month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ещё в последний день месяца"
+          }
+        }
+      }
+    },
+    "form.expected.termRemove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this date"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Убрать этот срок"
+          }
+        }
+      }
+    },
     "form.expected.total": {
       "extractionState": "manual",
       "localizations": {
@@ -7539,6 +7624,93 @@
           "stringUnit": {
             "state": "translated",
             "value": "Закрыть срок без операции: деньги ушли до сверки %@, и её остаток это уже учёл."
+          }
+        }
+      }
+    },
+    "reminders.overdue.skip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skip"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пропустить"
+          }
+        }
+      }
+    },
+    "reminders.overdue.skipAll": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Skip %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Skip all %lld"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Пропустить все %lld"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Пропустить все %lld"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Пропустить %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Пропустить все %lld"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "reminders.overdue.skipHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The payment was not made: the due date is closed without an operation, as «Skip» in Planning does"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платежа не было: срок закрывается без операции, как «Пропустить» в «Планировании»"
           }
         }
       }

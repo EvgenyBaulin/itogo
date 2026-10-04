@@ -82,6 +82,28 @@ struct Migration0006Tests {
 
   // MARK: 2. The banks
 
+  /// The payments of 1.2 closed their dues by counting: the new column that lets a payment say
+  /// «в этом месяце больше платежей не будет» starts off for every line of the journal.
+  @Test func theLinesOfOnePointTwoCloseNoTerm() throws {
+    let book = try Self.book(named: "terms")
+    defer { book.remove() }
+    let lines = try book.read { db in
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM debt_entries") ?? 0
+    }
+    #expect(lines > 0)
+    let stack = try DatabaseStack(
+      url: book.url, schema: TestSupport.schemaSource, context: Self.context)
+    defer { try? stack.close() }
+    let (after, closing) = try stack.writer.read { db in
+      (
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM debt_entries") ?? -1,
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM debt_entries WHERE closes_term = 0") ?? -1
+      )
+    }
+    #expect(after == lines)
+    #expect(closing == lines)
+  }
+
   @Test func aBankForEveryNameAndTheAccountsUnderIt() throws {
     let book = try Self.book(named: "banks")
     defer { book.remove() }

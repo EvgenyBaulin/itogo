@@ -272,6 +272,9 @@ struct MoneyBackConfirmSheet: View {
   @State private var debtJournals: [UUID: [DebtEntry]] = [:]
   /// The rate typed for a repayment of a debt in another currency than the money's.
   @State private var debtRateText = ""
+  /// «Сверх частей … — в счёт долга»: on by default, as the owner chose; off, the surplus is
+  /// income in «Доплаты» as before.
+  @State private var surplusToDebt = true
 
   init(
     prefill: MoneyBackPrefill, recordAsIncome: @escaping (TransactionDraft) -> Void,
@@ -472,13 +475,25 @@ struct MoneyBackConfirmSheet: View {
       Text(verbatim: Self.summaryLine(confirmation, words: environment.language, money: money))
         .accessibilityIdentifier("moneyBack.summary")
       if confirmation.plan.surplus.raw > 0 {
-        Text(
-          verbatim: environment.language.format(
-            "moneyBack.surplus", table: "Entry",
-            money.exact(confirmation.plan.surplus, currency: confirmation.plan.currency))
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        if let target = surplusDebt(of: confirmation) {
+          // The person owes on a debt too: the money over the parts may repay it.
+          Toggle(isOn: $surplusToDebt) {
+            Text(
+              verbatim: environment.language.format(
+                "moneyBack.surplusToDebt", table: "Entry",
+                money.exact(confirmation.plan.surplus, currency: confirmation.plan.currency),
+                target.debt.name))
+          }
+          .toggleStyle(.checkbox)
+          .accessibilityIdentifier("moneyBack.surplusToDebt")
+          if surplusToDebt, let preview = surplusPreview(target, of: confirmation) {
+            caption(text: preview).accessibilityIdentifier("moneyBack.surplusToDebt.preview")
+          } else {
+            surplusCaption(confirmation)
+          }
+        } else {
+          surplusCaption(confirmation)
+        }
       }
       if !confirmation.plan.skippedProvisional.isEmpty {
         Label {
@@ -493,6 +508,58 @@ struct MoneyBackConfirmSheet: View {
         .foregroundStyle(.secondary)
       }
     }
+  }
+
+  /// «Сверх всего — доход в «Доплатах»: 250.00 ₽».
+  private func surplusCaption(_ confirmation: MoneyBackConfirmation) -> some View {
+    Text(
+      verbatim: environment.language.format(
+        "moneyBack.surplus", table: "Entry",
+        money.exact(confirmation.plan.surplus, currency: confirmation.plan.currency))
+    )
+    .font(.caption)
+    .foregroundStyle(.secondary)
+  }
+
+  /// The debt the surplus of this money back may repay, and what is left on it
+  /// (`ReimbursementRecording.debtForSurplus`); only when the money, as the account got it, is
+  /// all there is to split: a figure of the account's in another currency stays whole.
+  private func surplusDebt(
+    of confirmation: MoneyBackConfirmation
+  ) -> (debt: Debt, balance: AmountE4)? {
+    guard confirmation.plan.refusal == nil, confirmation.plan.surplus.raw > 0,
+      let person = confirmation.person,
+      confirmation.entry.transaction.accountAmountE4 == nil
+    else { return nil }
+    return ReimbursementRecording.debtForSurplus(
+      of: person, in: confirmation.plan.currency, among: debts, balances: debtBalances)
+  }
+
+  /// «В счёт долга «Маша»: 2,000.00 ₽ — остаётся 3,000.00 ₽», and the income above the debt.
+  private func surplusPreview(
+    _ target: (debt: Debt, balance: AmountE4), of confirmation: MoneyBackConfirmation
+  ) -> String? {
+    var transaction = confirmation.entry.transaction
+    transaction.amountE4 = confirmation.plan.surplus
+    transaction.amountRubE4 = confirmation.plan.surplusRub
+    guard
+      let outcome = try? DebtRules.repayment(
+        on: target.debt, by: transaction, balance: target.balance, date: nil)
+    else { return nil }
+    let applied = money.exact(outcome.applied, currency: target.debt.currency)
+    var lines = [
+      outcome.closes
+        ? environment.format("moneyBack.debt.closes", table: "Entry", target.debt.name, applied)
+        : environment.format(
+          "moneyBack.debt.repays", table: "Entry", target.debt.name, applied,
+          money.exact(target.balance - outcome.applied, currency: target.debt.currency))
+    ]
+    if let over = outcome.surplus {
+      lines.append(
+        environment.format(
+          "moneyBack.surplus", table: "Entry", money.exact(over.amountE4, currency: over.currency)))
+    }
+    return lines.joined(separator: "\n")
   }
 
   /// «закроет: ужин, кино; останется должен: 800.00 ₽» — or «больше ничего не должен».
@@ -801,12 +868,24 @@ struct MoneyBackConfirmSheet: View {
       let repository = environment.transactions
     else { return }
     do {
-      guard let written = try confirmation.recording(setting: try setting(repository)) else {
-        return
+      let recordingSetting = try setting(repository)
+      guard let drawn = try confirmation.recording(setting: recordingSetting) else { return }
+      var written = ReimbursementRecording(
+        outcome: drawn.outcome, reimbursement: drawn.reimbursement, extra: drawn.extra)
+      var settling = DebtSettling.none
+      // The money over the parts repays the person's debt when the owner left the switch on.
+      if surplusToDebt, let target = surplusDebt(of: confirmation),
+        let split = try written.repayingDebt(
+          target.debt, balance: target.balance,
+          on: environment.calendar.day(of: confirmation.entry.transaction.occurredAt),
+          now: Date(), setting: recordingSetting)
+      {
+        written = split.recording
+        settling = split.settling
       }
       let write = try repository.apply(
         written.outcome, reimbursement: written.reimbursement, extra: written.extra,
-        repricing: repricing,
+        debt: settling, repricing: repricing,
         settlement: SettlementSetting(surplusNote: t("reimbursement.surplus")),
         calendar: environment.calendar)
       if !write.repricedBefore.isEmpty {

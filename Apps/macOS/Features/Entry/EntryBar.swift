@@ -929,7 +929,8 @@ enum EntrySave {
       entry: entry, openedCredit: credit?.debt, creditIsNew: credit?.isNew ?? false,
       paidDebt: paidDebt, expectedIncomeId: model.expectedIncomeId,
       day: environment.calendar.day(of: model.draft.occurredAt),
-      paidDebtBalance: repayment?.balance, surplus: repayment?.surplus)
+      paidDebtBalance: repayment?.balance, surplus: repayment?.surplus,
+      closesTerm: model.closesDebtTerm)
     {
       saved = store.apply(change)
     } else {

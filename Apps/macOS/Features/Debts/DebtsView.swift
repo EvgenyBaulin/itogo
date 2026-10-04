@@ -394,6 +394,21 @@ private struct DebtDetail: View {
             }
           }
         }
+        // Money paid toward a due, less than the due: the due stays owed until it is covered.
+        if debt.direction == .iOwe, line.dues.owes, line.dues.partialE4.raw > 0,
+          let monthly = debt.monthlyPaymentE4
+        {
+          Text(
+            verbatim: environment.format(
+              "debts.partialDue", table: "Debts",
+              environment.money.exact(line.dues.partialE4, currency: debt.currency),
+              environment.money.exact(monthly, currency: debt.currency),
+              environment.money.exact(
+                max(monthly - line.dues.partialE4, .zero), currency: debt.currency))
+          )
+          .font(.caption).foregroundStyle(.secondary)
+          .accessibilityIdentifier("debts.partialDue")
+        }
         if debt.direction == .iOwe {
           Toggle(
             isOn: Binding(
@@ -542,6 +557,16 @@ private struct DebtDetail: View {
                 .frame(width: 110, alignment: .leading)
               Text(verbatim: entry.description ?? t("debts.kind.\(entry.kind.rawValue)"))
                 .lineLimit(1)
+              // «В этом месяце больше платежей не будет»: said, so the due is shown as closed.
+              if entry.closesTerm {
+                Label {
+                  Text(verbatim: t("debts.journal.closesTerm"))
+                } icon: {
+                  Image(systemName: "checkmark.circle")
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                .help(t("debts.journal.closesTermHelp"))
+              }
               if let full = entry.fullAmountE4, let share = entry.share {
                 Text(
                   verbatim: environment.money.rounded(full, currency: line.debt.currency) + " × "
@@ -552,7 +577,7 @@ private struct DebtDetail: View {
               Spacer()
               Text(
                 // Exact, like the group totals and the balance it adds up to.
-                verbatim: (entry.amountE4.isNegative ? "−" : "+")
+                verbatim: (entry.amountE4.isZero ? "" : entry.amountE4.isNegative ? "−" : "+")
                   + environment.money.exact(entry.amountE4.magnitude, currency: line.debt.currency)
               )
               .monospacedDigit()

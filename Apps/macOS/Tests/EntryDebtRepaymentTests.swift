@@ -54,6 +54,47 @@ final class EntryDebtRepaymentTests: XCTestCase {
       try XCTUnwrap(environment.references).category(systemRole: .surcharges, kind: .income)?.id)
   }
 
+  /// «+1700 долг Маша» on Маша's 1,000 ₽ is the same as money back: the debt takes 1,000 ₽ and
+  /// closes, 700 ₽ are income in «Доплаты», and the 1,000 ₽ are not income — the operation is
+  /// money back, not an income of 1,700 ₽. One ⌘Z takes all of it back.
+  func testAnIncomeNamingTheDebtRepaysItLikeMoneyBack() async throws {
+    var debt: Debt?
+    let host = try await EntryHost(opensDetails: false) { environment in
+      try XCTUnwrap(environment.references).save(
+        PaymentMethod(name: "Card", currency: .rub, isDefault: true))
+      debt = try Self.lent(1_000, to: "Маша", environment: environment)
+    }
+    self.host = host
+    let masha = try XCTUnwrap(debt)
+    try host.type("+1700 долг Маша", into: try host.line())
+    host.pressReturn()
+
+    let lines = try host.references.debtEntries(debtId: masha.id)
+    XCTAssertEqual(
+      lines.filter { $0.kind == .payment }.map(\.amountE4), [AmountE4(whole: -1_000)],
+      "the debt takes what was left of it, not the whole 1,700")
+    XCTAssertEqual(DebtRules.balance(entries: lines), .zero)
+    XCTAssertEqual(
+      try host.references.debts(includeClosed: true).first { $0.id == masha.id }?.closed, true)
+    let written = try host.transactions.entries(from: .distantPast, to: .distantFuture)
+    XCTAssertEqual(
+      written.map(\.transaction.kind).sorted { $0.rawValue < $1.rawValue },
+      [.income, .reimbursement])
+    let surplus = try XCTUnwrap(written.first { $0.transaction.kind == .income })
+    XCTAssertEqual(surplus.transaction.amountE4, AmountE4(whole: 700))
+    XCTAssertEqual(
+      surplus.parts.first?.categoryId, try Self.surcharges(in: host.environment),
+      "the 700 over are «Доплаты»")
+    let back = try XCTUnwrap(written.first { $0.transaction.kind == .reimbursement })
+    XCTAssertEqual(back.transaction.amountE4, AmountE4(whole: 1_700))
+
+    host.store.undo()
+    XCTAssertTrue(try host.transactions.entries(from: .distantPast, to: .distantFuture).isEmpty)
+    XCTAssertEqual(
+      DebtRules.balance(entries: try host.references.debtEntries(debtId: masha.id)),
+      AmountE4(whole: 1_000))
+  }
+
   /// «возврат денег 1700 долг Маша» on Маша's 1,000 ₽: the line of the debt takes 1,000 ₽ and
   /// the debt closes; the 700 ₽ above it are income in «Доплаты»; one ⌘Z takes all of it back.
   func testRepaymentOverTheDebtFromTheLineIsOneUndoStep() async throws {

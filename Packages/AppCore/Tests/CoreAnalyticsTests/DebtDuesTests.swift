@@ -5,10 +5,11 @@ import Testing
 
 @testable import CoreAnalytics
 
-/// Each payment of a debt closes its earliest unpaid due, counted from the start of the debt:
-/// the one rule the Debts screen, the free sum, the planned month, the forecast and the
-/// reminders read.
-@Suite("Debt dues: every payment closes the earliest unpaid one")
+/// The money of a debt's payments closes its earliest unpaid dues, counted from the start of the
+/// debt: the one rule the Debts screen, the free sum, the planned month, the forecast and the
+/// reminders read. These are payments of the size of the monthly one — what a payment of another
+/// size does is `DebtDuesByMoneyTests`.
+@Suite("Debt dues: the money of the payments closes the earliest unpaid ones")
 struct DebtDuesTests {
   /// A loan of 8 000 a month on the 5th.
   static let loan = Debt(
@@ -40,8 +41,8 @@ struct DebtDuesTests {
 
   /// The owner's example: taken on 20 August — the first due is 5 September —, paid on 5 and on
   /// 28 September. Two payments close 5 September and 5 October: on 2 October the next due is
-  /// 5 November and nothing is overdue on the 6th. A third payment of 1 000 on the 15th moves
-  /// the schedule one more month.
+  /// 5 November and nothing is overdue on the 6th. A third payment of 1 000 on the 15th is not
+  /// a due: the next one stays 5 November, with 1 000 of it paid.
   @Test func eachPaymentClosesTheEarliestUnpaidDue() {
     var sketch = Sketch()
     sketch.expense("2026-09-05", "8000", category: id(4), debt: Self.loan.id)
@@ -58,7 +59,9 @@ struct DebtDuesTests {
     )
 
     sketch.expense("2026-09-15", "1000", category: id(4), debt: Self.loan.id)
-    #expect(state(sketch, journal: journal, today: "2026-10-02").firstUnpaid == day("2026-12-05"))
+    let extra = state(sketch, journal: journal, today: "2026-10-02")
+    #expect(extra.firstUnpaid == day("2026-11-05"))
+    #expect(extra.partialE4 == money("1000"))
   }
 
   /// Dues on 5 September and 5 October, one payment on 7 October: it closes 5 September, the

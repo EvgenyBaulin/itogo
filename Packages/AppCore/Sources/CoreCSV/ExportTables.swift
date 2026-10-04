@@ -147,13 +147,14 @@ public enum ExportTables {
 
   /// `payment_method_id`, `occurred_at`, `account_currency` and `account_amount` came with
   /// `Schema/0004_accounts.sql`: the account money borrowed or lent through the journal alone
-  /// went into or out of, when, and what moved on it.
+  /// went into or out of, when, and what moved on it. `closes_term` came with
+  /// `Schema/0006_banks.sql`: the payment that says no more money comes toward its due.
   public static let debtEntries = ExportTable(
     fileName: "debt_entries.csv",
     columns: [
       "id", "debt_id", "group_name", "date", "description", "full_amount", "share",
       "amount", "kind", "transaction_id", "note", "payment_method_id", "occurred_at",
-      "account_currency", "account_amount",
+      "account_currency", "account_amount", "closes_term",
     ])
 
   /// Columns match `Schema/0001_initial.sql`; `reconciled_at` and `breakdown` came with
@@ -425,6 +426,7 @@ extension ExportTables {
       CSVValue.string(instant: entry.occurredAt),
       CSVValue.string(entry.accountCurrency?.code),
       CSVValue.string(amount: entry.accountAmountE4),
+      CSVValue.string(bool: entry.closesTerm),
     ]
   }
 

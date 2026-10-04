@@ -2168,13 +2168,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No scheduled payment is paid from this account."
+            "value": "No scheduled payment is paid from this account. A payment shows on the account chosen in its form («Account»); one with no account shows on the main one."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "С этого счёта не оплачивается ни один платёж."
+            "value": "С этого счёта не оплачивается ни один платёж. Платёж показывается на счёте, выбранном в его форме («Счёт»); платёж без счёта — на основном."
           }
         }
       }

@@ -16,11 +16,15 @@ public struct OverdueDue: Hashable, Sendable, Identifiable {
   public var name: String
   /// The earliest unpaid due before today.
   public var due: DateOnly
-  /// In `currency`: the price on `due`; for a debt min(monthly payment, balance).
+  /// In `currency`: the price on `due`; for a debt min(what is left of the monthly payment —
+  /// less what was paid toward the due —, balance).
   public var amount: AmountE4
   public var currency: CurrencyCode
   /// Further unpaid dues of the same subject before today.
   public var moreOverdue: Int
+  /// The latest unpaid due before today — where «Пропустить все» stops; `due` when it is the only
+  /// one.
+  public var lastDue: DateOnly
   /// The moment of the latest count, on or after the due day, of the balance the due is about
   /// (`DueKeys`): the money may have left inside it, so «Уже списано до сверки» is offered;
   /// `nil` — it is not.
@@ -32,7 +36,7 @@ public struct OverdueDue: Hashable, Sendable, Identifiable {
 
   public init(
     subject: Subject, name: String, due: DateOnly, amount: AmountE4, currency: CurrencyCode,
-    moreOverdue: Int, countAfter: Date?, key: BalanceKey?
+    moreOverdue: Int, countAfter: Date?, key: BalanceKey?, lastDue: DateOnly? = nil
   ) {
     self.subject = subject
     self.name = name
@@ -40,6 +44,7 @@ public struct OverdueDue: Hashable, Sendable, Identifiable {
     self.amount = amount
     self.currency = currency
     self.moreOverdue = moreOverdue
+    self.lastDue = lastDue ?? due
     self.countAfter = countAfter
     self.key = key
     switch subject {
@@ -52,6 +57,10 @@ public struct OverdueDue: Hashable, Sendable, Identifiable {
     if case .debt = subject { return true }
     return false
   }
+
+  /// The due «Пропустить» closes — the earliest unpaid —, or with `all` «Пропустить все N»:
+  /// the latest, so that every unpaid due before today is closed at once.
+  public func skipping(all: Bool) -> DateOnly { all ? lastDue : due }
 }
 
 /// The balance whose money a due date is about: the one a count may already hold its money in.
@@ -194,7 +203,8 @@ public enum OverdueDues {
   ///   payment whose money is not in the summary (its effective account in a group left out)
   ///   is left out, as the free sum leaves it out.
   /// * Debts — every open debt I owe with a monthly payment and something left on it whose
-  ///   earliest unpaid due is before today (`DebtLine.dues`): min(monthly payment, balance). A
+  ///   earliest unpaid due is before today (`DebtLine.dues`): min(what is left of the monthly
+  ///   payment, balance) — the payment less the money paid toward the due. A
   ///   debt paid from an account out of the summary (its `DueKeys` account in a group left
   ///   out) is left out, as the free sum leaves it out.
   ///
@@ -231,7 +241,7 @@ public enum OverdueDues {
           subject: .scheduled(payment.id), name: payment.name, due: first,
           amount: SubscriptionMath.price(of: payment, on: first, prices: book.prices),
           currency: payment.currency, moreOverdue: dues.count - 1,
-          countAfter: countAfter(key, due: first), key: key))
+          countAfter: countAfter(key, due: first), key: key, lastDue: dues.last))
     }
     for line in debts.iOwe {
       guard let monthly = line.debt.monthlyPaymentE4, monthly.raw > 0, line.balance.raw > 0
@@ -244,8 +254,10 @@ public enum OverdueDues {
       result.append(
         OverdueDue(
           subject: .debt(line.debt.id), name: line.debt.name, due: first,
-          amount: min(monthly, line.balance), currency: line.debt.currency,
-          moreOverdue: late.count - 1, countAfter: countAfter(key, due: first), key: key))
+          amount: min(line.dues.owed(first, monthly: monthly), line.balance),
+          currency: line.debt.currency,
+          moreOverdue: late.count - 1, countAfter: countAfter(key, due: first), key: key,
+          lastDue: late.last))
     }
     return result.sorted { left, right in
       if left.due != right.due { return left.due < right.due }

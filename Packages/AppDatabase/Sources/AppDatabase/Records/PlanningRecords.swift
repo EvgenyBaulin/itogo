@@ -212,7 +212,7 @@ extension Reconciliation: @retroactive FetchableRecord, @retroactive Persistable
 extension PlanningSettings {
   /// Every key the planning settings live under, and write.
   public static let storageKeys = [
-    reconcileEveryDaysKey, savingsTargetKey, reserveGoalPlanKey,
+    reconcileEveryDaysKey, savingsTargetKey, reserveGoalPlanKey, reserveEventBudgetsKey,
     reconcileIncludesGoalSavingsKey, dismissedRemindersKey, limitsTopNKey,
     scheduledMatchRejectionsKey, goalSavingsValuationKey, firstCountKeptKey,
     beforeCountAnswersKey,
@@ -249,7 +249,9 @@ extension PlanningSettings {
         RowMapping.split(values[Self.firstCountKeptKey] ?? "").compactMap(Self.id)),
       beforeCountAnswers: Self.countAnswers(from: values[Self.beforeCountAnswersKey]),
       reconcileExpenseCategoryId: values[Self.reconcileExpenseCategoryKey].flatMap(Self.id),
-      reconcileIncomeCategoryId: values[Self.reconcileIncomeCategoryKey].flatMap(Self.id))
+      reconcileIncomeCategoryId: values[Self.reconcileIncomeCategoryKey].flatMap(Self.id),
+      reserveEventBudgets: values[Self.reserveEventBudgetsKey].flatMap(Self.switchValue)
+        ?? defaults.reserveEventBudgets)
   }
 
   /// The rows to write, ready for `PlanningChange.settings`. No dismissed reminder deletes
@@ -265,6 +267,7 @@ extension PlanningSettings {
       Self.reconcileEveryDaysKey: String(reconcileEveryDays),
       Self.savingsTargetKey: String(savingsTargetBp),
       Self.reserveGoalPlanKey: reserveGoalPlan ? "1" : "0",
+      Self.reserveEventBudgetsKey: reserveEventBudgets ? "1" : "0",
       Self.reconcileIncludesGoalSavingsKey: reconcileIncludesGoalSavings ? "1" : "0",
       Self.dismissedRemindersKey: dismissed.isEmpty ? nil : dismissed.joined(separator: "\n"),
       Self.limitsTopNKey: limitsTopN.map { String($0) } ?? Self.allLimits,

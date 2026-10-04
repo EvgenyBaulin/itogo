@@ -60,7 +60,7 @@ enum EntryCommit {
   static func change(
     entry: TransactionEntry, openedCredit: Debt?, creditIsNew: Bool = true, paidDebt: Debt?,
     expectedIncomeId: UUID?, day: DateOnly, paidDebtBalance: AmountE4? = nil,
-    surplus: SurplusSetting? = nil, now: Date = Date()
+    surplus: SurplusSetting? = nil, closesTerm: Bool = false, now: Date = Date()
   ) throws -> PlanningChange? {
     var rows = PlanningRows.empty
     var created = [entry]
@@ -106,7 +106,7 @@ enum EntryCommit {
       } else {
         let outcome = try DebtRules.payment(
           on: debt, amountE4: entry.transaction.amountE4, date: day, transactionId: entry.id,
-          description: note)
+          description: note, closesTerm: closesTerm)
         rows.debtEntries.append(outcome.entry)
       }
     }

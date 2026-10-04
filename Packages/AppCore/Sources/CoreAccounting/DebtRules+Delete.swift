@@ -102,4 +102,27 @@ extension DebtRules {
     }
     return paid
   }
+
+  /// The debts a deletion of `operations` leaves closed with something owed again: a closed debt
+  /// whose journal was at zero or below, and has money owed once the lines of those operations
+  /// — the payments that closed it — leave the journal. Deleting the payment does not open the
+  /// debt; the deletion asks whether to (`TransactionsStore.delete(ids:reopening:)`). A deleted
+  /// debt, an open one and a debt closed with money still owed on it are not among them. In the
+  /// order of `debts`.
+  public static func closedByDeleting(
+    _ operations: Set<UUID>, debts: [Debt], journal: [DebtEntry]
+  ) -> [Debt] {
+    guard !operations.isEmpty else { return [] }
+    var lines: [UUID: [DebtEntry]] = [:]
+    for line in journal { lines[line.debtId, default: []].append(line) }
+    return debts.filter { debt in
+      guard debt.closed, debt.deletedAt == nil, let own = lines[debt.id] else { return false }
+      let kept = own.filter { line in
+        guard let operation = line.transactionId else { return true }
+        return !operations.contains(operation)
+      }
+      guard kept.count < own.count else { return false }
+      return balance(entries: own).raw <= 0 && balance(entries: kept).raw > 0
+    }
+  }
 }

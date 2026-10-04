@@ -153,6 +153,23 @@ struct RemindersSheet: View {
         Button(t("scheduled.markAsPaid")) { payOverdue(due) }
           .buttonStyle(.bordered)
           .controlSize(.small)
+        // «Платежа не было»: a scheduled payment nobody cancelled — a debt is owed whatever the
+        // owner thinks of it, and has no skip.
+        if !due.isDebt {
+          Button(t("reminders.overdue.skip")) { skipOverdue(due, all: false) }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(t("reminders.overdue.skipHelp"))
+          if due.moreOverdue > 0 {
+            Button(
+              environment.language.format(
+                "reminders.overdue.skipAll", table: "Planning", counts: due.moreOverdue + 1)
+            ) { skipOverdue(due, all: true) }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(t("reminders.overdue.skipHelp"))
+          }
+        }
         if let count = due.countAfter {
           Button(t("reminders.overdue.settled")) { settle(due) }
             .buttonStyle(.bordered)
@@ -213,6 +230,27 @@ struct RemindersSheet: View {
     }
   }
 
+  /// «Пропустить» — the payment was not made, its earliest unpaid due closes without an
+  /// operation — and «Пропустить все N», every unpaid due before today at once. The same write
+  /// as «Пропустить» in Planning, one step of ⌘Z.
+  private func skipOverdue(_ due: OverdueDue, all: Bool) {
+    guard let dependencies, case .scheduled(let id) = due.subject,
+      let payment = compute.snapshot?.dataset.planning.scheduled.first(where: { $0.id == id })
+    else { return }
+    failed[due.id] = nil
+    if !Self.skip(due, all: all, payment: payment, with: PlanningActions(dependencies)) {
+      failed[due.id] = t("form.notSaved")
+    }
+  }
+
+  /// Closes `payment` through the due `due.skipping(all:)` without an operation.
+  @discardableResult
+  static func skip(
+    _ due: OverdueDue, all: Bool, payment: ScheduledPayment, with actions: PlanningActions
+  ) -> Bool {
+    actions.skip(payment, due: due.skipping(all: all))
+  }
+
   /// «Уже списано до сверки».
   private func settle(_ due: OverdueDue) {
     guard let dependencies else { return }
@@ -224,7 +262,7 @@ struct RemindersSheet: View {
       done = PlanningActions(dependencies).settle(payment: payment, due: due.due)
     case .debt(let id):
       guard let debt = compute.snapshot?.dataset.debts.first(where: { $0.id == id }) else { return }
-      done = DebtActions(dependencies).settle(debt: debt, due: due.due)
+      done = DebtActions(dependencies).settle(debt: debt, due: due.due, owed: due.amount)
     }
     if !done { failed[due.id] = t("form.notSaved") }
   }

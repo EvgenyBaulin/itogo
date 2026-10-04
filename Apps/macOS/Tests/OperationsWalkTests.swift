@@ -147,13 +147,19 @@ final class EntryWalkTests: XCTestCase {
     self.host = host
     XCTAssertNil(host.textFields().first { $0.placeholderString == "0" }, "closed")
     try host.pressKey("\t", code: 48)
-    // The panel asks for the focus in a task of the main actor, which runs while the test waits.
-    try await Task.sleep(for: .milliseconds(500))
-    host.settle(0.1)
+    // The panel asks for the focus in a task of the main actor, which runs while the test waits —
+    // up to three seconds, since a busy machine takes longer than a fixed pause.
+    func firstFieldHasTheKeyboard() -> Bool {
+      ((host.window.firstResponder as? NSTextView)?.delegate as? NSTextField)?.placeholderString
+        == "0"
+    }
+    let deadline = Date().addingTimeInterval(3)
+    while !firstFieldHasTheKeyboard(), Date() < deadline {
+      try await Task.sleep(for: .milliseconds(50))
+      host.settle(0.05)
+    }
     XCTAssertNotNil(host.textFields().first { $0.placeholderString == "0" }, "the panel opened")
-    XCTAssertEqual(
-      ((host.window.firstResponder as? NSTextView)?.delegate as? NSTextField)?.placeholderString,
-      "0", "Tab went to the amount")
+    XCTAssertTrue(firstFieldHasTheKeyboard(), "Tab went to the amount")
   }
 
   /// Shift-Tab with the panel closed is not ours: nothing opens.
@@ -169,13 +175,23 @@ final class EntryWalkTests: XCTestCase {
   func testTheLineTakesTheKeyboardBack() async throws {
     let host = try await EntryHost(opensDetails: false)
     self.host = host
+    // SwiftUI follows the keyboard of a window only while its app is the active one: the host of
+    // the tests is not when something else of this Mac has the screen, and the keyboard then
+    // stays where the test put it or comes back, as the timing falls. Nothing to check there.
+    try XCTSkipUnless(
+      NSApp.isActive || host.window.isKeyWindow,
+      "the app is not active: SwiftUI does not move the keyboard in its windows")
     let line = try host.line()
     host.window.makeFirstResponder(nil)
     host.settle(0.1)
     NotificationCenter.default.post(name: .returnToEntryLine, object: nil)
-    host.settle(0.3)
-    XCTAssertTrue(
-      ((host.window.firstResponder as? NSTextView)?.delegate as? NSTextField) === line,
-      "the line has the keyboard")
+    // The line asks for the focus in a task of the main actor: on a busy machine it takes longer
+    // than a fixed pause, so the test waits for it, up to three seconds.
+    func lineHasTheKeyboard() -> Bool {
+      ((host.window.firstResponder as? NSTextView)?.delegate as? NSTextField) === line
+    }
+    let deadline = Date().addingTimeInterval(3)
+    while !lineHasTheKeyboard(), Date() < deadline { host.settle(0.05) }
+    XCTAssertTrue(lineHasTheKeyboard(), "the line has the keyboard")
   }
 }

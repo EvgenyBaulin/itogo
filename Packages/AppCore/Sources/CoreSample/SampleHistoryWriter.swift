@@ -159,7 +159,7 @@ final class SampleHistoryWriter {
     // A loan I had before the app: its payments are my expenses in Loans.
     self.bankLoan = Debt(
       id: rng.nextUUID(), direction: .iOwe, type: .loan, name: loanSubcategory.name,
-      monthlyPaymentE4: Self.loanPayment, paymentDay: 25, paymentsAreExpenses: true,
+      monthlyPaymentE4: Self.loanPayment, paymentDay: Self.loanPayday, paymentsAreExpenses: true,
       origin: .existing, loansSubcategoryId: loanSubcategory.id)
     // A phone bought here in instalments: the purchase is the expense, its payments are not.
     let phoneDay =
@@ -173,12 +173,48 @@ final class SampleHistoryWriter {
     self.rng = rng
 
     debts.append(bankLoan)
+    let loanBegan = calendar.adding(days: -300, to: firstDay)
     debtEntries.append(
       DebtEntry(
-        id: self.rng.nextUUID(), debtId: bankLoan.id,
-        date: calendar.adding(days: -300, to: firstDay), description: bankLoan.name,
+        id: self.rng.nextUUID(), debtId: bankLoan.id, date: loanBegan, description: bankLoan.name,
         amountE4: AmountE4(whole: 500_000), kind: .borrowed))
+    payLoanBeforeTheHistory(since: loanBegan)
     planEvents()
+  }
+
+  /// The loan began long before the history, and it was paid every month since: one line of the
+  /// journal for each payday between the day it began and the first day of the history, the
+  /// monthly payment each, with no operation — the operations of those months are not in the
+  /// history. Without them every due of those months stood unpaid, and the demo opened its
+  /// «Просроченные платежи» with ten rows of the same loan.
+  ///
+  /// The ids come from a stream of their own, seeded from the loan's: a draw of the history's
+  /// would shift every one after it.
+  private func payLoanBeforeTheHistory(since began: DateOnly) {
+    var stream = SeededRandom(seed: Self.earlierPaymentsSeed(of: bankLoan.id))
+    let note = word("Bank loan payment", "Платёж по кредиту")
+    var month = began.monthKey
+    func payday(of month: MonthKey) -> DateOnly {
+      DateOnly(year: month.year, month: month.month, day: Self.loanPayday)
+    }
+    // The payday of the month it began came before the loan itself: the first due is next month.
+    if payday(of: month) < began { month = month.next }
+    while payday(of: month) < firstDay {
+      debtEntries.append(
+        DebtEntry(
+          id: stream.nextUUID(), debtId: bankLoan.id, date: payday(of: month), description: note,
+          amountE4: -Self.loanPayment, kind: .payment))
+      month = month.next
+    }
+  }
+
+  /// A seed of the early payments' own: the first eight bytes of the loan's id mixed with a tag.
+  private static func earlierPaymentsSeed(of loan: UUID) -> UInt64 {
+    let tag: UInt64 = 0x4C4F_414E_5041_4944  // "LOANPAID"
+    let bytes = loan.uuid
+    let high = [bytes.0, bytes.1, bytes.2, bytes.3, bytes.4, bytes.5, bytes.6, bytes.7]
+      .reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+    return high ^ tag
   }
 
   // MARK: - Writing
@@ -380,7 +416,7 @@ final class SampleHistoryWriter {
         .income, on: day, parts: [PartSpec(named.work, amount(50_000, 3_000, 30_000))],
         note: word("Advance", "Аванс"), method: mainCard)
     }
-    if day.day == 25 { payLoan(on: day) }
+    if day.day == Self.loanPayday { payLoan(on: day) }
     if let phoneDay, day.day == phone.paymentDay, day > phoneDay, phonePayments < 6 {
       payPhone(on: day)
     }
@@ -1104,6 +1140,7 @@ final class SampleHistoryWriter {
   static let mobile = AmountE4(whole: 650)
 
   private static let loanPayment = AmountE4(whole: 15_000)
+  private static let loanPayday = 25
   private static let phoneInstalment = AmountE4(whole: 8_000)
   private static let phonePrice = AmountE4(whole: 48_000)
   private static let phoneOffset = 11

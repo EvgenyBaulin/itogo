@@ -518,7 +518,7 @@ final class BulkActionsTests: XCTestCase {
 
     let confirmation = try XCTUnwrap(
       BulkConfirmation.deletion(of: [entries[0], laptop], debts: [:]))
-    guard case .delete(let ids, let plan, let totals, _) = confirmation else {
+    guard case .delete(let ids, let plan, let totals, _, _) = confirmation else {
       return XCTFail("a deletion was expected")
     }
     XCTAssertEqual(ids, [entries[0].id])
@@ -566,14 +566,14 @@ final class BulkActionsTests: XCTestCase {
     }
 
     for question in try questions(paid: 0) {
-      guard case .delete(let ids, let plan, _, _) = try XCTUnwrap(question) else {
+      guard case .delete(let ids, let plan, _, _, _) = try XCTUnwrap(question) else {
         return XCTFail("a deletion was expected")
       }
       XCTAssertEqual(ids, [purchase.id])
       XCTAssertTrue(plan.skipped.isEmpty, "\(plan.skipped.map(\.reason))")
     }
     for question in try questions(paid: 3) {
-      guard case .delete(let ids, let plan, _, _) = try XCTUnwrap(question) else {
+      guard case .delete(let ids, let plan, _, _, _) = try XCTUnwrap(question) else {
         return XCTFail("a deletion was expected")
       }
       XCTAssertEqual(ids, [])
@@ -1007,7 +1007,7 @@ final class BulkActionsTests: XCTestCase {
     let (card, cash, ids) = try await purchasesOnArchivedCash([2_000, 3_000])
     let actions = OperationActions()
     actions.requestDeletion(of: Set(ids), store: store)
-    guard case .delete(let asked, _, _, _) = actions.confirmation else {
+    guard case .delete(let asked, _, _, _, _) = actions.confirmation else {
       XCTFail("a deletion is confirmed first")
       throw CancellationError()
     }

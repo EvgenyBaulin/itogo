@@ -681,10 +681,22 @@ public final class EntryDraftModel {
   }
 
   /// The draft as it is written: without what its kind has no field for — a place chosen in
-  /// the panel before the kind became income stays out of the income. Stored rows keep what
-  /// they have; this is for a new operation only.
+  /// the panel before the kind became income stays out of the income —, and an income that names
+  /// a debt owed to me as money back (`incomeIsMoneyBack`). Stored rows keep what they have;
+  /// this is for a new operation only.
   public var draftForSaving: TransactionDraft {
-    KindFields.stripped(draft, tree: categoryTree).draft
+    var written = draft
+    if incomeIsMoneyBack { written.kind = .reimbursement }
+    return KindFields.stripped(written, tree: categoryTree).draft
+  }
+
+  /// An income that names an open debt owed to me is money given back on it: the debt takes what
+  /// is left of it and closes, and what is over is income in «Доплаты» — one rule for every way
+  /// of recording it (`DebtRules.repayment`), and the debt's payment is not income. A saved
+  /// operation is changed in its editor and keeps its kind.
+  public var incomeIsMoneyBack: Bool {
+    guard !editsSavedOperation, draft.kind == .income, let id = draft.debtId else { return false }
+    return debts.contains { $0.id == id && $0.direction == .owedToMe && !$0.closed }
   }
 
   /// Whether the model suggests and files from history and from the category model: the line
@@ -2123,6 +2135,25 @@ public final class EntryDraftModel {
   /// «Записать как есть» of the question about a date ahead, kept the same way.
   var aheadAnswered = false
 
+  /// «В этом месяце больше платежей не будет»: set from the panel on a payment of a debt that
+  /// leaves part of its due unpaid, so the due closes all the same (`DebtEntry.closesTerm`).
+  /// Kept until the operation is saved, and cleared with the draft (`reset`).
+  var closesDebtTerm = false
+
+  /// The debt the operation as it stands pays: an expense that names a debt I owe, still open.
+  var debtBeingPaid: Debt? {
+    guard draft.kind == .expense, let id = draft.debtId else { return nil }
+    return debts.first { $0.id == id && $0.direction == .iOwe && !$0.closed }
+  }
+
+  /// Whether the panel offers «В этом месяце больше платежей не будет»: a new payment of a debt
+  /// whose due the payment does not cover (`DebtTerms.offersClosing`, given the state of the
+  /// debt's dues). A saved payment is changed in Debts.
+  func offersClosingTerm(dues: DebtDueState?) -> Bool {
+    guard !editsSavedOperation, let debt = debtBeingPaid else { return false }
+    return DebtTerms.offersClosing(debt, paying: draft.amount, dues: dues)
+  }
+
   /// The operation written in the last five minutes that this one repeats — the same kind, amount
   /// and currency (`RecentDuplicate`) —, read from the database as it is now. Nil for a saved
   /// operation being edited, and once «Добавить» was said.
@@ -2515,6 +2546,7 @@ public final class EntryDraftModel {
     stampedAt = nil
     repeatConfirmed = false
     aheadAnswered = false
+    closesDebtTerm = false
   }
 
   // MARK: Refund of a purchase

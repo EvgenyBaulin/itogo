@@ -157,7 +157,8 @@ struct CashFx {
       until: Self.day(until), rubPerUnit: rubPerUnit, matches: planning.matches,
       goals: planning.goals, debts: planning.debts, events: planning.budgetedEvents,
       reserveGoalPlan: settings.reserveGoalPlan,
-      subtractGoalSavings: settings.reconcileIncludesGoalSavings)
+      subtractGoalSavings: settings.reconcileIncludesGoalSavings,
+      reserveEventBudgets: settings.reserveEventBudgets)
   }
 
   static func payment(
@@ -381,6 +382,52 @@ struct CashPlanTests {
     fx.entries[fx.entries.count - 1].parts[0].eventId = Fx.id(501)
     #expect(fx.plan(until: "2026-09-30").events == Fx.money("15000"))
     #expect(fx.plan(until: "2026-10-31").events == Fx.money("23000"))
+  }
+
+  /// «Остаток бюджетов событий» may be left out of the plan: with the switch off no budget is held
+  /// back, and the plan says so.
+  @Test func theBudgetsOfEventsCanBeLeftOut() {
+    var fx = Fx()
+    fx.events = [
+      Event(
+        id: Fx.id(501), name: "Trip", startDate: Fx.day("2026-09-15"),
+        endDate: Fx.day("2026-09-25"), budgetE4: Fx.money("20000")),
+      Event(
+        id: Fx.id(502), name: "Birthday", startDate: Fx.day("2026-10-10"),
+        endDate: Fx.day("2026-10-10"), budgetE4: Fx.money("8000")),
+    ]
+    fx.add(.expense, "5000", at: Fx.at("2026-09-16", 12), category: Fx.fun)
+    fx.entries[fx.entries.count - 1].parts[0].eventId = Fx.id(501)
+    let on = fx.plan(until: "2026-10-31")
+    #expect(on.events == Fx.money("23000"))
+    #expect(on.reservesEventBudgets)
+
+    fx.settings.reserveEventBudgets = false
+    let off = fx.plan(until: "2026-10-31")
+    #expect(off.events == .zero)
+    #expect(!off.reservesEventBudgets)
+  }
+
+  /// A payment tied to an event is part of its budget while the budget is held back; with the
+  /// budgets left out it is an ordinary payment, held back as itself — the hotel is still to be paid.
+  @Test func aTiedPaymentIsAnOrdinaryDueWhenTheBudgetsAreLeftOut() {
+    var fx = Fx()
+    fx.events = [
+      Event(
+        id: Fx.id(501), name: "Trip", startDate: Fx.day("2026-09-15"),
+        endDate: Fx.day("2026-09-25"), budgetE4: Fx.money("20000"))
+    ]
+    var hotel = Fx.payment(2, "Hotel", "12000", day: 22, next: "2026-09-22")
+    hotel.eventId = Fx.id(501)
+    fx.scheduled = [hotel]
+    let held = fx.plan(until: "2026-09-30")
+    #expect(held.events == Fx.money("20000"), "the budget, of which the hotel is a part")
+    #expect(held.scheduled == .zero, "not counted twice")
+
+    fx.settings.reserveEventBudgets = false
+    let left = fx.plan(until: "2026-09-30")
+    #expect(left.events == .zero)
+    #expect(left.scheduled == Fx.money("12000"), "the hotel is an ordinary payment")
   }
 
   // MARK: - The dues one by one

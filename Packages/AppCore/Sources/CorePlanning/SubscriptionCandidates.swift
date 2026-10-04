@@ -13,6 +13,10 @@ public struct SubscriptionCandidate: Hashable, Sendable, Identifiable {
   public var placeId: UUID?
   /// The category of the latest operation.
   public var categoryId: UUID?
+  /// The account and the card of the latest operation: a payment made of the candidate is paid
+  /// from them. `nil` when it named none.
+  public var paymentMethodId: UUID?
+  public var cardId: UUID?
   public var currency: CurrencyCode
   /// The median amount, in `currency`.
   public var typicalAmount: AmountE4
@@ -22,11 +26,14 @@ public struct SubscriptionCandidate: Hashable, Sendable, Identifiable {
 
   public init(
     key: String, placeId: UUID?, categoryId: UUID?, currency: CurrencyCode,
-    typicalAmount: AmountE4, freq: Frequency, occurrences: Int, lastDay: DateOnly
+    typicalAmount: AmountE4, freq: Frequency, occurrences: Int, lastDay: DateOnly,
+    paymentMethodId: UUID? = nil, cardId: UUID? = nil
   ) {
     self.key = key
     self.placeId = placeId
     self.categoryId = categoryId
+    self.paymentMethodId = paymentMethodId
+    self.cardId = cardId
     self.currency = currency
     self.typicalAmount = typicalAmount
     self.freq = freq
@@ -73,6 +80,8 @@ public enum SubscriptionCandidates {
       let amount: AmountE4
       let categoryId: UUID?
       let placeId: UUID?
+      let paymentMethodId: UUID?
+      let cardId: UUID?
     }
     struct GroupKey: Hashable {
       let key: String
@@ -99,7 +108,8 @@ public enum SubscriptionCandidates {
       groups[GroupKey(key: key, currency: transaction.currency), default: []].append(
         Item(
           day: row.day, amount: transaction.amountE4, categoryId: row.categoryId,
-          placeId: transaction.placeId))
+          placeId: transaction.placeId, paymentMethodId: transaction.paymentMethodId,
+          cardId: transaction.cardId))
     }
 
     let names = Set(book.scheduled.compactMap { normalized($0.name) })
@@ -143,7 +153,8 @@ public enum SubscriptionCandidates {
         SubscriptionCandidate(
           key: group.key, placeId: last.placeId, categoryId: last.categoryId,
           currency: group.currency, typicalAmount: typical, freq: fit.freq,
-          occurrences: items.count, lastDay: last.day))
+          occurrences: items.count, lastDay: last.day, paymentMethodId: last.paymentMethodId,
+          cardId: last.cardId))
     }
     return result.sorted { left, right in
       if left.key != right.key { return left.key < right.key }

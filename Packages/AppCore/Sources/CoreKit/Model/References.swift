@@ -312,13 +312,17 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
   public var occurredAt: Date?
   public var accountCurrency: CurrencyCode?
   public var accountAmountE4: AmountE4?
+  /// «В этом месяце больше платежей не будет»: on a payment, the due it was made for is closed
+  /// although the payment is smaller than the monthly one. Only a `payment` carries it
+  /// (`DebtRules.makeEntry`).
+  public var closesTerm: Bool
 
   public init(
     id: UUID = UUID(), debtId: UUID, groupName: String? = nil, date: DateOnly? = nil,
     description: String? = nil, fullAmountE4: AmountE4? = nil, share: Decimal? = nil,
     amountE4: AmountE4, kind: DebtEntryKind, transactionId: UUID? = nil, note: String? = nil,
     paymentMethodId: UUID? = nil, occurredAt: Date? = nil, accountCurrency: CurrencyCode? = nil,
-    accountAmountE4: AmountE4? = nil
+    accountAmountE4: AmountE4? = nil, closesTerm: Bool = false
   ) {
     self.id = id
     self.debtId = debtId
@@ -335,6 +339,7 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
     self.occurredAt = occurredAt
     self.accountCurrency = accountCurrency
     self.accountAmountE4 = accountAmountE4
+    self.closesTerm = closesTerm
   }
 }
 

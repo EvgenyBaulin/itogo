@@ -22,6 +22,7 @@ struct ExportRoundTripPropertyTests {
   private static let booleans: Set<String> = [
     "archived", "is_default", "reimbursable", "rate_provisional", "pinned", "recurring_yearly",
     "payments_are_expenses", "closed", "rollover", "active", "in_summary", "records_difference",
+    "closes_term",
   ]
   /// Columns holding an instant, written in UTC to the second.
   private static let instants: Set<String> = [
@@ -429,6 +430,7 @@ struct ExportRoundTripPropertyTests {
     "payment_methods.csv:bank_id", "payment_methods.csv:cashback_precision",
     "payment_methods.csv:cashback_direction", "payment_methods.csv:cashback_payout",
     "payment_methods.csv:cashback_payout_day", "payment_methods.csv:cashback_points_account_id",
+    "debt_entries.csv:closes_term",
   ]
 
   /// Cards on two accounts of the history, one with other names that break a CSV cell; the

@@ -205,7 +205,8 @@ public enum DebtRules {
     groupName: String? = nil,
     description: String? = nil,
     transactionId: UUID? = nil,
-    note: String? = nil
+    note: String? = nil,
+    closesTerm: Bool = false
   ) -> DebtEntry {
     DebtEntry(
       id: id,
@@ -218,7 +219,8 @@ public enum DebtRules {
       amountE4: signedAmount(amountE4, for: kind),
       kind: kind,
       transactionId: transactionId,
-      note: cleaned(note))
+      note: cleaned(note),
+      closesTerm: closesTerm && kind == .payment)
   }
 
   /// A text as it is stored: without the spaces and line breaks around it, `nil` when nothing
@@ -328,6 +330,10 @@ public enum DebtRules {
   /// One payment against a debt. It always reduces the balance; it is also an expense in
   /// Loans when the debt records its payments that way. Never both an expense here and
   /// an expense at the purchase: one purchase is an expense exactly once.
+  ///
+  /// With `closesTerm` — «в этом месяце больше платежей не будет» — the line says the due the
+  /// payment was made for is closed although the payment is smaller than the monthly one
+  /// (`DebtDues`).
   public static func payment(
     on debt: Debt,
     amountE4: AmountE4,
@@ -335,12 +341,14 @@ public enum DebtRules {
     transactionId: UUID? = nil,
     groupName: String? = nil,
     description: String? = nil,
+    closesTerm: Bool = false,
     entryId: UUID = UUID()
   ) throws -> DebtPaymentOutcome {
     guard amountE4.raw > 0 else { throw DebtError.negativeAmount }
     let entry = makeEntry(
       id: entryId, debtId: debt.id, kind: .payment, amountE4: amountE4, date: date,
-      groupName: groupName, description: description, transactionId: transactionId)
+      groupName: groupName, description: description, transactionId: transactionId,
+      closesTerm: closesTerm)
     guard paymentIsExpense(on: debt) else { return DebtPaymentOutcome(entry: entry) }
     let expense = LoanExpense(
       debtId: debt.id, amountE4: amountE4.magnitude, subcategoryId: debt.loansSubcategoryId)
@@ -396,14 +404,20 @@ public enum DebtRules {
   /// lowers the balance and closes the earliest unpaid due like any payment, and moves no money
   /// on any account — only `borrowed` lines without an operation do. `nil` when nothing is left
   /// on the debt or it has no monthly payment.
+  ///
+  /// A due paid in part is taken for what is left of it: `owed` is that rest, never more than
+  /// the monthly payment, and the line pays it. The line says the due is closed either way.
   public static func settledByCount(
-    debt: Debt, due: DateOnly, balance: AmountE4, entryId: UUID = UUID()
+    debt: Debt, due: DateOnly, balance: AmountE4, owed: AmountE4? = nil, entryId: UUID = UUID()
   ) -> DebtEntry? {
     guard let monthly = debt.monthlyPaymentE4, monthly.raw > 0, balance.raw > 0 else {
       return nil
     }
+    let rest = min(monthly, owed ?? monthly)
+    guard rest.raw > 0 else { return nil }
     return makeEntry(
-      id: entryId, debtId: debt.id, kind: .payment, amountE4: min(monthly, balance), date: due)
+      id: entryId, debtId: debt.id, kind: .payment, amountE4: min(rest, balance), date: due,
+      closesTerm: true)
   }
 
   // MARK: - Transfer

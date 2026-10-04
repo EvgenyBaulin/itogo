@@ -19,9 +19,10 @@ import Foundation
 ///   to an event, dated by the event's end, is part of that event's budget while the event is
 ///   counted (below), not a line of its own.
 /// * **Debts** — for every open debt I owe with a monthly payment, a payment day and something
-///   left on it: every unpaid monthly due through D (`DebtDueState.unpaid`, each payment
-///   closing the earliest due), overdue ones of earlier months included, never more in all
-///   than the debt's balance, in the debt's currency. The money is that of the account of the
+///   left on it: every unpaid monthly due through D (`DebtDueState.unpaid`, the money paid
+///   closing the earliest dues), overdue ones of earlier months included, less what was paid
+///   toward the first of them, never more in all than the debt's balance, in the debt's
+///   currency. The money is that of the account of the
 ///   debt's last payment (`DebtAccount.lastPayment`, through `DueAccounts.effective`); a debt
 ///   paid from an account of a group left out of the summary is left out with its money.
 /// * **Goal savings** — with `subtractGoalSavings` (the setting «Деньги целей лежат на счетах в
@@ -33,9 +34,11 @@ import Foundation
 ///   left of this month's plan (`GoalPlanState.restThisMonth`) plus a full plan for every later
 ///   month whose 1st is by D, less what went in above the plans (`creditOut`), never more than
 ///   the goal still needs.
-/// * **Events** — every live event with a budget that is under way today or starts after today
-///   and by D: max(what is left of its budget, its unpaid tied dues) — the rest of the budget is
-///   budget − spent − what matching operations without the event paid of its tied payments.
+/// * **Events** — with `reserveEventBudgets` (on by default): every live event with a budget that
+///   is under way today or starts after today and by D: max(what is left of its budget, its
+///   unpaid tied dues) — the rest of the budget is budget − spent − what matching operations
+///   without the event paid of its tied payments. Off, no budget is held back and the dues tied to
+///   an event are ordinary dues.
 ///
 /// A foreign amount without a rate today is left out and its currency listed in
 /// `withoutRate`, never guessed.
@@ -46,9 +49,11 @@ public struct CashPlan: Hashable, Sendable {
   public var goalSavings: AmountE4
   /// Zero when the goal plans are not held back (`reservesGoalPlans`).
   public var goalPlans: AmountE4
+  /// Zero when the budgets of events are not held back (`reservesEventBudgets`).
   public var events: AmountE4
   public var subtractsGoalSavings: Bool
   public var reservesGoalPlans: Bool
+  public var reservesEventBudgets: Bool
   /// Currencies of amounts left out for want of a rate today, by code.
   public var withoutRate: [CurrencyCode]
   /// The part of the lines due before today: due dates nothing paid, whose money is counted as
@@ -58,7 +63,8 @@ public struct CashPlan: Hashable, Sendable {
   public init(
     scheduled: AmountE4 = .zero, debts: AmountE4 = .zero, goalSavings: AmountE4 = .zero,
     goalPlans: AmountE4 = .zero, events: AmountE4 = .zero, subtractsGoalSavings: Bool = true,
-    reservesGoalPlans: Bool = true, withoutRate: [CurrencyCode] = [], overdue: AmountE4 = .zero
+    reservesGoalPlans: Bool = true, withoutRate: [CurrencyCode] = [], overdue: AmountE4 = .zero,
+    reservesEventBudgets: Bool = true
   ) {
     self.scheduled = scheduled
     self.debts = debts
@@ -67,6 +73,7 @@ public struct CashPlan: Hashable, Sendable {
     self.events = events
     self.subtractsGoalSavings = subtractsGoalSavings
     self.reservesGoalPlans = reservesGoalPlans
+    self.reservesEventBudgets = reservesEventBudgets
     self.withoutRate = withoutRate
     self.overdue = overdue
   }
@@ -89,7 +96,7 @@ public struct CashPlan: Hashable, Sendable {
     until d: DateOnly, rubPerUnit: [CurrencyCode: Decimal], matches: ScheduledMatches,
     goals: [GoalStatus], debts: DebtsOverview, events: [EventPlan], reserveGoalPlan: Bool,
     subtractGoalSavings: Bool, dayRates: DayRates = .empty,
-    goalSavingsValuation: GoalSavingsValuation = .today
+    goalSavingsValuation: GoalSavingsValuation = .today, reserveEventBudgets: Bool = true
   ) -> CashPlan {
     var missing: Set<CurrencyCode> = []
     func rubles(_ amount: AmountE4, in currency: CurrencyCode) -> AmountE4 {
@@ -106,7 +113,7 @@ public struct CashPlan: Hashable, Sendable {
 
     // Events with a budget that the plan counts: under way today, or starting by D.
     var counted: [UUID: EventPlan] = [:]
-    for plan in events where !plan.event.archived && plan.budget != nil {
+    for plan in events where reserveEventBudgets && !plan.event.archived && plan.budget != nil {
       let counts =
         plan.event.covers(today) || (plan.event.startDate > today && plan.event.startDate <= d)
       if counts { counted[plan.event.id] = plan }
@@ -151,16 +158,15 @@ public struct CashPlan: Hashable, Sendable {
     for line in debts.iOwe {
       guard let monthly = line.debt.monthlyPaymentE4, monthly.raw > 0, line.balance.raw > 0
       else { continue }
-      let late = line.dues.overdue(today: today).count
-      guard late > 0 else { continue }
+      let late = line.dues.owed(through: today.adding(days: -1), monthly: monthly)
+      guard late.raw > 0 else { continue }
       let payer =
         payers[line.debt.id]
         ?? DebtAccount.lastPayment(
           of: line.debt, ledger: ledger, journal: book.debtEntries, mainId: mainId)
       guard accounts.isInSummary(DueAccounts.effective(payer, accounts: list) ?? mainId)
       else { continue }
-      let owed = min(SubscriptionMath.rounded(monthly.decimal * Decimal(late)), line.balance)
-      overdue += rubles(owed, in: line.debt.currency)
+      overdue += rubles(min(late, line.balance), in: line.debt.currency)
     }
 
     // Goals.
@@ -214,7 +220,8 @@ public struct CashPlan: Hashable, Sendable {
       scheduled: scheduled, debts: debtTotal, goalSavings: savings, goalPlans: plans,
       events: eventTotal, subtractsGoalSavings: subtractGoalSavings,
       reservesGoalPlans: reserveGoalPlan,
-      withoutRate: missing.sorted { $0.code < $1.code }, overdue: overdue)
+      withoutRate: missing.sorted { $0.code < $1.code }, overdue: overdue,
+      reservesEventBudgets: reserveEventBudgets)
   }
 
   /// What ordinary operations paid of the due dates tied to each counted event, by matching
@@ -426,9 +433,8 @@ extension CashPlan {
       guard let payment = line.debt.monthlyPaymentE4, let state = states[line.debt.id] else {
         continue
       }
-      let count = state.unpaid(through: d).count
-      guard count > 0 else { continue }
-      let owed = SubscriptionMath.rounded(payment.decimal * Decimal(count))
+      let owed = state.owed(through: d, monthly: payment)
+      guard owed.raw > 0 else { continue }
       owing.append((line, min(owed, line.balance)))
     }
     guard !owing.isEmpty else { return [] }

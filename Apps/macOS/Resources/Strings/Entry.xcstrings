@@ -868,6 +868,40 @@
         }
       }
     },
+    "entry.closesTerm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No more payments this month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этом месяце больше платежей не будет"
+          }
+        }
+      }
+    },
+    "entry.closesTerm.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The due of this debt counts as paid although the payment is smaller than the monthly one"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Срок по этому долгу будет считаться оплаченным, хотя платёж меньше ежемесячного"
+          }
+        }
+      }
+    },
     "entry.creditInDebts": {
       "extractionState": "manual",
       "localizations": {
@@ -966,6 +1000,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ (удалён)"
+          }
+        }
+      }
+    },
+    "entry.debt.moneyBack": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Money onto a debt owed to you is the debt paid back: it takes what is left and closes, what is over is income in «Surcharges»."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги по долгу «Мне должны» — возврат долга: он заберёт остаток и закроется, лишнее станет доходом в «Доплатах»."
           }
         }
       }
@@ -2787,6 +2838,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сверх долга %@ — доход в «Доплатах»"
+          }
+        }
+      }
+    },
+    "moneyBack.surplusToDebt": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Over the parts %1$@ — towards the debt «%2$@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сверх частей %1$@ — в счёт долга «%2$@»"
           }
         }
       }

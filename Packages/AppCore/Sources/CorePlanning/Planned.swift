@@ -158,7 +158,9 @@ public struct PlannedMonth: Hashable, Sendable {
         let due = DebtDueState.payday(day, in: current)
         let byToday = current == month && due <= today
         guard due <= last, state.isUnpaid(due) else { continue }
-        let rubles = SubscriptionMath.rubles(payment, in: debt.currency, rubPerUnit: rubPerUnit)
+        // What is left of the due when part of it was paid.
+        let owed = state.owed(due, monthly: payment)
+        let rubles = SubscriptionMath.rubles(owed, in: debt.currency, rubPerUnit: rubPerUnit)
         if rubles == nil { missing.append(debt.id) }
         if byToday {
           debtsDueByToday += rubles ?? .zero
@@ -166,7 +168,7 @@ public struct PlannedMonth: Hashable, Sendable {
         }
         items.append(
           PlannedItem(
-            kind: .debt, id: debt.id, due: due, currency: debt.currency, amount: payment,
+            kind: .debt, id: debt.id, due: due, currency: debt.currency, amount: owed,
             myShareRub: rubles, categoryId: debt.loansSubcategoryId))
       }
     }

@@ -341,7 +341,8 @@ final class TransactionEditorModel {
     let owed = store.deletionDebts()
     confirmation = BulkConfirmation.deletion(
       of: [entry], refunds: store.listing?.refundIndex ?? .empty, debts: store.debts,
-      deletedDebts: owed.deleted, paidDebts: owed.paid)
+      deletedDebts: owed.deleted, paidDebts: owed.paid,
+      reopening: store.debtsClosedBy(deleting: [entry.id]))
   }
 
   /// The saved operation after the edit. Only what the panel edits changes: when the

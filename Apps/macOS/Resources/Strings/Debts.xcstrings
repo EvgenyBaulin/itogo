@@ -570,6 +570,40 @@
         }
       }
     },
+    "debts.journal.closesTerm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "term closed"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "срок закрыт"
+          }
+        }
+      }
+    },
+    "debts.journal.closesTermHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Said with this payment: no more payments this month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сказано при этом платеже: в этом месяце больше платежей не будет"
+          }
+        }
+      }
+    },
     "debts.journalEmpty": {
       "extractionState": "manual",
       "localizations": {
@@ -685,6 +719,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "перенос отсюда"
+          }
+        }
+      }
+    },
+    "debts.monthPaid.note": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This month's payment was already made"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платёж за этот месяц уже сделан"
           }
         }
       }
@@ -838,6 +889,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Мне должны"
+          }
+        }
+      }
+    },
+    "debts.partialDue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paid %1$@ of %2$@ so far — %3$@ left"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оплачено %1$@ из %2$@ — осталось %3$@"
           }
         }
       }
@@ -1592,6 +1660,91 @@
         }
       }
     },
+    "form.monthPaid": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This month's payment already made?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платёж за этот месяц уже сделан?"
+          }
+        }
+      }
+    },
+    "form.monthPaid.ask": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today is the payment day. Say whether the balance above is after today's payment — you cannot save before."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сегодня день платежа. Скажите, указан ли остаток уже после сегодняшнего платежа, — без ответа не сохранить."
+          }
+        }
+      }
+    },
+    "form.monthPaid.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Yes»: the first payment owed is next month's. «No»: it is today's."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Да»: первый платёж к оплате — в следующем месяце. «Нет»: сегодняшний."
+          }
+        }
+      }
+    },
+    "form.monthPaid.no": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет"
+          }
+        }
+      }
+    },
+    "form.monthPaid.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Да"
+          }
+        }
+      }
+    },
     "form.monthlyPayment": {
       "extractionState": "manual",
       "localizations": {
@@ -1690,6 +1843,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Закрыть долг: этот платёж его гасит"
+          }
+        }
+      }
+    },
+    "form.pay.closesTerm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No more payments this month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этом месяце больше платежей не будет"
+          }
+        }
+      }
+    },
+    "form.pay.closesTermHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The due counts as paid although this payment is smaller than the monthly one."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Срок будет считаться оплаченным, хотя платёж меньше ежемесячного."
           }
         }
       }

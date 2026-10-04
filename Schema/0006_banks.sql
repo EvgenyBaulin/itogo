@@ -63,3 +63,11 @@ ALTER TABLE payment_methods ADD COLUMN cashback_points_account_id TEXT
   CHECK (cashback_points_account_id IS NULL OR cashback_points_account_id <> id);
 CREATE INDEX idx_payment_methods_points ON payment_methods(cashback_points_account_id)
   WHERE cashback_points_account_id IS NOT NULL;
+
+-- 4. A payment that closes its term ------------------------------------------------------------
+-- «В этом месяце больше платежей не будет»: on the line of a payment, the due the payment was
+-- made for is closed although the payment is smaller than the monthly one. The dues of a debt are
+-- paid by money (`DebtDues`); this is the owner's word that no more money comes toward this one.
+-- Only a payment carries it, and the lines of 1.2 do not: they closed their dues by counting.
+ALTER TABLE debt_entries ADD COLUMN closes_term INTEGER NOT NULL DEFAULT 0
+  CHECK (closes_term IN (0, 1));

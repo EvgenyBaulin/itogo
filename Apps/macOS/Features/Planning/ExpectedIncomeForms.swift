@@ -17,6 +17,8 @@ struct ExpectedIncomeForm: View {
   @State private var loaded = false
   /// «On the last day of the month» of a recurring income; read off the stored day.
   @State private var lastDay = false
+  /// The other days of the month the income comes on (`ExpectedIncome.terms`), of a new income.
+  @State private var extraTerms: [IncomeTerm] = []
 
   var body: some View {
     let choices = PlanningChoices(compute, environment)
@@ -67,6 +69,42 @@ struct ExpectedIncomeForm: View {
                 followTheLastDay()
               }))
         }
+        if offersTerms {
+          ForEach($extraTerms) { $term in
+            HStack {
+              Stepper(value: $term.day, in: 1...31) {
+                Text(
+                  verbatim: term.isLastDay
+                    ? t("form.expected.termLast")
+                    : environment.language.format(
+                      "form.expected.termDay", table: "Planning", term.day))
+              }
+              AmountField(amount: $term.amountE4, locale: environment.language.locale)
+                .frame(maxWidth: 140)
+              Button {
+                extraTerms.removeAll { $0.id == term.id }
+              } label: {
+                Image(systemName: "minus.circle")
+              }
+              .buttonStyle(.borderless)
+              .help(t("form.expected.termRemove"))
+              .accessibilityLabel(Text(verbatim: t("form.expected.termRemove")))
+            }
+          }
+          if extraTerms.count < ExpectedIncome.maxExtraTerms {
+            Button {
+              extraTerms.append(IncomeTerm(day: 31, amountE4: income.totalE4))
+            } label: {
+              Label {
+                Text(verbatim: t("form.expected.termAdd"))
+              } icon: {
+                Image(systemName: "plus")
+              }
+            }
+            .help(t("form.expected.termHint"))
+            .accessibilityIdentifier("expected.termAdd")
+          }
+        }
         if income.kind == .recurring {
           Picker(
             t("form.freq"),
@@ -116,8 +154,12 @@ struct ExpectedIncomeForm: View {
             && income.totalE4.raw > 0
         ) {
           guard let dependencies else { return false }
-          return PlanningActions(dependencies).save(
-            income.readyToSave(today: environment.today, lastDay: offersLastDay && lastDay))
+          let ready = income.readyToSave(
+            today: environment.today, lastDay: offersLastDay && lastDay)
+          // The other terms of the month are incomes of their own, written with this one in one
+          // step: one ⌘Z takes them all back.
+          let others = offersTerms ? income.terms(extraTerms, today: environment.today) : []
+          return PlanningActions(dependencies).save([ready] + others)
         }
       }
     }
@@ -139,6 +181,12 @@ struct ExpectedIncomeForm: View {
   }
 
   private var offersLastDay: Bool { income.offersLastDay }
+
+  /// «Ещё срок в месяце» is offered for a new income by the month; a saved one is one income, and
+  /// another term is made from a new form.
+  private var offersTerms: Bool {
+    original == nil && income.kind == .recurring && (income.freq ?? .monthly) == .monthly
+  }
 
   private func followTheLastDay() { income.followTheLastDay(&lastDay, today: environment.today) }
 
@@ -215,6 +263,60 @@ extension ExpectedIncome {
       saved.day = nil
     }
     return saved
+  }
+}
+
+/// One more day of the month an income comes on, and how much comes then — «Ещё срок в месяце».
+struct IncomeTerm: Hashable, Identifiable {
+  var id = UUID()
+  /// 1…31; 31 is the last day of the month.
+  var day: Int
+  var amountE4: AmountE4
+
+  init(day: Int = 31, amountE4: AmountE4 = .zero) {
+    self.day = min(max(day, 1), 31)
+    self.amountE4 = amountE4
+  }
+
+  /// Whether this term is the last day of the month.
+  var isLastDay: Bool { day == 31 }
+}
+
+extension ExpectedIncome {
+  /// Terms more than this a month do not fit one form.
+  static let maxExtraTerms = 3
+
+  /// The other terms of an income that comes several times a month — the parents' money on the
+  /// 15th and on the last day, 25,000 each —: for every term with an amount a monthly recurring
+  /// copy of this income (the same name, category, person, account and currency) with that term's
+  /// amount and its day, first due on that day in the month of this income's first due date, or
+  /// in the next month when that day has passed in it. Each is an income of its own, so every
+  /// term is due, received and linked on its own. Only an income by the month has terms, and at
+  /// most `maxExtraTerms` are made. The rows are ready to save (`readyToSave`).
+  func terms(_ terms: [IncomeTerm], today: DateOnly) -> [ExpectedIncome] {
+    guard kind == .recurring, (freq ?? .monthly) == .monthly else { return [] }
+    let first = dueDate ?? today
+    return terms.prefix(Self.maxExtraTerms).compactMap { term in
+      guard term.amountE4.raw > 0 else { return nil }
+      var copy = self
+      copy.id = UUID()
+      copy.freq = .monthly
+      copy.totalE4 = term.amountE4
+      copy.closed = false
+      var due = Self.date(of: term, in: first.monthKey)
+      if due < first { due = Self.date(of: term, in: first.monthKey.adding(months: 1)) }
+      copy.dueDate = due
+      // The day of the rule is the term's own, not the one a short month clipped its first due
+      // date to: the 30th of February is 28 February once and the 30th every month after.
+      var ready = copy.readyToSave(today: today, lastDay: term.isLastDay)
+      ready.day = term.isLastDay ? MonthEnd.day(freq: .monthly, month: nil) : term.day
+      return ready
+    }
+  }
+
+  /// The day of `term` in `month`, clipped to its length: the last day for 31.
+  private static func date(of term: IncomeTerm, in month: MonthKey) -> DateOnly {
+    DateOnly(year: month.year, month: month.month, day: min(term.day, month.dayCount))
   }
 }
 

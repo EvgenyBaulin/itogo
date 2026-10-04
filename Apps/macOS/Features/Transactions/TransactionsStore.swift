@@ -582,6 +582,18 @@ public final class TransactionsStore {
       paidDebts: debts.paid)
   }
 
+  /// The closed debts deleting `ids` leaves owed again: the payment that closed them goes with
+  /// the operation, and the debt stays closed unless the owner opens it
+  /// (`DebtRules.closedByDeleting`). Of the operations the rules let go, as the lists have them.
+  public func debtsClosedBy(deleting ids: some Collection<UUID>) -> [Debt] {
+    guard let dataset = listing?.dataset, !ids.isEmpty else { return [] }
+    let gone = Set(
+      Self.deletable(
+        entries(ids: Set(ids)), refunds: listing?.refundIndex ?? .empty, debts: deletionDebts()))
+    return DebtRules.closedByDeleting(
+      gone, debts: dataset.debts, journal: dataset.planning.debtEntries)
+  }
+
   /// The debts a deletion asks about: the deleted ones, and those something ever paid
   /// (`DebtRules.paidDebts`). A purchase on credit of a deleted debt goes like any other, unless
   /// its debt was paid: then the money that left the account would be in no figure.
@@ -726,9 +738,15 @@ public final class TransactionsStore {
   /// the lists have them now —, so they go in only when it takes exactly those. When one was
   /// deleted elsewhere meanwhile nothing is written, and the screen asks for the deletion again
   /// (`WriteFailureCause.planOutdated`).
+  ///
+  /// `reopening` are the closed debts the owner asked to open again — «Удалить и открыть долг»:
+  /// each is opened in the same change and by the same ⌘Z when this deletion really leaves it
+  /// closed with something owed (`debtsClosedBy(deleting:)`); a debt it does not leave so is
+  /// kept as it is.
   @discardableResult
   public func delete(
-    ids: [UUID], settling: [Transfer] = [], planned: Set<UUID>? = nil, file: String = #fileID
+    ids: [UUID], settling: [Transfer] = [], planned: Set<UUID>? = nil,
+    reopening: Set<UUID> = [], file: String = #fileID
   ) -> Bool {
     guard !refuses("delete(ids:)", file), let repository, !isWritingInBackground else {
       return false
@@ -745,8 +763,10 @@ public final class TransactionsStore {
     }
     let (transfers, kept) = transferDeletions(among: ids)
     let ids = kept.isEmpty ? ids : ids.filter { kept[$0] == nil }
-    if !transfers.isEmpty || !settling.isEmpty {
-      return delete(ids, with: transfers, settling: settling, planned: planned, file: file)
+    let opened = debtsClosedBy(deleting: ids).filter { reopening.contains($0.id) }
+    if !transfers.isEmpty || !settling.isEmpty || !opened.isEmpty {
+      return delete(
+        ids, with: transfers, settling: settling, reopening: opened, planned: planned, file: file)
     }
     if ids.isEmpty { return kept.isEmpty }
     // A purchase a live refund takes money back from stays: the write refuses it, and would
@@ -830,7 +850,7 @@ public final class TransactionsStore {
   /// rows are written off the main thread.
   private func delete(
     _ ids: [UUID], with transfers: [Transfer], settling: [Transfer] = [],
-    planned: Set<UUID>? = nil, file: String
+    reopening: [Debt] = [], planned: Set<UUID>? = nil, file: String
   ) -> Bool {
     guard let planning else { return false }
     let transferIds = Set(transfers.map(\.id))
@@ -840,8 +860,15 @@ public final class TransactionsStore {
     var gone = Self.deletable(
       operations, refunds: listing?.refundIndex ?? .empty, debts: deletionDebts())
     for fee in feeIds(of: transfers) where !gone.contains(fee) { gone.append(fee) }
+    // A debt the deletion leaves closed with something owed, which the owner asked to open: the
+    // same change opens it, so one ⌘Z gives back the operation and the closing together.
+    let reopened = reopening.map { debt -> Debt in
+      var open = debt
+      open.closed = false
+      return open
+    }
     let change = PlanningChange(
-      upsert: PlanningRows(transfers: settling),
+      upsert: PlanningRows(debts: reopened, transfers: settling),
       delete: PlanningRowIDs(transfers: transfers.map(\.id)), softDeleted: gone, at: Date(),
       settlingPlanned: settling.isEmpty ? nil : planned ?? Set(gone))
     if Self.writesInBackground(gone.count + transfers.count) {

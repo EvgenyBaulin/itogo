@@ -104,6 +104,39 @@ struct SubscriptionCandidatesTests {
       ])
   }
 
+  /// A subscription found in the history is paid from the account — and the card — of its
+  /// latest purchase: the payment made of it starts there, so the screen of that account lists it
+  /// and the free sum holds it back on the right account.
+  @Test func aCandidateNamesTheAccountAndTheCardOfItsLatestPurchase() {
+    let apple = Fx.id(60)
+    let old = Fx.id(61)
+    let appleCard = Fx.id(62)
+    var entries = [
+      ("2026-06-02", old), ("2026-07-02", apple), ("2026-08-02", apple), ("2026-09-02", apple),
+    ].enumerated().map { index, row in
+      Fx.operation(index + 1, row.0, "199", note: "Cloud", method: row.1)
+    }
+    entries[entries.count - 1].transaction.cardId = appleCard
+    let found = SubscriptionCandidates.find(
+      ledger: Fx.ledger(entries), book: .empty, today: today)
+    #expect(found.count == 1)
+    #expect(found.first?.paymentMethodId == apple, "the latest purchase decides")
+    #expect(found.first?.cardId == appleCard)
+  }
+
+  /// With no account on the latest purchase the candidate names none: the payment is the main
+  /// account's, as a payment of no account always was.
+  @Test func aCandidateWithoutAnAccountNamesNone() {
+    let entries = [("2026-06-02", "100"), ("2026-07-02", "100"), ("2026-08-02", "100")]
+      .enumerated().map { index, row in
+        Fx.operation(index + 1, row.0, row.1, note: "Cloud")
+      }
+    let found = SubscriptionCandidates.find(
+      ledger: Fx.ledger(entries), book: .empty, today: today)
+    #expect(found.first?.paymentMethodId == nil)
+    #expect(found.first?.cardId == nil)
+  }
+
   /// A median of an even count is the mean of the two middle amounts.
   @Test func theTypicalAmountIsTheMedian() {
     let entries = [

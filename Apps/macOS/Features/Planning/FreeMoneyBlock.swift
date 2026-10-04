@@ -258,21 +258,36 @@ struct FreeMoneyBlock: View {
     .accessibilityElement(children: .combine)
   }
 
+  /// The two switches of what the grey line holds back: the goals' plans and the budgets of
+  /// events. A setting, not an action: the observation of the database recounts the block.
   private func reserveSwitch(_ snapshot: DataSnapshot) -> some View {
+    let settings = snapshot.planning.book.settings
+    return VStack(alignment: .leading, spacing: 4) {
+      settingSwitch(
+        PlanningSettings.reserveGoalPlanKey, isOn: settings.reserveGoalPlan,
+        label: "settings.planning.reserve")
+      settingSwitch(
+        PlanningSettings.reserveEventBudgetsKey, isOn: settings.reserveEventBudgets,
+        label: "settings.planning.reserveEvents"
+      )
+      .accessibilityIdentifier("free.reserveEvents")
+    }
+  }
+
+  private func settingSwitch(_ key: String, isOn: Bool, label: String) -> some View {
     Toggle(
       isOn: Binding(
-        get: { snapshot.planning.book.settings.reserveGoalPlan },
+        get: { isOn },
         set: { reserve in
-          // A setting, not an action; the observation of the database recounts the block.
           if !environment.attempt(
             "settings.planning", on: environment.settings,
-            { try $0.set(PlanningSettings.reserveGoalPlanKey, to: reserve ? "1" : "0") })
+            { try $0.set(key, to: reserve ? "1" : "0") })
           {
             refused = true
           }
         })
     ) {
-      Text(verbatim: environment.language("settings.planning.reserve", table: "Settings"))
+      Text(verbatim: environment.language(label, table: "Settings"))
     }
     .toggleStyle(.checkbox)
     .font(.caption)

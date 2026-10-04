@@ -203,7 +203,8 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
       paymentMethodId: RowMapping.optionalUUID(row, "payment_method_id"),
       occurredAt: try RowMapping.optionalInstant(row, "occurred_at"),
       accountCurrency: RowMapping.currency(row, "account_currency"),
-      accountAmountE4: try RowMapping.optionalAmount(row, "account_amount_e4"))
+      accountAmountE4: try RowMapping.optionalAmount(row, "account_amount_e4"),
+      closesTerm: row["closes_term"] ?? false)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -222,5 +223,6 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
     container["occurred_at"] = StoredInstant.databaseValue(occurredAt)
     container["account_currency"] = accountCurrency?.code
     container["account_amount_e4"] = accountAmountE4?.raw
+    container["closes_term"] = closesTerm
   }
 }

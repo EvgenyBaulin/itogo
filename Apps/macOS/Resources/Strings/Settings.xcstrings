@@ -5494,6 +5494,40 @@
         }
       }
     },
+    "settings.planning.reserveEvents": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep back what is left of the event budgets in «Free to spend»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Учитывать остаток бюджетов событий в «Свободной сумме»"
+          }
+        }
+      }
+    },
+    "settings.planning.reserveEventsHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What is left of the budget of every event under way or about to start by the chosen date is not counted as free money; a payment tied to an event is part of that budget. Off, no budget is held back and a tied payment is held back as an ordinary one."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток бюджета каждого события, идущего сейчас или начинающегося до выбранной даты, не считается свободными деньгами; платёж, привязанный к событию, входит в этот остаток. Выключено — бюджеты событий не вычитаются, а привязанный платёж вычитается как обычный."
+          }
+        }
+      }
+    },
     "settings.planning.reserveHint": {
       "extractionState": "manual",
       "localizations": {

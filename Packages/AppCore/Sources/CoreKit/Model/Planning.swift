@@ -297,6 +297,7 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
   public static let reconcileEveryDaysKey = "planning.reconcileEveryDays"
   public static let savingsTargetKey = "planning.savingsTargetBp"
   public static let reserveGoalPlanKey = "planning.reserveGoalPlan"
+  public static let reserveEventBudgetsKey = "planning.reserveEventBudgets"
   public static let reconcileIncludesGoalSavingsKey = "planning.reconcileIncludesGoalSavings"
   public static let dismissedRemindersKey = "reminders.dismissed"
   /// The categories the difference of a reconciliation is written to — «Сверка» and its
@@ -319,6 +320,10 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
   public var savingsTargetBp: Int
   /// «Free to spend» keeps back what is left of this month's goal plans (default on).
   public var reserveGoalPlan: Bool
+  /// «Free to spend» keeps back what is left of the budgets of the events under way and soon to
+  /// come (default on); off, no budget is held back and a payment tied to an event is held back
+  /// as an ordinary one.
+  public var reserveEventBudgets: Bool
   /// Contributions to goals stay in the total I reconcile (default on).
   public var reconcileIncludesGoalSavings: Bool
   /// Ids of reminders put off until they change (`Reminder.id`).
@@ -349,11 +354,12 @@ public struct PlanningSettings: Hashable, Sendable, Codable {
     limitsTopN: Int? = 5, scheduledMatchRejections: Set<String> = [],
     goalSavingsValuation: GoalSavingsValuation = .today, firstCountKept: Set<UUID> = [],
     beforeCountAnswers: [UUID: Bool] = [:], reconcileExpenseCategoryId: UUID? = nil,
-    reconcileIncomeCategoryId: UUID? = nil
+    reconcileIncomeCategoryId: UUID? = nil, reserveEventBudgets: Bool = true
   ) {
     self.reconcileEveryDays = reconcileEveryDays
     self.savingsTargetBp = savingsTargetBp
     self.reserveGoalPlan = reserveGoalPlan
+    self.reserveEventBudgets = reserveEventBudgets
     self.reconcileIncludesGoalSavings = reconcileIncludesGoalSavings
     self.dismissedReminders = dismissedReminders
     self.limitsTopN = limitsTopN

@@ -141,6 +141,40 @@
         }
       }
     },
+    "bulk.deleteAndReopen": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete and Reopen the Debt «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить и открыть долг «%@»"
+          }
+        }
+      }
+    },
+    "bulk.deleteClosedDebt": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The payment closed a debt: %@. Once it is deleted money is owed on it again, and the debt stays closed unless you reopen it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платёж закрыл долг: %@. После удаления по нему снова должны, а сам долг останется закрытым, если его не открыть."
+          }
+        }
+      }
+    },
     "bulk.deleteDebtPayment": {
       "extractionState": "manual",
       "localizations": {

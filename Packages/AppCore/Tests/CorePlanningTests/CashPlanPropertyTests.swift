@@ -376,12 +376,13 @@ struct CashPlanPropertyTests {
       return (total, missing)
     }
 
-    /// Each payment closes the earliest due still unpaid: of the dues from the first one the
-    /// debt owes (its payment day, the last day of a shorter month, in the month it began or,
-    /// when that day came before the start — or on it, for a purchase on credit —, in the next)
-    /// through D, as many are paid as there are payments dated from the start through today —
-    /// operations on the debt and `payment` lines of its journal —; the rest is owed, never
-    /// more than the debt.
+    /// The money of the payments closes the earliest dues still unpaid: of the dues from the
+    /// first one the debt owes (its payment day, the last day of a shorter month, in the month it
+    /// began or, when that day came before the start — or on it, for a purchase on credit —, in
+    /// the next) through D, as many are paid as the money of the payments dated from the start
+    /// through today — operations on the debt and `payment` lines of its journal — covers, one
+    /// after another, a percent short of a due included; the rest is owed, less what was paid
+    /// toward the first of them, never more than the debt.
     func debts() -> AmountE4 {
       var total = AmountE4.zero
       // Only what I owe on open debts: money owed to me and closed debts ask for nothing.
@@ -406,14 +407,26 @@ struct CashPlanPropertyTests {
           }
         }
         let counts = { (day: DateOnly) in day >= start && day <= CashFx.today }
-        let operations = fx.entries.filter { entry in
+        var money: [(day: DateOnly, amount: AmountE4)] = fx.entries.filter { entry in
           entry.transaction.debtId == debt.id
             && counts(CalendarContext.utc.day(of: entry.transaction.occurredAt))
-        }.count
-        let lines = journal.filter { $0.kind == .payment && $0.date.map(counts) == true }.count
-        let unpaid = max(0, dues - operations - lines)
+        }.map { (CalendarContext.utc.day(of: $0.transaction.occurredAt), $0.transaction.amountE4) }
+        money += journal.filter { $0.kind == .payment && $0.date.map(counts) == true }
+          .compactMap { line in line.date.map { ($0, line.amountE4.magnitude) } }
+        // The money laid against the dues in the order of the days; a percent short is a due.
+        let slack = AmountE4(raw: payment.raw / 100)
+        var paid = 0
+        var kept = AmountE4.zero
+        for entry in money.sorted(by: { $0.day < $1.day }) {
+          kept += entry.amount
+          let covered = Int((kept + slack).raw / payment.raw)
+          paid += covered
+          kept = max(AmountE4.zero, kept - AmountE4(raw: payment.raw * Int64(covered)))
+        }
+        let unpaid = max(0, dues - paid)
         guard unpaid > 0 else { continue }
-        let owed = SubscriptionMath.rounded(payment.decimal * Decimal(unpaid))
+        let owed = max(
+          AmountE4.zero, SubscriptionMath.rounded(payment.decimal * Decimal(unpaid)) - kept)
         total += rubles(min(owed, balance), debt.currency) ?? .zero
       }
       return total

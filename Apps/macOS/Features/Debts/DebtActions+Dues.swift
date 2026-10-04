@@ -9,13 +9,16 @@ extension DebtActions {
   /// no account (`DebtRules.settledByCount`): the balance drops, the earliest unpaid due closes,
   /// and no money moves on any account. One write, one step of ⌘Z. What is left is read from
   /// the database at the moment of asking — the journal on screen when there is none to read.
+  ///
+  /// A due paid in part is taken for what is left of it: `owed` is that rest, the monthly payment
+  /// when not said.
   @discardableResult
-  func settle(debt: Debt, due: DateOnly) -> Bool {
+  func settle(debt: Debt, due: DateOnly, owed: AmountE4? = nil) -> Bool {
     let shown = planning.snapshot.map { snapshot in
       DebtRules.balance(of: debt.id, entries: snapshot.dataset.planning.debtEntries)
     }
     guard !debt.closed, let balance = balance(of: debt) ?? shown,
-      let line = DebtRules.settledByCount(debt: debt, due: due, balance: balance)
+      let line = DebtRules.settledByCount(debt: debt, due: due, balance: balance, owed: owed)
     else {
       AppLog.error(
         "planning.due.notSettled", .db, "a due date was not closed",

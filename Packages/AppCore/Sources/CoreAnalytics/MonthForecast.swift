@@ -58,10 +58,12 @@ public struct PlannedPayments: Hashable, Sendable {
       else { continue }
       let due = DebtDueState.payday(day, in: month)
       guard due > today, state.isUnpaid(due) else { continue }
+      // What is left of the due when part of it was paid.
+      let owed = state.owed(due, monthly: payment)
       if debt.currency == .rub {
-        debts += payment
+        debts += owed
       } else if let rate = rubPerUnit[debt.currency] {
-        debts += AmountE4.rounded(payment.decimal * rate)
+        debts += AmountE4.rounded(owed.decimal * rate)
       } else {
         missing.append(debt.id)
       }

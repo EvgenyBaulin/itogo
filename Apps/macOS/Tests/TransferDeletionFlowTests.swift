@@ -42,7 +42,7 @@ final class TransferDeletionFlowTests: XCTestCase {
     let confirmation = try XCTUnwrap(
       BulkConfirmation.deletion(
         of: [], transfers: [moved.id], transferSummary: summary, debts: [:]))
-    guard case .delete(let ids, _, _, _) = confirmation else {
+    guard case .delete(let ids, _, _, _, _) = confirmation else {
       return XCTFail("a deletion was expected")
     }
     XCTAssertEqual(ids, [moved.id])

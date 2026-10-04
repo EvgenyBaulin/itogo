@@ -992,6 +992,57 @@ final class DueDatesFlowTests: XCTestCase {
     XCTAssertEqual(try planning.scheduled().first?.nextDate, day("2026-09-05"))
   }
 
+  /// Rent nobody paid since June: four dues on 19 September. «Пропустить» of its overdue row
+  /// closes the earliest without an operation, «Пропустить все 4» closes them all; each is one step
+  /// of ⌘Z.
+  func testSkippingOverdueDuesIsOneStepOfUndo() throws {
+    let payment = ScheduledPayment(
+      name: "Rent", amountE4: AmountE4(whole: 30_000), paymentMethodId: main.id, day: 5,
+      nextDate: day("2026-06-05"))
+    var rows = PlanningRows.empty
+    rows.scheduled = [payment]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    let due = try XCTUnwrap(try show().planning.overdue.first)
+    XCTAssertEqual(due.moreOverdue, 3)
+
+    XCTAssertTrue(
+      RemindersSheet.skip(due, all: false, payment: payment, with: PlanningActions(deps)))
+    XCTAssertEqual(try planning.scheduled().first?.nextDate, day("2026-07-05"))
+    XCTAssertEqual(try transactions.entries(from: .distantPast, to: .distantFuture), [])
+    store.undo()
+    XCTAssertEqual(try planning.scheduled().first?.nextDate, day("2026-06-05"))
+
+    XCTAssertTrue(
+      RemindersSheet.skip(due, all: true, payment: payment, with: PlanningActions(deps)))
+    XCTAssertEqual(try planning.scheduled().first?.nextDate, day("2026-10-05"))
+    XCTAssertEqual(try transactions.entries(from: .distantPast, to: .distantFuture), [])
+    XCTAssertTrue(try show().planning.overdue.isEmpty, "nothing is overdue any more")
+    store.undo()
+    XCTAssertEqual(try planning.scheduled().first?.nextDate, day("2026-06-05"))
+    // What is left is the writing of the payment itself: a step for each skip, no more.
+    store.undo()
+    XCTAssertTrue(try planning.scheduled().isEmpty)
+    XCTAssertFalse(store.canUndo, "one step for each, nothing left")
+  }
+
+  /// «Завести» from a candidate starts a subscription paid from the account and the card of the
+  /// purchases it was found in: it shows on that account's screen at once.
+  func testASubscriptionMadeOfACandidateIsPaidFromTheAccountOfItsPurchases() throws {
+    let account = UUID()
+    let card = UUID()
+    let candidate = SubscriptionCandidate(
+      key: "cloud", placeId: nil, categoryId: nil, currency: .rub,
+      typicalAmount: AmountE4(whole: 199), freq: .monthly, occurrences: 4, lastDay: today,
+      paymentMethodId: account, cardId: card)
+    guard
+      case .newPayment(let payment, _) = PlanningSheet.subscription(from: candidate, name: "Cloud")
+    else { return XCTFail("a form for a new payment") }
+    XCTAssertEqual(payment.paymentMethodId, account)
+    XCTAssertEqual(payment.cardId, card)
+    XCTAssertEqual(payment.kind, .subscription)
+    XCTAssertEqual(payment.amountE4, AmountE4(whole: 199))
+  }
+
   /// The balance of Main as the pipeline shows it with `book` over the database.
   private func mainBalance(_ book: PlanningBook) throws -> AmountE4? {
     try show(book: book).planning.accounts.balances[

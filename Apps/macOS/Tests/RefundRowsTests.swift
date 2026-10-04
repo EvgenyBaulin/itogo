@@ -283,7 +283,7 @@ final class RefundRowsTests: XCTestCase {
     // The purchase alone stays: its refund would take back from nothing.
     let alone = try XCTUnwrap(
       BulkConfirmation.deletion(of: [purchase], refunds: ledger.refundIndex, debts: [:]))
-    guard case .delete(let ids, let plan, _, _) = alone else {
+    guard case .delete(let ids, let plan, _, _, _) = alone else {
       return XCTFail("a deletion was expected")
     }
     XCTAssertEqual(ids, [])
@@ -292,7 +292,7 @@ final class RefundRowsTests: XCTestCase {
     // With its refund both go, and they come to what the purchase counted: 2 000.
     let both = try XCTUnwrap(
       BulkConfirmation.deletion(of: [refund, purchase], refunds: ledger.refundIndex, debts: [:]))
-    guard case .delete(let bothIds, _, let totals, _) = both else {
+    guard case .delete(let bothIds, _, let totals, _, _) = both else {
       return XCTFail("a deletion was expected")
     }
     XCTAssertEqual(Set(bothIds), [purchase.id, refund.id])
@@ -301,7 +301,7 @@ final class RefundRowsTests: XCTestCase {
     // The refund alone comes to nothing: it counted in the purchase.
     let refundOnly = try XCTUnwrap(
       BulkConfirmation.deletion(of: [refund], refunds: ledger.refundIndex, debts: [:]))
-    guard case .delete(_, _, let refundTotals, _) = refundOnly else {
+    guard case .delete(_, _, let refundTotals, _, _) = refundOnly else {
       return XCTFail("a deletion was expected")
     }
     XCTAssertEqual(refundTotals.myExpenses, .zero)

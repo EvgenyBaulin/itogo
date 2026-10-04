@@ -52,6 +52,14 @@ struct PlanningSettingsView: View {
           Text(verbatim: t("settings.planning.reserve"))
           Text(verbatim: t("settings.planning.reserveHint"))
         }
+        Toggle(
+          isOn: Binding(
+            get: { values.reserveEventBudgets }, set: { save(\.reserveEventBudgets, $0) })
+        ) {
+          Text(verbatim: t("settings.planning.reserveEvents"))
+          Text(verbatim: t("settings.planning.reserveEventsHint"))
+        }
+        .accessibilityIdentifier("settings.planning.reserveEvents")
         // Where the money saved in goals is kept. On an account counted in the summary, the free
         // sum takes it off what can be spent now; on an account outside the summary it is not in
         // the balance, and taking it off would count it twice.

@@ -264,6 +264,59 @@ final class EntryCommitTests: XCTestCase {
     return model
   }
 
+  /// An income that names a debt owed to me is money back: «+1700 Маша» with «Долг: Маша» is
+  /// the same thing as «возврат денег 1700 от Маши» on her debt — the debt takes what is left of
+  /// it and closes, what is over is income in «Доплаты». The draft is written as money back, and
+  /// the category an income carried goes with the kind it no longer has.
+  func testAnIncomeThatNamesADebtOwedToMeIsWrittenAsMoneyBack() throws {
+    let lent = Debt(direction: .owedToMe, type: .personal, name: "Igor", paymentsAreExpenses: false)
+    let salary = CoreKit.Category(kind: .income, name: "Salary")
+    var rows = PlanningRows.empty
+    rows.debts = [lent]
+    rows.categories = [salary]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    let model = lineModel()
+    model.draft.kind = .income
+    model.draft.amount = AmountE4(whole: 1_700)
+    model.draft.debtId = lent.id
+    model.draft.normalizeSinglePart()
+    model.draft.parts[0].categoryId = salary.id
+    XCTAssertEqual(model.draftForSaving.kind, .reimbursement)
+    XCTAssertEqual(model.draftForSaving.debtId, lent.id, "it stays the payment of the debt")
+    XCTAssertNil(model.draftForSaving.parts[0].categoryId, "money back has no category")
+    XCTAssertEqual(model.draft.kind, .income, "the draft on screen is as the owner left it")
+    XCTAssertFalse(
+      model.recordsThroughReimbursementSheet, "it names the debt, so no sheet of parts")
+  }
+
+  /// An income on a debt I owe is money borrowed more, and one without a debt is income.
+  func testAnIncomeStaysIncomeUnlessItNamesADebtOwedToMe() throws {
+    let owed = Debt(direction: .iOwe, type: .loan, name: "Loan")
+    let lent = Debt(direction: .owedToMe, type: .personal, name: "Igor", paymentsAreExpenses: false)
+    var rows = PlanningRows.empty
+    rows.debts = [owed, lent]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: rows)))
+    let model = lineModel()
+    model.draft.kind = .income
+    model.draft.amount = AmountE4(whole: 1_700)
+    model.draft.normalizeSinglePart()
+    XCTAssertEqual(model.draftForSaving.kind, .income)
+    model.draft.debtId = owed.id
+    XCTAssertEqual(model.draftForSaving.kind, .income, "money got on a debt I owe grows it")
+    model.draft.debtId = lent.id
+    model.draft.kind = .expense
+    XCTAssertEqual(model.draftForSaving.kind, .expense, "money lent on a debt owed to me grows it")
+    // A debt closed since is no debt to be paid back.
+    var closed = lent
+    closed.closed = true
+    var reopened = PlanningRows.empty
+    reopened.debts = [closed]
+    XCTAssertTrue(store.apply(PlanningChange(upsert: reopened)))
+    model.reload()
+    model.draft.kind = .income
+    XCTAssertEqual(model.draftForSaving.kind, .income)
+  }
+
   /// An expense on the mortgage turned into a refund «без покупки»: a refund pays no debt, so
   /// nothing is written in the mortgage's journal — it used to grow by the refund.
   func testARefundWithoutAPurchaseMovesNoDebt() throws {

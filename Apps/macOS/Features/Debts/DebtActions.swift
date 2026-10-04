@@ -27,10 +27,14 @@ struct DebtActions {
   /// Money that changes hands now is a line of cash on an account — `account` while it is
   /// live, else the main one — at `moment`, with what that account was charged when it does
   /// not hold the debt's currency (`charged` when typed, else the prefill).
+  ///
+  /// A loan written on the day its payment falls due (`DebtTerms.asksAboutThisMonth`) is asked
+  /// whether this month's payment is made already: with `termPaid` the first line is followed by
+  /// a payment of nothing that closes the due of the day, so the first one owed is next month's.
   @discardableResult
   func create(
     _ debt: Debt, balance: AmountE4, on day: DateOnly, moneyMovedNow: Bool,
-    account: UUID? = nil, charged: Money? = nil, at moment: Date? = nil
+    account: UUID? = nil, charged: Money? = nil, at moment: Date? = nil, termPaid: Bool = false
   ) -> Bool {
     guard !balance.isNegative else { return false }
     // Named without the spaces around it: the Loans subcategory and the entry line's word
@@ -54,6 +58,13 @@ struct DebtActions {
         else { return false }
       }
       rows.debtEntries = [opening]
+      if termPaid {
+        rows.debtEntries.append(
+          DebtRules.makeEntry(
+            debtId: debt.id, kind: .payment, amountE4: .zero, date: day,
+            description: planning.environment.language("debts.monthPaid.note", table: "Debts"),
+            closesTerm: true))
+      }
     }
     return apply(PlanningChange(upsert: rows))
   }
@@ -161,10 +172,13 @@ struct DebtActions {
   /// The operation is on `paymentMethodId` while that account is live, else on the main one,
   /// with what the account was charged when it does not hold the debt's currency: `charged`
   /// when typed from the statement, else the prefill at the rate of the operation.
+  ///
+  /// With `closesTerm` — «в этом месяце больше платежей не будет» — the line says the due the
+  /// payment was made for is closed although the payment is smaller than the monthly one.
   @discardableResult
   func pay(
     _ debt: Debt, amount: AmountE4, on day: Date, paymentMethodId: UUID?, closing: Bool = false,
-    charged: Money? = nil
+    charged: Money? = nil, closesTerm: Bool = false
   ) -> Bool {
     guard !debt.closed else { return false }
     var rows = PlanningRows.empty
@@ -189,7 +203,7 @@ struct DebtActions {
     }
     guard
       let outcome = try? DebtRules.payment(
-        on: debt, amountE4: amount, date: date, transactionId: entry.id)
+        on: debt, amountE4: amount, date: date, transactionId: entry.id, closesTerm: closesTerm)
     else { return false }
     rows.debtEntries = [outcome.entry]
     if closing, let left = balance(of: debt), Self.paysOff(amount, balance: left) {

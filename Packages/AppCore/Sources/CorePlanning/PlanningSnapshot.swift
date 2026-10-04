@@ -347,7 +347,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
       rubPerUnit: rubPerUnit, matches: matches, goals: goals, debts: debts, events: events,
       reserveGoalPlan: book.settings.reserveGoalPlan,
       subtractGoalSavings: book.settings.reconcileIncludesGoalSavings, dayRates: dayRates,
-      goalSavingsValuation: book.settings.goalSavingsValuation)
+      goalSavingsValuation: book.settings.goalSavingsValuation,
+      reserveEventBudgets: book.settings.reserveEventBudgets)
     let still = IncomeEstimate.stillExpected(
       statuses: expected, today: today, through: end, ledger: ledger)
     return FreeMoney(
@@ -474,7 +475,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
       result.append(
         UpcomingPayment(
           kind: .debt, id: line.debt.id, name: line.debt.name, due: due,
-          currency: line.debt.currency, amount: amount, isOverdue: due < today))
+          currency: line.debt.currency, amount: line.dues.owed(due, monthly: amount),
+          isOverdue: due < today))
     }
 
     return result.sorted { left, right in

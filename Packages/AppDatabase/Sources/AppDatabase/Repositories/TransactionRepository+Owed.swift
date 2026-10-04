@@ -3,6 +3,23 @@ import CoreKit
 import Foundation
 import GRDB
 
+/// The rows of a debt owed to me that a money back writes with itself, when part of the money
+/// repays the debt of the person who gave it: the lines of the journal — each pointing at the
+/// operation that repaid —, and the debt itself when the repayment closes it.
+public struct DebtSettling: Hashable, Sendable {
+  public var lines: [DebtEntry]
+  public var debts: [Debt]
+
+  public init(lines: [DebtEntry] = [], debts: [Debt] = []) {
+    self.lines = lines
+    self.debts = debts
+  }
+
+  public static let none = DebtSettling()
+
+  public var isEmpty: Bool { lines.isEmpty && debts.isEmpty }
+}
+
 /// Everything recording one money back wrote, so that one ⌘Z takes it all back
 /// (`TransactionRepository.revertMoneyBack`).
 public struct MoneyBackWrite: Hashable, Sendable {
@@ -26,12 +43,16 @@ public struct MoneyBackWrite: Hashable, Sendable {
   /// back, so taking the money back is no new write of the purchase (the owner's latest hand
   /// rating of a description is the one written last).
   public var updatedAtBefore: [UUID: Date]
+  /// The lines of a debt's journal it wrote (`DebtSettling`): ⌘Z takes them away.
+  public var debtLines: [UUID]
+  /// The debts it closed, as they were: ⌘Z opens them again.
+  public var debtsBefore: [Debt]
 
   public init(
     created: [UUID] = [], closedPartIds: [UUID] = [], links: [UUID] = [],
     repricedBefore: [TransactionEntry] = [], refundsBefore: [TransactionEntry] = [],
     settlement: SettlementWrite = .empty, counts: CountsSettled = .none,
-    updatedAtBefore: [UUID: Date] = [:]
+    updatedAtBefore: [UUID: Date] = [:], debtLines: [UUID] = [], debtsBefore: [Debt] = []
   ) {
     self.created = created
     self.closedPartIds = closedPartIds
@@ -41,6 +62,8 @@ public struct MoneyBackWrite: Hashable, Sendable {
     self.settlement = settlement
     self.counts = counts
     self.updatedAtBefore = updatedAtBefore
+    self.debtLines = debtLines
+    self.debtsBefore = debtsBefore
   }
 
   /// Every operation the money back wrote or wrote over, by id: itself, its surplus and
@@ -110,13 +133,18 @@ extension TransactionRepository {
   ///
   /// The reimbursement and the operations it brings are given an account like any other
   /// (`assigningAccount`). The counts whose windows the money that came, or a purchase charged
-  /// anew, reached follow the books in the same write (`MoneyBackWrite.counts`). Returns
-  /// everything written, so that one ⌘Z takes it all back (`revertMoneyBack`).
+  /// anew, reached follow the books in the same write (`MoneyBackWrite.counts`).
+  ///
+  /// With `debt` — part of the money repays the debt owed to me by the person who gave it, the
+  /// operation of that repayment being one of `extra` — the lines of the journal and the closing
+  /// of the debt land in the same write (`DebtSettling`). Returns everything written, so that
+  /// one ⌘Z takes it all back (`revertMoneyBack`).
   @discardableResult
   public func apply(
     _ outcome: ReimbursementOutcome,
     reimbursement: TransactionEntry,
     extra: [TransactionEntry] = [],
+    debt: DebtSettling = .none,
     repricing: [UUID: Decimal] = [:],
     settlement: SettlementSetting = SettlementSetting(surplusNote: nil),
     calendar: CalendarContext = .system,
@@ -175,6 +203,18 @@ extension TransactionRepository {
         try Self.replaceParts(of: companion, db: db)
         write.created.append(companion.id)
       }
+      // The debt the money repays: its journal lines point at the operations just written, and
+      // a debt the repayment closes is kept as it was for ⌘Z.
+      for closed in debt.debts {
+        if let before = try Debt.fetchOne(db, key: closed.id.uuidString) {
+          write.debtsBefore.append(before)
+        }
+        try closed.save(db)
+      }
+      for line in debt.lines {
+        try line.save(db)
+        write.debtLines.append(line.id)
+      }
       for link in outcome.links {
         try link.insert(db)
         write.links.append(link.id)
@@ -210,6 +250,15 @@ extension TransactionRepository {
     let context = liveCounts
     return try writer.write { db in
       let standing = try Self.entries(ids: write.touchedIds, db: db)
+      // The lines of a debt's journal go first: their operations' deletion would only let them
+      // go, with nothing to point at. A debt the money back closed is open again.
+      for chunk in write.debtLines.map(\.uuidString).chunked(by: Self.chunkSize) {
+        try db.execute(
+          sql:
+            "DELETE FROM debt_entries WHERE id IN (\(databaseQuestionMarks(count: chunk.count)))",
+          arguments: StatementArguments(chunk))
+      }
+      for before in write.debtsBefore { try before.save(db) }
       _ = try CoreKit.Transaction.deleteAll(db, keys: write.created.map(\.uuidString))
       let reopening = try write.closedPartIds.filter {
         try String.fetchOne(

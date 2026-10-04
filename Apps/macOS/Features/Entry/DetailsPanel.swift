@@ -466,6 +466,15 @@ struct DetailsPanel: View {
         .disabled(moneyLocked)
         .accessibilityIdentifier("entry.debt")
       }
+      // Money that comes onto a debt owed to me is the debt paid back, not income.
+      if model.incomeIsMoneyBack {
+        GridRow {
+          Color.clear.frame(width: 1, height: 1)
+          caption("entry.debt.moneyBack")
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("entry.debt.moneyBack")
+        }
+      }
     }
   }
 
@@ -739,11 +748,33 @@ struct DetailsPanel: View {
         caption("entry.creditInDebts")
       }
 
+      // A payment smaller than the due of its debt may say that no more comes this month.
+      if offersClosingTerm {
+        Toggle(isOn: $model.closesDebtTerm) {
+          Text(verbatim: t("entry.closesTerm"))
+        }
+        .toggleStyle(.checkbox)
+        .help(t("entry.closesTerm.help"))
+        .accessibilityIdentifier("entry.closesTerm")
+      }
+
       if model.creditPlan != nil {
         creditFields
       }
     }
+    // The box goes with the offer: a payment made whole, or another debt, says nothing.
+    .onChange(of: offersClosingTerm) { _, offered in
+      if !offered { model.closesDebtTerm = false }
+    }
   }
+
+  /// The state of the dues of the debt the operation pays, as the planning last worked them out.
+  private var duesOfTheDebtPaid: DebtDueState? {
+    guard let id = model.debtBeingPaid?.id else { return nil }
+    return compute.snapshot?.planning.debts.iOwe.first { $0.debt.id == id }?.dues
+  }
+
+  private var offersClosingTerm: Bool { model.offersClosingTerm(dues: duesOfTheDebtPaid) }
 
   /// Which debt the purchase joins — an existing one or a new one — and how it is repaid.
   @ViewBuilder

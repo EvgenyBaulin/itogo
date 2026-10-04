@@ -43,6 +43,59 @@ struct OverdueDuesTests {
     #expect(overdue.map(\.countAfter) == [Fx.at("2026-09-10", 14), Fx.at("2026-09-10", 14)])
   }
 
+  /// «Пропустить все N»: skipping stops at the latest of the unpaid dues before today. Rent
+  /// nobody paid since June, today 19 September: four dues, the first 5 June, the last 5 September.
+  @Test func theLastOverdueDueIsWhereSkippingAllStops() {
+    var fx = Fx()
+    fx.scheduled = [Fx.payment(1, "Rent", "30000", day: 5, next: "2026-06-05")]
+    let due = fx.snapshot().overdue.first
+    #expect(due?.due == Fx.day("2026-06-05"))
+    #expect(due?.moreOverdue == 3)
+    #expect(due?.lastDue == Fx.day("2026-09-05"))
+    #expect(due?.skipping(all: false) == Fx.day("2026-06-05"))
+    #expect(due?.skipping(all: true) == Fx.day("2026-09-05"))
+  }
+
+  /// One overdue due is its own last: skipping one and skipping all are the same.
+  @Test func aSingleOverdueDueIsItsOwnLast() {
+    var fx = Fx()
+    fx.scheduled = [Fx.payment(1, "Rent", "30000", day: 5, next: "2026-09-05")]
+    let due = fx.snapshot().overdue.first
+    #expect(due?.moreOverdue == 0)
+    #expect(due?.lastDue == due?.due)
+    #expect(due?.skipping(all: true) == due?.skipping(all: false))
+  }
+
+  /// A due an ordinary operation paid is not among the unpaid ones, and the last one is still the
+  /// latest unpaid: rent of July paid, June, August and September are not.
+  @Test func aPaidDueInTheMiddleIsNotCounted() {
+    var fx = Fx()
+    fx.scheduled = [Fx.payment(1, "Rent", "30000", day: 5, next: "2026-06-05")]
+    fx.add(
+      .expense, "30000", at: Fx.at("2026-07-06", 12), category: Fx.housing,
+      link: .scheduled(paymentId: Fx.id(1), due: Fx.day("2026-07-05")))
+    let due = fx.snapshot().overdue.first
+    #expect(due?.due == Fx.day("2026-06-05"))
+    #expect(due?.moreOverdue == 2, "August and September stand with June")
+    #expect(due?.lastDue == Fx.day("2026-09-05"))
+  }
+
+  /// A debt has the same: the earliest unpaid due, and the last before today.
+  @Test func aDebtKnowsItsLastOverdueDueToo() {
+    var fx = Fx()
+    fx.debts = [Self.loan]
+    fx.debtEntries = [
+      DebtEntry(
+        debtId: Self.loan.id, date: Fx.day("2026-06-20"), amountE4: Fx.money("80000"),
+        kind: .borrowed)
+    ]
+    let due = fx.snapshot().overdue.first
+    #expect(due?.isDebt == true)
+    #expect(due?.due == Fx.day("2026-07-05"))
+    #expect(due?.lastDue == Fx.day("2026-09-05"))
+    #expect(due?.moreOverdue == 2)
+  }
+
   /// A count on the due day itself may hold the money; one before it cannot; none, nothing.
   @Test func countAfterOnlyWithACountOnOrAfterTheDueDay() {
     var fx = Fx()

@@ -56,6 +56,12 @@ struct ReimbursementSheet: View {
   /// Where «Received» came from: what the ticked parts cost, the rubles typed in the entry line
   /// — ticking a part spreads that money instead of replacing it —, or the owner's own typing.
   @State private var receivedSource: ReceivedSource
+  /// The open «Мне должны» debts and what is left on each: the money over the parts may repay
+  /// the debt of the person who gave it.
+  @State private var debts: [Debt] = []
+  @State private var debtBalances: [UUID: AmountE4] = [:]
+  /// «Сверх частей … — в счёт долга»: on by default; off, the surplus is income in «Доплаты».
+  @State private var surplusToDebt = true
 
   init(prefill: ReimbursementPrefill? = nil, recorded: @escaping () -> Void = {}) {
     self.prefill = prefill
@@ -211,6 +217,18 @@ struct ReimbursementSheet: View {
         .disabled(selected.isEmpty)
       }
 
+      // The person owes on a debt too, and more came back than the parts cost.
+      if let over = surplusEstimate, let target = surplusDebt {
+        Toggle(isOn: $surplusToDebt) {
+          Text(
+            verbatim: environment.language.format(
+              "moneyBack.surplusToDebt", table: "Entry", environment.money.exact(over),
+              target.debt.name))
+        }
+        .toggleStyle(.checkbox)
+        .accessibilityIdentifier("reimbursement.surplusToDebt")
+      }
+
       if let errorText {
         Text(verbatim: errorText)
           .font(.caption)
@@ -333,6 +351,30 @@ struct ReimbursementSheet: View {
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Entry") }
+
+  /// The money over the parts the figures of the sheet leave, in rubles; only for money in
+  /// rubles: the debt takes it in its own currency.
+  private var surplusEstimate: AmountE4? {
+    guard currency == .rub, let money = amountValue, !selectedParts.isEmpty else { return nil }
+    let owed = selectedParts.map(\.inRubles)
+    let allocated: AmountE4
+    if let allocation = distribution.allocation(over: owed) {
+      allocated = AmountE4.sum(allocation.map(\.amountE4))
+    } else {
+      allocated = min(money, AmountE4.sum(owed.map(\.amountE4)))
+    }
+    let over = money - allocated
+    return over >= MoneyBack.crumb ? over : nil
+  }
+
+  /// The debt of the person who gave the money that its surplus may repay.
+  private var surplusDebt: (debt: Debt, balance: AmountE4)? {
+    guard
+      let person = ReimbursementRecording.payer(chosen: personId, closing: selectedParts).personId
+    else { return nil }
+    return ReimbursementRecording.debtForSurplus(
+      of: person, in: .rub, among: debts, balances: debtBalances)
+  }
 
   /// The money that came back in rubles, which the parts share: at its rate when it is not in
   /// rubles.
@@ -554,6 +596,15 @@ struct ReimbursementSheet: View {
     accounts = (try? environment.references?.paymentMethods()) ?? []
     rates = (try? environment.rates?.table()) ?? RateTable()
     if accountId == nil { accountId = accounts.first(where: \.isDefault)?.id }
+    debts = ((try? environment.references?.debts()) ?? []).filter {
+      $0.direction == .owedToMe && !$0.closed
+    }
+    debtBalances = [:]
+    for debt in debts {
+      if let journal = try? environment.references?.debtEntries(debtId: debt.id) {
+        debtBalances[debt.id] = DebtRules.balance(entries: journal)
+      }
+    }
     purchases = [:]
     for id in Set(owed.filter { $0.currency != .rub }.map(\.transactionId)) {
       if let entry = try? environment.transactions?.entry(id: id) { purchases[id] = entry }
@@ -583,17 +634,29 @@ struct ReimbursementSheet: View {
       }
     }
     do {
-      let recording = try ReimbursementRecording.make(
+      let recordingSetting = try recordingSetting(repository)
+      var recording = try ReimbursementRecording.make(
         id: UUID(), received: amount, closing: parts, distribution: distribution,
         personId: personId, occurredAt: prefill?.occurredAt, note: prefill?.note,
         accountId: accountId,
         leg: Self.leg(for: currency, rubles: amount, account: account, figure: legFigure),
         money: currency == .rub ? nil : Money(amount: received, currency: currency),
         rate: terms?.rate, rateDate: terms?.date, rateSource: terms?.source,
-        setting: try recordingSetting(repository))
+        setting: recordingSetting)
+      var settling = DebtSettling.none
+      // The money over the parts repays the person's debt when the owner left the switch on.
+      if surplusToDebt, currency == .rub, let target = surplusDebt,
+        let split = try recording.repayingDebt(
+          target.debt, balance: target.balance,
+          on: environment.calendar.day(of: recording.reimbursement.transaction.occurredAt),
+          now: Date(), setting: recordingSetting)
+      {
+        recording = split.recording
+        settling = split.settling
+      }
       let write = try repository.apply(
         recording.outcome, reimbursement: recording.reimbursement, extra: recording.extra,
-        repricing: repricing,
+        debt: settling, repricing: repricing,
         settlement: SettlementSetting(surplusNote: t("reimbursement.surplus")),
         calendar: environment.calendar)
       if !write.repricedBefore.isEmpty {

@@ -403,10 +403,18 @@ struct PlanningActions {
 
   @discardableResult
   func save(_ income: ExpectedIncome) -> Bool {
-    var income = income
-    income.name = Self.trimmed(income.name)
+    save([income])
+  }
+
+  /// Incomes written in one change — the terms of one form — and so one step of ⌘Z.
+  @discardableResult
+  func save(_ incomes: [ExpectedIncome]) -> Bool {
     var rows = PlanningRows.empty
-    rows.expected = [income]
+    rows.expected = incomes.map { income in
+      var income = income
+      income.name = Self.trimmed(income.name)
+      return income
+    }
     return apply(PlanningChange(upsert: rows))
   }
 

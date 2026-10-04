@@ -8,8 +8,12 @@ enum BulkConfirmation {
   case edit(BulkEdit, ids: [UUID], plan: BulkEditPlan)
   /// `ids` are the operations and transfers that will go; `totals` is what the operations come
   /// to; `transfers` counts the transfers among `ids` and what their fees come to.
+  ///
+  /// `reopening` are the closed debts the deletion leaves owed again — the payment that closed
+  /// them is among the operations that go: the question offers «Удалить и открыть долг».
   case delete(
-    ids: [UUID], plan: BulkEditPlan, totals: RowTotals, transfers: TransferDeletion = .none)
+    ids: [UUID], plan: BulkEditPlan, totals: RowTotals, transfers: TransferDeletion = .none,
+    reopening: [Debt] = [])
 
   /// Deleting always asks first, one operation or many, from the menu or from the edit
   /// sheet: the same question with the same numbers. Transfers go with the operations, in the
@@ -25,7 +29,8 @@ enum BulkConfirmation {
   static func deletion(
     of entries: [TransactionEntry], transfers: [UUID] = [],
     transferSummary: TransferDeletion = .none, refunds: RefundIndex = .empty,
-    debts: [UUID: Debt], deletedDebts: Set<UUID> = [], paidDebts: Set<UUID> = []
+    debts: [UUID: Debt], deletedDebts: Set<UUID> = [], paidDebts: Set<UUID> = [],
+    reopening: [Debt] = []
   ) -> BulkConfirmation? {
     let plan = BulkEditRule.deletion(
       of: entries, refunds: refunds, deletedDebts: deletedDebts, paidDebts: paidDebts)
@@ -39,7 +44,7 @@ enum BulkConfirmation {
     return .delete(
       ids: plan.changedIds + transfers, plan: plan,
       totals: RowTotals(entries: plan.changed, debts: debts, refunds: refunds),
-      transfers: transferSummary)
+      transfers: transferSummary, reopening: plan.changed.isEmpty ? [] : reopening)
   }
 }
 
@@ -226,7 +231,8 @@ final class OperationActions {
       of: store.entries(ids: ids), transfers: store.transferIds(in: ids),
       transferSummary: store.transferDeletion(in: ids),
       refunds: store.listing?.refundIndex ?? .empty, debts: store.debts,
-      deletedDebts: owed.deleted, paidDebts: owed.paid)
+      deletedDebts: owed.deleted, paidDebts: owed.paid,
+      reopening: store.debtsClosedBy(deleting: ids))
   }
 }
 
@@ -612,7 +618,7 @@ struct ArchivedSettling: Identifiable {
     /// the money was worked out: the transfers the owner picks count theirs, and are written
     /// only with a write that still lands on exactly those.
     case edit(BulkEdit, ids: [UUID], rates: DayRates, planned: Set<UUID>? = nil)
-    case delete([UUID], planned: Set<UUID>? = nil)
+    case delete([UUID], planned: Set<UUID>? = nil, reopening: Set<UUID> = [])
   }
 
   let check: ArchivedMoneyCheck
@@ -659,9 +665,9 @@ private struct BulkConfirmationDialog: ViewModifier {
       check = store.archivedLeftovers(of: edit, ids: Set(ids), rates: rates, calendar: calendar)
       let planned = store.plan(edit, ids: Set(ids), rates: rates, calendar: calendar).changed
       write = .edit(edit, ids: ids, rates: rates, planned: Set(planned.map(\.id)))
-    case .delete(let ids, _):
+    case .delete(let ids, _, let reopening):
       check = store.archivedLeftovers(ofDeleting: ids)
-      write = .delete(ids, planned: store.deletionPlanned(of: ids))
+      write = .delete(ids, planned: store.deletionPlanned(of: ids), reopening: reopening)
     }
     guard !check.leftovers.isEmpty else {
       self.write(write, settling: [])
@@ -681,8 +687,9 @@ private struct BulkConfirmationDialog: ViewModifier {
       store.apply(
         edit, to: ids, rates: rates, calendar: environment.calendar, settling: settling,
         planned: planned)
-    case .delete(let ids, let planned):
-      let landed = store.delete(ids: ids, settling: settling, planned: planned)
+    case .delete(let ids, let planned, let reopening):
+      let landed = store.delete(
+        ids: ids, settling: settling, planned: planned, reopening: reopening)
       finished?(landed)
     }
   }
@@ -701,10 +708,20 @@ private struct BulkConfirmationDialog: ViewModifier {
         } else {
           Button(environment.language("action.ok"), role: .cancel) {}
         }
-      case .delete(let ids, _, _, _):
+      case .delete(let ids, _, _, _, let reopening):
         if !ids.isEmpty {
           Button(environment.language("action.delete"), role: .destructive) {
             confirmed(.delete(ids))
+          }
+          // A debt this payment had closed: deleted with it, it can be opened in the same step.
+          if !reopening.isEmpty {
+            Button(
+              environment.language.format(
+                "bulk.deleteAndReopen", table: "Transactions",
+                reopening.map(\.name).joined(separator: ", ")), role: .destructive
+            ) {
+              confirmed(.delete(ids, reopening: Set(reopening.map(\.id))))
+            }
           }
           Button(environment.language("action.cancel"), role: .cancel) {}
         } else {
@@ -764,7 +781,7 @@ enum BulkConfirmationText {
     case .edit(_, _, let plan):
       guard !plan.changed.isEmpty else { return language("bulk.nothingToChange", table: table) }
       return language.format("bulk.confirmEdit", table: table, counts: plan.changed.count)
-    case .delete(let ids, let plan, _, let transfers):
+    case .delete(let ids, let plan, _, let transfers, _):
       guard !ids.isEmpty else { return language("bulk.nothingToDelete", table: table) }
       // A transfer is not an operation: transfers alone are asked about as transfers.
       if let title = TransferDeletionText.title(
@@ -785,7 +802,7 @@ enum BulkConfirmationText {
         lines.append(language.format("bulk.splitWarning", table: table, counts: plan.splitCount))
       }
       lines += skipLines(plan, language: language)
-    case .delete(let ids, let plan, let totals, let transfers):
+    case .delete(let ids, let plan, let totals, let transfers, let reopening):
       if !totals.isEmpty { lines.append(RowTotalsText.line(totals, environment: environment)) }
       // The transfers besides the operations, and the fees that go with them.
       lines += TransferDeletionText.lines(
@@ -800,6 +817,13 @@ enum BulkConfirmationText {
       }
       if plan.changed.contains(where: { $0.transaction.debtId != nil }) {
         lines.append(language("bulk.deleteDebtPayment", table: table))
+      }
+      // The payment closed a debt: without it the debt is owed again, and stays closed unless
+      // the owner opens it.
+      if !reopening.isEmpty {
+        lines.append(
+          language.format(
+            "bulk.deleteClosedDebt", table: table, reopening.map(\.name).joined(separator: ", ")))
       }
       lines += skipLines(plan, language: language)
       if !ids.isEmpty { lines.append(language("bulk.undoHint", table: table)) }
