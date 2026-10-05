@@ -512,6 +512,192 @@ struct AccountForecastTests {
   }
 }
 
+/// Money that leaves an account without being my spending: what counts keep finding missing
+/// and what is paid for others and not yet back. Each goes on at the pace of the window.
+@Suite("Count losses and spending for others in the balance at the end of the month")
+struct AccountForecastOutflowTests {
+  typealias Fx = CashFx
+  typealias F = ForecastFx
+
+  /// The example with a history that began long before the window: the window is the full
+  /// 90 days, 21 June through 18 September, and 11 days are left. The purchase of May is
+  /// outside the window of the shares too.
+  static func longHistory() -> CashFx {
+    var fx = F.example()
+    fx.add(.expense, "100", at: Fx.at("2026-05-01", 12))
+    return fx
+  }
+
+  /// The difference a count of `account` wrote: an expense is money that disappeared, an
+  /// income money that appeared.
+  static func difference(
+    _ fx: inout CashFx, _ kind: TransactionKind, _ amount: String, at moment: Date,
+    account: UUID = CashFx.main
+  ) {
+    fx.add(
+      kind, amount, at: moment, account: account,
+      category: kind == .income ? Fx.salary : Fx.groceries,
+      link: .reconciledBalance(reconciliation: UUID(), balance: UUID()))
+  }
+
+  /// One purchase of `total` whose parts, in order, are paid for somebody else as
+  /// `reimbursable` says.
+  static func paidForOthers(
+    _ fx: inout CashFx, _ total: String, _ parts: [(String, Bool)], at moment: Date,
+    currency: CurrencyCode = .rub, account: UUID = CashFx.main
+  ) {
+    fx.add(.expense, total, at: moment, currency: currency, account: account)
+    let index = fx.entries.count - 1
+    let first = fx.entries[index].parts[0]
+    let rate = fx.entries[index].transaction.amountRubE4.decimal / Fx.money(total).decimal
+    fx.entries[index].parts = parts.enumerated().map { offset, part in
+      var copy = first
+      copy.id = Fx.id(800_000 + index * 10 + offset)
+      copy.amountE4 = Fx.money(part.0)
+      copy.amountRubE4 = SubscriptionMath.rounded(Fx.money(part.0).decimal * rate)
+      copy.reimbursable = part.1
+      return copy
+    }
+  }
+
+  static func flows(_ plan: AccountMonthPlan, _ key: BalanceKey) -> AccountMonthPlan.Flows? {
+    plan.flows.first { $0.key == key }
+  }
+
+  /// 900 ₽ went missing at a count of Main within the window: 900 / 90 × 11 = 110 ₽ more
+  /// leave by the end of the month, and every figure of Main's balance is 110 ₽ lower. Card
+  /// found 2,000 ₽ more than it should: a gain is not forecast, Card stays as it was.
+  @Test func aCountLossLowersItsPairAtThePace() throws {
+    let before = Self.longHistory()
+    var fx = before
+    Self.difference(&fx, .expense, "900", at: Fx.at("2026-08-16", 10))
+    Self.difference(&fx, .income, "2000", at: Fx.at("2026-09-16", 10), account: Fx.card)
+    let plan = F.plan(fx)
+    let main = try #require(Self.flows(plan, F.mainRub))
+    #expect(main.reconcileLoss == Fx.money("110"))
+    #expect(main.othersSpending == .zero)
+    #expect(Self.flows(plan, F.cardRub)?.reconcileLoss == .zero)
+    #expect(Self.flows(plan, F.freedomKzt)?.reconcileLoss == .zero)
+
+    let was = F.plan(before).forecast(remainder: F.remainder)
+    let now = plan.forecast(remainder: F.remainder)
+    let old = try #require(was.line(of: F.mainRub)?.balance)
+    let new = try #require(now.line(of: F.mainRub)?.balance)
+    #expect(new.low == old.low - Fx.money("110"))
+    #expect(new.middle == old.middle - Fx.money("110"))
+    #expect(new.high == old.high - Fx.money("110"))
+    #expect(now.line(of: F.cardRub)?.balance == was.line(of: F.cardRub)?.balance)
+    #expect(now.line(of: F.freedomKzt)?.balance == was.line(of: F.freedomKzt)?.balance)
+    let total = try #require(was.inSummaryTotalRub?.middle)
+    #expect(now.inSummaryTotalRub?.middle == total - Fx.money("110"))
+  }
+
+  /// Losses and gains of one pair are netted before the floor: 900 lost, 450 found — 450 / 90
+  /// × 11 = 55; more found than lost — nothing.
+  @Test func lossesAndGainsOfAPairAreNetted() {
+    var fx = Self.longHistory()
+    Self.difference(&fx, .expense, "900", at: Fx.at("2026-07-16", 10))
+    Self.difference(&fx, .income, "450", at: Fx.at("2026-08-16", 10))
+    #expect(Self.flows(F.plan(fx), F.mainRub)?.reconcileLoss == Fx.money("55"))
+    Self.difference(&fx, .income, "1000", at: Fx.at("2026-09-01", 10))
+    #expect(Self.flows(F.plan(fx), F.mainRub)?.reconcileLoss == .zero)
+  }
+
+  /// 1,800 ₽ paid from Main for somebody else, 900 ₽ of it back on Main: 900 / 90 × 11 = 110.
+  /// Money back onto Card is Card's, and Card never goes below zero. Half of a purchase of
+  /// 900 ₸ on Freedom, in tenge: 450 / 90 × 11 = 55 ₸.
+  @Test func spendingForOthersLessMoneyBackLowersItsPair() throws {
+    // The part of the tenge purchase that is mine is spending and moves the shares: it is in
+    // the book before too, so Main's share of the spending stays as it was.
+    var before = Self.longHistory()
+    Self.paidForOthers(
+      &before, "900", [("450", true), ("450", false)], at: Fx.at("2026-09-02", 12),
+      currency: Fx.tenge, account: Fx.freedom)
+    var fx = before
+    Self.paidForOthers(&fx, "1800", [("1800", true)], at: Fx.at("2026-09-01", 12))
+    fx.add(.reimbursement, "900", at: Fx.at("2026-09-05", 12), category: nil)
+    fx.add(.reimbursement, "5000", at: Fx.at("2026-09-05", 12), account: Fx.card, category: nil)
+    let plan = F.plan(fx)
+    let main = try #require(Self.flows(plan, F.mainRub))
+    #expect(main.othersSpending == Fx.money("110"))
+    #expect(main.reconcileLoss == .zero)
+    #expect(Self.flows(plan, F.cardRub)?.othersSpending == .zero)
+    #expect(Self.flows(plan, F.freedomKzt)?.othersSpending == Fx.money("55"))
+
+    let was = F.plan(before).forecast(remainder: F.remainder)
+    let now = plan.forecast(remainder: F.remainder)
+    let old = try #require(was.line(of: F.mainRub)?.balance)
+    let new = try #require(now.line(of: F.mainRub)?.balance)
+    #expect(new.middle == old.middle - Fx.money("110"))
+    #expect(new.low == old.low - Fx.money("110"))
+  }
+
+  /// More back than paid on a pair is nothing, not a raise; money back that repays a debt
+  /// «Мне должны» is the debt's, not the parts'.
+  @Test func moneyBackNeverRaisesAndADebtsIsNotCounted() {
+    var fx = Self.longHistory()
+    Self.paidForOthers(&fx, "1000", [("1000", true)], at: Fx.at("2026-09-01", 12))
+    fx.add(.reimbursement, "3000", at: Fx.at("2026-09-05", 12), category: nil)
+    #expect(Self.flows(F.plan(fx), F.mainRub)?.othersSpending == .zero)
+
+    var lent = Self.longHistory()
+    let friend = Debt(
+      id: Fx.id(311), direction: .owedToMe, type: .personal, name: "Friend")
+    lent.debts.append(friend)
+    Self.paidForOthers(&lent, "1800", [("1800", true)], at: Fx.at("2026-09-01", 12))
+    lent.add(.reimbursement, "900", at: Fx.at("2026-09-05", 12), category: nil, debt: friend.id)
+    #expect(Self.flows(F.plan(lent), F.mainRub)?.othersSpending == Fx.money("220"))
+  }
+
+  /// What is dated today or later is no pace; neither is an archived account's money, nor a
+  /// deleted operation's.
+  @Test func aheadTodayArchivedAndDeletedAreLeftOut() {
+    var fx = Self.longHistory()
+    Self.difference(&fx, .expense, "900", at: Fx.at("2026-09-25", 10))
+    Self.difference(&fx, .expense, "900", at: Fx.at("2026-09-19", 9))
+    Self.paidForOthers(&fx, "1800", [("1800", true)], at: Fx.at("2026-09-26", 12))
+    Self.paidForOthers(&fx, "1800", [("1800", true)], at: Fx.at("2026-09-19", 9))
+    let old = Fx.id(5)
+    fx.accounts.append(PaymentMethod(id: old, name: "Old", currency: .rub, archived: true))
+    Self.difference(&fx, .expense, "900", at: Fx.at("2026-09-01", 10), account: old)
+    Self.paidForOthers(&fx, "1800", [("1800", true)], at: Fx.at("2026-09-01", 12), account: old)
+    Self.paidForOthers(&fx, "1800", [("1800", true)], at: Fx.at("2026-09-02", 12))
+    fx.entries[fx.entries.count - 1].transaction.deletedAt = Fx.at("2026-09-03", 12)
+    let plan = F.plan(fx)
+    #expect(!plan.flows.isEmpty)
+    for flows in plan.flows {
+      #expect(flows.reconcileLoss == .zero, "\(flows.key)")
+      #expect(flows.othersSpending == .zero, "\(flows.key)")
+    }
+  }
+
+  /// A history of 49 days — 1 August through 18 September — is the window: 490 lost is
+  /// 490 / 49 × 11 = 110.
+  @Test func aShortHistoryIsAShortWindow() {
+    var fx = F.example()
+    Self.difference(&fx, .expense, "490", at: Fx.at("2026-09-01", 10))
+    #expect(Self.flows(F.plan(fx), F.mainRub)?.reconcileLoss == Fx.money("110"))
+  }
+
+  /// The last day of the month leaves no day to go on: nothing is forecast.
+  @Test func noDayLeftNoPace() {
+    var fx = Self.longHistory()
+    Self.difference(&fx, .expense, "900", at: Fx.at("2026-09-16", 10))
+    let plan = F.plan(fx, today: Fx.day("2026-09-30"), now: Fx.at("2026-09-30", 15))
+    #expect(Self.flows(plan, F.mainRub)?.reconcileLoss == .zero)
+  }
+
+  /// Both amounts are in the base: the band, the rubles and «may go below zero» follow it.
+  @Test func theBaseTakesBothAmounts() {
+    let account = PaymentMethod(id: Fx.main, name: "Main", currency: .rub)
+    let flows = AccountMonthPlan.Flows(
+      key: F.mainRub, account: account, now: Fx.money("1000"), writtenAhead: Fx.money("100"),
+      income: Fx.money("50"), scheduled: Fx.money("20"), debts: Fx.money("10"),
+      reconcileLoss: Fx.money("300"), othersSpending: Fx.money("900"))
+    #expect(flows.base == Fx.money("-80"))
+  }
+}
+
 /// Numbers for the properties of the forecast: SplitMix64, so a failure repeats.
 struct ForecastDice {
   private var state: UInt64

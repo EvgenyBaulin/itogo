@@ -78,6 +78,30 @@ final class ArchivedLegTextTests: XCTestCase {
         environment.money.exact(AmountE4(whole: 30_000), currency: .rub), "Сбер", "Наличные"))
   }
 
+  /// What an edit of the archived account's past leaves goes right after its last movement, in
+  /// the past: the line says that day, with its year — it can be a year ago —, and not «Сейчас».
+  func testATransferInThePastSaysItsDay() {
+    let names = [cash: "Наличные", sber: "Сбер"]
+    let earlier = leg(.earlier, 1_000, from: cash, to: sber, daysAhead: -40)
+    XCTAssertEqual(
+      ArchivedLegText.key(for: earlier, following: false), "archived.leftover.leg.earlier")
+    let lines = ArchivedLegText.lines([earlier], name: { names[$0] ?? "?" }, environment)
+    let day = environment.dates.longDay(environment.calendar.day(of: earlier.at))
+    XCTAssertEqual(
+      lines,
+      [
+        environment.format(
+          "archived.leftover.leg.earlier", table: AccountText.table, day,
+          environment.money.exact(AmountE4(whole: 1_000), currency: .rub), "Наличные", "Сбер")
+      ])
+    XCTAssertTrue(lines[0].contains(day), lines[0])
+    XCTAssertNotEqual(
+      lines[0],
+      environment.format(
+        "archived.leftover.leg.now", table: AccountText.table,
+        environment.money.exact(AmountE4(whole: 1_000), currency: .rub), "Наличные", "Сбер"))
+  }
+
   func testOneTransferIsOneLine() {
     let names = [cash: "Наличные", sber: "Сбер"]
     let lines = ArchivedLegText.lines(

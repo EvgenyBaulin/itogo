@@ -70,7 +70,9 @@ struct ArchivedMoneyTests {
       accounts: [sber, wallet, cash])
     #expect(check.unknown.isEmpty)
     #expect(
-      check.leftovers == [ArchivedLeftover(key: cashRub, amount: money(1_000), latest: at(7))])
+      check.leftovers == [
+        ArchivedLeftover(key: cashRub, amount: money(1_000), latest: at(7), settleAfter: at(7))
+      ])
   }
 
   /// A transfer «Сбер → Наличные» of 1,000 after the count, deleted: «Наличные» would fall to
@@ -90,7 +92,8 @@ struct ArchivedMoneyTests {
       check.leftovers[0], counterpart: sber.id, now: at(12), note: "n", id: id(30))
     #expect(settling.fromAccountId == sber.id && settling.toAccountId == cash.id)
     #expect(settling.fromAmountE4 == money(1_000) && settling.toAmountE4 == money(1_000))
-    #expect(settling.occurredAt == at(12))
+    // Nothing moves on the key after the deletion: the transfer follows its count.
+    #expect(settling.occurredAt == at(6).addingTimeInterval(1))
   }
 
   /// A change dated before the archived account's latest count changes that count's
@@ -139,12 +142,205 @@ struct ArchivedMoneyTests {
   /// would sit on the archived account from then on.
   @Test func aFutureChangeDatesItsTransferAfterIt() {
     let future = purchase(10, 700, on: cash.id, at: at(30))
+    var cheaper = future
+    cheaper.transaction.amountE4 = money(500)
+    cheaper.parts[0].amountE4 = money(500)
     let check = ArchivedMoney.leftovers(
-      removing: movement(future), adding: [], balances: balances(entries: [future]),
-      accounts: [sber, wallet, cash])
+      removing: movement(future), adding: movement(cheaper),
+      balances: balances(entries: [future]), accounts: [sber, wallet, cash])
     let settling = ArchivedMoney.settlingTransfer(
       check.leftovers[0], counterpart: sber.id, now: at(12), note: nil, id: id(30))
-    #expect(settling.occurredAt == at(30))
+    #expect(settling.occurredAt == at(30).addingTimeInterval(1))
+  }
+
+  // MARK: - The day of the transfer that settles a change
+
+  /// «Наличные», archived at zero: counted 5,000 at 06:00, a purchase of 5,000 at 07:00, a
+  /// purchase of 1,000 at 08:00 settled by 1,000 from «Сбер» at 08:00. Now is days later
+  /// unless said.
+  func archivedAtZero(now: Date = moment("2026-10-05")) -> (
+    books: AccountBalances, first: TransactionEntry, second: TransactionEntry, settled: Transfer
+  ) {
+    let first = purchase(10, 5_000, on: cash.id, at: at(7))
+    let second = purchase(11, 1_000, on: cash.id, at: at(8))
+    let settled = Transfer(
+      id: id(21), occurredAt: at(8), fromAccountId: sber.id, fromCurrency: .rub,
+      fromAmountE4: money(1_000), toAccountId: cash.id, toCurrency: .rub,
+      toAmountE4: money(1_000))
+    let books = balances(
+      entries: [first, second], transfers: [settled],
+      counted: [(cashRub, 5_000), (sberRub, 10_000)], now: now)
+    return (books, first, second, settled)
+  }
+
+  /// An edit of a past purchase on the archived account: the transfer that takes the money it
+  /// leaves goes a second after the last movement the key keeps — not now, days later, or the
+  /// money would sit on the archived account, in no total, all that time.
+  @Test func anEditInThePastSettlesASecondAfterTheLastMovement() {
+    let (books, first, second, settled) = archivedAtZero()
+    #expect(books[cashRub]?.amountE4 == .zero)
+    var cheaper = first
+    cheaper.transaction.amountE4 = money(4_000)
+    cheaper.parts[0].amountE4 = money(4_000)
+    let check = ArchivedMoney.leftovers(
+      removing: movement(first), adding: movement(cheaper), balances: books,
+      accounts: [sber, wallet, cash])
+    #expect(check.leftovers.map(\.amount) == [money(1_000)])
+    #expect(check.leftovers.map(\.settleAfter) == [at(8)])
+    let settling = ArchivedMoney.settlingTransfer(
+      check.leftovers[0], counterpart: sber.id, now: books.now, note: nil, id: id(30))
+    #expect(settling.occurredAt == at(8).addingTimeInterval(1))
+    #expect(settling.fromAccountId == cash.id && settling.toAccountId == sber.id)
+    #expect(settling.createdAt == books.now)
+    // The key is at zero from right after its last movement on, not only from now.
+    let after = balances(
+      entries: [cheaper, second], transfers: [settled, settling],
+      counted: [(cashRub, 5_000), (sberRub, 10_000)], now: books.now)
+    #expect(after.balance(cashRub, at: at(9)) == .zero)
+    #expect(after[cashRub]?.amountE4 == .zero)
+    #expect(after[sberRub]?.amountE4 == money(10_000))
+  }
+
+  /// The edit moves the purchase to a later moment than every other movement of the key: the
+  /// transfer goes a second after the purchase's new moment.
+  @Test func anEditMovedLaterSettlesAfterItsNewMoment() {
+    let (books, first, _, _) = archivedAtZero()
+    var moved = first
+    moved.transaction.occurredAt = at(10)
+    moved.transaction.amountE4 = money(4_000)
+    moved.parts[0].amountE4 = money(4_000)
+    let check = ArchivedMoney.leftovers(
+      removing: movement(first), adding: movement(moved), balances: books,
+      accounts: [sber, wallet, cash])
+    #expect(check.leftovers.map(\.settleAfter) == [at(10)])
+    let settling = ArchivedMoney.settlingTransfer(
+      check.leftovers[0], counterpart: sber.id, now: books.now, note: nil, id: id(30))
+    #expect(settling.occurredAt == at(10).addingTimeInterval(1))
+  }
+
+  /// Deleting a movement of the key: the transfer goes a second after the latest movement that
+  /// stays — the deleted one is not there any more.
+  @Test func deletingTheLatestMovementSettlesAfterTheOneBefore() {
+    let (books, first, second, settled) = archivedAtZero()
+    let both = ArchivedMoney.leftovers(
+      removing: movement(second) + ArchivedMoney.movements(of: settled), adding: [],
+      balances: books, accounts: [sber, wallet, cash])
+    #expect(both.leftovers.isEmpty, "the purchase and its transfer cancel out")
+
+    let alone = ArchivedMoney.leftovers(
+      removing: movement(second), adding: [], balances: books, accounts: [sber, wallet, cash])
+    #expect(alone.leftovers.map(\.amount) == [money(1_000)])
+    #expect(alone.leftovers.map(\.settleAfter) == [at(8)], "the transfer of 08:00 is still there")
+
+    // The latest two gone, and the first edited: the purchase of 07:00 is the last.
+    var cheaper = first
+    cheaper.transaction.amountE4 = money(4_000)
+    cheaper.parts[0].amountE4 = money(4_000)
+    let earlier = ArchivedMoney.leftovers(
+      removing: movement(first) + movement(second) + ArchivedMoney.movements(of: settled),
+      adding: movement(cheaper), balances: books, accounts: [sber, wallet, cash])
+    #expect(earlier.leftovers.map(\.amount) == [money(1_000)])
+    #expect(earlier.leftovers.map(\.settleAfter) == [at(7)])
+    let settling = ArchivedMoney.settlingTransfer(
+      earlier.leftovers[0], counterpart: sber.id, now: books.now, note: nil, id: id(30))
+    #expect(settling.occurredAt == at(7).addingTimeInterval(1))
+  }
+
+  /// The same movement twice in the books — two equal lines — and one of them taken away: the
+  /// other is still there.
+  @Test func aMovementTakenAwayOnceLeavesItsTwin() {
+    let late = purchase(12, 300, on: cash.id, at: at(9))
+    let books = balances(entries: [late, late], counted: [(cashRub, 600)], now: at(20))
+    #expect(books.latestMovement(of: cashRub, removing: movement(late)) == at(9))
+    #expect(books.latestMovement(of: cashRub, removing: movement(late) + movement(late)) == nil)
+    #expect(books.latestMovement(of: cashRub, removing: []) == at(9))
+  }
+
+  /// With nothing left on the key after its count, the transfer follows the count: before it,
+  /// it would change the count's difference and leave the money where it is.
+  @Test func withNothingAfterTheCountTheTransferFollowsTheCount() {
+    let (books, first, second, settled) = archivedAtZero()
+    let check = ArchivedMoney.leftovers(
+      removing: movement(first) + movement(second) + ArchivedMoney.movements(of: settled),
+      adding: [], balances: books, accounts: [sber, wallet, cash])
+    #expect(check.leftovers.map(\.amount) == [money(5_000)])
+    #expect(check.leftovers.map(\.settleAfter) == [at(6)])
+  }
+
+  /// Money typed ahead on the archived key: a change ahead is settled a second after the last
+  /// movement, ahead of now, as before.
+  @Test func aMovementTypedAheadSettlesAfterIt() {
+    let rent = purchase(13, 30_000, on: cash.id, at: at(84))
+    let back = Transfer(
+      id: id(22), occurredAt: at(84), fromAccountId: sber.id, fromCurrency: .rub,
+      fromAmountE4: money(30_000), toAccountId: cash.id, toCurrency: .rub,
+      toAmountE4: money(30_000))
+    let books = balances(
+      entries: [rent], transfers: [back], counted: [(cashRub, 0), (sberRub, 50_000)],
+      now: at(12))
+    var cheaper = rent
+    cheaper.transaction.amountE4 = money(25_000)
+    cheaper.parts[0].amountE4 = money(25_000)
+    let check = ArchivedMoney.leftovers(
+      removing: movement(rent), adding: movement(cheaper), balances: books,
+      accounts: [sber, wallet, cash])
+    #expect(check.leftovers.map(\.amount) == [money(5_000)])
+    let settling = ArchivedMoney.settlingTransfer(
+      check.leftovers[0], counterpart: sber.id, now: at(12), note: nil, id: id(30))
+    #expect(settling.occurredAt == at(84).addingTimeInterval(1))
+    #expect(
+      ArchivedMoney.legs(of: [settling], archived: cash.id, now: at(12)).map(\.when) == [.later])
+    let after = balances(
+      entries: [cheaper], transfers: [back, settling],
+      counted: [(cashRub, 0), (sberRub, 50_000)], now: at(96))
+    #expect(after[cashRub]?.amountE4 == .zero)
+    #expect(after[sberRub]?.amountE4 == money(25_000))
+  }
+
+  /// The last movement a hair before now: the transfer is dated now at the latest — still after
+  /// it —, so the question tells it as a transfer of now, not as money typed ahead.
+  @Test func aLastMovementJustBeforeNowSettlesNow() {
+    let now = at(12)
+    let leftover = ArchivedLeftover(
+      key: cashRub, amount: money(100), latest: now.addingTimeInterval(-0.4),
+      settleAfter: now.addingTimeInterval(-0.4))
+    let settling = ArchivedMoney.settlingTransfer(
+      leftover, counterpart: sber.id, now: now, note: nil, id: id(30))
+    #expect(settling.occurredAt == now)
+    #expect(ArchivedMoney.legs(of: [settling], archived: cash.id, now: now).map(\.when) == [.now])
+  }
+
+  /// A transfer dated in the past is told as such, with its moment, not as one of now.
+  @Test func aTransferInThePastIsAnEarlierLeg() {
+    let (books, first, _, _) = archivedAtZero()
+    var cheaper = first
+    cheaper.transaction.amountE4 = money(4_000)
+    cheaper.parts[0].amountE4 = money(4_000)
+    let check = ArchivedMoney.leftovers(
+      removing: movement(first), adding: movement(cheaper), balances: books,
+      accounts: [sber, wallet, cash])
+    let transfers = ArchivedMoney.settlingTransfers(
+      check.leftovers[0], counterpart: sber.id, now: books.now, note: nil)
+    #expect(transfers.map(\.occurredAt) == [at(8).addingTimeInterval(1)])
+    let legs = ArchivedMoney.legs(of: transfers, archived: cash.id, now: books.now)
+    #expect(legs.map(\.when) == [.earlier])
+    #expect(legs.map(\.at) == [at(8).addingTimeInterval(1)])
+  }
+
+  /// Archiving an account with money is not a change of its past: what it holds now still goes
+  /// now, and what is typed ahead with its latest movement.
+  @Test func archivingIsStillSettledNowAndLater() {
+    var live = cash
+    live.archived = false
+    let plain = balances(counted: [(cashRub, 1_000)])
+    let check = ArchivedMoney.balancesToMove(of: live, balances: plain)
+    #expect(check.leftovers.map(\.settleAfter) == [nil])
+    #expect(
+      ArchivedMoney.settlingTransfers(
+        check.leftovers[0], counterpart: sber.id, now: at(12), note: nil
+      ).map(\.occurredAt) == [at(12)])
+    let (books, _, _, _) = archivedAtZero(now: at(12))
+    #expect(ArchivedMoney.balancesToMove(of: live, balances: books).leftovers.isEmpty)
   }
 
   /// Only live accounts that hold the currency take the money, in the order of every menu:

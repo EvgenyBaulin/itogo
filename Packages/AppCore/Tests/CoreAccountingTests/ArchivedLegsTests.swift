@@ -69,6 +69,17 @@ struct ArchivedLegsTests {
     #expect(legs.map(\.returnsToArchived) == [false, false])
   }
 
+  /// What an edit of the archived account's past leaves goes right after its last movement, in
+  /// the past: an earlier leg, not one of now.
+  @Test func aTransferDatedInThePastIsAnEarlierLeg() {
+    let before = now.addingTimeInterval(-3 * 86_400)
+    let legs = ArchivedMoney.legs(
+      of: [transfer(1_000, from: cash, to: sber, at: before)], archived: cash, now: now)
+    #expect(legs.map(\.when) == [.earlier])
+    #expect(legs.map(\.at) == [before])
+    #expect(legs.map(\.returnsToArchived) == [false])
+  }
+
   @Test func noTransferIsNoLeg() {
     #expect(ArchivedMoney.legs(of: [], archived: cash, now: now).isEmpty)
   }

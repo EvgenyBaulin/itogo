@@ -1102,7 +1102,14 @@ final class TransactionEditorAccountsTests: XCTestCase {
       try repository.entry(id: purchase.id)?.transaction.amountE4, AmountE4(whole: 4_000))
     var dataset = try await DatasetRepository(writer: stack.writer).load(version: 0)
     XCTAssertEqual(dataset.transfers.map(\.id), settling.map(\.id))
+    XCTAssertEqual(
+      dataset.transfers.map(\.occurredAt), [moment(yesterday, 7).addingTimeInterval(1)],
+      "the money leaves the archived account a second after its last movement, not today")
     let after = TransactionsStore.balances(of: dataset)
+    XCTAssertEqual(
+      after.balance(
+        BalanceKey(accountId: cash.id, currency: .rub), at: moment(yesterday, 8)), .zero,
+      "and it is at zero from then on")
     XCTAssertEqual(
       after[BalanceKey(accountId: cash.id, currency: .rub)]?.amountE4, .zero,
       "the archived account stays at zero")

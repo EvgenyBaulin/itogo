@@ -562,6 +562,23 @@
         }
       }
     },
+    "account.forecast.countLosses": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Count losses (at the pace)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Потери сверки (по темпу)"
+          }
+        }
+      }
+    },
     "account.forecast.debts": {
       "extractionState": "manual",
       "localizations": {
@@ -575,6 +592,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Платежи по долгам"
+          }
+        }
+      }
+    },
+    "account.forecast.forOthers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spending for others less money back (at the pace)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Траты за других минус возвраты (по темпу)"
           }
         }
       }
@@ -3152,6 +3186,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "И %1$@ — перевод %2$@ с «%3$@» обратно на «%4$@», чтобы покрыть записанное вперёд."
+          }
+        }
+      }
+    },
+    "archived.leftover.leg.earlier": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On %1$@ — a transfer of %2$@ from «%3$@» to «%4$@», right after the last money that moved on the archived account."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ — перевод %2$@ с «%3$@» на «%4$@», сразу после последнего движения денег по счёту в архиве."
           }
         }
       }

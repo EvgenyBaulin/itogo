@@ -1446,9 +1446,15 @@ final class AccountsJourneyTests: XCTestCase {
     ).transfers(now: noon, note: "остаток")
     XCTAssertEqual(settling.first?.toAccountId, books.sber.id, "the main account is offered")
     XCTAssertEqual(
+      settling.map(\.occurredAt), [noon.addingTimeInterval(-5 * 3_600 + 1)],
+      "dated a second after the purchase, the last movement of the cash")
+    XCTAssertEqual(
       store.saveEdit(cheaper, calendar: environment.calendar, settling: settling), .saved)
 
     let after = try await freshBooks()
+    XCTAssertEqual(
+      after.dataset.transfers.filter { $0.id == settling.first?.id }.map(\.occurredAt),
+      [noon.addingTimeInterval(-5 * 3_600 + 1)], "and written with that moment")
     XCTAssertEqual(balance(after, books.cash.id, .rub), .zero, "the archived cash stays at zero")
     XCTAssertEqual(balance(after, books.sber.id, .rub), AmountE4(whole: 101_000))
     let snapshot = try await show()

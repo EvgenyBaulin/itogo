@@ -168,6 +168,11 @@ enum AppLaunch {
       compute.onSnapshot = { [store] snapshot in store.show(snapshot.ledger) }
       var wired = sources(stack, rateService, environment.calendar)
       if wired.models == nil { wired.models = models?(stack, environment) }
+      // Every full run — the launch, ⌘R, «Пересчитать» — first brings the counts to the books,
+      // the run of the launch leaning on the catch-up the open has just started.
+      if wired.settleCounts == nil, let settle = RunCountsSettle.live(environment) {
+        wired.settleCounts = { await settle.run() }
+      }
       compute.attach(wired, changes: stack.ledgerChanges())
       #if DEBUG
         // `--slow-pipeline`: the run of the launch is slowed down the way Debug → Pipeline

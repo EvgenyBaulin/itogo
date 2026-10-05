@@ -190,6 +190,13 @@ release-local: generate
 release-check:
 	@scripts/check-release.sh $(if $(CANDIDATE),--candidate "$(CANDIDATE)",$(V))
 
+# The release of a night, with nobody at the keyboard: checks, make verify, the commit, the
+# build and its signature, the push, CI, the GitHub release and the feed, in that order, never
+# asking and never forcing. One a night; a second run refuses. `ARGS=--dry-run` prints the
+# checks and the plan and changes nothing.
+night-release:
+	@$(AWAKE) bash scripts/night-release.sh $(ARGS)
+
 # A build from the repository is stopped by its path, never by its name: the owner's copy in
 # /Applications is called Itogo too, and may be open in the middle of an entry.
 run: build

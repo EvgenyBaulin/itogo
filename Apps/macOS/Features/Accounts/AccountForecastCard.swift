@@ -4,8 +4,9 @@ import SwiftUI
 /// «Прогноз остатка на 30 сентября» under the balances of an account: for each currency of the
 /// account, about how much will be on it at the end of the month, the interval, and what the
 /// figure is made of — the balance now, what is already written for later days, the expected
-/// income, the payments and subscriptions, the debt payments and the day-to-day spending by
-/// the account's share. Whole units everywhere: it is an estimate, and the exact balance is
+/// income, the payments and subscriptions, the debt payments, what counts keep finding missing,
+/// what is paid for others less money back, and the day-to-day spending by the account's
+/// share. Whole units everywhere: it is an estimate, and the exact balance is
 /// the card above it.
 ///
 /// The forecast step gives the day-to-day spending; everything else is the data of the moment
@@ -239,6 +240,15 @@ enum AccountForecastText {
       ]
       for part in parts where !isWholeZero(part.amount) {
         breakdown.append(Row(label: part.label, value: signed(part.amount)))
+      }
+      // Money that leaves without being my spending goes on at the pace of the window: an
+      // estimate, marked as the spending is.
+      let paced: [(label: String, amount: AmountE4)] = [
+        (t("account.forecast.countLosses"), -flows.reconcileLoss),
+        (t("account.forecast.forOthers"), -flows.othersSpending),
+      ]
+      for part in paced where !isWholeZero(part.amount) {
+        breakdown.append(Row(label: part.label, value: "≈\u{00A0}\(signed(part.amount))"))
       }
       if let spending = line.spending, !isWholeZero(spending.middle) {
         let share = line.shareBp.map { money.percent(basisPoints: $0, fractionDigits: 0) } ?? "—"

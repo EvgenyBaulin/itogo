@@ -15,6 +15,12 @@ struct ComputeSources: Sendable {
   /// Trains the category model and publishes it (step 4). A test that does not care about
   /// the model leaves it out.
   var models: CategoryModelService?
+  /// Brings every later count's difference to the books before the data step reads, so the
+  /// numbers of a full run already hold the differences as the books stand now
+  /// (`RunCountsSettle`). Only a full run goes through it, never a light reload. It never
+  /// throws: a catch-up that fails costs the run nothing but the catch-up. A test that builds
+  /// its own sources leaves it out.
+  var settleCounts: (@Sendable () async -> Void)? = nil
 
   /// The app's sources: the database of `stack` and the rate service. `language` gives the
   /// language the names of the accounts are ordered in, read at every load, so a language
@@ -85,6 +91,11 @@ struct ComputeSources: Sendable {
       },
       PipelineStep(ComputeStep.data) { _ in
         try await faults.hold(ComputeStep.data)
+        // The counts first: what the catch-up writes is in the read that follows.
+        if let settle = sources.settleCounts {
+          await settle()
+          try Task.checkCancellation()
+        }
         // Taken before the read: a write that lands during it is laid over it again.
         return try await sources.loadData(counter.value, today(), now())
       },
@@ -170,6 +181,103 @@ extension ComputeSources {
     MonthForecast.remainder(
       ledger: snapshot.ledger, today: today,
       scheduledOperations: snapshot.planning.matches.operationIds)
+  }
+}
+
+/// The catch-up of the counts at the start of every full run: every later count's difference
+/// follows the books again (`ReconciliationRepository.settleAll`), and a difference that came to
+/// zero takes its operation with it. Every write that moves money settles its own windows
+/// already; this is for what reached a window without settling it — an operation another
+/// program or a missed path wrote — so that ⌘R, not only the next launch, puts it right.
+///
+/// The open of the database starts the same catch-up beside the launch, and the run of the
+/// launch comes right after it: the first call waits for that one and settles nothing more,
+/// rather than reading the whole history twice at launch. Every later call waits for it too —
+/// a ⌘R in the first seconds — and then settles.
+final class RunCountsSettle: Sendable {
+  private let caughtUp: @Sendable () async -> Void
+  private let settle: @Sendable () async throws -> CountsSettled
+  /// Whether the first call — the run of the launch — has come.
+  private let launchRunCame = Mutex(false)
+
+  init(
+    caughtUp: @escaping @Sendable () async -> Void,
+    settle: @escaping @Sendable () async throws -> CountsSettled
+  ) {
+    self.caughtUp = caughtUp
+    self.settle = settle
+  }
+
+  /// The app's catch-up: the database of `environment`, in its calendar and with «Сверка»
+  /// named in the language of the interface, as every write of the app settles. `nil` without
+  /// an open database.
+  @MainActor
+  static func live(_ environment: AppEnvironment) -> RunCountsSettle? {
+    guard let stack = environment.stack, let context = environment.liveCounts else {
+      return nil
+    }
+    let repository = ReconciliationRepository(writer: stack.writer)
+    return RunCountsSettle(
+      caughtUp: { [weak environment] in await environment?.countsCaughtUp() },
+      settle: { try await repository.settleAllInBackground(context: context) })
+  }
+
+  /// Settles, unless this is the run of the launch; never throws — a failure is in the journal.
+  func run() async {
+    let isLaunchRun = launchRunCame.withLock { came in
+      defer { came = true }
+      return !came
+    }
+    await caughtUp()
+    guard !isLaunchRun else { return }
+    do {
+      CountsJournal.record(try await settle(), atOpen: false)
+    } catch is CancellationError {
+      // A run replaced by the next ⌘R: that one settles.
+    } catch {
+      CountsJournal.failed(error)
+    }
+  }
+}
+
+/// What a catch-up of the counts says in the journal, at the open and at a run alike: ids and
+/// counts only. A difference taken away because its count is gone, and a count whose
+/// difference still waits for a rate of the bank, are in the journal on their own — the second
+/// even when nothing was written.
+enum CountsJournal {
+  static func record(_ settled: CountsSettled, atOpen: Bool) {
+    if settled.orphansPurged > 0 {
+      AppLog.info(
+        "reconcile.orphansPurged", .db, "differences whose count is gone were taken away",
+        [LogPair("operations", .count(settled.orphansPurged))])
+    }
+    if settled.waitingForRate > 0 {
+      AppLog.warning(
+        "reconcile.waitsForRate", .db, "a difference in a foreign currency waits for a rate",
+        [LogPair("counts", .count(settled.waitingForRate))])
+    }
+    guard !settled.isEmpty else { return }
+    let pairs = [
+      LogPair("counts", .count(settled.countsChanged)),
+      LogPair("created", .count(settled.created)),
+      LogPair("rewritten", .count(settled.rewritten)),
+      LogPair("purged", .count(settled.purged)),
+      LogPair("modeChanged", .count(settled.modeChanged)),
+      LogPair("orphans", .count(settled.orphansPurged)),
+      LogPair("waitForRate", .count(settled.waitingForRate)),
+    ]
+    if atOpen {
+      AppLog.info("reconcile.settledAtOpen", .db, "the counts follow the books again", pairs)
+    } else {
+      AppLog.info(
+        "reconcile.settledAtRun", .db, "the counts follow the books again before a run", pairs)
+    }
+  }
+
+  static func failed(_ error: any Error) {
+    AppLog.error(
+      "reconcile.settleFailed", .db, "the counts could not follow the books",
+      [LogPair("error", .error(error))])
   }
 }
 

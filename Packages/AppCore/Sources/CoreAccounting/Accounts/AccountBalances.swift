@@ -270,6 +270,24 @@ public struct AccountBalances: Hashable, Sendable {
     balance(key, at: momentAhead(key))
   }
 
+  /// The moment of the latest movement of the key once `removed` are taken away — up to now
+  /// and after —, or `nil` when none is left. Each movement of `removed` takes away one equal
+  /// movement of the books, so of two equal lines one stays. A journal line with no date has
+  /// no moment and is never the latest.
+  public func latestMovement(of key: BalanceKey, removing removed: [AccountMovement]) -> Date? {
+    var taken: [AccountMovement: Int] = [:]
+    for movement in removed where movement.key == key { taken[movement, default: 0] += 1 }
+    for movement in (movementsByKey[key] ?? []).reversed() {
+      if let count = taken[movement], count > 0 {
+        taken[movement] = count - 1
+        continue
+      }
+      if case .undated = movement.timing { continue }
+      return movement.at
+    }
+    return nil
+  }
+
   /// Whether the key was ever counted or ever moved, at any moment.
   public func hasHistory(_ key: BalanceKey) -> Bool {
     !(anchorsByKey[key]?.isEmpty ?? true) || !(movementsByKey[key]?.isEmpty ?? true)

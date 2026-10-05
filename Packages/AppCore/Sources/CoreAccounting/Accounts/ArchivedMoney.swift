@@ -16,12 +16,23 @@ public struct ArchivedLeftover: Hashable, Sendable {
   /// zero in between too, when no total would count the money it held. `nil` for what a change
   /// leaves.
   public var heldNow: AmountE4?
+  /// For what a change leaves (`ArchivedMoney.leftovers`): the moment of the last movement of
+  /// the key once the change is made — every movement the books know, less the ones the change
+  /// takes away, plus the ones it puts in —, or of the key's latest count when that is later.
+  /// The transfer that settles the key is dated a second after it, so the money never sits on
+  /// the archived account between its last movement and now. `nil` for a whole balance, which
+  /// is settled now and later (`settlingTransfers`).
+  public var settleAfter: Date?
 
-  public init(key: BalanceKey, amount: AmountE4, latest: Date, heldNow: AmountE4? = nil) {
+  public init(
+    key: BalanceKey, amount: AmountE4, latest: Date, heldNow: AmountE4? = nil,
+    settleAfter: Date? = nil
+  ) {
     self.key = key
     self.amount = amount
     self.latest = latest
     self.heldNow = heldNow
+    self.settleAfter = settleAfter
   }
 
   /// The money the question about the key names: what it holds now when that is not zero —
@@ -51,7 +62,10 @@ public struct ArchivedMoneyCheck: Hashable, Sendable {
 /// that is archived — to pay what is typed ahead there.
 public struct SettlingLeg: Hashable, Sendable {
   public enum When: Hashable, Sendable {
-    /// Dated now or earlier: the money moves with the answer.
+    /// Dated in the past, right after the last movement of the archived account: what a change
+    /// of its past leaves is moved off from then on.
+    case earlier
+    /// Dated now: the money moves with the answer.
     case now
     /// Dated with an operation typed ahead.
     case later
@@ -85,17 +99,19 @@ public struct SettlingLeg: Hashable, Sendable {
 /// An account in the archive stays at zero. No total counts it, so money left on it would
 /// leave «Всего» for good, and money taken from it would be made out of nothing. An edit or a
 /// deletion that would do either — or the archive of an account that still holds money — is
-/// paired with a transfer between the archived key and a live account of the same currency,
-/// dated now — or with the latest money on the key typed ahead of now —, so the archived key is
-/// back at zero and the live account holds the real money. An account archived with money now
-/// and other money typed ahead is settled in two legs, now and then.
+/// paired with a transfer between the archived key and a live account of the same currency, so
+/// the archived key is back at zero and the live account holds the real money. What a change
+/// leaves goes a second after the key's last movement once the change is made — in the past or
+/// typed ahead —, so the money never sits on the archived account in between. An account
+/// archived with money is settled now, and money typed ahead on it then: two legs.
 ///
 /// Only what moves the balance counts: a change dated at or before the archived key's latest
 /// count changes that count's difference, not its balance, and a money-neutral edit (a comment,
 /// a category, a place) moves nothing at all.
 public enum ArchivedMoney {
   /// What the change — `old` movements taken away, `new` ones put in — leaves on every key of
-  /// an archived account among `accounts`, per key, the non-zero ones only, in key order. A key
+  /// an archived account among `accounts`, per key, the non-zero ones only, in key order, each
+  /// with the moment its settling transfer follows (`ArchivedLeftover.settleAfter`). A key
   /// that moves but was never counted goes to `unknown`.
   public static func leftovers(
     removing old: [AccountMovement], adding new: [AccountMovement], balances: AccountBalances,
@@ -119,9 +135,28 @@ public enum ArchivedMoney {
     for movement in new { add(movement, sign: 1) }
     let leftovers = sums.keys.sorted().compactMap { key -> ArchivedLeftover? in
       guard let amount = sums[key], !amount.isZero else { return nil }
-      return ArchivedLeftover(key: key, amount: amount, latest: latest[key] ?? balances.now)
+      return ArchivedLeftover(
+        key: key, amount: amount, latest: latest[key] ?? balances.now,
+        settleAfter: lastMoment(of: key, removing: old, adding: new, balances: balances))
     }
     return ArchivedMoneyCheck(leftovers: leftovers, unknown: unknown.sorted())
+  }
+
+  /// The last movement of the key once the change is made, or its latest count when that is
+  /// later: a transfer dated at or before the count would change the count's difference and
+  /// leave the money where it is.
+  private static func lastMoment(
+    of key: BalanceKey, removing old: [AccountMovement], adding new: [AccountMovement],
+    balances: AccountBalances
+  ) -> Date? {
+    var moments = new.filter { movement in
+      guard movement.key == key else { return false }
+      if case .undated = movement.timing { return false }
+      return true
+    }.map(\.at)
+    if let kept = balances.latestMovement(of: key, removing: old) { moments.append(kept) }
+    if let count = balances.latestAnchor(key)?.at { moments.append(count) }
+    return moments.max()
   }
 
   /// What archiving `account` leaves — or what an account already in the archive still holds:
@@ -163,14 +198,23 @@ public enum ArchivedMoney {
 
   /// The transfer that brings the key back to zero: money left on it goes from it to
   /// `counterpart`, money taken below its count comes from `counterpart` to it — the whole
-  /// amount, in the key's currency, dated `now` or the change's latest moment when that is
-  /// later.
+  /// amount, in the key's currency. What a change leaves is dated a second after the key's last
+  /// movement (`ArchivedLeftover.settleAfter`) — in the past, or ahead of now when that movement
+  /// is typed ahead; a last movement less than a second before now gives now, still after it.
+  /// Without that moment: `now`, or the change's latest moment when that is later.
   public static func settlingTransfer(
     _ leftover: ArchivedLeftover, counterpart: UUID, now: Date, note: String?, id: UUID
   ) -> Transfer {
     transfer(
       leftover.amount, of: leftover.key, counterpart: counterpart,
-      at: max(now, leftover.latest), now: now, note: note, id: id)
+      at: settlingMoment(of: leftover, now: now), now: now, note: note, id: id)
+  }
+
+  /// The moment `settlingTransfer` dates its transfer.
+  static func settlingMoment(of leftover: ArchivedLeftover, now: Date) -> Date {
+    guard let after = leftover.settleAfter else { return max(now, leftover.latest) }
+    let next = after.addingTimeInterval(1)
+    return after <= now ? min(next, now) : next
   }
 
   /// The transfers that keep the key at zero from now on. What a change leaves goes by one
@@ -206,7 +250,8 @@ public enum ArchivedMoney {
   public static func legs(of transfers: [Transfer], archived: UUID, now: Date) -> [SettlingLeg] {
     transfers.map { transfer in
       SettlingLeg(
-        when: transfer.occurredAt > now ? .later : .now, at: transfer.occurredAt,
+        when: transfer.occurredAt > now ? .later : transfer.occurredAt < now ? .earlier : .now,
+        at: transfer.occurredAt,
         amount: transfer.fromAmountE4, currency: transfer.fromCurrency,
         from: transfer.fromAccountId, to: transfer.toAccountId,
         returnsToArchived: transfer.toAccountId == archived)

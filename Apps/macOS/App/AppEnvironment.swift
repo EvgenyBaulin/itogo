@@ -705,6 +705,7 @@ public final class AppEnvironment {
     planning = nil
     anomalies = nil
     accounts = nil
+    liveCounts = nil
     // The services were built on this stack too, and a caller that holds the environment
     // reaches them directly: `scheduleBackup()`, `applyRate(...)`. Left wired, they went on
     // writing through a closed connection for the whole terminate-later window (SQLITE_MISUSE,
@@ -766,6 +767,7 @@ public final class AppEnvironment {
     // calendar; «Сверка» is made again, when it has to be, in the language of the interface.
     let liveCounts = LiveCountsContext(
       calendar: calendar, categoryName: language("categories.reconciliation", table: "Settings"))
+    self.liveCounts = liveCounts
     self.transactions = TransactionRepository(writer: stack.writer, liveCounts: liveCounts)
     self.references = ReferenceRepository(writer: stack.writer)
     self.settings = SettingsRepository(writer: stack.writer)
@@ -819,6 +821,11 @@ public final class AppEnvironment {
     let catchUp = ReconciliationRepository(writer: stack.writer)
     countsCatchUp = Task { await Self.settleCountsAtOpen(liveCounts, with: catchUp) }
   }
+
+  /// How every write of this database settles the counts: the owner's calendar and «Сверка» in
+  /// the language of the interface at the open. The catch-up of every full run settles with it
+  /// too (`RunCountsSettle`). `nil` without an open database.
+  @ObservationIgnored public private(set) var liveCounts: LiveCountsContext?
 
   /// The catch-up of the counts the open started (`settleCountsAtOpen`).
   @ObservationIgnored private var countsCatchUp: Task<Void, Never>?
@@ -913,33 +920,10 @@ public final class AppEnvironment {
     _ context: LiveCountsContext, with repository: ReconciliationRepository
   ) async {
     do {
-      let settled = try await repository.settleAllInBackground(context: context)
-      if settled.orphansPurged > 0 {
-        AppLog.info(
-          "reconcile.orphansPurged", .db, "differences whose count is gone were taken away",
-          [LogPair("operations", .count(settled.orphansPurged))])
-      }
-      if settled.waitingForRate > 0 {
-        AppLog.warning(
-          "reconcile.waitsForRate", .db, "a difference in a foreign currency waits for a rate",
-          [LogPair("counts", .count(settled.waitingForRate))])
-      }
-      guard !settled.isEmpty else { return }
-      AppLog.info(
-        "reconcile.settledAtOpen", .db, "the counts follow the books again",
-        [
-          LogPair("counts", .count(settled.countsChanged)),
-          LogPair("created", .count(settled.created)),
-          LogPair("rewritten", .count(settled.rewritten)),
-          LogPair("purged", .count(settled.purged)),
-          LogPair("modeChanged", .count(settled.modeChanged)),
-          LogPair("orphans", .count(settled.orphansPurged)),
-          LogPair("waitForRate", .count(settled.waitingForRate)),
-        ])
+      CountsJournal.record(
+        try await repository.settleAllInBackground(context: context), atOpen: true)
     } catch {
-      AppLog.error(
-        "reconcile.settleFailed", .db, "the counts could not follow the books",
-        [LogPair("error", .error(error))])
+      CountsJournal.failed(error)
     }
   }
 

@@ -78,6 +78,41 @@ final class AccountForecastCardTests: XCTestCase {
     ru.language.choice = .russian
   }
 
+  /// Money that leaves without being my spending — what counts keep finding missing, what is
+  /// paid for others less money back — has a line each, estimated, after the debts and before
+  /// the day-to-day spending; a line of nothing is left out.
+  func testCountLossesAndSpendingForOthersHaveTheirLines() {
+    var line = mainLine
+    line.flows.debts = whole(3_000)
+    line.flows.reconcileLoss = whole(110)
+    line.flows.othersSpending = whole(220)
+    let ru = environment(.russian)
+    let rows = AccountForecastText.pair(line, showsCurrency: false, ru).breakdown
+    XCTAssertEqual(
+      Array(rows.dropFirst(4).dropLast()),
+      [
+        AccountForecastText.Row(label: "Платежи по долгам", value: "−3,000\u{00A0}₽"),
+        AccountForecastText.Row(
+          label: "Потери сверки (по темпу)", value: "≈\u{00A0}−110\u{00A0}₽"),
+        AccountForecastText.Row(
+          label: "Траты за других минус возвраты (по темпу)", value: "≈\u{00A0}−220\u{00A0}₽"),
+      ])
+    XCTAssertTrue(rows.last?.label.hasPrefix("Повседневные траты") ?? false)
+
+    let en = environment(.english)
+    let english = AccountForecastText.pair(line, showsCurrency: false, en).breakdown.map(\.label)
+    XCTAssertTrue(english.contains("Count losses (at the pace)"), "\(english)")
+    XCTAssertTrue(
+      english.contains("Spending for others less money back (at the pace)"), "\(english)")
+    en.language.choice = .russian
+
+    var onlyOne = mainLine
+    onlyOne.flows.othersSpending = whole(220)
+    let labels = AccountForecastText.pair(onlyOne, showsCurrency: false, ru).breakdown.map(\.label)
+    XCTAssertFalse(labels.contains("Потери сверки (по темпу)"), "a loss of nothing is left out")
+    XCTAssertTrue(labels.contains("Траты за других минус возвраты (по темпу)"))
+  }
+
   /// Never counted, no rate for the currency, flows left out for want of a rate, a salary that
   /// did not come, a balance that may go below zero, a short history: each is said in words
   /// with a symbol of its own.

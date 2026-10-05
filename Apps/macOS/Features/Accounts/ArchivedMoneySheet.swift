@@ -28,8 +28,9 @@ struct ArchivedMoneyForm: Sendable {
   /// Every row has a live account to move its money to or from.
   var canConfirm: Bool { !rows.isEmpty && rows.allSatisfy { $0.chosen != nil } }
 
-  /// The transfers that bring every archived key back to zero, dated now — and, for money
-  /// typed ahead on a key, the rest dated with its latest movement (`settlingTransfers`).
+  /// The transfers that bring every archived key back to zero (`settlingTransfers`): what a
+  /// change leaves, a second after the key's last movement; a whole balance, now — and, for
+  /// money typed ahead on a key, the rest dated with its latest movement.
   func transfers(now: Date, note: String?) -> [Transfer] {
     rows.flatMap { row in
       row.chosen.map {
@@ -61,7 +62,9 @@ struct ArchivedMoneyForm: Sendable {
 }
 
 /// What the question says of the transfers it will write: one line for each, with its day, its
-/// amount and the two accounts. A settling can be two transfers — what the account holds now goes
+/// amount and the two accounts. What a change of an archived account's past leaves goes right
+/// after its last movement, and the line names that day rather than «now». A settling can be
+/// two transfers — what the account holds now goes
 /// now, and what is typed ahead of today on it goes back and forth on its own day —, and the
 /// second must not be a surprise: «И 30 сентября — перевод 30,000 ₽ с «Сбер» обратно на
 /// «Наличные», чтобы покрыть записанное вперёд.»
@@ -70,6 +73,7 @@ enum ArchivedLegText {
   /// The key of the Accounts table that words `leg`; `following` is a leg after the first.
   static func key(for leg: SettlingLeg, following: Bool) -> String {
     switch (leg.when, leg.returnsToArchived) {
+    case (.earlier, _): "archived.leftover.leg.earlier"
     case (.now, _): "archived.leftover.leg.now"
     case (.later, true): following ? "archived.leftover.leg.back.and" : "archived.leftover.leg.back"
     case (.later, false):
@@ -88,7 +92,11 @@ enum ArchivedLegText {
         return environment.format(
           key, table: AccountText.table, amount, name(leg.from), name(leg.to))
       }
-      let day = environment.dates.dayAndMonth(environment.calendar.day(of: leg.at))
+      // A day in the past can be of another year: it says its year.
+      let legDay = environment.calendar.day(of: leg.at)
+      let day =
+        leg.when == .earlier
+        ? environment.dates.longDay(legDay) : environment.dates.dayAndMonth(legDay)
       return environment.format(
         key, table: AccountText.table, day, amount, name(leg.from), name(leg.to))
     }
@@ -97,8 +105,9 @@ enum ArchivedLegText {
 
 /// «На какой счёт зачислить 1,000 ₽ с «Наличные»?» — an account in the archive stays at zero:
 /// what a change would leave on it goes to a live account of the same currency, and what it
-/// would take below zero comes from one, by a transfer dated now. The change and its transfers
-/// are one step of ⌘Z.
+/// would take below zero comes from one, by a transfer dated a second after the account's last
+/// movement once the change is made — or now, for an account archived with money. The change and
+/// its transfers are one step of ⌘Z.
 ///
 /// Three ways in: a change of its past (an edit, a deletion) hands in what it would leave and
 /// takes the transfers back (`init(check:accountName:confirm:cancel:)`); «В архив» on an

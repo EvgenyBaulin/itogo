@@ -16,8 +16,18 @@ import Foundation
 /// + expected income    what the expectations still due this month bring to this account
 /// − scheduled          unpaid due dates of the payments on this account, through the month's end
 /// − debts              what the debts I owe still ask this month, from the account of their last payment
+/// − count losses       the net the pair's counts lost in the window, at its pace for the days left
+/// − for others         paid from the pair for others less money back onto it, at the same pace
 /// − spending           the forecast's variable spending of the days left × this pair's share
 /// ```
+///
+/// * Count losses and spending for others are money that really leaves an account without
+///   being my spending, so the forecast of my spending never holds them. Over the window of
+///   the shares — `MonthForecast.windowLength` days before today through yesterday, fewer when
+///   the history is shorter — each pair's net of each is taken in what moved on the account,
+///   floored at zero (what a count found or more money back than paid is not forecast), and
+///   goes on at the same pace: net ÷ days of the window × days after today through the
+///   month's end. An archived account keeps none, as it keeps no share.
 ///
 /// * The first count of a pair is where its balance starts; operations dated before it are
 ///   history, never income or spending of the pair. A line the app wrote for its books — the
@@ -77,6 +87,12 @@ public struct AccountMonthPlan: Hashable, Sendable {
     public var scheduled: AmountE4
     /// Debt payments still due this month, never below zero.
     public var debts: AmountE4
+    /// What counts of the pair are expected to find missing by the end of the month, at the
+    /// pace of the window's net loss; never below zero.
+    public var reconcileLoss: AmountE4
+    /// What is expected to leave the pair for others by the end of the month — paid for them
+    /// less the money back onto the pair, at the pace of the window; never below zero.
+    public var othersSpending: AmountE4
     /// Rubles of variable spending of the window (`SpendingByBalance.weights`).
     public var spendingWeight: AmountE4
     /// Currencies of flows left out for want of a rate today, by code.
@@ -87,7 +103,8 @@ public struct AccountMonthPlan: Hashable, Sendable {
     public init(
       key: BalanceKey, account: PaymentMethod, isHeld: Bool = true, now: AmountE4?,
       writtenAhead: AmountE4 = .zero, income: AmountE4 = .zero, scheduled: AmountE4 = .zero,
-      debts: AmountE4 = .zero, spendingWeight: AmountE4 = .zero,
+      debts: AmountE4 = .zero, reconcileLoss: AmountE4 = .zero,
+      othersSpending: AmountE4 = .zero, spendingWeight: AmountE4 = .zero,
       withoutRate: [CurrencyCode] = [], overdueIncome: [OverdueIncome] = []
     ) {
       self.key = key
@@ -98,6 +115,8 @@ public struct AccountMonthPlan: Hashable, Sendable {
       self.income = income
       self.scheduled = scheduled
       self.debts = debts
+      self.reconcileLoss = reconcileLoss
+      self.othersSpending = othersSpending
       self.spendingWeight = spendingWeight
       self.withoutRate = withoutRate
       self.overdueIncome = overdueIncome
@@ -106,7 +125,7 @@ public struct AccountMonthPlan: Hashable, Sendable {
     /// The balance at the end of the month before any variable spending; `nil` while never
     /// counted.
     public var base: AmountE4? {
-      now.map { $0 + writtenAhead + income - scheduled - debts }
+      now.map { $0 + writtenAhead + income - scheduled - debts - reconcileLoss - othersSpending }
     }
   }
 
@@ -254,6 +273,8 @@ public struct AccountMonthPlan: Hashable, Sendable {
     let spending = VariableSpending.byBalance(
       ledger: ledger, today: today, through: through,
       scheduledOperations: planMatches.operationIds, mainId: mainId, liveAccounts: live)
+    let outflows = Outflows.paced(
+      ledger: ledger, today: today, mainId: mainId, liveAccounts: live)
 
     let balances = accounts.balances
     let sections = accounts.sections.map { section in
@@ -271,7 +292,10 @@ public struct AccountMonthPlan: Hashable, Sendable {
             return Flows(
               key: key, account: line.account, isHeld: keyLine.isHeld, now: now,
               writtenAhead: ahead, income: routed.income, scheduled: routed.scheduled,
-              debts: routed.debts, spendingWeight: spending.weights[key] ?? .zero,
+              debts: routed.debts,
+              reconcileLoss: outflows.reconcileLoss[key] ?? .zero,
+              othersSpending: outflows.othersSpending[key] ?? .zero,
+              spendingWeight: spending.weights[key] ?? .zero,
               withoutRate: routed.withoutRate.sorted { $0.code < $1.code },
               overdueIncome: routed.overdueIncome.sorted { $0.due < $1.due })
           }
@@ -369,6 +393,77 @@ public struct AccountMonthPlan: Hashable, Sendable {
       if currency == .rub { return 1 }
       guard let rate = rubPerUnit[currency], rate > 0 else { return nil }
       return rate
+    }
+  }
+
+  /// Money that leaves the accounts without being my spending, by pair, at the pace it left
+  /// over the window, for the days after today through the month's end.
+  struct Outflows {
+    var reconcileLoss: [BalanceKey: AmountE4] = [:]
+    var othersSpending: [BalanceKey: AmountE4] = [:]
+
+    /// Over the window of the shares through yesterday — from the first day of the history
+    /// when that is later, at least one day — each pair's net, in what moved on its account:
+    ///
+    /// * count losses — the differences the counts of the pair wrote
+    ///   (`OperationLink.reconciledBalance`), an expense being money that disappeared and an
+    ///   income money that appeared;
+    /// * for others — the parts paid for somebody else (`reimbursable`), each its share of what
+    ///   moved, less the money back onto the pair. Money back that repays a debt is the debt's,
+    ///   not the parts'; a purchase on credit moved no money.
+    ///
+    /// Each net below zero is nothing: a gain is not forecast. What is dated today or later is
+    /// no pace — it is in «written ahead», or it is today's and the window ends yesterday.
+    static func paced(
+      ledger: Ledger, today: DateOnly, mainId: UUID?, liveAccounts: Set<UUID>
+    ) -> Outflows {
+      let daysLeft = today.monthKey.dayCount - today.day
+      let yesterday = today.adding(days: -1)
+      var start = today.adding(days: -MonthForecast.windowLength)
+      if let first = ledger.firstDay, first > start { start = first }
+      if start > yesterday { start = yesterday }
+      let windowDays = yesterday.dayNumber - start.dayNumber + 1
+      guard daysLeft > 0, windowDays > 0 else { return Outflows() }
+
+      var losses: [BalanceKey: AmountE4] = [:]
+      var others: [BalanceKey: AmountE4] = [:]
+      for row in ledger.rows(in: DayRange(start, yesterday)) where row.isFirstPart {
+        guard let entry = ledger.entry(row.transactionId) else { continue }
+        let transaction = entry.transaction
+        guard let accountId = transaction.paymentMethodId ?? mainId,
+          liveAccounts.contains(accountId)
+        else { continue }
+        let moved = transaction.movedMoney
+        let key = BalanceKey(accountId: accountId, currency: moved.currency)
+        if case .reconciledBalance = row.link {
+          switch transaction.kind {
+          case .expense: losses[key, default: .zero] += moved.amount
+          case .income: losses[key, default: .zero] += -moved.amount
+          case .refund, .reimbursement: break
+          }
+          continue
+        }
+        guard AccountBalances.movesMoney(entry, tree: ledger.tree) else { continue }
+        switch transaction.kind {
+        case .expense where entry.parts.contains(where: \.reimbursable):
+          let shares = moved.amount.allocated(
+            proportionallyTo: entry.parts.map(\.amountE4), outOf: transaction.amountE4)
+          let paid = zip(shares, entry.parts).filter { $0.1.reimbursable }.map(\.0)
+          others[key, default: .zero] += AmountE4.sum(paid)
+        case .reimbursement where transaction.debtId == nil:
+          others[key, default: .zero] += -moved.amount
+        default:
+          break
+        }
+      }
+
+      func pace(_ net: AmountE4) -> AmountE4? {
+        guard net.raw > 0 else { return nil }
+        return SubscriptionMath.rounded(net.decimal / Decimal(windowDays) * Decimal(daysLeft))
+      }
+      return Outflows(
+        reconcileLoss: losses.compactMapValues(pace),
+        othersSpending: others.compactMapValues(pace))
     }
   }
 
