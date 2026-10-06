@@ -540,8 +540,13 @@ public final class EntryDraftModel {
   ///
   /// `text` is the line as typed: Enter's stop for a category is remembered by it
   /// (`gapToAsk`), since the same text parses anew once «Добавить…» made a name in it known.
+  ///
+  /// `whileTyping`: the open panel reads the line at a keystroke, not at Enter. What such a
+  /// reading fills from a word the next reading takes back once the line no longer names it —
+  /// the word was only half typed (`TypedFills`).
   public func apply(
-    _ parsed: ParsedInput, amount: AmountE4, today: DateOnly, text: String? = nil
+    _ parsed: ParsedInput, amount: AmountE4, today: DateOnly, text: String? = nil,
+    whileTyping: Bool = false
   ) {
     // A purchase picked for a refund — or «Без покупки» — belongs to the line it was picked
     // for: Enter on that line again keeps it, any other line starts without it, so a refund
@@ -555,6 +560,8 @@ public final class EntryDraftModel {
       lastLine = parsed
       lastLineText = text
     }
+    takeBackWhatTheTypedLineNoLongerSays(parsed)
+    let before = TypedState(of: self)
     // A kind chosen in the panel is not overwritten by a line that says nothing about it:
     // the parser reports `.expense` both when it read nothing and when it read "расход".
     if parsed.kind != .expense || draft.kind == .expense {
@@ -618,6 +625,8 @@ public final class EntryDraftModel {
       if !missing.isEmpty { draft.note = ([note] + missing).joined(separator: " ") }
     }
     applyDefaults(today: today)
+    // After the defaults, so what the next reading compares is what the panel shows.
+    typedFills = whileTyping ? recordingTypedFills(of: parsed, before: before) : TypedFills()
   }
 
   /// The amount of the line, kept with its formula — its numbers written the way the app writes
@@ -2186,7 +2195,8 @@ public final class EntryDraftModel {
 
   /// The payment this expense becomes as a plan.
   public func plannedPayment(named name: String) -> ScheduledPayment {
-    OperationAhead.scheduledPayment(from: draftForSaving, named: name, calendar: calendar)
+    OperationAhead.scheduledPayment(
+      from: draftForSaving, named: name, calendar: calendar, tree: categoryTree)
   }
 
   /// The expected income this income becomes as a plan.
@@ -2540,6 +2550,7 @@ public final class EntryDraftModel {
     lineOfThePick = nil
     lastLine = nil
     lastLineText = nil
+    typedFills = TypedFills()
     personPhraseFromTheLine = nil
     gapStop = nil
     focusRequest = nil
@@ -2596,6 +2607,201 @@ public final class EntryDraftModel {
   private var lastLine: ParsedInput?
   /// The text of the line applied last, as the entry bar handed it over.
   private var lastLineText: String?
+
+  /// A field the line filled from a word while it was being typed, with what the field held
+  /// before the line touched it.
+  private struct TypedFill<Value: Equatable>: Equatable {
+    var filled: Value
+    var before: Value
+  }
+  /// The account with what goes with it: whether the defaults laid it, whether it is the open
+  /// screen's, and its card.
+  private struct AccountState: Equatable {
+    var accountId: UUID?
+    var fromDefaults: UUID?
+    var fromTheScreen: Bool
+    var cardId: UUID?
+  }
+  /// What the open panel's reading of the line as it is typed filled from the words of the line
+  /// (`apply(_:amount:today:text:whileTyping:)`). The panel reads the line at every keystroke,
+  /// so it reads every half-typed word on the way too — «бат» on the way to «батон» is the baht,
+  /// «Магнит» on the way to «магнитик» a shop, «аванс» on the way to «авансом» a salary. The
+  /// next reading takes back each field the line no longer names, while the field still holds
+  /// what the line put there: a choice the panel made since is the owner's and stays. Empty
+  /// after a reading of the whole line at Enter, which keeps what it reads as it always did.
+  private struct TypedFills: Equatable {
+    var kind: TypedFill<TransactionKind>?
+    var currency: TypedFill<CurrencyCode>?
+    var currencyFromDefaults: CurrencyCode?
+    var placeId: TypedFill<UUID?>?
+    var account: TypedFill<AccountState>?
+    var debtId: TypedFill<UUID?>?
+    var eventId: TypedFill<UUID?>?
+    var forWhom: TypedFill<ForWhomChoice>?
+    var forWhomFromDefaults: ForWhomChoice?
+    var amount: TypedFill<LineAmount>?
+    var amountFromTheLine: LineAmount?
+    var zeroWasTyped = false
+  }
+  private var typedFills = TypedFills()
+
+  /// The amount and its formula as the draft holds them.
+  private var heldAmount: LineAmount {
+    LineAmount(amount: draft.amount, expression: draft.amountExpression)
+  }
+
+  /// The fields a line fills from its words, as they stand before a reading.
+  private struct TypedState {
+    var kind: TransactionKind
+    var currency: CurrencyCode
+    var currencyFromDefaults: CurrencyCode?
+    var placeId: UUID?
+    var account: AccountState
+    var debtId: UUID?
+    var eventId: UUID?
+    var forWhom: ForWhomChoice
+    var forWhomFromDefaults: ForWhomChoice?
+    var amount: LineAmount
+    var amountFromTheLine: LineAmount?
+    var zeroWasTyped: Bool
+
+    @MainActor init(of model: EntryDraftModel) {
+      let draft = model.draft
+      kind = draft.kind
+      currency = draft.currency
+      currencyFromDefaults = model.currencyFromDefaults
+      placeId = draft.placeId
+      account = model.accountState
+      debtId = draft.debtId
+      eventId = draft.parts.first?.eventId
+      forWhom = draft.parts.first.map(ForWhomChoice.init(of:)) ?? .me
+      forWhomFromDefaults = model.forWhomFromDefaults
+      amount = model.heldAmount
+      amountFromTheLine = model.amountFromTheLine
+      zeroWasTyped = model.zeroWasTyped
+    }
+  }
+
+  /// The fills of a reading made while typing: every field `parsed` names, as the draft holds
+  /// it now, with what it held before the line first filled it — kept from an earlier reading
+  /// that filled it already.
+  private func recordingTypedFills(of parsed: ParsedInput, before: TypedState) -> TypedFills {
+    var fills = typedFills
+    func fill<Value: Equatable>(
+      _ kept: TypedFill<Value>?, _ now: Value, _ was: Value
+    ) -> TypedFill<Value> {
+      TypedFill(filled: now, before: kept?.before ?? was)
+    }
+    if parsed.kind != .expense {
+      fills.kind = fill(fills.kind, draft.kind, before.kind)
+    }
+    if parsed.currency != nil {
+      if fills.currency == nil { fills.currencyFromDefaults = before.currencyFromDefaults }
+      fills.currency = fill(fills.currency, draft.currency, before.currency)
+    }
+    if parsed.placeId != nil {
+      fills.placeId = fill(fills.placeId, draft.placeId, before.placeId)
+    }
+    if parsed.paymentMethodId != nil {
+      fills.account = fill(fills.account, accountState, before.account)
+    }
+    if parsed.debtId != nil {
+      fills.debtId = fill(fills.debtId, draft.debtId, before.debtId)
+    }
+    if parsed.eventId != nil {
+      fills.eventId = fill(fills.eventId, draft.parts.first?.eventId, before.eventId)
+    }
+    if parsed.forWhom != nil || parsed.personId != nil, let first = draft.parts.first {
+      if fills.forWhom == nil { fills.forWhomFromDefaults = before.forWhomFromDefaults }
+      fills.forWhom = fill(fills.forWhom, ForWhomChoice(of: first), before.forWhom)
+    }
+    // Only an amount the line wrote: one the panel changed stays the owner's.
+    if parsed.amount != nil, amountFromTheLine == heldAmount {
+      if fills.amount == nil {
+        fills.amountFromTheLine = before.amountFromTheLine
+        fills.zeroWasTyped = before.zeroWasTyped
+      }
+      fills.amount = fill(fills.amount, heldAmount, before.amount)
+    }
+    return fills
+  }
+
+  private var accountState: AccountState {
+    AccountState(
+      accountId: draft.paymentMethodId, fromDefaults: paymentMethodFromDefaults,
+      fromTheScreen: accountFromTheScreen, cardId: draft.cardId)
+  }
+
+  /// Gives back what the line typed so far filled and `parsed` no longer names (`TypedFills`),
+  /// and forgets every fill the panel has changed since.
+  private func takeBackWhatTheTypedLineNoLongerSays(_ parsed: ParsedInput) {
+    var fills = typedFills
+    if let fill = fills.kind, parsed.kind == .expense || draft.kind != fill.filled {
+      if draft.kind == fill.filled { draft.kind = fill.before }
+      fills.kind = nil
+    }
+    if let fill = fills.currency, parsed.currency == nil || draft.currency != fill.filled {
+      if draft.currency == fill.filled, currencyFromDefaults == nil {
+        draft.currency = fill.before
+        currencyFromDefaults = fills.currencyFromDefaults
+      }
+      fills.currency = nil
+    }
+    if let fill = fills.placeId, parsed.placeId == nil || draft.placeId != fill.filled {
+      if draft.placeId == fill.filled { draft.placeId = fill.before }
+      fills.placeId = nil
+    }
+    if let fill = fills.account,
+      parsed.paymentMethodId == nil || accountState != fill.filled
+    {
+      if accountState == fill.filled {
+        draft.paymentMethodId = fill.before.accountId
+        paymentMethodFromDefaults = fill.before.fromDefaults
+        accountFromTheScreen = fill.before.fromTheScreen
+        draft.cardId = fill.before.cardId
+      }
+      fills.account = nil
+    }
+    if let fill = fills.debtId, parsed.debtId == nil || draft.debtId != fill.filled {
+      if draft.debtId == fill.filled { draft.debtId = fill.before }
+      fills.debtId = nil
+    }
+    if let fill = fills.eventId, parsed.eventId == nil || draft.parts.first?.eventId != fill.filled
+    {
+      if draft.parts.count == 1, draft.parts[0].eventId == fill.filled {
+        draft.parts[0].eventId = fill.before
+      }
+      fills.eventId = nil
+    }
+    if let fill = fills.forWhom,
+      (parsed.forWhom == nil && parsed.personId == nil)
+        || draft.parts.first.map(ForWhomChoice.init(of:)) != fill.filled
+    {
+      if draft.parts.count == 1, ForWhomChoice(of: draft.parts[0]) == fill.filled {
+        draft.parts[0].forWhom = fill.before.value
+        draft.parts[0].forPersonId = fill.before.personId
+        forWhomFromDefaults = fills.forWhomFromDefaults
+      }
+      fills.forWhom = nil
+    }
+    // A number rubbed out takes its amount back; a formula half typed («250+») reads as no
+    // amount for a moment and keeps it.
+    if let fill = fills.amount,
+      (parsed.amount == nil && parsed.amountProblem == nil) || heldAmount != fill.filled
+    {
+      if heldAmount == fill.filled, parsed.amount == nil {
+        draft.amount = fill.before.amount
+        draft.amountExpression = fill.before.expression
+        amountFromTheLine = fills.amountFromTheLine
+        zeroWasTyped = fills.zeroWasTyped
+        if draft.parts.count == 1 { draft.parts[0].amount = draft.amount }
+        followTheAmountInTheCreditPlan()
+      }
+      fills.amount = nil
+    }
+    typedFills = fills
+  }
+
   /// Whom the line named and in its own words — «от Ани» —, for the note of money back
   /// recorded as income instead.
   private var personPhraseFromTheLine: (id: UUID, text: String)?

@@ -10,16 +10,21 @@ public enum DebtTerms {
   /// monthly payment and a payment day and something to pay, and the payment, with the money
   /// already paid toward the earliest unpaid due, does not cover that due — a percent short of
   /// it is covered (`DebtDues.tolerance`). `dues` is the state of the debt's dues; without it
-  /// the monthly payment is the measure.
+  /// the monthly payment is the measure. What is left of the due is never more than is left of
+  /// the debt (`DebtDueState.owed`): a payment of all of it pays the debt off, and there is no
+  /// month after it for the word to speak of.
   public static func offersClosing(
     _ debt: Debt, paying amount: AmountE4, dues: DebtDueState?
   ) -> Bool {
     guard debt.direction == .iOwe, !debt.closed, amount.raw > 0,
       let monthly = debt.monthlyPaymentE4, monthly.raw > 0, debt.paymentDay != nil
     else { return false }
-    if let dues, dues.firstUnpaid == nil { return false }
-    let paidToward = dues?.partialE4 ?? .zero
-    return paidToward + amount + DebtDues.tolerance(of: monthly) < monthly
+    var left = monthly
+    if let dues {
+      guard let due = dues.firstUnpaid else { return false }
+      left = dues.owed(due, monthly: monthly)
+    }
+    return amount + DebtDues.tolerance(of: monthly) < left
   }
 
   /// What a payment of `debt` starts with: what is left of the earliest unpaid due — the monthly

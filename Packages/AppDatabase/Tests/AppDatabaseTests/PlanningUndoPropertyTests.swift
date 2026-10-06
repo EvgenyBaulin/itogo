@@ -196,6 +196,66 @@ struct PlanningUndoPropertyTests {
     #expect(after == before, "seed \(seed): \(drawer.log)\n\(Self.difference(before, after))")
   }
 
+  /// The actions of 1.3 — banks made, renamed, archived and deleted, the cashback settings and
+  /// the bank of an account, cards and the cashback rules of accounts and cards, payments that
+  /// close their term, differences put in the bin and counts asked to record them again — in
+  /// rows of changes, then mixed with every other action, taken back from the last: the
+  /// database is what it was.
+  @Test(arguments: Array(UInt64(3001)...UInt64(3080)))
+  func aChangeOfTheBanksCardsAndCountsAndItsUndoLeaveTheDatabaseAsItWas(seed: UInt64) throws {
+    let stack = try Self.stack()
+    var drawer = ChangeDrawer(seed: seed, kinds: seed.isMultiple(of: 2) ? 31...40 : 0...40)
+    let before = try Self.contents(stack)
+    let planning = PlanningRepository(writer: stack.writer)
+    var undos: [PlanningUndo] = []
+    for _ in 0..<4 {
+      let change = try drawer.change(in: stack, actions: 1...4)
+      let written = try Self.contents(stack)
+      do {
+        undos.append(try planning.apply(change))
+      } catch {
+        #expect(
+          try Self.contents(stack) == written, "seed \(seed): a refused change wrote something")
+      }
+    }
+    for undo in undos.reversed() {
+      try planning.revert(undo, at: Date(timeIntervalSince1970: 1_790_000_000))
+    }
+    let after = try Self.contents(stack)
+    #expect(
+      after == before,
+      "seed \(seed), \(undos.count) changes: \(drawer.log)\n\(Self.difference(before, after))")
+  }
+
+  /// The actions of 1.3 land often enough, and among them banks, cards, rules and counts asked
+  /// to record again.
+  @Test func mostChangesOfTheBanksCardsAndCountsAreWritten() throws {
+    var drawn = 0
+    var written = 0
+    var landed: [String: Int] = [:]
+    for seed in UInt64(3101)...UInt64(3130) {
+      let stack = try Self.stack()
+      var drawer = ChangeDrawer(seed: seed, kinds: 31...40)
+      let planning = PlanningRepository(writer: stack.writer)
+      for _ in 0..<4 {
+        let first = drawer.log.count
+        let change = try drawer.change(in: stack, actions: 1...2)
+        drawn += 1
+        guard (try? planning.apply(change)) != nil else { continue }
+        written += 1
+        for action in drawer.log[first...] { landed[action, default: 0] += 1 }
+      }
+    }
+    #expect(written * 3 >= drawn * 2, "only \(written) of \(drawn) were written")
+    for action in [
+      "new bank with an account and a card", "edit bank", "new card", "new cashback rule",
+      "edit the cashback or the bank of an account", "new payment closing its term",
+      "delete a difference", "record a difference again",
+    ] {
+      #expect((landed[action] ?? 0) >= 2, "«\(action)» landed \(landed[action] ?? 0) times")
+    }
+  }
+
   /// The actions on the books land often enough, and among them the deletions of categories
   /// that reach the rows outside the planning.
   @Test func mostChangesOfTheBooksAreWritten() throws {
@@ -287,6 +347,9 @@ struct ChangeDrawer {
     /// Categories another row is filed under — a limit, a goal, a debt, a payment, an expected
     /// income, a template, a mapping, a choice of the model: what a deletion reaches.
     var filedCategories: Set<UUID>
+    var banks: [Bank] = []
+    var cards: [PaymentCard] = []
+    var cashbackRules: [CashbackRule] = []
   }
 
   private func state(_ stack: DatabaseStack) throws -> State {
@@ -345,7 +408,10 @@ struct ChangeDrawer {
               UNION SELECT chosen_category_id FROM category_feedback
               UNION SELECT predicted_category_id FROM category_feedback
               """
-          ).compactMap { $0.flatMap(UUID.init(uuidString:)) }))
+          ).compactMap { $0.flatMap(UUID.init(uuidString:)) }),
+        banks: try Bank.order(Column.rowID).fetchAll(db),
+        cards: try PaymentCard.order(Column.rowID).fetchAll(db),
+        cashbackRules: try CashbackRule.order(Column.rowID).fetchAll(db))
     }
   }
 
@@ -678,6 +744,136 @@ struct ChangeDrawer {
         change.upsert.reconciledBalances.append(balance)
       }
       log.append("edit reconciliation")
+    case 31:
+      // A bank, alone or with an account and a card under it, as «Новый банк» makes them.
+      let bank = Bank(name: "Bank \(random.int(in: 1...999))", sort: random.int(in: 0...5))
+      change.upsert.banks.append(bank)
+      if chance(2, 3) {
+        let account = PaymentMethod(
+          name: bank.name, kind: .card, currency: .rub, isDefault: chance(1, 5), bankId: bank.id)
+        change.upsert.paymentMethods.append(account)
+        change.upsert.cards.append(PaymentCard(accountId: account.id, name: bank.name))
+        log.append("new bank with an account and a card")
+      } else {
+        log.append("new bank")
+      }
+    case 32:
+      guard var bank = pick(state.banks), touched.insert(bank.id).inserted else { return }
+      switch random.int(in: 0...2) {
+      case 0: bank.name += " (renamed)"
+      case 1: bank.sort = random.int(in: 1...20)
+      default: bank.archived.toggle()
+      }
+      change.upsert.banks.append(bank)
+      log.append("edit bank")
+    case 33:
+      guard let bank = pick(state.banks), touched.insert(bank.id).inserted else { return }
+      change.delete.banks.append(bank.id)
+      log.append("delete bank")
+    case 34:
+      // How an account's bank pays its cashback, or the bank the account is under.
+      guard var account = pick(live), touched.insert(account.id).inserted else { return }
+      switch random.int(in: 0...3) {
+      case 0:
+        account.cashbackRounding = CashbackRounding(
+          precision: pick(CashbackRounding.Precision.allCases) ?? .cents,
+          direction: pick(CashbackRounding.Direction.allCases) ?? .up)
+      case 1:
+        account.cashbackPayout =
+          chance(1, 3) ? nil : chance(1, 2) ? .immediately : .later(day: random.int(in: 1...31))
+      case 2:
+        account.cashbackPointsAccountId =
+          chance(1, 3) ? nil : pick(live.filter { $0.id != account.id })?.id
+      default:
+        guard let bank = pick(state.banks.filter { !$0.archived }) else { return }
+        account.bankId = bank.id
+      }
+      change.upsert.paymentMethods.append(account)
+      log.append("edit the cashback or the bank of an account")
+    case 35:
+      if chance(1, 2), var card = pick(state.cards), touched.insert(card.id).inserted {
+        card.name += " (renamed)"
+        card.archived.toggle()
+        change.upsert.cards.append(card)
+        log.append("edit card")
+      } else if let account = pick(live) {
+        change.upsert.cards.append(
+          PaymentCard(accountId: account.id, name: "Card \(random.int(in: 1...999))"))
+        log.append("new card")
+      }
+    case 36:
+      guard let card = pick(state.cards), touched.insert(card.id).inserted else { return }
+      change.delete.cards.append(card.id)
+      log.append("delete card")
+    case 37:
+      // A rule of an account or of one of its cards, made, changed or deleted.
+      if chance(1, 3), let rule = pick(state.cashbackRules), touched.insert(rule.id).inserted {
+        change.delete.cashbackRules.append(rule.id)
+        log.append("delete cashback rule")
+      } else if chance(1, 2), var rule = pick(state.cashbackRules),
+        touched.insert(rule.id).inserted
+      {
+        rule.percent = CashbackPercent(e4: Int64(random.int(in: 0...100_000))) ?? .zero
+        change.upsert.cashbackRules.append(rule)
+        log.append("edit cashback rule")
+      } else if let account = pick(live) {
+        let card = chance(1, 2) ? pick(state.cards.filter { $0.accountId == account.id }) : nil
+        change.upsert.cashbackRules.append(
+          CashbackRule(
+            accountId: account.id, cardId: card?.id,
+            categoryId: chance(1, 3) ? nil : pick(expenses)?.id,
+            month: chance(1, 2) ? nil : MonthKey(year: 2026, month: random.int(in: 1...12)),
+            percent: CashbackPercent(e4: Int64(random.int(in: 1...50_000))) ?? .zero))
+        log.append("new cashback rule")
+      }
+    case 38:
+      // A payment that says no more money comes toward its due this month.
+      guard let debt = pick(state.debts.filter { $0.currency == .rub }) else { return }
+      let day = DateOnly(year: 2026, month: 9, day: random.int(in: 1...28))
+      let paid = amount()
+      if chance(1, 2), let account = pick(live.filter { $0.mainCurrency == .rub }),
+        let category = pick(expenses)
+      {
+        // Paid by an operation, its line pointing at it.
+        let id = UUID()
+        let at = TestSupport.sampleCalendar.startOfDay(day).addingTimeInterval(43_200)
+        change.created.append(
+          TransactionEntry(
+            transaction: Transaction(
+              id: id, kind: .expense, occurredAt: at, amountE4: paid, note: "pays",
+              paymentMethodId: account.id, debtId: debt.id, createdAt: at, updatedAt: at),
+            parts: [TransactionPart(transactionId: id, categoryId: category.id, amountE4: paid)]))
+        change.upsert.debtEntries.append(
+          DebtEntry(
+            debtId: debt.id, date: day, amountE4: -paid, kind: .payment, transactionId: id,
+            note: "closes", closesTerm: true))
+        log.append("new payment closing its term")
+      } else {
+        change.upsert.debtEntries.append(
+          DebtEntry(
+            debtId: debt.id, date: day, amountE4: -paid, kind: .payment, note: "closes",
+            closesTerm: true))
+        log.append("new payment closing its term")
+      }
+    case 39:
+      // «Записывать разницу»: a count that keeps its difference asked to record it again.
+      let keeping = state.balances.filter { $0.recordsDifference == false }
+      guard var count = pick(keeping), touched.insert(count.id).inserted else { return }
+      count.recordsDifference = true
+      count.transactionId = nil
+      change.upsert.reconciledBalances.append(count)
+      change.settles.insert(count.key)
+      log.append("record a difference again")
+    case 40:
+      // A difference put in the bin: its count turns to keeping.
+      let differences = state.live.filter {
+        guard case .reconciledBalance = OperationLink(externalId: $0.transaction.externalId)
+        else { return false }
+        return true
+      }
+      guard let entry = pick(differences), touched.insert(entry.id).inserted else { return }
+      change.softDeleted.append(entry.id)
+      log.append("delete a difference")
     default:
       let splits = state.live.filter { $0.parts.count > 1 }
       // Operations with ties to others: paid due dates, fees, money back and what it wrote,

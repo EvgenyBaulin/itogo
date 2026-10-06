@@ -119,6 +119,26 @@ struct DateOrNumberLineTests {
     #expect(result.tokens.contains { $0.role == .date })
   }
 
+  /// A count or a day of the month — «2 шт», «3 бутылки», «к 8 марта» — is not the amount while
+  /// another number is there, so it leaves no amount behind a day-shaped number either: «3.10»
+  /// beside «2 шт» is the price, not the third of October with an amount of 2. With an amount
+  /// beside them a day is a day as before.
+  @Test(
+    "A count beside a day-shaped number leaves it the amount",
+    arguments: [
+      Reading("круассаны 2 шт 3.10", amount: "3.1", note: "круассаны 2 шт"),
+      Reading("пиво 3 бутылки 5.10 EUR", amount: "5.1", note: "пиво 3 бутылки"),
+      Reading("подарок к 8 марта 12.03", amount: "12.03", note: "подарок к 8 марта"),
+      Reading("кофе 3 шт 250 12.09", amount: "250", date: "2026-09-12", note: "кофе 3 шт"),
+      Reading("кофе 12.09 3 шт 250", amount: "250", date: "2026-09-12", note: "кофе 3 шт"),
+    ])
+  func aCountBesideADayShapedNumberLeavesItTheAmount(_ reading: Reading) {
+    let result = Fixture.parse(reading.line)
+    #expect(result.amount == reading.amount.map(dec))
+    #expect(result.date?.iso == reading.date)
+    #expect(result.note == reading.note)
+  }
+
   /// Not shaped like a day: a month above 12, a day of 0, one digit after the point, a comma.
   /// The only number of a line is its amount, whatever it looks like.
   @Test(

@@ -7,6 +7,37 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.3.1] — 2026-10-07
+
+Fixes found by tests after 1.3.0.
+
+### Fixed
+
+- **Record the difference** did nothing for a count whose difference operation, written by 1.1
+  under an id of its own, had been deleted.
+- The repair that gives every account a bank at each open failed, or made an empty extra bank,
+  when one account was stored in two letter cases, or when an account lost its bank by hand
+  after its bank had been renamed.
+- A debt journal line edited so that it is no longer a payment kept the mark «no more payments
+  this month».
+- A debt with less left than its monthly payment asked for the whole monthly payment in the
+  month's forecast and plan, in «Payments for 7 days», «Overdue payments» and **Payment…**; a due
+  now asks for no more than is left of the debt.
+- «No more payments this month» was offered for a payment that pays the debt off.
+- A purchase for an event written for a later day lowered the budget the free sum holds back
+  for the event, although its money is still on the accounts.
+- A debt payment written for a later day took the debt out of the free sum and the debt's next
+  payment out of the lists before its day.
+- While the ↓ panel was open, a half-typed word could set a field and leave it set: «батон»
+  passed through «бат» and was saved in baht, «магнитик» got the shop «Магнит» as its place,
+  «авансом» made an expense income. What the line set while typing is now taken back when the
+  line no longer says it; what you chose in the panel stays.
+- A count beside a day-shaped price turned the price into a date: «croissants 2 pcs 3.10» was
+  saved as 2 on 3 October.
+- **Plan a payment** for an expense dated ahead could save the payment in a category of the app
+  («Don't remember», «Loans»), which the payment form refuses.
+- «Add another one?» did not ask after **Mark as paid** in Planning.
+
 ## [1.3.0] — 2026-10-07
 
 Banks above accounts and cards, cashback rules that belong to the account, an entry that asks for

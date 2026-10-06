@@ -224,6 +224,45 @@ struct BankStorageTests {
     return live + old
   }
 
+  /// One UUID a hand edit stored in two cases is two rows: the first is filed, and the other
+  /// stays as it is at this open and every open after — the repair never fails on it, never makes
+  /// a bank for it.
+  @Test func aUUIDStoredInTwoCasesIsFiledOnceAndTheNextOpenDoesNotFail() throws {
+    let stack = try stack()
+    let sber = PaymentMethod(name: "Сбер", isDefault: true)
+    try stack.writer.write { db in
+      try sber.insert(db)
+      try db.execute(
+        sql: "INSERT INTO payment_methods (id, name, kind) VALUES (?, 'Альфа', 'card')",
+        arguments: [sber.id.uuidString.lowercased()])
+    }
+    let repository = AccountRepository(writer: stack.writer)
+    #expect(try repository.ensureBanks() == BankRepair(created: 1, filed: 1, skipped: 0))
+    #expect(try repository.ensureBanks() == nil)
+    #expect(try repository.banks(includeArchived: true).map(\.name) == ["Сбер"])
+  }
+
+  /// An account a hand edit left without a bank, whose own bank of the update is still there
+  /// under another name — the owner renamed it —, is filed under a bank of its own name: the id
+  /// the update would give that bank is taken, and the repair does not fail on it.
+  @Test func anAccountWhoseUpdateBankIdIsTakenIsFiledAllTheSame() throws {
+    let stack = try stack()
+    let accounts = try loose(["Сбер"], into: stack)
+    let repository = AccountRepository(writer: stack.writer)
+    _ = try repository.ensureBanks()
+    let made = BanksMigration.bankId(forAccount: accounts[0].id)
+    try stack.writer.write { db in
+      try db.execute(
+        sql: "UPDATE banks SET name = 'Сбербанк' WHERE id = ?", arguments: [made.uuidString])
+      try db.execute(sql: "UPDATE payment_methods SET bank_id = NULL")
+    }
+    #expect(try repository.ensureBanks() == BankRepair(created: 1, filed: 1, skipped: 0))
+    let filed = try #require(try repository.accounts().first?.bankId)
+    #expect(filed != made)
+    #expect(try repository.banks().first { $0.id == filed }?.name == "Сбер")
+    #expect(try repository.ensureBanks() == nil)
+  }
+
   @Test func anAccountWithoutABankIsFiledAtTheNextOpen() throws {
     let stack = try stack()
     let accounts = try loose(["Сбер", "Наличные"], archived: ["сбер"], into: stack)

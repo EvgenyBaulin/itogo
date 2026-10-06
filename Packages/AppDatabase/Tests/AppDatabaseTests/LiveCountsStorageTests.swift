@@ -1265,4 +1265,41 @@ extension LiveCountsStorageTests {
     #expect(try book.row(count.id)?.differenceE4 == AmountE4(whole: 3_000))
     #expect(try book.operation(ofCount: count)?.transaction.kind == .income)
   }
+
+  /// «Записывать разницу» on a count whose difference 1.1 wrote under an id of its own and the
+  /// owner put in the bin: the new operation takes the place of the binned one — they share the
+  /// count's key, which is unique —, and ⌘Z gives back the count that kept and the operation in
+  /// the bin, under its own id.
+  @Test func recordingAgainOverAOnePointOneDifferenceInTheBinLandsAndUndoes() throws {
+    let book = try LiveBook()
+    let (_, count) = try book.september()
+    let oldId = try book.asOnePointOne(count)
+    _ = try book.transactions.softDelete(ids: [oldId], at: book.at("2026-09-21"))
+    let keeping = try #require(try book.row(count.id))
+    #expect(keeping.recordsDifference == false)
+
+    var asked = keeping
+    asked.recordsDifference = true
+    asked.transactionId = nil
+    var rows = PlanningRows.empty
+    rows.reconciledBalances = [asked]
+    let undo = try book.planning.apply(
+      PlanningChange(upsert: rows, at: book.at("2026-09-22"), settles: [book.cardKey]))
+
+    let written = try #require(try book.operation(ofCount: count))
+    #expect(!written.transaction.isDeleted)
+    #expect(written.transaction.amountE4 == AmountE4(whole: 8_000))
+    #expect(try book.row(count.id)?.recordsDifference == true)
+    #expect(try book.row(count.id)?.transactionId == written.id)
+    #expect(try book.reconcileOperations() == 1)
+
+    try book.planning.revert(undo, at: book.at("2026-09-23"))
+
+    let back = try #require(try book.operation(ofCount: count))
+    #expect(back.id == oldId)
+    #expect(back.transaction.isDeleted)
+    #expect(try book.row(count.id)?.recordsDifference == false)
+    #expect(try book.row(count.id)?.transactionId == nil)
+    #expect(try book.reconcileOperations() == 1)
+  }
 }

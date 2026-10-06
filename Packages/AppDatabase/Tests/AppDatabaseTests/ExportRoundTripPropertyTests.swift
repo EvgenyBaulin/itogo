@@ -509,6 +509,29 @@ struct ExportRoundTripPropertyTests {
           UPDATE debts SET deleted_at = '2026-09-10 08:15:30.250'
           WHERE id IN (SELECT id FROM debts ORDER BY rowid LIMIT 1)
           """)
+      // How the bank of the first account pays, its points going to the second; a payment
+      // that closes its term.
+      if accounts.count == 2 {
+        try db.execute(
+          sql: """
+            UPDATE payment_methods
+            SET cashback_precision = 'cents', cashback_direction = 'down',
+              cashback_payout = 'later', cashback_payout_day = 31, cashback_points_account_id = ?
+            WHERE id = ?
+            """,
+          arguments: [accounts[1], accounts[0]])
+        try db.execute(
+          sql: """
+            UPDATE payment_methods SET cashback_direction = 'up', cashback_payout = 'immediately'
+            WHERE id = ?
+            """,
+          arguments: [accounts[1]])
+      }
+      try db.execute(
+        sql: """
+          UPDATE debt_entries SET closes_term = 1
+          WHERE id IN (SELECT id FROM debt_entries WHERE kind = 'payment' ORDER BY rowid LIMIT 2)
+          """)
     }
   }
 }

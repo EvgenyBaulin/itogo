@@ -118,6 +118,21 @@ struct BanksMigrationTests {
     #expect(plan.assignments == [.init(account: loose.id, bank: plan.banks[0].id)])
   }
 
+  /// The bank an earlier filing made for the account is there under another name, archived or
+  /// not: the new bank does not take its id.
+  @Test func aTakenIdIsNotGivenAgain() {
+    let loose = account("Сбер")
+    for archived in [false, true] {
+      let renamed = Bank(
+        id: BanksMigration.bankId(forAccount: loose.id), name: "Сбербанк", archived: archived)
+      let plan = BanksMigration.plan(accounts: [loose], among: [renamed])
+      #expect(plan.banks.count == 1)
+      #expect(plan.banks[0].id != renamed.id)
+      #expect(plan.banks[0].name == "Сбер")
+      #expect(plan.assignments == [.init(account: loose.id, bank: plan.banks[0].id)])
+    }
+  }
+
   @Test func anIdGivenTwiceGetsOneBank() {
     let id = UUID()
     let plan = BanksMigration.plan(accounts: [account("Сбер", id: id), account("Сбер", id: id)])

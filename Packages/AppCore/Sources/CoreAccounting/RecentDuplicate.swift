@@ -12,8 +12,9 @@ public enum RecentDuplicate {
   /// income, nothing else is asked —, with the same amount in the same currency, written (by
   /// `created_at`, whatever date it carries) within `window` before `now`, and by the owner's own
   /// hand: what the app writes by itself — the fee of a transfer, the difference of a count —
-  /// carries an external id and is never a repeat. The latest one when there are several. Nil
-  /// for a zero amount.
+  /// carries an external id and is never a repeat. «Провести» of a planned payment carries one
+  /// too, but it is the owner's record of money paid, and a repeat like any other. The latest
+  /// one when there are several. Nil for a zero amount.
   public static func match(
     of draft: TransactionDraft, among recent: [TransactionEntry], now: Date
   ) -> TransactionEntry? {
@@ -21,9 +22,16 @@ public enum RecentDuplicate {
     let earliest = now.addingTimeInterval(-window)
     return recent.filter { entry in
       let written = entry.transaction
-      return written.deletedAt == nil && written.externalId == nil && written.kind == draft.kind
+      return written.deletedAt == nil && isTheOwnersOwn(written) && written.kind == draft.kind
         && written.amountE4 == draft.amount && written.currency == draft.currency
         && written.createdAt >= earliest
     }.max { $0.transaction.createdAt < $1.transaction.createdAt }
+  }
+
+  /// Written by the owner: no external id, or the link of a planned payment marked as paid.
+  private static func isTheOwnersOwn(_ transaction: Transaction) -> Bool {
+    guard let externalId = transaction.externalId else { return true }
+    if case .scheduled = OperationLink(externalId: externalId) { return true }
+    return false
   }
 }

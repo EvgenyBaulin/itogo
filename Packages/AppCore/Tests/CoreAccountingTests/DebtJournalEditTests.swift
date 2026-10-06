@@ -116,6 +116,18 @@ struct DebtJournalEditTests {
     #expect(edit.upsert.map(\.amountE4) == [money(-5_000)])
   }
 
+  /// «В этом месяце больше платежей не будет» is the word of a payment only: a payment that
+  /// closed its term, edited into money that grows the debt, no longer closes anything.
+  @Test func aLineThatStopsBeingAPaymentStopsClosingItsTerm() throws {
+    var closing = paymentLine(5_000, on: loan)
+    closing.closesTerm = true
+    let edit = try journal(
+      [closing], from: operation(5_000, debtId: loan.id),
+      to: operation(5_000, kind: .income, debtId: loan.id))
+    #expect(edit.upsert.map(\.kind) == [.borrowed])
+    #expect(edit.upsert.map(\.closesTerm) == [false])
+  }
+
   @Test func theOpeningLineOfAPurchaseOnCreditFollowsItsPrice() throws {
     let opening = try DebtRules.creditPurchaseOpening(
       on: phone, amountE4: money(60_000), date: day("2026-03-10"), transactionId: id(1),

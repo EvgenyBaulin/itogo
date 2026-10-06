@@ -686,7 +686,8 @@ struct EntryBar<Accessory: View>: View {
       guard let read = try? AmountE4(decimal: typed) else { return }
       amount = read
     }
-    model.apply(parsed, amount: amount, today: environment.today, text: trimmed)
+    model.apply(
+      parsed, amount: amount, today: environment.today, text: trimmed, whileTyping: true)
   }
 
   private func prepareModel() {

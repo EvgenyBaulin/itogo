@@ -185,6 +185,24 @@ struct MoneyBackDebtStorageTests {
       try book.repository.entry(id: book.purchase.id)?.parts[0].reimbursementStatus == .expected)
   }
 
+  /// The undo of a money back that repaid a debt, closed it and wrote a surplus is the exact
+  /// inverse of the write: every table is what it was, rowid for rowid.
+  @Test func theUndoLeavesTheDatabaseAsItWas() throws {
+    for received: Int64 in [3_000, 6_000, 7_000] {
+      let book = try book()
+      let before = try PlanningUndoPropertyTests.contents(book.stack)
+      let recorded = try recording(book, received: received)
+      let write = try book.repository.apply(
+        recorded.outcome, reimbursement: recorded.back, extra: recorded.extra,
+        debt: recorded.settling, calendar: .utc, at: instant)
+      try book.repository.revertMoneyBack(write, at: instant)
+      let after = try PlanningUndoPropertyTests.contents(book.stack)
+      #expect(
+        after == before,
+        "\(received): \(PlanningUndoPropertyTests.difference(before, after))")
+    }
+  }
+
   /// A money back that repays nothing writes what it always wrote.
   @Test func withoutADebtNothingChanges() throws {
     let book = try book()

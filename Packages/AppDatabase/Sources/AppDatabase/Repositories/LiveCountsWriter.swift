@@ -387,8 +387,9 @@ enum LiveCountsWriter {
     switch settlement.operation {
     case .create(let entry):
       // The count's own operation, once put in the bin, gives its place to the new one: the
-      // owner asked the count to record again (`LiveCounts.settle`).
-      if let binned = state.operation, binned.id == entry.id, binned.transaction.isDeleted {
+      // owner asked the count to record again (`LiveCounts.settle`). Whatever its id — 1.1 wrote
+      // a difference under an id of its own —: both carry the count's key, which is unique.
+      if let binned = state.operation, binned.transaction.isDeleted {
         try purge([binned.id], db: db)
       }
       try entry.transaction.insert(db)

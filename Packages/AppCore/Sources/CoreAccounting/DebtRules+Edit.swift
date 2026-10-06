@@ -119,6 +119,8 @@ extension DebtRules {
       written.fullAmountE4 = nil
       written.share = nil
     }
+    // «В этом месяце больше платежей не будет» is said of a payment only.
+    if written.kind != .payment { written.closesTerm = false }
     if edit.dayChanged { written.date = edit.afterDay }
     if written != line { journal.upsert.append(written) }
   }

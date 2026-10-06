@@ -36,7 +36,10 @@ enum BankFiling {
       // An account whose archive flag does not read is taken for archived: filed last.
       let archived = (try? RowMapping.flag(row, "archived", fallback: false)) ?? true
       let hasBank = !(row["bank_id"] as DatabaseValue).isNull
-      if accountTexts[id] == nil { accountTexts[id] = text }
+      // Only the row the filing writes to is planned: a bank planned for the other spelling
+      // could never be given to it, and at the next open its id is taken already.
+      guard accountTexts[id] == nil else { continue }
+      accountTexts[id] = text
       accounts.append(
         MigratingBankAccount(id: id, name: row["name"] ?? "", archived: archived, hasBank: hasBank))
     }

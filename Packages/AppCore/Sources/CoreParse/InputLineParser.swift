@@ -578,10 +578,12 @@ private struct ParseSession {
         return
       }
     }
-    // Gathered once: asking per word would walk the whole line for every word of it.
-    let numbers = amountCandidates()
+    // Gathered once: asking per word would walk the whole line for every word of it. A count
+    // or a day of the month («2 шт», «к 8 марта») is no amount while another number is there,
+    // so it leaves none behind a day-shaped number: «круассаны 2 шт 3.10» costs 3.10.
+    let amounts = amountCandidates().filter { !isCountOrDay($0) }
     for index in words.indices where !words[index].claimed {
-      let allowDayMonth = numbers.count > (numbers.contains(index) ? 1 : 0)
+      let allowDayMonth = amounts.contains { $0 != index }
       guard
         let reading = dateReading(
           from: words[index].normalized, written: words[index].original,
@@ -631,17 +633,20 @@ private struct ParseSession {
   /// amount; the only number of a line is still its amount.
   private func countsAndDays() -> Set<Int> {
     let numbers = amountCandidates()
-    var aside: Set<Int> = []
-    for index in numbers {
-      let unit =
-        index + 1 < words.count && !words[index + 1].claimed
-        && Lexicon.wordsAfterACount.contains(words[index + 1].normalized)
-      let month =
-        index > 0 && !words[index - 1].claimed
-        && Lexicon.monthsBeforeADay.contains(words[index - 1].normalized)
-      if unit || month { aside.insert(index) }
-    }
+    let aside = numbers.filter(isCountOrDay)
     return aside.count < numbers.count ? aside : []
+  }
+
+  /// Whether the number at `index` says how many or which day: a unit or a span of time behind
+  /// it, or an English month in front of it.
+  private func isCountOrDay(_ index: Int) -> Bool {
+    let unit =
+      index + 1 < words.count && !words[index + 1].claimed
+      && Lexicon.wordsAfterACount.contains(words[index + 1].normalized)
+    let month =
+      index > 0 && !words[index - 1].claimed
+      && Lexicon.monthsBeforeADay.contains(words[index - 1].normalized)
+    return unit || month
   }
 
   /// How many neighbouring words one amount may span. A number grouped by spaces

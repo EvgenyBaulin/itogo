@@ -1,3 +1,4 @@
+import CoreAccounting
 import CoreKit
 import Foundation
 
@@ -37,15 +38,19 @@ public enum OperationAhead {
 
   /// The payment an expense dated ahead becomes: «Разово» — every month, ending on its own date,
   /// which is how Planning reads one charge —, named `name`, with what the expense said: amount,
-  /// currency, category, account and card, event, for whom, and who gives the money back.
+  /// currency, category, account and card, event, for whom, and who gives the money back. A
+  /// category of the app («Не помню», Loans and what is under them) is left out: a payment may
+  /// not have one (`ScheduledRules.validate`), and the payment is saved without a category.
   public static func scheduledPayment(
-    from draft: TransactionDraft, named name: String, calendar: CalendarContext
+    from draft: TransactionDraft, named name: String, calendar: CalendarContext,
+    tree: CategoryTree = CategoryTree()
   ) -> ScheduledPayment {
     let due = calendar.day(of: draft.occurredAt)
     let part = draft.parts.first ?? PartDraft()
+    let category = tree.systemRole(of: part.categoryId) == nil ? part.categoryId : nil
     return ScheduledPayment(
       name: name, kind: .bill, amountE4: draft.amount, currency: draft.currency,
-      categoryId: part.categoryId, paymentMethodId: draft.paymentMethodId,
+      categoryId: category, paymentMethodId: draft.paymentMethodId,
       forWhom: part.forWhom, forPersonId: part.forPersonId, reimbursable: part.reimbursable,
       debtorPersonId: part.debtorPersonId, freq: .monthly, interval: 1, day: due.day,
       nextDate: due, endDate: due, cardId: draft.cardId, eventId: part.eventId)

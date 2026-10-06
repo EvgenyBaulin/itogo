@@ -97,6 +97,18 @@ struct RecentDuplicateTests {
       RecentDuplicate.match(of: draft("250", kind: .reimbursement), among: recent, now: now) == nil)
   }
 
+  /// «Провести» of a planned payment is the owner's own record of the money, though the app
+  /// writes it with a link to the payment: the rent marked as paid in Planning and typed in the
+  /// line a minute later is the same rent twice.
+  @Test func aPaymentMarkedAsPaidIsTheOwnersOwn() {
+    let payment = UUID(uuidString: "6F1C1D5E-0000-4000-8000-000000000001")!
+    let link = OperationLink.scheduled(
+      paymentId: payment, due: DateOnly(year: 2026, month: 9, day: 1)
+    ).externalId
+    let recent = [written("30000", secondsAgo: 60, external: link)]
+    #expect(RecentDuplicate.match(of: draft("30000"), among: recent, now: now)?.id == id(1))
+  }
+
   @Test func aZeroAmountRepeatsNothing() {
     let recent = [written("0", secondsAgo: 10)]
     #expect(RecentDuplicate.match(of: draft("0"), among: recent, now: now) == nil)

@@ -70,6 +70,9 @@ public enum BanksMigration {
   ) -> BanksMigrationPlan {
     var banks: [Bank] = []
     var bankByName: [String: UUID] = [:]
+    // An id the update would give is taken when the account was filed once and a hand edit left
+    // it without a bank since: its bank then gets an id of its own.
+    let taken = Set(existing.map(\.id))
     for bank in existing where !bank.archived {
       let key = NameKey.fold(bank.name)
       if !key.isEmpty, bankByName[key] == nil { bankByName[key] = bank.id }
@@ -90,7 +93,8 @@ public enum BanksMigration {
       if let known = bankByName[key] {
         bankId = known
       } else {
-        bankId = Self.bankId(forAccount: account.id)
+        let derived = Self.bankId(forAccount: account.id)
+        bankId = taken.contains(derived) ? UUID() : derived
         bankByName[key] = bankId
         banks.append(Bank(id: bankId, name: name))
       }

@@ -36,9 +36,10 @@ import Foundation
 ///   the goal still needs.
 /// * **Events** — with `reserveEventBudgets` (on by default): every live event with a budget that
 ///   is under way today or starts after today and by D: max(what is left of its budget, its
-///   unpaid tied dues) — the rest of the budget is budget − spent − what matching operations
-///   without the event paid of its tied payments. Off, no budget is held back and the dues tied to
-///   an event are ordinary dues.
+///   unpaid tied dues) — the rest of the budget is budget − spent by today (what is written for
+///   later days is still to leave the accounts) − what matching operations without the event
+///   paid of its tied payments. Off, no budget is held back and the dues tied to an event are
+///   ordinary dues.
 ///
 /// A foreign amount without a rate today is left out and its currency listed in
 /// `withoutRate`, never guessed.
@@ -156,7 +157,8 @@ public struct CashPlan: Hashable, Sendable {
       debtTotal += rubles(due.amount, in: due.currency)
     }
     for line in debts.iOwe {
-      guard let monthly = line.debt.monthlyPaymentE4, monthly.raw > 0, line.balance.raw > 0
+      let left = line.dues.balance(or: line.balance)
+      guard let monthly = line.debt.monthlyPaymentE4, monthly.raw > 0, left.raw > 0
       else { continue }
       let late = line.dues.owed(through: today.adding(days: -1), monthly: monthly)
       guard late.raw > 0 else { continue }
@@ -166,7 +168,7 @@ public struct CashPlan: Hashable, Sendable {
           of: line.debt, ledger: ledger, journal: book.debtEntries, mainId: mainId)
       guard accounts.isInSummary(DueAccounts.effective(payer, accounts: list) ?? mainId)
       else { continue }
-      overdue += rubles(min(late, line.balance), in: line.debt.currency)
+      overdue += rubles(min(late, left), in: line.debt.currency)
     }
 
     // Goals.
@@ -209,10 +211,12 @@ public struct CashPlan: Hashable, Sendable {
     // when they are more — never both.
     let extra = matchedExtra(
       ledger: ledger, book: book, matches: matches, counted: counted)
+    let ahead = spentAhead(ledger: ledger, today: today, counted: counted)
     var eventTotal = AmountE4.zero
     for plan in events {
       guard counted[plan.event.id] != nil, let budget = plan.budget else { continue }
-      let left = max(.zero, budget - plan.spent - (extra[plan.event.id] ?? .zero))
+      let spentByNow = plan.spent - (ahead[plan.event.id] ?? .zero)
+      let left = max(.zero, budget - spentByNow - (extra[plan.event.id] ?? .zero))
       eventTotal += max(left, tied[plan.event.id] ?? .zero)
     }
 
@@ -222,6 +226,22 @@ public struct CashPlan: Hashable, Sendable {
       reservesGoalPlans: reserveGoalPlan,
       withoutRate: missing.sorted { $0.code < $1.code }, overdue: overdue,
       reservesEventBudgets: reserveEventBudgets)
+  }
+
+  /// What the operations of each counted event dated after today add to its «потрачено», as my
+  /// spending in rubles (`LedgerRow.contribution`). Written ahead, their money has not left the
+  /// accounts yet — the money now still holds it, as a payment typed ahead pays no due before
+  /// its day —, so the budget held back for the event is not smaller by it.
+  static func spentAhead(
+    ledger: Ledger, today: DateOnly, counted: [UUID: EventPlan]
+  ) -> [UUID: AmountE4] {
+    guard !counted.isEmpty, let last = ledger.rows.last?.day, last > today else { return [:] }
+    var result: [UUID: AmountE4] = [:]
+    for row in ledger.rows(in: DayRange(today.adding(days: 1), last)) {
+      guard let eventId = row.eventId, counted[eventId] != nil else { continue }
+      result[eventId, default: .zero] += row.contribution
+    }
+    return result
   }
 
   /// What ordinary operations paid of the due dates tied to each counted event, by matching
@@ -417,7 +437,7 @@ extension CashPlan {
       guard let payment = line.debt.monthlyPaymentE4, payment.raw > 0,
         line.debt.paymentDay != nil
       else { return false }
-      return line.balance.raw > 0
+      return line.dues.balance(or: line.balance).raw > 0
     }
     guard !candidates.isEmpty else { return [] }
     let states: [UUID: DebtDueState]
@@ -435,7 +455,9 @@ extension CashPlan {
       }
       let owed = state.owed(through: d, monthly: payment)
       guard owed.raw > 0 else { continue }
-      owing.append((line, min(owed, line.balance)))
+      let left = state.balance(or: line.balance)
+      guard left.raw > 0 else { continue }
+      owing.append((line, min(owed, left)))
     }
     guard !owing.isEmpty else { return [] }
     let mainId = ledger.dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id

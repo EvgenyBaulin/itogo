@@ -382,14 +382,19 @@ struct CashPlanPropertyTests {
     /// the next) through D, as many are paid as the money of the payments dated from the start
     /// through today — operations on the debt and `payment` lines of its journal — covers, one
     /// after another, a percent short of a due included; the rest is owed, less what was paid
-    /// toward the first of them, never more than the debt.
+    /// toward the first of them, never more than the debt owes today.
     func debts() -> AmountE4 {
       var total = AmountE4.zero
       // Only what I owe on open debts: money owed to me and closed debts ask for nothing.
       for debt in fx.debts where debt.direction == .iOwe && !debt.closed {
         guard let payment = debt.monthlyPaymentE4, let day = debt.paymentDay else { continue }
         let journal = fx.debtEntries.filter { $0.debtId == debt.id }
-        let balance = AmountE4.sum(journal.map(\.amountE4))
+        // What is owed today: a line written for a later day — a payment typed ahead — has not
+        // paid anything yet, as it pays no due before its day. A debt that begins after today
+        // owes what its journal says.
+        let byToday = journal.filter { $0.date.map { $0 <= CashFx.today } ?? true }
+        let balance = AmountE4.sum(
+          (byToday.contains { $0.amountE4.raw > 0 } ? byToday : journal).map(\.amountE4))
         guard balance.raw > 0, let start = journal.compactMap(\.date).min() else { continue }
         func payday(_ month: MonthKey) -> DateOnly {
           DateOnly(

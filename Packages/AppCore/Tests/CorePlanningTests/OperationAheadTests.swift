@@ -1,3 +1,4 @@
+import CoreAccounting
 import CoreKit
 import Foundation
 import Testing
@@ -109,6 +110,28 @@ struct OperationAheadTests {
       }, named: "Dinner", calendar: calendar)
     #expect(payment.reimbursable)
     #expect(payment.debtorPersonId == debtor)
+  }
+
+  /// A category of the app — «Не помню», Loans and what is under it — is not one a payment may
+  /// have: the form of a payment refuses it («Системную категорию здесь выбрать нельзя»). An
+  /// expense dated ahead in it becomes a payment with no category, one Planning saves as it is;
+  /// an ordinary category stays.
+  @Test func thePaymentLeavesACategoryOfTheAppOut() {
+    let unknown = CoreKit.Category(kind: .expense, name: "Не помню", systemRole: .unknown)
+    let loans = CoreKit.Category(kind: .expense, name: "Кредиты", systemRole: .loans)
+    let mortgage = CoreKit.Category(parentId: loans.id, kind: .expense, name: "Ипотека")
+    let groceries = CoreKit.Category(id: food, kind: .expense, name: "Продукты")
+    let tree = CategoryTree([unknown, loans, mortgage, groceries])
+    for category in [unknown.id, loans.id, mortgage.id] {
+      let payment = OperationAhead.scheduledPayment(
+        from: draft { $0.parts[0].categoryId = category }, named: "Sofa", calendar: calendar,
+        tree: tree)
+      #expect(payment.categoryId == nil)
+      #expect(ScheduledRules.validate(payment, tree: tree) == nil)
+    }
+    let payment = OperationAhead.scheduledPayment(
+      from: draft(), named: "Sofa", calendar: calendar, tree: tree)
+    #expect(payment.categoryId == food)
   }
 
   @Test func theExpectedIncomeIsOneDueOnTheDay() {
