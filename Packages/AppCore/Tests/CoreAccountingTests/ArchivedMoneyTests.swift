@@ -89,7 +89,8 @@ struct ArchivedMoneyTests {
     #expect(check.leftovers.map(\.key) == [cashRub])
     #expect(check.leftovers.first?.amount == money(-1_000))
     let settling = ArchivedMoney.settlingTransfer(
-      check.leftovers[0], counterpart: sber.id, now: at(12), note: "n", id: id(30))
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: "n",
+      id: id(30))
     #expect(settling.fromAccountId == sber.id && settling.toAccountId == cash.id)
     #expect(settling.fromAmountE4 == money(1_000) && settling.toAmountE4 == money(1_000))
     // Nothing moves on the key after the deletion: the transfer follows its count.
@@ -130,7 +131,8 @@ struct ArchivedMoneyTests {
       removing: movement(old), adding: movement(new), balances: books,
       accounts: [sber, wallet, cash])
     let settling = ArchivedMoney.settlingTransfer(
-      check.leftovers[0], counterpart: sber.id, now: at(12), note: nil, id: id(30))
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil,
+      id: id(30))
     let after = balances(
       entries: [new], transfers: [settling], counted: [(cashRub, 5_000), (sberRub, 10_000)],
       now: at(13))
@@ -149,7 +151,8 @@ struct ArchivedMoneyTests {
       removing: movement(future), adding: movement(cheaper),
       balances: balances(entries: [future]), accounts: [sber, wallet, cash])
     let settling = ArchivedMoney.settlingTransfer(
-      check.leftovers[0], counterpart: sber.id, now: at(12), note: nil, id: id(30))
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil,
+      id: id(30))
     #expect(settling.occurredAt == at(30).addingTimeInterval(1))
   }
 
@@ -158,7 +161,9 @@ struct ArchivedMoneyTests {
   /// «Наличные», archived at zero: counted 5,000 at 06:00, a purchase of 5,000 at 07:00, a
   /// purchase of 1,000 at 08:00 settled by 1,000 from «Сбер» at 08:00. Now is days later
   /// unless said.
-  func archivedAtZero(now: Date = moment("2026-10-05")) -> (
+  func archivedAtZero(
+    now: Date = moment("2026-10-05")
+  ) -> (
     books: AccountBalances, first: TransactionEntry, second: TransactionEntry, settled: Transfer
   ) {
     let first = purchase(10, 5_000, on: cash.id, at: at(7))
@@ -188,7 +193,8 @@ struct ArchivedMoneyTests {
     #expect(check.leftovers.map(\.amount) == [money(1_000)])
     #expect(check.leftovers.map(\.settleAfter) == [at(8)])
     let settling = ArchivedMoney.settlingTransfer(
-      check.leftovers[0], counterpart: sber.id, now: books.now, note: nil, id: id(30))
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: books.now,
+      note: nil, id: id(30))
     #expect(settling.occurredAt == at(8).addingTimeInterval(1))
     #expect(settling.fromAccountId == cash.id && settling.toAccountId == sber.id)
     #expect(settling.createdAt == books.now)
@@ -214,7 +220,8 @@ struct ArchivedMoneyTests {
       accounts: [sber, wallet, cash])
     #expect(check.leftovers.map(\.settleAfter) == [at(10)])
     let settling = ArchivedMoney.settlingTransfer(
-      check.leftovers[0], counterpart: sber.id, now: books.now, note: nil, id: id(30))
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: books.now,
+      note: nil, id: id(30))
     #expect(settling.occurredAt == at(10).addingTimeInterval(1))
   }
 
@@ -242,7 +249,8 @@ struct ArchivedMoneyTests {
     #expect(earlier.leftovers.map(\.amount) == [money(1_000)])
     #expect(earlier.leftovers.map(\.settleAfter) == [at(7)])
     let settling = ArchivedMoney.settlingTransfer(
-      earlier.leftovers[0], counterpart: sber.id, now: books.now, note: nil, id: id(30))
+      earlier.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: books.now,
+      note: nil, id: id(30))
     #expect(settling.occurredAt == at(7).addingTimeInterval(1))
   }
 
@@ -267,6 +275,106 @@ struct ArchivedMoneyTests {
     #expect(check.leftovers.map(\.settleAfter) == [at(6)])
   }
 
+  /// «Сбер», the live account the money goes to, was counted again at 10:00, after the last
+  /// movement of «Наличные» (08:00). A transfer at 08:00:01 would land inside the window of that
+  /// count and make up a «Сверка» difference there: it goes a second after the count instead.
+  /// To «Кошелёк», never counted, it goes a second after the last movement, as before.
+  @Test func aLaterCountOfTheCounterpartDatesTheTransferAfterIt() {
+    let first = purchase(10, 5_000, on: cash.id, at: at(7))
+    let second = purchase(11, 1_000, on: cash.id, at: at(8))
+    let settled = Transfer(
+      id: id(21), occurredAt: at(8), fromAccountId: sber.id, fromCurrency: .rub,
+      fromAmountE4: money(1_000), toAccountId: cash.id, toCurrency: .rub,
+      toAmountE4: money(1_000))
+    let early = Reconciliation(
+      id: id(90), date: day("2026-09-26"), reconciledAt: at(6), actualTotalRubE4: .zero,
+      kind: .accounts)
+    let late = Reconciliation(
+      id: id(91), date: day("2026-09-26"), reconciledAt: at(10), actualTotalRubE4: .zero,
+      kind: .accounts)
+    let books = AccountBalances.build(
+      entries: [first, second], transfers: [settled], debtEntries: [], debts: [:],
+      reconciliations: [early, late],
+      balances: [
+        ReconciledBalance(
+          id: id(900), reconciliationId: early.id, accountId: cash.id, currency: .rub,
+          actualE4: money(5_000)),
+        ReconciledBalance(
+          id: id(901), reconciliationId: early.id, accountId: sber.id, currency: .rub,
+          actualE4: money(10_000)),
+        ReconciledBalance(
+          id: id(902), reconciliationId: late.id, accountId: sber.id, currency: .rub,
+          actualE4: money(9_000)),
+      ],
+      accounts: [sber, wallet, cash], tree: categories.tree, now: moment("2026-10-05"),
+      calendar: .utc)
+    var cheaper = first
+    cheaper.transaction.amountE4 = money(4_000)
+    cheaper.parts[0].amountE4 = money(4_000)
+    let check = ArchivedMoney.leftovers(
+      removing: movement(first), adding: movement(cheaper), balances: books,
+      accounts: [sber, wallet, cash])
+    #expect(check.leftovers.map(\.settleAfter) == [at(8)])
+    let leftover = check.leftovers[0]
+
+    let counted = ArchivedMoney.counterpartCount(sber.id, for: leftover.key, balances: books)
+    #expect(counted == at(10))
+    let toSber = ArchivedMoney.settlingTransfer(
+      leftover, counterpart: sber.id, counterpartCountedAt: counted, now: books.now, note: nil,
+      id: id(30))
+    #expect(toSber.occurredAt == at(10).addingTimeInterval(1))
+    #expect(
+      ArchivedMoney.settlingTransfers(
+        leftover, counterpart: sber.id, counterpartCountedAt: counted, now: books.now, note: nil
+      ).map(\.occurredAt) == [at(10).addingTimeInterval(1)])
+    // The count of «Сбер» keeps what it found: the transfer is after it.
+    let after = AccountBalances.build(
+      entries: [cheaper, second], transfers: [settled, toSber], debtEntries: [], debts: [:],
+      reconciliations: [early, late],
+      balances: [
+        ReconciledBalance(
+          id: id(900), reconciliationId: early.id, accountId: cash.id, currency: .rub,
+          actualE4: money(5_000)),
+        ReconciledBalance(
+          id: id(901), reconciliationId: early.id, accountId: sber.id, currency: .rub,
+          actualE4: money(10_000)),
+        ReconciledBalance(
+          id: id(902), reconciliationId: late.id, accountId: sber.id, currency: .rub,
+          actualE4: money(9_000)),
+      ],
+      accounts: [sber, wallet, cash], tree: categories.tree, now: moment("2026-10-05"),
+      calendar: .utc)
+    #expect(after.expected(forCount: id(902)) == books.expected(forCount: id(902)))
+    #expect(after[cashRub]?.amountE4 == .zero)
+
+    let walletCount = ArchivedMoney.counterpartCount(wallet.id, for: leftover.key, balances: books)
+    #expect(walletCount == nil)
+    let toWallet = ArchivedMoney.settlingTransfer(
+      leftover, counterpart: wallet.id, counterpartCountedAt: walletCount, now: books.now,
+      note: nil, id: id(31))
+    #expect(toWallet.occurredAt == at(8).addingTimeInterval(1))
+  }
+
+  /// A line of a debt journal known only by its day — 27 September — is as late as the end of
+  /// that day: the transfer goes at the start of the next one, never in the middle of a day the
+  /// line may have moved money later in.
+  @Test func aMovementKnownByItsDayCountsAsTheEndOfIt() {
+    let (books, _, _, _) = archivedAtZero()
+    let lineDay = day("2026-09-27")
+    let line = AccountMovement(
+      key: cashRub, at: CalendarContext.utc.startOfDay(lineDay), amountE4: money(700),
+      source: .journal(id(40)), timing: .day(lineDay))
+    let check = ArchivedMoney.leftovers(
+      removing: [], adding: [line], balances: books, accounts: [sber, wallet, cash])
+    #expect(check.leftovers.map(\.amount) == [money(700)])
+    let nextDay = CalendarContext.utc.startOfDay(day("2026-09-28"))
+    #expect(check.leftovers.map(\.settleAfter) == [nextDay.addingTimeInterval(-1)])
+    let settling = ArchivedMoney.settlingTransfer(
+      check.leftovers[0], counterpart: wallet.id, counterpartCountedAt: nil, now: books.now,
+      note: nil, id: id(30))
+    #expect(settling.occurredAt == nextDay)
+  }
+
   /// Money typed ahead on the archived key: a change ahead is settled a second after the last
   /// movement, ahead of now, as before.
   @Test func aMovementTypedAheadSettlesAfterIt() {
@@ -286,7 +394,8 @@ struct ArchivedMoneyTests {
       accounts: [sber, wallet, cash])
     #expect(check.leftovers.map(\.amount) == [money(5_000)])
     let settling = ArchivedMoney.settlingTransfer(
-      check.leftovers[0], counterpart: sber.id, now: at(12), note: nil, id: id(30))
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil,
+      id: id(30))
     #expect(settling.occurredAt == at(84).addingTimeInterval(1))
     #expect(
       ArchivedMoney.legs(of: [settling], archived: cash.id, now: at(12)).map(\.when) == [.later])
@@ -305,7 +414,7 @@ struct ArchivedMoneyTests {
       key: cashRub, amount: money(100), latest: now.addingTimeInterval(-0.4),
       settleAfter: now.addingTimeInterval(-0.4))
     let settling = ArchivedMoney.settlingTransfer(
-      leftover, counterpart: sber.id, now: now, note: nil, id: id(30))
+      leftover, counterpart: sber.id, counterpartCountedAt: nil, now: now, note: nil, id: id(30))
     #expect(settling.occurredAt == now)
     #expect(ArchivedMoney.legs(of: [settling], archived: cash.id, now: now).map(\.when) == [.now])
   }
@@ -320,7 +429,8 @@ struct ArchivedMoneyTests {
       removing: movement(first), adding: movement(cheaper), balances: books,
       accounts: [sber, wallet, cash])
     let transfers = ArchivedMoney.settlingTransfers(
-      check.leftovers[0], counterpart: sber.id, now: books.now, note: nil)
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: books.now, note: nil
+    )
     #expect(transfers.map(\.occurredAt) == [at(8).addingTimeInterval(1)])
     let legs = ArchivedMoney.legs(of: transfers, archived: cash.id, now: books.now)
     #expect(legs.map(\.when) == [.earlier])
@@ -337,7 +447,7 @@ struct ArchivedMoneyTests {
     #expect(check.leftovers.map(\.settleAfter) == [nil])
     #expect(
       ArchivedMoney.settlingTransfers(
-        check.leftovers[0], counterpart: sber.id, now: at(12), note: nil
+        check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil
       ).map(\.occurredAt) == [at(12)])
     let (books, _, _, _) = archivedAtZero(now: at(12))
     #expect(ArchivedMoney.balancesToMove(of: live, balances: books).leftovers.isEmpty)
@@ -374,7 +484,8 @@ struct ArchivedMoneyTests {
     let owed = ArchivedMoney.balancesToMove(of: live, balances: credit)
     #expect(owed.leftovers.map(\.amount) == [money(-30_000)])
     let settling = ArchivedMoney.settlingTransfer(
-      owed.leftovers[0], counterpart: sber.id, now: at(12), note: nil, id: id(31))
+      owed.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil,
+      id: id(31))
     #expect(settling.fromAccountId == sber.id && settling.toAccountId == cash.id)
     #expect(settling.fromAmountE4 == money(30_000))
   }
@@ -402,7 +513,7 @@ struct ArchivedMoneyTests {
     #expect(check.leftovers[0].shownAmount == money(12_000), "the question names the money now")
     var next = 30
     let settling = ArchivedMoney.settlingTransfers(
-      check.leftovers[0], counterpart: sber.id, now: at(12), note: nil,
+      check.leftovers[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil,
       ids: {
         next += 1
         return id(next)
@@ -435,7 +546,7 @@ struct ArchivedMoneyTests {
     let owed = ArchivedMoney.balancesToMove(of: live, balances: atZero).leftovers
     #expect(owed.map(\.amount) == [money(-30_000)])
     let onRentDay = ArchivedMoney.settlingTransfers(
-      owed[0], counterpart: sber.id, now: at(12), note: nil)
+      owed[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil)
     #expect(onRentDay.map(\.occurredAt) == [at(84)], "nothing to move now: one leg, with the rent")
 
     let paidAhead = balances(entries: [rent], counted: [(cashRub, 30_000), (sberRub, 50_000)])
@@ -448,7 +559,7 @@ struct ArchivedMoneyTests {
     #expect(both.map(\.amount) == [.zero])
     #expect(both.map(\.shownAmount) == [money(30_000)])
     let legs = ArchivedMoney.settlingTransfers(
-      both[0], counterpart: sber.id, now: at(12), note: nil)
+      both[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil)
     #expect(legs.map(\.occurredAt) == [at(12), at(84)])
     let emptied = balances(
       entries: [rent], transfers: legs, counted: [(cashRub, 30_000), (sberRub, 50_000)],
@@ -465,8 +576,10 @@ struct ArchivedMoneyTests {
     let plain = balances(counted: [(cashRub, 1_000)])
     let one = ArchivedMoney.balancesToMove(of: live, balances: plain).leftovers
     #expect(
-      ArchivedMoney.settlingTransfers(one[0], counterpart: sber.id, now: at(12), note: nil)
-        .map(\.occurredAt) == [at(12)])
+      ArchivedMoney.settlingTransfers(
+        one[0], counterpart: sber.id, counterpartCountedAt: nil, now: at(12), note: nil
+      )
+      .map(\.occurredAt) == [at(12)])
   }
 
   /// A key that moved but was never counted: nobody knows its balance, so nothing is moved

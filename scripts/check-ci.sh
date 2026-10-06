@@ -20,7 +20,7 @@
 # and named no test.
 #
 # And every secret a workflow reads is named as a secret in the instructions a maintainer
-# follows — the section «Выпуск» of README.md: a release once stopped on SPARKLE_PUBLIC_KEY
+# follows — the section «Выпуск» of guide/development.md: a release once stopped on SPARKLE_PUBLIC_KEY
 # while the instructions of the day asked for SPARKLE_PRIVATE_KEY alone. A name counts where a
 # list item or a paragraph that says «секрет» or «secret» spells it; a variable of the same name
 # elsewhere does not.
@@ -340,7 +340,7 @@ outdated() {
 }
 
 # The documents that tell a maintainer what to set up on GitHub.
-instructions="README.md"
+instructions="guide/development.md"
 
 # Prints each secret the workflows read (all arguments after the first) that a document of the
 # first argument, a list of paths, does not name as a secret; exit 1 when there is any.

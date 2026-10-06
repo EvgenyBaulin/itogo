@@ -270,7 +270,10 @@ enum AnalyticsBuilder {
     }
     return ForWhomSectionModel(
       values: ranked(report.values, else: .noSpending),
-      people: ranked(report.people, else: .noSpending),
+      // Spending that names nobody is the owner's own and has no line here; a period with
+      // spending and nobody named says that, not «no spending».
+      people: ranked(
+        report.people, else: report.values.contains { $0.amount.raw > 0 } ? .noPeople : .noSpending),
       dynamics: dynamics)
   }
 

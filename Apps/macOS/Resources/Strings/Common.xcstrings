@@ -1,6 +1,57 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "about.menu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "About Itogo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "О программе Итого"
+          }
+        }
+      }
+    },
+    "about.support.link": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Support the author →"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поддержать автора →"
+          }
+        }
+      }
+    },
+    "about.support.question": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Like Itogo?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нравится Итого?"
+          }
+        }
+      }
+    },
     "accounts.mainDefaultName": {
       "extractionState": "manual",
       "localizations": {

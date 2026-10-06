@@ -111,7 +111,11 @@ struct CountBook {
       balances[index] = settlement.count
       switch settlement.operation {
       case .none: break
-      case .create(let entry): entries.append(entry)
+      case .create(let entry):
+        // A new operation takes the place of the binned one with the same ids, as the
+        // database does.
+        entries.removeAll { $0.id == entry.id }
+        entries.append(entry)
       case .rewrite(let entry):
         if let at = entries.firstIndex(where: { $0.id == entry.id }) { entries[at] = entry }
       case .purge(let purged): entries.removeAll { $0.id == purged }

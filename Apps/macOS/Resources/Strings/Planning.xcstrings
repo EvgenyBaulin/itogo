@@ -6587,6 +6587,57 @@
         }
       }
     },
+    "reconcile.answer.after": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operations of this day: after the count"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Операции этого дня: после сверки"
+          }
+        }
+      }
+    },
+    "reconcile.answer.before": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operations of this day: before the count"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Операции этого дня: до сверки"
+          }
+        }
+      }
+    },
+    "reconcile.answer.forget": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forget"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Забыть"
+          }
+        }
+      }
+    },
     "reconcile.archived": {
       "extractionState": "manual",
       "localizations": {
@@ -7299,6 +7350,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Записать разницу"
+          }
+        }
+      }
+    },
+    "reconcile.recordAgain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record the difference"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записывать разницу"
           }
         }
       }

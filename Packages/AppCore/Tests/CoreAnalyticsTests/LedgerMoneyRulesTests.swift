@@ -264,7 +264,9 @@ struct IncomeMaskTests {
     #expect(events.events.first?.total == rub(1200))
     let forWhom = ForWhomReport(ledger: ledger, period: period)
     #expect(forWhom.values.map(\.key) == [.forWhom(.me)])
-    #expect(forWhom.people.map(\.key) == [.noPerson])
+    // Anya of the income is no one's line, and the dinner that names nobody is my own spending,
+    // which has no line among the people either.
+    #expect(forWhom.people.map(\.key) == [])
     let overview = OverviewSummary(ledger: ledger, today: day("2026-03-31"))
     #expect(overview.owedToMe == .zero)
     #expect(overview.owedCount == 0)

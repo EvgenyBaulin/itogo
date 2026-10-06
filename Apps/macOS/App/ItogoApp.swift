@@ -40,6 +40,7 @@ struct ItogoApp: App {
       AppCommands(environment: environment, store: store, compute: compute)
       FileCommands(environment: environment, store: store)
       HelpCommands(environment: environment)
+      AboutCommands(environment: environment)
       #if DEBUG
         DebugCommands(environment: environment, compute: compute)
       #endif
@@ -47,7 +48,7 @@ struct ItogoApp: App {
 
     Window(environment.language("window.transactions"), id: "transactions") {
       AppScenes.root(deps, window: .transactions) { deps in
-        SecondaryWindow(titleKey: "window.transactions") {
+        SecondaryWindow(titleKey: "window.transactions", scene: "transactions") {
           TransactionsRootView(deps: deps)
         }
       }
@@ -59,7 +60,7 @@ struct ItogoApp: App {
 
     Window(environment.language("window.analytics"), id: "analytics") {
       AppScenes.root(deps, window: .analytics) { deps in
-        SecondaryWindow(titleKey: "window.analytics") {
+        SecondaryWindow(titleKey: "window.analytics", scene: "analytics") {
           AnalyticsWindow(deps: deps)
         }
       }
@@ -71,7 +72,7 @@ struct ItogoApp: App {
 
     Window(environment.language("window.reports"), id: "reports") {
       AppScenes.root(deps, window: .reports) { deps in
-        SecondaryWindow(titleKey: "window.reports") {
+        SecondaryWindow(titleKey: "window.reports", scene: "reports") {
           ReportsWindow(deps: deps)
         }
       }
@@ -155,19 +156,25 @@ struct AppCommands: Commands {
         // flag waits for the window: a notification posted now would reach nobody while the
         // window is still being made, and the first ⌘F would be lost.
         environment.pendingSearchFocus = true
-        openWindow(id: "transactions")
+        WindowTabs.open("transactions", with: openWindow)
       }
       .keyboardShortcut("f", modifiers: .command)
     }
 
     // The secondary windows, each with its shortcut: ⌘⇧T, ⌘⇧A, ⌘⇧R.
     CommandGroup(before: .windowList) {
-      Button(environment.language("window.transactions")) { openWindow(id: "transactions") }
-        .keyboardShortcut("t", modifiers: [.command, .shift])
-      Button(environment.language("window.analytics")) { openWindow(id: "analytics") }
-        .keyboardShortcut("a", modifiers: [.command, .shift])
-      Button(environment.language("window.reports")) { openWindow(id: "reports") }
-        .keyboardShortcut("r", modifiers: [.command, .shift])
+      Button(environment.language("window.transactions")) {
+        WindowTabs.open("transactions", with: openWindow)
+      }
+      .keyboardShortcut("t", modifiers: [.command, .shift])
+      Button(environment.language("window.analytics")) {
+        WindowTabs.open("analytics", with: openWindow)
+      }
+      .keyboardShortcut("a", modifiers: [.command, .shift])
+      Button(environment.language("window.reports")) {
+        WindowTabs.open("reports", with: openWindow)
+      }
+      .keyboardShortcut("r", modifiers: [.command, .shift])
       Divider()
     }
 
@@ -429,6 +436,8 @@ struct MainWindow: View {
       .toolbar { toolbarContent }
     }
     .navigationTitle(windowTitle)
+    // The window Transactions, Analytics and Reports open as tabs of (`WindowTabs`).
+    .windowTab(.main)
     .navigationSubtitle(RecomputeText.subtitle(compute: compute, environment: environment))
     .journalsSection(selection.journalToken, in: .main)
     .task {
@@ -589,8 +598,10 @@ struct MainWindow: View {
         AccountScreen(accountId: id, actions: overviewActions)
           .id(id)
       case .group(let id):
-        GroupScreen(groupId: id, actions: overviewActions) { selection = .account($0) }
+        GroupScreen(scope: .group(id), actions: overviewActions) { selection = .account($0) }
           .id(id)
+      case .allAccounts:
+        GroupScreen(scope: .summary, actions: overviewActions) { selection = .account($0) }
       }
     }
   }
@@ -669,7 +680,7 @@ struct MainWindow: View {
       .help(environment.language("reconcile.help", table: "Planning"))
 
       Button {
-        openWindow(id: "transactions")
+        WindowTabs.open("transactions", with: openWindow)
       } label: {
         Label {
           Text(verbatim: environment.language("window.transactions"))
@@ -679,7 +690,7 @@ struct MainWindow: View {
       }
 
       Button {
-        openWindow(id: "analytics")
+        WindowTabs.open("analytics", with: openWindow)
       } label: {
         Label {
           Text(verbatim: environment.language("window.analytics"))
@@ -689,7 +700,7 @@ struct MainWindow: View {
       }
 
       Button {
-        openWindow(id: "reports")
+        WindowTabs.open("reports", with: openWindow)
       } label: {
         Label {
           Text(verbatim: environment.language("window.reports"))
@@ -777,11 +788,23 @@ extension View {
 struct SecondaryWindow<Content: View>: View {
   @Dependency(\.environment) private var environment
   let titleKey: String
+  /// The id of the scene; with one, the window opens as a tab of the main window
+  /// (`WindowTabs`). A test hosting the content in a window of its own gives none.
+  var scene: String?
   @ViewBuilder let content: Content
+
+  init(titleKey: String, scene: String? = nil, @ViewBuilder content: () -> Content) {
+    self.titleKey = titleKey
+    self.scene = scene
+    self.content = content()
+  }
 
   var body: some View {
     content
       .frame(minWidth: 720, minHeight: 480)
       .navigationTitle(environment.language(titleKey))
+      .background {
+        if let scene { Color.clear.windowTab(.secondary(scene: scene)) }
+      }
   }
 }

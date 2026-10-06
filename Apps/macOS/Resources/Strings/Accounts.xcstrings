@@ -2094,6 +2094,40 @@
         }
       }
     },
+    "account.screen.lastRecord": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last operation added %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последняя операция добавлена %@"
+          }
+        }
+      }
+    },
+    "account.screen.lastRecordNone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No operation added yet"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Операций ещё не добавляли"
+          }
+        }
+      }
+    },
     "account.screen.notCounted": {
       "extractionState": "manual",
       "localizations": {
@@ -4860,6 +4894,40 @@
         }
       }
     },
+    "group.screen.incomes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expected income"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидаемые поступления"
+          }
+        }
+      }
+    },
+    "group.screen.incomesNone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No income is expected to these accounts."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На эти счета поступлений не ждём."
+          }
+        }
+      }
+    },
     "group.screen.noAccounts": {
       "extractionState": "manual",
       "localizations": {
@@ -4873,6 +4941,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "В группе нет счетов."
+          }
+        }
+      }
+    },
+    "group.screen.payments": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Payments and subscriptions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платежи и подписки"
+          }
+        }
+      }
+    },
+    "group.screen.paymentsNone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No payment is paid from these accounts."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "С этих счетов платежей нет."
+          }
+        }
+      }
+    },
+    "group.screen.plan": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plans of the accounts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Планы счетов"
           }
         }
       }

@@ -308,6 +308,30 @@ struct LiveCountsTests {
     #expect(count.transactionId == book.entries[index].id)
   }
 
+  /// «Записывать разницу» of the history: the owner asks a count kept without an operation to
+  /// record again, by its mode alone with no operation linked. The operation in the bin does
+  /// not turn it back: a new one is written over it, with the count's own ids.
+  @Test func askingToRecordAgainWritesTheDifferenceOverTheBin() throws {
+    var (book, later) = theOwnersSeptember()
+    let index = try #require(
+      book.entries.firstIndex { $0.id == ReconcileDifferenceIds.operation(forCount: later) })
+    book.entries[index].transaction.deletedAt = at("2026-09-21")
+    book.settle()
+    #expect(book.count(later)?.recordsDifference == false)
+
+    let countIndex = try #require(book.balances.firstIndex { $0.id == later })
+    book.balances[countIndex].recordsDifference = true
+    book.balances[countIndex].transactionId = nil
+    book.settle()
+    let count = try #require(book.count(later))
+    #expect(count.recordsDifference == true)
+    let operation = try #require(book.operation(ofCount: later))
+    #expect(operation.transaction.isDeleted == false)
+    #expect(operation.transaction.amountE4 == money(8_000))
+    #expect(count.transactionId == operation.id)
+    #expect(book.entries.filter { $0.id == operation.id }.count == 1)
+  }
+
   @Test func aForeignDifferenceKeepsItsOwnRate() throws {
     var book = book()
     book.rates = [kzt: Decimal(string: "0.19")!]

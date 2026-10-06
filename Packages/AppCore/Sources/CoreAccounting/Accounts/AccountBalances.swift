@@ -288,6 +288,41 @@ public struct AccountBalances: Hashable, Sendable {
     return nil
   }
 
+  /// The latest instant a movement may have happened at: its moment, or for one known only by
+  /// its day the last second of that day in the owner's calendar — it may have been as late as
+  /// that. `nil` for a journal line with no date.
+  public func lastInstant(of movement: AccountMovement) -> Date? {
+    switch movement.timing {
+    case .moment: return movement.at
+    case .day(let day):
+      // The next day of the calendar, whatever the length of this one: a day is never as long
+      // as 36 hours.
+      let calendar = days.calendar
+      let next = calendar.day(of: calendar.startOfDay(day).addingTimeInterval(36 * 3600))
+      return calendar.startOfDay(next).addingTimeInterval(-1)
+    case .undated: return nil
+    }
+  }
+
+  /// The latest instant any movement of the key may have happened at once `removed` are taken
+  /// away (`lastInstant(of:)`), up to now and after; `nil` when none with a date is left. Each
+  /// movement of `removed` takes away one equal movement of the books, so of two equal lines one
+  /// stays.
+  public func latestInstant(of key: BalanceKey, removing removed: [AccountMovement]) -> Date? {
+    var taken: [AccountMovement: Int] = [:]
+    for movement in removed where movement.key == key { taken[movement, default: 0] += 1 }
+    var latest: Date?
+    for movement in movementsByKey[key] ?? [] {
+      if let count = taken[movement], count > 0 {
+        taken[movement] = count - 1
+        continue
+      }
+      guard let instant = lastInstant(of: movement) else { continue }
+      if latest.map({ instant > $0 }) ?? true { latest = instant }
+    }
+    return latest
+  }
+
   /// Whether the key was ever counted or ever moved, at any moment.
   public func hasHistory(_ key: BalanceKey) -> Bool {
     !(anchorsByKey[key]?.isEmpty ?? true) || !(movementsByKey[key]?.isEmpty ?? true)

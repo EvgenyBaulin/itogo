@@ -368,6 +368,13 @@ enum ArchiveImportFlow {
     if let style = values[AppEnvironment.entryStyleKey], EntryStyle(rawValue: style) != nil {
       defaults.set(style, forKey: AppEnvironment.entryStyleKey)
     }
+    // The tiles of Overview are read as a choice the grid can show before they are kept: a tile
+    // this build does not know goes, and never more than twelve stay.
+    if let tiles = values[AppEnvironment.overviewTilesKey] {
+      defaults.set(
+        OverviewTiles.encode(OverviewTiles.decode(tiles)),
+        forKey: AppEnvironment.overviewTilesKey)
+    }
   }
 
   /// What an import asks the owner and what it tells them. Alerts in the app; a test answers

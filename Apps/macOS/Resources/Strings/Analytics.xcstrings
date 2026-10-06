@@ -3152,6 +3152,23 @@
         }
       }
     },
+    "analytics.reason.noPeople": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No spending in this period names a person — it is all your own"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этом периоде нет трат с человеком — все траты ваши"
+          }
+        }
+      }
+    },
     "analytics.reason.noPlaces": {
       "extractionState": "manual",
       "localizations": {

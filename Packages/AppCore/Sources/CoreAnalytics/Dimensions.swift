@@ -10,8 +10,9 @@ public struct ForWhomReport: Hashable, Sendable {
   }
 
   public var values: [BreakdownNode]
-  /// By person — whom the part was for, or who owes it — with «no particular person» last,
-  /// so the shares are shares of all my expenses.
+  /// By person — whom the part was for, or who owes it. A part that names nobody is my own
+  /// spending, not a person's, and has no line here; it stays in the base of the shares, so a
+  /// share is still a share of all my expenses.
   public var people: [BreakdownNode]
   public var months: [Month]
 
@@ -19,7 +20,8 @@ public struct ForWhomReport: Hashable, Sendable {
     let rows = ledger.rows(in: period.range).filter { !$0.contribution.isZero }
     values = Tabulation.oneLevel(rows.map { (.forWhom($0.forWhom), $0.contribution) })
     people = Tabulation.oneLevel(
-      rows.map { ($0.personId.map(ReportKey.person) ?? .noPerson, $0.contribution) })
+      rows.map { ($0.personId.map(ReportKey.person) ?? .noPerson, $0.contribution) }
+    ).filter { $0.key != .noPerson }
     months = period.months.map { month in
       var amounts: [ForWhom: AmountE4] = [:]
       for row in ledger.rows(in: ledger.slice(of: month, in: period))

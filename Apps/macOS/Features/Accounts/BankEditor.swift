@@ -37,11 +37,8 @@ struct BankEditor: View {
         .font(.headline)
       Form {
         Section {
-          TextField(text: $name) {
-            Text(verbatim: t("bank.editor.name"))
-          }
-          .accessibilityIdentifier("bank.editor.name")
-          .onSubmit(save)
+          NameField(title: t("bank.editor.name"), text: $name, identifier: "bank.editor.name")
+            .onSubmit(save)
         } footer: {
           Text(verbatim: t(previous == nil ? "bank.editor.newHint" : "bank.editor.hint"))
             .foregroundStyle(.secondary)

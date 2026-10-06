@@ -120,7 +120,7 @@ struct AccountsSidebarSection: View {
       }
     }
     .help(snapshot.inSummaryTotalRub == nil ? t("sidebar.totalNotCounted") : t("sidebar.totalHint"))
-    .selectionDisabled()
+    .tag(SidebarItem.allAccounts)
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("sidebar.accounts.total")
   }

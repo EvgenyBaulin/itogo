@@ -178,6 +178,33 @@ extension PlanningActions {
     return done
   }
 
+  /// «Записывать разницу» of the history: a count that keeps only its numbers records its
+  /// difference again — the operation written now (over the one in the bin, if the owner
+  /// deleted it), following the books from now on —, one step of ⌘Z.
+  @discardableResult
+  func recordDifference(of count: ReconciledBalance) -> Bool {
+    let done = apply(Self.recordingAgain(count))
+    let pairs = [LogPair("count", .id(count.id))]
+    if done {
+      AppLog.info("reconcile.recordsAgain", .db, "a count records its difference again", pairs)
+    } else {
+      AppLog.error("reconcile.recordRefused", .db, "a count was not set to record", pairs)
+    }
+    return done
+  }
+
+  /// The one write of «Записывать разницу»: the mode, with no operation linked — the owner
+  /// asking, which the operation in the bin does not hold back (`LiveCounts.settle`) —, and the
+  /// pair settled in the same step.
+  static func recordingAgain(_ count: ReconciledBalance) -> PlanningChange {
+    var asked = count
+    asked.recordsDifference = true
+    asked.transactionId = nil
+    var rows = PlanningRows.empty
+    rows.reconciledBalances = [asked]
+    return PlanningChange(upsert: rows, settles: [count.key])
+  }
+
   /// The one write of the fix: the starting point and its operation to the bin.
   static func fixing(_ candidate: FirstCountCandidate) -> PlanningChange {
     let write = FirstCountFix.fix(candidate)

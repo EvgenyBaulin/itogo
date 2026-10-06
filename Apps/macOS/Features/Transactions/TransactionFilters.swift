@@ -8,8 +8,8 @@ import Foundation
 ///   is dropped together with its subcategory — it would filter everything out, and the
 ///   picker could no longer show it;
 /// * another category drops the subcategory, exactly as the ↓ panel does;
-/// * a value archived after it was chosen is dropped (`keep(within:)`) — but a place, which the
-///   filter goes on offering from the archive, is kept;
+/// * a value archived after it was chosen is dropped (`keep(within:)`) — but a place, a person
+///   and an event, which the filter goes on offering from the archive, are kept;
 /// * «Reset» brings everything back, the search included.
 struct TransactionFilters: Hashable, Sendable {
   enum PeriodChoice: String, CaseIterable, Hashable, Sendable {
@@ -172,10 +172,11 @@ struct TransactionFilters: Hashable, Sendable {
 }
 
 /// The values the filters offer, taken from the data the table shows whenever it changes.
-/// Archived categories, people, events, accounts and cards are not offered, though an operation filed
-/// under an archived subcategory is still found by its live parent. Places in the archive are:
-/// their operations keep them, and the table is where the owner finds those — the live places
-/// first, then the archived ones (`archivedPlaceIds`).
+/// Archived categories, accounts and cards are not offered, though an operation filed under an
+/// archived subcategory is still found by its live parent. Places, people and events in the
+/// archive are: their operations keep them, and the table is where the owner finds those — the
+/// live ones first, then the archived ones, which the picker names «(архив)» after a line
+/// (`placeOptions`, `personOptions`, `eventOptions`).
 struct FilterChoices: Sendable {
   var categories: [CoreKit.Category] = []
   var people: [Person] = []
@@ -190,19 +191,29 @@ struct FilterChoices: Sendable {
   var everyAccount: [PaymentMethod] = []
   /// The places of `places` that are in the archive, named «(архив)» by the picker.
   var archivedPlaceIds: Set<UUID> = []
+  /// The people of `people` that are in the archive, named «(архив)» by the picker.
+  var archivedPersonIds: Set<UUID> = []
+  /// The events of `events` that are in the archive, named «(архив)» by the picker.
+  var archivedEventIds: Set<UUID> = []
 
   init() {}
 
   /// `locale` orders the accounts by name the way the interface language does.
   init(_ dataset: Dataset, locale: Locale = Locale(identifier: "en")) {
     categories = dataset.categories.filter { !$0.archived }
-    people = dataset.people.filter { !$0.archived }.sorted { $0.name < $1.name }
+    let byName: (Person, Person) -> Bool = { $0.name < $1.name }
+    let archivedPeople = dataset.people.filter(\.archived).sorted(by: byName)
+    people = dataset.people.filter { !$0.archived }.sorted(by: byName) + archivedPeople
+    archivedPersonIds = Set(archivedPeople.map(\.id))
     let archivedPlaces = dataset.places.filter(\.archived).sorted { $0.name < $1.name }
     places =
       dataset.places.filter { !$0.archived }.sorted { $0.name < $1.name } + archivedPlaces
     archivedPlaceIds = Set(archivedPlaces.map(\.id))
-    // The latest first: the event one looks for is usually the last one.
-    events = dataset.events.filter { !$0.archived }.sorted { $0.startDate > $1.startDate }
+    // The latest first, in each part: the event one looks for is usually the last one.
+    let latestFirst: (Event, Event) -> Bool = { $0.startDate > $1.startDate }
+    let archivedEvents = dataset.events.filter(\.archived).sorted(by: latestFirst)
+    events = dataset.events.filter { !$0.archived }.sorted(by: latestFirst) + archivedEvents
+    archivedEventIds = Set(archivedEvents.map(\.id))
     // The order of every list of accounts: the main one first, then the owner's order.
     paymentMethods = AccountRules.ordered(dataset.paymentMethods, locale: locale)
     let offered = Set(paymentMethods.map(\.id))
@@ -218,6 +229,36 @@ struct FilterChoices: Sendable {
   var accountItems: [AccountCardChoices.Item] {
     AccountCardChoices.items(
       accounts: paymentMethods, cards: cards, banks: banks, among: everyAccount, locale: locale)
+  }
+
+  /// The choices of a picker that offers the archive too: each value with its name — an archived
+  /// one through `archivedName`, «Кофемания (архив)» — and where the archived ones start, for the
+  /// line that sets them apart (`nil` when there are none, or nothing live before them).
+  struct Options {
+    var options: [(UUID, String)]
+    var dividerBefore: Int?
+  }
+
+  /// `archivedName` names a value in the archive: `common.archivedName` of the interface.
+  func placeOptions(archivedName: (String) -> String) -> Options {
+    Self.options(places.map { ($0.id, $0.name) }, archived: archivedPlaceIds, archivedName)
+  }
+
+  func personOptions(archivedName: (String) -> String) -> Options {
+    Self.options(people.map { ($0.id, $0.name) }, archived: archivedPersonIds, archivedName)
+  }
+
+  func eventOptions(archivedName: (String) -> String) -> Options {
+    Self.options(events.map { ($0.id, $0.name) }, archived: archivedEventIds, archivedName)
+  }
+
+  private static func options(
+    _ values: [(UUID, String)], archived: Set<UUID>, _ archivedName: (String) -> String
+  ) -> Options {
+    let first = values.firstIndex { archived.contains($0.0) }
+    return Options(
+      options: values.map { archived.contains($0.0) ? ($0.0, archivedName($0.1)) : $0 },
+      dividerBefore: first.flatMap { $0 > 0 ? $0 : nil })
   }
 
   func topLevel(for kind: TransactionKind?) -> [CoreKit.Category] {

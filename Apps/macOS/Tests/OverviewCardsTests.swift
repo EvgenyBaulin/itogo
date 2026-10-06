@@ -136,24 +136,29 @@ final class OverviewCardsTests: XCTestCase {
     XCTAssertEqual(OverviewCard.columns(forWidth: 0), 1)
   }
 
-  /// The cards keep their designed order in every width: the six of the first layout, the
-  /// five of planning that took the place of the line «Появится позже», and the anomalies.
+  /// The tiles keep the order of the choice in every width; by default the six of the first
+  /// layout, the five of planning that took the place of the line «Появится позже», and the
+  /// anomalies — the grid of 1.2.
   func testTheCardsFillTheRowsInTheirOrder() {
     XCTAssertEqual(
-      OverviewCard.rows(columns: 3),
+      OverviewCard.rows(OverviewTiles.standard, columns: 3),
       [
-        [.monthToDate, .topCategories, .qualities], [.canSave, .forecast, .limits],
-        [.upcoming, .expected, .owed], [.event, .reconciliation, .anomalies],
+        [.monthToDate, .topCategories, .qualities], [.canSave, .spendingForecast, .limits],
+        [.upcoming, .expectedIncome, .owedToMe], [.event, .lastCount, .worthALook],
       ])
-    XCTAssertEqual(OverviewCard.rows(columns: 2).count, 6)
-    XCTAssertEqual(OverviewCard.rows(columns: 1).flatMap { $0 }, OverviewCard.allCases)
+    XCTAssertEqual(OverviewCard.rows(OverviewTiles.standard, columns: 2).count, 6)
+    XCTAssertEqual(
+      OverviewCard.rows(OverviewTiles.standard, columns: 1).flatMap { $0 }, OverviewTiles.standard)
+    XCTAssertEqual(
+      OverviewCard.rows([.freeMoney, .iOwe, .lastRecord, .monthToDate], columns: 3),
+      [[.freeMoney, .iOwe, .lastRecord], [.monthToDate]])
   }
 
   /// The way back to the setup of the accounts is no cell of the grid — the rows above stay as
   /// they are — and it shows only while the setup is put off: a done setup leaves no empty row,
   /// and while the setup is asked its sheet is up instead.
   func testTheSetupCardStandsOutsideTheGridWhileTheSetupIsPutOff() {
-    XCTAssertEqual(OverviewCard.allCases.count, 12)
+    XCTAssertEqual(OverviewTiles.standard.count, 12)
     XCTAssertTrue(AccountsSetupCard.shows(setup: .later))
     XCTAssertFalse(AccountsSetupCard.shows(setup: .done))
     XCTAssertFalse(AccountsSetupCard.shows(setup: nil))

@@ -1,15 +1,16 @@
 import AppCore
 import SwiftUI
 
-/// The screen of a group of accounts: its total, whether it counts in the summary, its
-/// accounts with their balances — a click opens one — and their history together.
+/// The screen of a group of accounts, or of «Всего» — every account of the summary: its
+/// total, whether it counts in the summary, its accounts with their balances — a click opens
+/// one —, what is planned for them, when an operation was last added, and their history.
 struct GroupScreen: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.store) private var store
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
 
-  let groupId: UUID
+  let scope: GroupScope
   /// The selection of the window, shared with Overview.
   let actions: OperationActions
   /// Opens the screen of an account of the group.
@@ -32,12 +33,13 @@ struct GroupScreen: View {
 
   private func t(_ key: String) -> String { environment.language(key, table: AccountText.table) }
 
-  private var section: AccountsSnapshot.Section? {
-    compute.snapshot?.planning.accounts.ordered(locale: environment.language.locale).sections
-      .first { $0.group?.id == groupId }
+  private var section: GroupContent? {
+    compute.snapshot.flatMap {
+      scope.content(in: $0.planning.accounts.ordered(locale: environment.language.locale))
+    }
   }
 
-  private var accountIds: Set<UUID> { Set(section?.accounts.map(\.account.id) ?? []) }
+  private var accountIds: Set<UUID> { section?.accountIds ?? [] }
 
   var body: some View {
     AccountHistoryList(
@@ -60,19 +62,23 @@ struct GroupScreen: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
-        if let section, let group = section.group {
-          Image(systemName: section.inSummary ? "folder" : "eye.slash")
-            .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
-          Text(verbatim: group.name)
+        if let section {
+          Image(
+            systemName: section.group == nil ? "sum" : section.inSummary ? "folder" : "eye.slash"
+          )
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+          Text(verbatim: section.group?.name ?? t("sidebar.total"))
             .font(.title2.weight(.semibold))
         }
         Spacer()
         buttons
       }
+      LastRecordCaption(history: history)
       if let section {
         summary(section)
         accounts(section)
+        GroupPlanBlock(accountIds: section.accountIds)
       }
     }
     .padding(.vertical, 8)
@@ -93,13 +99,15 @@ struct GroupScreen: View {
           Image(systemName: "arrow.left.arrow.right")
         }
       }
-      Button {
-        if let group = section?.group { sheet = .edit(group) }
-      } label: {
-        Label {
-          Text(verbatim: t("accounts.edit"))
-        } icon: {
-          Image(systemName: "pencil")
+      if let group = section?.group {
+        Button {
+          sheet = .edit(group)
+        } label: {
+          Label {
+            Text(verbatim: t("accounts.edit"))
+          } icon: {
+            Image(systemName: "pencil")
+          }
         }
       }
     }
@@ -109,7 +117,7 @@ struct GroupScreen: View {
 
   /// The total and, for a group left out of the summary, what that means — in words and with
   /// its own symbol.
-  private func summary(_ section: AccountsSnapshot.Section) -> some View {
+  private func summary(_ section: GroupContent) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .firstTextBaseline) {
         Text(verbatim: t("sidebar.total"))
@@ -143,7 +151,7 @@ struct GroupScreen: View {
   }
 
   /// The accounts of the group with their balances; a click opens the account.
-  private func accounts(_ section: AccountsSnapshot.Section) -> some View {
+  private func accounts(_ section: GroupContent) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       Text(verbatim: t("account.group.accounts"))
         .font(.caption)

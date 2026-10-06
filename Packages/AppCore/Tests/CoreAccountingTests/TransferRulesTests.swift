@@ -112,7 +112,8 @@ struct TransferRulesTests {
         key: BalanceKey(accountId: id(2), currency: .rub), amount: amount,
         latest: moment("2026-03-02"))
       let settling = ArchivedMoney.settlingTransfer(
-        leftover, counterpart: id(1), now: moment("2026-03-05"), note: nil, id: id(71))
+        leftover, counterpart: id(1), counterpartCountedAt: nil, now: moment("2026-03-05"),
+        note: nil, id: id(71))
       #expect(TransferRules.validate(settling, accounts: accounts) == .archivedAccount)
       #expect(
         TransferRules.validate(settling, accounts: accounts, allowingArchived: [id(2)]) == nil)

@@ -33,6 +33,9 @@ struct ReconcileSheet: View {
   /// The moment the expected balances are counted for, and the reconciliation is stamped with.
   @State private var now = Date()
   @State private var showsHistory = false
+  /// The answers «до сверки?» remembered by reconciliation, read when the history opens and
+  /// after «Забыть».
+  @State private var answers: [UUID: Bool] = [:]
   /// The key of why the last press saved nothing, until the next one: the sheet is never left
   /// open without a word.
   @State private var failure: String?
@@ -114,6 +117,7 @@ struct ReconcileSheet: View {
       }
       DisclosureGroup(isExpanded: $showsHistory) {
         history(snapshot)
+          .onAppear { answers = environment.rememberedCountAnswers() }
       } label: {
         Text(verbatim: t("reconcile.history"))
       }
@@ -527,6 +531,7 @@ struct ReconcileSheet: View {
     // Every first count older versions recorded as a difference — kept ones too: this is the
     // place to change one's mind.
     let candidates = snapshot.map { Self.candidates(in: $0, kept: []) } ?? []
+    let recordable = snapshot.map(Self.recordable(in:)) ?? []
     return VStack(alignment: .leading, spacing: 4) {
       if all.isEmpty { Text(verbatim: t("reconcile.historyNone")).foregroundStyle(.secondary) }
       ForEach(all, id: \.id) { item in
@@ -543,6 +548,12 @@ struct ReconcileSheet: View {
         .font(.caption)
         ForEach(Self.candidates(candidates, of: item), id: \.id) { candidate in
           fixButton(candidate, snapshot: snapshot)
+        }
+        ForEach(recordable.filter { $0.reconciliationId == item.id }, id: \.id) { count in
+          recordButton(count, snapshot: snapshot)
+        }
+        if let wasBefore = answers[item.id] {
+          answerLine(wasBefore, reconciliation: item.id)
         }
       }
     }
@@ -571,6 +582,66 @@ struct ReconcileSheet: View {
         Text(
           verbatim: Self.spoken(
             t("reconcile.firstCount.fix"), account: name, currency: candidate.key?.currency)))
+    }
+  }
+
+  /// «Записывать разницу» under a count that keeps only its numbers, the account named.
+  private func recordButton(_ count: ReconciledBalance, snapshot: DataSnapshot?) -> some View {
+    let name = snapshot.map { accountName(count.accountId, $0) }
+    return HStack {
+      Spacer(minLength: 8)
+      if let name {
+        Text(verbatim: name)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      // Content, not a floating control: a plain small button, never glass.
+      Button(t("reconcile.recordAgain")) {
+        guard let dependencies else { return }
+        PlanningActions(dependencies).recordDifference(of: count)
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .accessibilityLabel(
+        Text(
+          verbatim: Self.spoken(t("reconcile.recordAgain"), account: name, currency: count.currency)
+        ))
+    }
+  }
+
+  /// «Операции этого дня: до сверки · Забыть» under a count whose question is answered for good.
+  private func answerLine(_ wasBefore: Bool, reconciliation: UUID) -> some View {
+    HStack {
+      Spacer(minLength: 8)
+      Text(verbatim: Self.answerText(wasBefore, environment.language))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Button(t("reconcile.answer.forget")) {
+        environment.forgetCountAnswer(reconciliation: reconciliation)
+        answers = environment.rememberedCountAnswers()
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+    }
+  }
+
+  /// The words of a remembered answer: where the operations of the count's day go.
+  static func answerText(_ wasBefore: Bool, _ language: AppLanguage) -> String {
+    language(wasBefore ? "reconcile.answer.before" : "reconcile.answer.after", table: "Planning")
+  }
+
+  /// The live counts of `snapshot` that keep only their numbers and found a difference: each
+  /// can record it again («Записывать разницу»). A first count still to decide on is not one.
+  static func recordable(in snapshot: DataSnapshot) -> [ReconciledBalance] {
+    let book = snapshot.dataset.planning
+    let frozen = ZeroOpenings.frozenCounts(
+      balances: snapshot.planning.accounts.balances, reconciliations: book.reconciliations,
+      kept: book.settings.firstCountKept)
+    let live = LiveCounts.liveIds(
+      reconciliations: book.reconciliations, balances: book.reconciledBalances, frozen: frozen)
+    return book.reconciledBalances.filter {
+      live.contains($0.id) && $0.recordsDifference == false
+        && !($0.differenceE4 ?? .zero).isZero
     }
   }
 

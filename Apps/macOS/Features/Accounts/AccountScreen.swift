@@ -22,6 +22,9 @@ struct AccountHistory: Sendable {
   let operationIds: Set<UUID>
   /// The fee of each transfer listed that has one, by transfer.
   let fees: [UUID: TransactionEntry]
+  /// When an operation was last written down on these accounts (`AccountLastRecord`): the
+  /// moment of writing, not the day the operation names; `nil` when none was.
+  var lastRecordedAt: Date? = nil
 
   static let empty = AccountHistory(days: [], operationIds: [], fees: [:])
 
@@ -68,7 +71,9 @@ struct AccountHistory: Sendable {
         return nil
       })
     return AccountHistory(
-      days: days, operationIds: ids, fees: fees.filter { listedTransfers.contains($0.key) })
+      days: days, operationIds: ids, fees: fees.filter { listedTransfers.contains($0.key) },
+      lastRecordedAt: AccountLastRecord.latest(
+        of: accountIds, in: AccountLastRecord.byAccount(dataset)))
   }
 
   /// The card names a history shows beside its operations, by card: only for the cards of an
@@ -516,6 +521,7 @@ struct AccountScreen: View {
         Spacer()
         buttons
       }
+      LastRecordCaption(history: history)
       if let caption = groupCaption {
         Text(verbatim: caption)
           .font(.caption)

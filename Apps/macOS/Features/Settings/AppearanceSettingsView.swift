@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Settings → Appearance: light, dark or the system's, and the one accent colour of the app.
+/// Settings → Appearance: light, dark or the system's, the one accent colour of the app, and the
+/// tiles of Overview (`OverviewTilesSection`).
 ///
 /// No restart hint here, unlike the language next door: the theme applies at once —
 /// `NSApp.appearance` for every window, alert and panel, the SwiftUI environment for the accent.
@@ -41,6 +42,8 @@ struct AppearanceSettingsView: View {
         Text(verbatim: environment.language("settings.appearance.accentHint", table: "Settings"))
           .foregroundStyle(.secondary)
       }
+
+      OverviewTilesSection()
     }
     .formStyle(.grouped)
     .padding()

@@ -158,10 +158,8 @@ struct AccountEditor: View {
       Text(verbatim: t(previous == nil ? "account.editor.newTitle" : "account.editor.title"))
         .font(.headline)
       Form {
-        TextField(text: $draft.name) {
-          Text(verbatim: t("account.editor.name"))
-        }
-        .accessibilityIdentifier("account.editor.name")
+        NameField(
+          title: t("account.editor.name"), text: $draft.name, identifier: "account.editor.name")
         Picker(selection: $draft.kind) {
           ForEach(PaymentMethodKind.allCases, id: \.self) { kind in
             Text(verbatim: t(AccountText.kindKey(kind))).tag(kind)
@@ -213,7 +211,11 @@ struct AccountEditor: View {
       }
     }
     .padding(20)
-    .frame(width: 480, height: 700)
+    // No taller than the settings window it hangs from (620 points as it opens): a sheet taller
+    // than that went past the bottom of the window, and of a smaller screen, with the fields
+    // below. The form scrolls inside instead.
+    .frame(width: 480)
+    .frame(minHeight: 420, idealHeight: 600, maxHeight: 700)
     .task {
       groups = actions.groups
       banks = actions.banks
@@ -242,13 +244,10 @@ struct AccountEditor: View {
       }
       .accessibilityIdentifier("account.editor.bank")
       if draft.bankId == nil {
-        TextField(
-          text: $draft.newBankName,
-          prompt: Text(verbatim: draft.name.trimmingCharacters(in: .whitespaces))
-        ) {
-          Text(verbatim: t("account.editor.bank.newName"))
-        }
-        .accessibilityIdentifier("account.editor.newBankName")
+        NameField(
+          title: t("account.editor.bank.newName"), text: $draft.newBankName,
+          prompt: draft.name.trimmingCharacters(in: .whitespaces),
+          identifier: "account.editor.newBankName")
       }
     } footer: {
       Text(
@@ -433,6 +432,33 @@ struct AccountEditor: View {
   }
 }
 
+/// A name field of a grouped form: its label on the left as before, its text read from the left.
+/// The form puts the text of a labelled field on the right, where a space typed last — «Сбер. » —
+/// shows only once the next letter comes, as if it had not been typed; the alignment of the text
+/// is taken back only from a field whose own label is hidden, so the label is drawn beside it.
+/// VoiceOver still hears the field by `title`. Amounts stay on the right, under each other.
+struct NameField: View {
+  let title: String
+  @Binding var text: String
+  /// The grey text of an empty field.
+  var prompt: String? = nil
+  /// How a UI test finds the field.
+  let identifier: String
+
+  var body: some View {
+    LabeledContent {
+      TextField(text: $text, prompt: prompt.map { Text(verbatim: $0) }) {
+        Text(verbatim: title)
+      }
+      .labelsHidden()
+      .multilineTextAlignment(.leading)
+      .accessibilityIdentifier(identifier)
+    } label: {
+      Text(verbatim: title)
+    }
+  }
+}
+
 /// The other names of an account or of a card, one row each with ×, and a field to add one: the
 /// entry line knows the account by any of them («Т-Банк» — «тинькофф», «тинек»), and a card too,
 /// putting the operation on the card's account («кофе 300 виртуалка»).
@@ -458,9 +484,10 @@ struct AccountOtherNames: View {
       }
     }
     HStack {
-      TextField(text: $typed) {
-        Text(verbatim: environment.language("account.editor.newName", table: "Accounts"))
-      }
+      NameField(
+        title: environment.language("account.editor.newName", table: "Accounts"), text: $typed,
+        identifier: "account.editor.newOtherName"
+      )
       .onSubmit(add)
       Button(environment.language("action.add"), action: add)
         .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)

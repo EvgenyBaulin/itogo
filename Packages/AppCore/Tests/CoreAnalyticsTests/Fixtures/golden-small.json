@@ -244,10 +244,10 @@
           { "key": "category:15", "amount": "700", "share": 365 }] }
       ] },
     "report.august.byForWhom": {
-      "why": "August by 'for whom' → person: me 1800+4000+900+2000+2500+700+150+2200 = 14250 (no person, so no children); friends: Boris 3000 (birthday gift) + Anna 750 (the shortfall on her souvenir keeps the purchase's 'for whom' and names her, the debtor, since the part was for nobody else) + no person 1200 (cake) = 4950. Top ×10000/19200: 7421 r16800, 2578 r2400 = 9999 → the spare bp to 'me'. Lowest level: me 7421 r16800, Boris 1562 r9600, Anna 390 r12000, no person 625 r0 = 9998 → spare to 'me' and Anna",
+      "why": "August by 'for whom' → person: me 1800+4000+900+2000+2500+700+150+2200 = 14250 (no person, so no children); friends: Boris 3000 (birthday gift) + Anna 750 (the shortfall on her souvenir keeps the purchase's 'for whom' and names her, the debtor, since the part was for nobody else) + the cake 1200 that names nobody = 4950; money that names no person is the value's own and is named by the value, last under it, never 'no person'. Top ×10000/19200: 7421 r16800, 2578 r2400 = 9999 → the spare bp to 'me'. Lowest level: me 7421 r16800, Boris 1562 r9600, Anna 390 r12000, friends themselves 625 r0 = 9998 → spare to 'me' and Anna",
       "nodes": [
         { "key": "for-whom:me", "amount": "14250", "share": 7422 },
-        { "key": "for-whom:friends", "amount": "4950", "share": 2578, "children": [{ "key": "person:41", "amount": "3000", "share": 1562 }, { "key": "person:40", "amount": "750", "share": 391 }, { "key": "no-person", "amount": "1200", "share": 625 }] }
+        { "key": "for-whom:friends", "amount": "4950", "share": 2578, "children": [{ "key": "person:41", "amount": "3000", "share": 1562 }, { "key": "person:40", "amount": "750", "share": 391 }, { "key": "for-whom:friends", "amount": "1200", "share": 625 }] }
       ] },
     "report.august.byPaymentMethod": {
       "why": "one level by payment method, my expenses: Main card 1800+4000+0+900+3000+1200+2500+0+150 = 13550; Cash 2000+700 = 2700; Travel card 2200; no method (the shortfall) 750. Floors ×10000/19200: 7057 r5600, 1406 r4800, 1145 r16000, 390 r12000 = 9998 → spare to Travel card and no method",
@@ -315,8 +315,8 @@
       "why": "me 14250, friends 3000 + 1200 + the shortfall 750 on Anna's souvenir = 4950 (see report.august.byForWhom); floors 7421 r16800, 2578 r2400 → spare to me",
       "nodes": [{ "key": "for-whom:me", "amount": "14250", "share": 7422 }, { "key": "for-whom:friends", "amount": "4950", "share": 2578 }] },
     "forWhom.august.people": {
-      "why": "by person over all my August expenses: Boris 3000; Anna 750 (the shortfall on her souvenir); no particular person 19200 − 3750 = 15450 (last); floors 1562 r9600, 390 r12000, 8046 r16800 = 9998 → spare to no person and Anna",
-      "nodes": [{ "key": "person:41", "amount": "3000", "share": 1562 }, { "key": "person:40", "amount": "750", "share": 391 }, { "key": "no-person", "amount": "15450", "share": 8047 }] },
+      "why": "by person, shares of all my August expenses: Boris 3000; Anna 750 (the shortfall on her souvenir); the 19200 − 3750 = 15450 that name nobody are my own spending and get no line, but stay in the base of the shares: floors 1562 r9600, 390 r12000, 8046 r16800 = 9998 → spare to the 15450 and Anna",
+      "nodes": [{ "key": "person:41", "amount": "3000", "share": 1562 }, { "key": "person:40", "amount": "750", "share": 391 }] },
 
     "places.july": {
       "why": "[place, my spending, purchases, average receipt, first day, new]: Electro 12000, 1, 12000/1; Cafe Luna mine 1200+4000+1000 = 6200, receipts (1200+800) + (2000+2000) + (1000+1000) = 8000 over 3 = 2666.6667; Market 2000+3000 = 5000, receipts 2000 + 3000 over 2 = 2500; Bar Nord 1500−500 = 1000, one purchase of 1500. All four first appear in July",

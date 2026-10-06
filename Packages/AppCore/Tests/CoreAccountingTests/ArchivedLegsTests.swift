@@ -90,7 +90,7 @@ struct ArchivedLegsTests {
     let leftover = ArchivedLeftover(
       key: key, amount: AmountE4(whole: -18_000), latest: later, heldNow: AmountE4(whole: 12_000))
     let transfers = ArchivedMoney.settlingTransfers(
-      leftover, counterpart: sber, now: now, note: nil)
+      leftover, counterpart: sber, counterpartCountedAt: nil, now: now, note: nil)
     let legs = ArchivedMoney.legs(of: transfers, archived: cash, now: now)
     #expect(legs.count == 2)
     #expect(legs.map(\.amount) == [AmountE4(whole: 12_000), AmountE4(whole: 30_000)])

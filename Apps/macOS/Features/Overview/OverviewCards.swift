@@ -1,57 +1,50 @@
 import AppCore
 import SwiftUI
 
-/// The cards of Overview, in the order of the grid: each a block of the pipeline with
-/// its own title, bound to the state of the step it comes from — the data step for the
-/// month, the categories, the qualities and the reconciliation; «owed to me» for its card;
-/// the forecast for the forecast. A failed step turns only its own cards into a message with
-/// «Повторить»; the rest keep their numbers.
-enum OverviewCard: CaseIterable, Hashable {
-  case monthToDate
-  case topCategories
-  case qualities
-  case canSave
-  case forecast
-  case limits
-  case upcoming
-  case expected
-  case owed
-  case event
-  case reconciliation
-  case anomalies
-
+/// The grid of Overview: the tiles the owner chose (`AppEnvironment.overviewTiles`), in their
+/// order. Each tile is a block of the pipeline with its own title, bound to the state of the step
+/// it comes from — the data step for the month, the categories, the qualities and the
+/// reconciliation; «owed to me» for its card; the forecast for the forecasts. A failed step turns
+/// only its own tiles into a message with «Повторить»; the rest keep their numbers.
+enum OverviewCard {
   /// Three columns from about 840 pt of list, two from about 560, one below that.
   static func columns(forWidth width: CGFloat) -> Int {
     width >= 840 ? 3 : width >= 560 ? 2 : 1
   }
 
-  /// The cards in rows of `columns`, in order.
-  static func rows(columns: Int) -> [[OverviewCard]] {
+  /// The tiles in rows of `columns`, in order.
+  static func rows(_ tiles: [OverviewTile], columns: Int) -> [[OverviewTile]] {
     let size = max(1, columns)
-    return stride(from: 0, to: allCases.count, by: size).map {
-      Array(allCases[$0..<min($0 + size, allCases.count)])
+    return stride(from: 0, to: tiles.count, by: size).map {
+      Array(tiles[$0..<min($0 + size, tiles.count)])
     }
   }
 }
 
 struct OverviewCardView: View {
-  let card: OverviewCard
+  let tile: OverviewTile
   let actions: OperationActions
 
   var body: some View {
-    switch card {
+    switch tile {
     case .monthToDate: MonthToDateCard()
     case .topCategories: TopCategoriesCard()
     case .qualities: QualitiesCard()
     case .canSave: CanSaveCard()
-    case .forecast: ForecastCard()
+    case .spendingForecast: ForecastCard()
+    case .incomeForecast: IncomeForecastCard()
+    case .balanceForecast: BalanceForecastCard()
     case .limits: LimitsCard()
     case .upcoming: UpcomingPaymentsCard()
-    case .expected: ExpectedIncomeCard()
-    case .owed: OwedCard(actions: actions)
+    case .expectedIncome: ExpectedIncomeCard()
+    case .owedToMe: OwedCard(actions: actions)
+    case .iOwe: IOweCard()
     case .event: EventCard()
-    case .reconciliation: ReconciliationCard()
-    case .anomalies: AnomaliesCard()
+    case .lastCount: ReconciliationCard()
+    case .lastRecord: LastRecordCard()
+    case .lastCountAndRecord: LastCountAndRecordCard()
+    case .worthALook: AnomaliesCard()
+    case .freeMoney: FreeMoneyCard()
     }
   }
 }

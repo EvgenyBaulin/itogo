@@ -519,13 +519,35 @@ struct AccountForecastOutflowTests {
   typealias Fx = CashFx
   typealias F = ForecastFx
 
-  /// The example with a history that began long before the window: the window is the full
-  /// 90 days, 21 June through 18 September, and 11 days are left. The purchase of May is
-  /// outside the window of the shares too.
+  /// The example with a history that began long before the window, and every pair first
+  /// counted on 2 May: the window is the full 90 days, 21 June through 18 September, and 11
+  /// days are left. The purchase of May is outside the window of the shares too.
   static func longHistory() -> CashFx {
     var fx = F.example()
     fx.add(.expense, "100", at: Fx.at("2026-05-01", 12))
+    countFirst(&fx, at: Fx.at("2026-05-02", 12))
     return fx
+  }
+
+  /// A count of every pair of the example put before every other count of the book: the first
+  /// count of each pair, its starting point. The later counts stay the latest.
+  static func countFirst(
+    _ fx: inout CashFx, at moment: Date,
+    pairs: [(UUID, CurrencyCode)] = [
+      (CashFx.main, .rub), (CashFx.card, .rub), (CashFx.freedom, CashFx.tenge),
+    ]
+  ) {
+    let number = 700_000 + fx.reconciliations.count * 10
+    let reconciliation = Reconciliation(
+      id: Fx.id(number), date: CalendarContext.utc.day(of: moment), reconciledAt: moment,
+      actualTotalRubE4: .zero, kind: .accounts)
+    fx.reconciliations.insert(reconciliation, at: 0)
+    fx.counts.insert(
+      contentsOf: pairs.enumerated().map { offset, pair in
+        ReconciledBalance(
+          id: Fx.id(number + 1 + offset), reconciliationId: reconciliation.id,
+          accountId: pair.0, currency: pair.1, actualE4: Fx.money("1000"))
+      }, at: 0)
   }
 
   /// The difference a count of `account` wrote: an expense is money that disappeared, an
@@ -671,12 +693,66 @@ struct AccountForecastOutflowTests {
     }
   }
 
-  /// A history of 49 days — 1 August through 18 September — is the window: 490 lost is
-  /// 490 / 49 × 11 = 110.
+  /// A history of 49 days — 1 August through 18 September —, every pair counted from its
+  /// first day, is the window: 490 lost is 490 / 49 × 11 = 110.
   @Test func aShortHistoryIsAShortWindow() {
     var fx = F.example()
+    Self.countFirst(&fx, at: Fx.at("2026-08-01", 0))
     Self.difference(&fx, .expense, "490", at: Fx.at("2026-09-01", 10))
     #expect(Self.flows(F.plan(fx), F.mainRub)?.reconcileLoss == Fx.money("110"))
+  }
+
+  /// Main was first counted on 1 July: what its counts lost and what was paid from it for
+  /// others before then is history, never a loss of the pair. The window of the pair starts on
+  /// the day of that count — 80 days through 18 September —: 800 lost after it is 800 / 80 × 11
+  /// = 110, and the 900 of June and the 1,800 paid for others in June count for nothing.
+  @Test func whatCameBeforeThePairsFirstCountIsHistory() {
+    var fx = F.example()
+    fx.add(.expense, "100", at: Fx.at("2026-05-01", 12))
+    Self.countFirst(&fx, at: Fx.at("2026-07-01", 9), pairs: [(Fx.main, .rub)])
+    Self.difference(&fx, .expense, "900", at: Fx.at("2026-06-25", 10))
+    Self.paidForOthers(&fx, "1800", [("1800", true)], at: Fx.at("2026-06-26", 12))
+    Self.difference(&fx, .expense, "800", at: Fx.at("2026-08-16", 10))
+    let main = Self.flows(F.plan(fx), F.mainRub)
+    #expect(main?.reconcileLoss == Fx.money("110"))
+    #expect(main?.othersSpending == .zero)
+  }
+
+  /// A pair counted for the first time less than 28 days ago — Main, from 10 September — keeps
+  /// no pace, as the spending forecast of a short history is «мало данных»: what nine days lost
+  /// says nothing of the month. A history of 20 days says nothing either, counted or not.
+  @Test func aWindowShorterThanFourWeeksPacesNothing() {
+    var recent = F.example()
+    recent.add(.expense, "100", at: Fx.at("2026-05-01", 12))
+    Self.difference(&recent, .expense, "900", at: Fx.at("2026-09-12", 10))
+    Self.paidForOthers(&recent, "1800", [("1800", true)], at: Fx.at("2026-09-13", 12))
+    let main = Self.flows(F.plan(recent), F.mainRub)
+    #expect(main?.reconcileLoss == .zero)
+    #expect(main?.othersSpending == .zero)
+
+    var young = CashFx()
+    Self.countFirst(&young, at: Fx.at("2026-08-30", 9))
+    young.add(.expense, "100", at: Fx.at("2026-08-31", 12))
+    Self.difference(&young, .expense, "900", at: Fx.at("2026-09-12", 10))
+    #expect(Self.flows(F.plan(young), F.mainRub)?.reconcileLoss == .zero)
+  }
+
+  /// 1,800 ₽ paid from Main for somebody else, 900 ₽ of it refunded by the shop onto Main: only
+  /// 900 left for good — 900 / 90 × 11 = 110. A refund of my own purchase is no money back for
+  /// others.
+  @Test func aRefundOfAPartPaidForOthersLowersSpendingForOthers() {
+    var fx = Self.longHistory()
+    Self.paidForOthers(&fx, "1800", [("1800", true)], at: Fx.at("2026-09-01", 12))
+    let purchasePart = fx.entries[fx.entries.count - 1].parts[0].id
+    fx.add(.refund, "900", at: Fx.at("2026-09-03", 12))
+    fx.entries[fx.entries.count - 1].parts[0].refundOfPartId = purchasePart
+    #expect(Self.flows(F.plan(fx), F.mainRub)?.othersSpending == Fx.money("110"))
+
+    let mine = fx.add(.expense, "5000", at: Fx.at("2026-09-04", 12))
+    let minePart = fx.entries.first { $0.id == mine }?.parts[0].id
+    fx.add(.refund, "5000", at: Fx.at("2026-09-06", 12))
+    fx.entries[fx.entries.count - 1].parts[0].refundOfPartId = minePart
+    #expect(Self.flows(F.plan(fx), F.mainRub)?.othersSpending == Fx.money("110"))
   }
 
   /// The last day of the month leaves no day to go on: nothing is forecast.

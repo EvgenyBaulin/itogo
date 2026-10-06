@@ -139,6 +139,8 @@ public enum LiveCounts {
   ///   one with the ids derived from the count, at `rate` in a foreign currency, and waits
   ///   when there is none.
   /// * Keeping: nothing is written but the numbers.
+  /// * Asked to record again (mode «record», no operation linked) while the operation is in the
+  ///   bin: a new operation is written over the binned one, with the count's ids.
   ///
   /// `template` is the count's operation as a write being taken back found it: when that write
   /// purged it at zero, the operation written again is that one — its ids, the owner's category,
@@ -156,7 +158,11 @@ public enum LiveCounts {
     let live = state.operation.flatMap { $0.transaction.isDeleted ? nil : $0 }
     let binned = state.operation.map(\.transaction.isDeleted) ?? false
     var records = count.recordsDifference ?? (live != nil)
-    if records, binned {
+    // An operation put in the bin while the count held it turns the count to keeping. A count
+    // told to record with no operation linked — «Записывать разницу» — is the owner asking
+    // again: the binned operation does not hold it back, and a new one is written over it.
+    let askedAgain = count.recordsDifference == true && count.transactionId == nil
+    if records, binned, !askedAgain {
       records = false
     } else if !records, live != nil {
       records = true

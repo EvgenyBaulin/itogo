@@ -144,19 +144,25 @@ public enum ArchivedMoney {
 
   /// The last movement of the key once the change is made, or its latest count when that is
   /// later: a transfer dated at or before the count would change the count's difference and
-  /// leave the money where it is.
+  /// leave the money where it is. A movement known only by its day may have been as late as the
+  /// end of that day (`AccountBalances.lastInstant(of:)`).
   private static func lastMoment(
     of key: BalanceKey, removing old: [AccountMovement], adding new: [AccountMovement],
     balances: AccountBalances
   ) -> Date? {
-    var moments = new.filter { movement in
-      guard movement.key == key else { return false }
-      if case .undated = movement.timing { return false }
-      return true
-    }.map(\.at)
-    if let kept = balances.latestMovement(of: key, removing: old) { moments.append(kept) }
+    var moments = new.filter { $0.key == key }.compactMap(balances.lastInstant(of:))
+    if let kept = balances.latestInstant(of: key, removing: old) { moments.append(kept) }
     if let count = balances.latestAnchor(key)?.at { moments.append(count) }
     return moments.max()
+  }
+
+  /// The moment of the latest count of the live account's key that takes or gives the money of
+  /// `key` — `counterpart` in the same currency —, `nil` while it was never counted. The
+  /// transfer that settles `key` goes after it (`settlingTransfer`).
+  public static func counterpartCount(
+    _ counterpart: UUID, for key: BalanceKey, balances: AccountBalances
+  ) -> Date? {
+    balances.latestAnchor(BalanceKey(accountId: counterpart, currency: key.currency))?.at
   }
 
   /// What archiving `account` leaves — or what an account already in the archive still holds:
@@ -202,17 +208,28 @@ public enum ArchivedMoney {
   /// movement (`ArchivedLeftover.settleAfter`) — in the past, or ahead of now when that movement
   /// is typed ahead; a last movement less than a second before now gives now, still after it.
   /// Without that moment: `now`, or the change's latest moment when that is later.
+  ///
+  /// The transfer moves the counterpart's key too, so it never lands inside the window of a count
+  /// of that key: `counterpartCountedAt`, the moment of its latest count
+  /// (`counterpartCount(_:for:balances:)`), is a moment the transfer goes after as well. Dated
+  /// before it, the transfer would change what that count expected and make up a «Сверка»
+  /// difference of the live account.
   public static func settlingTransfer(
-    _ leftover: ArchivedLeftover, counterpart: UUID, now: Date, note: String?, id: UUID
+    _ leftover: ArchivedLeftover, counterpart: UUID, counterpartCountedAt: Date?, now: Date,
+    note: String?, id: UUID
   ) -> Transfer {
     transfer(
       leftover.amount, of: leftover.key, counterpart: counterpart,
-      at: settlingMoment(of: leftover, now: now), now: now, note: note, id: id)
+      at: settlingMoment(of: leftover, counterpartCountedAt: counterpartCountedAt, now: now),
+      now: now, note: note, id: id)
   }
 
   /// The moment `settlingTransfer` dates its transfer.
-  static func settlingMoment(of leftover: ArchivedLeftover, now: Date) -> Date {
-    guard let after = leftover.settleAfter else { return max(now, leftover.latest) }
+  static func settlingMoment(
+    of leftover: ArchivedLeftover, counterpartCountedAt: Date?, now: Date
+  ) -> Date {
+    guard var after = leftover.settleAfter else { return max(now, leftover.latest) }
+    if let counted = counterpartCountedAt, counted > after { after = counted }
     let next = after.addingTimeInterval(1)
     return after <= now ? min(next, now) : next
   }
@@ -220,15 +237,18 @@ public enum ArchivedMoney {
   /// The transfers that keep the key at zero from now on. What a change leaves goes by one
   /// (`settlingTransfer`). A whole balance goes by what it holds now, dated `now`, and by the
   /// rest money typed ahead makes of it, dated with the latest movement ahead: one leg or two,
-  /// the ones that are not zero.
+  /// the ones that are not zero. `counterpartCountedAt` is the latest count of the counterpart's
+  /// key, which the transfer of what a change leaves goes after (`settlingTransfer`).
   public static func settlingTransfers(
-    _ leftover: ArchivedLeftover, counterpart: UUID, now: Date, note: String?,
-    ids: () -> UUID = { UUID() }
+    _ leftover: ArchivedLeftover, counterpart: UUID, counterpartCountedAt: Date?, now: Date,
+    note: String?, ids: () -> UUID = { UUID() }
   ) -> [Transfer] {
     let later = max(now, leftover.latest)
     guard let held = leftover.heldNow, later > now else {
       return [
-        settlingTransfer(leftover, counterpart: counterpart, now: now, note: note, id: ids())
+        settlingTransfer(
+          leftover, counterpart: counterpart, counterpartCountedAt: counterpartCountedAt,
+          now: now, note: note, id: ids())
       ]
     }
     var legs: [(AmountE4, Date)] = []

@@ -178,9 +178,11 @@ final class EntryWalkTests: XCTestCase {
     // SwiftUI follows the keyboard of a window only while its app is the active one: the host of
     // the tests is not when something else of this Mac has the screen, and the keyboard then
     // stays where the test put it or comes back, as the timing falls. Nothing to check there.
+    // Only the active app: a window that merely was key let the test run once in a full run
+    // with the app in the background, and the keyboard stayed put. The message of the check
+    // says which it was, should it fail again.
     try XCTSkipUnless(
-      NSApp.isActive || host.window.isKeyWindow,
-      "the app is not active: SwiftUI does not move the keyboard in its windows")
+      NSApp.isActive, "the app is not active: SwiftUI does not move the keyboard in its windows")
     let line = try host.line()
     host.window.makeFirstResponder(nil)
     host.settle(0.1)
@@ -192,6 +194,9 @@ final class EntryWalkTests: XCTestCase {
     }
     let deadline = Date().addingTimeInterval(3)
     while !lineHasTheKeyboard(), Date() < deadline { host.settle(0.05) }
-    XCTAssertTrue(lineHasTheKeyboard(), "the line has the keyboard")
+    XCTAssertTrue(
+      lineHasTheKeyboard(),
+      "the line has the keyboard (app active \(NSApp.isActive), window key \(host.window.isKeyWindow))"
+    )
   }
 }

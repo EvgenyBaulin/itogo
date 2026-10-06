@@ -301,7 +301,17 @@ final class ReportsExportTests: XCTestCase {
     XCTAssertTrue(forWhom.contains("Я"), "\(forWhom)")
     let people = try names(model(.expensesByCategoryAndSubcategory, .forWhom, year))
     XCTAssertTrue(people.contains("Anna"), "\(people)")
-    XCTAssertTrue(people.contains("Без человека"), "\(people)")
+    // Money that names no person is the value's own — for «Я», simply mine: never a line
+    // «Без человека», but the value itself again, last under it, so the lines still add up.
+    XCTAssertFalse(people.contains("Без человека"), "\(people)")
+    XCTAssertEqual(people.filter { $0 == "Друзья" }.count, 2, "\(people)")
+    let friends = try XCTUnwrap(
+      model(.expensesByCategoryAndSubcategory, .forWhom, year).lines.first {
+        $0.key == .forWhom(.friends)
+      })
+    XCTAssertEqual(friends.children.last?.key, .forWhom(.friends))
+    XCTAssertEqual(
+      friends.children.map(\.values[0]).reduce(0) { $0 + ($1 ?? 0) }, friends.values[0])
     let categories = try names(model(.expensesByCategoryAndSubcategory, .category, year))
     XCTAssertTrue(categories.contains("Без категории"), "\(categories)")
     XCTAssertTrue(categories.contains("(без подкатегории)"), "\(categories)")

@@ -24,10 +24,12 @@ import Foundation
 /// * Count losses and spending for others are money that really leaves an account without
 ///   being my spending, so the forecast of my spending never holds them. Over the window of
 ///   the shares — `MonthForecast.windowLength` days before today through yesterday, fewer when
-///   the history is shorter — each pair's net of each is taken in what moved on the account,
-///   floored at zero (what a count found or more money back than paid is not forecast), and
-///   goes on at the same pace: net ÷ days of the window × days after today through the
-///   month's end. An archived account keeps none, as it keeps no share.
+///   the history is shorter and never before the day of the pair's first count — each pair's
+///   net of each is taken in what moved on the account, floored at zero (what a count found or
+///   more money back than paid is not forecast), and goes on at the same pace: net ÷ days of
+///   the window × days after today through the month's end. A window shorter than four weeks
+///   keeps no pace, and neither does an archived account, as it keeps no share. A refund of a
+///   part paid for others is money back for others too.
 ///
 /// * The first count of a pair is where its balance starts; operations dated before it are
 ///   history, never income or spending of the pair. A line the app wrote for its books — the
@@ -273,10 +275,10 @@ public struct AccountMonthPlan: Hashable, Sendable {
     let spending = VariableSpending.byBalance(
       ledger: ledger, today: today, through: through,
       scheduledOperations: planMatches.operationIds, mainId: mainId, liveAccounts: live)
-    let outflows = Outflows.paced(
-      ledger: ledger, today: today, mainId: mainId, liveAccounts: live)
-
     let balances = accounts.balances
+    let outflows = Outflows.paced(
+      ledger: ledger, today: today, mainId: mainId, liveAccounts: live, balances: balances)
+
     let sections = accounts.sections.map { section in
       Section(
         group: section.group, inSummary: section.inSummary,
@@ -403,27 +405,53 @@ public struct AccountMonthPlan: Hashable, Sendable {
     var othersSpending: [BalanceKey: AmountE4] = [:]
 
     /// Over the window of the shares through yesterday — from the first day of the history
-    /// when that is later, at least one day — each pair's net, in what moved on its account:
+    /// when that is later — each pair's net, in what moved on its account:
     ///
     /// * count losses — the differences the counts of the pair wrote
     ///   (`OperationLink.reconciledBalance`), an expense being money that disappeared and an
     ///   income money that appeared;
     /// * for others — the parts paid for somebody else (`reimbursable`), each its share of what
-    ///   moved, less the money back onto the pair. Money back that repays a debt is the debt's,
-    ///   not the parts'; a purchase on credit moved no money.
+    ///   moved, less the money back onto the pair and less the refunds of those parts onto it.
+    ///   Money back that repays a debt is the debt's, not the parts'; a purchase on credit moved
+    ///   no money.
     ///
-    /// Each net below zero is nothing: a gain is not forecast. What is dated today or later is
-    /// no pace — it is in «written ahead», or it is today's and the window ends yesterday.
+    /// A pair's window starts no earlier than the day of its first count (`balances`): what was
+    /// written before it is history, not money the pair lost, and a pair never counted keeps
+    /// nothing. A window shorter than `MonthForecast.minimumWindow` days keeps no pace, as a
+    /// spending forecast of so short a history has too little data: a few days say nothing of
+    /// the month. Each net below zero is nothing: a gain is not forecast. What is dated today or
+    /// later is no pace — it is in «written ahead», or it is today's and the window ends
+    /// yesterday.
     static func paced(
-      ledger: Ledger, today: DateOnly, mainId: UUID?, liveAccounts: Set<UUID>
+      ledger: Ledger, today: DateOnly, mainId: UUID?, liveAccounts: Set<UUID>,
+      balances: AccountBalances
     ) -> Outflows {
       let daysLeft = today.monthKey.dayCount - today.day
       let yesterday = today.adding(days: -1)
       var start = today.adding(days: -MonthForecast.windowLength)
       if let first = ledger.firstDay, first > start { start = first }
-      if start > yesterday { start = yesterday }
-      let windowDays = yesterday.dayNumber - start.dayNumber + 1
-      guard daysLeft > 0, windowDays > 0 else { return Outflows() }
+      guard daysLeft > 0, start <= yesterday else { return Outflows() }
+
+      // The moment of each pair's first count, read once per pair.
+      var firstCounts: [BalanceKey: Date?] = [:]
+      func firstCount(_ key: BalanceKey) -> Date? {
+        if let known = firstCounts[key] { return known }
+        let moment = balances.anchors(key).first?.at
+        firstCounts[key] = moment
+        return moment
+      }
+      // The parts of live purchases paid for somebody else: a refund of one is money back for
+      // others too.
+      var paidForOthers: Set<UUID>?
+      func isPaidForOthers(_ part: UUID) -> Bool {
+        if paidForOthers == nil {
+          paidForOthers = Set(
+            ledger.dataset.entries.lazy
+              .filter { $0.transaction.kind == .expense && !$0.transaction.isDeleted }
+              .flatMap { $0.parts.filter(\.reimbursable).map(\.id) })
+        }
+        return paidForOthers?.contains(part) ?? false
+      }
 
       var losses: [BalanceKey: AmountE4] = [:]
       var others: [BalanceKey: AmountE4] = [:]
@@ -435,6 +463,7 @@ public struct AccountMonthPlan: Hashable, Sendable {
         else { continue }
         let moved = transaction.movedMoney
         let key = BalanceKey(accountId: accountId, currency: moved.currency)
+        guard let counted = firstCount(key), transaction.occurredAt > counted else { continue }
         if case .reconciledBalance = row.link {
           switch transaction.kind {
           case .expense: losses[key, default: .zero] += moved.amount
@@ -452,18 +481,40 @@ public struct AccountMonthPlan: Hashable, Sendable {
           others[key, default: .zero] += AmountE4.sum(paid)
         case .reimbursement where transaction.debtId == nil:
           others[key, default: .zero] += -moved.amount
+        case .refund:
+          let backForOthers = entry.parts.map {
+            $0.refundOfPartId.map(isPaidForOthers) ?? false
+          }
+          guard backForOthers.contains(true) else { break }
+          let shares = moved.amount.allocated(
+            proportionallyTo: entry.parts.map(\.amountE4), outOf: transaction.amountE4)
+          let back = zip(shares, backForOthers).filter { $0.1 }.map(\.0)
+          others[key, default: .zero] += -AmountE4.sum(back)
         default:
           break
         }
       }
 
-      func pace(_ net: AmountE4) -> AmountE4? {
-        guard net.raw > 0 else { return nil }
-        return SubscriptionMath.rounded(net.decimal / Decimal(windowDays) * Decimal(daysLeft))
+      // The days of a pair's window: from its first count's day when that is later than the
+      // window's start, through yesterday.
+      func windowDays(_ key: BalanceKey) -> Int {
+        var from = start
+        if let counted = firstCount(key) {
+          let day = ledger.calendar.day(of: counted)
+          if day > from { from = day }
+        }
+        return yesterday.dayNumber - from.dayNumber + 1
       }
-      return Outflows(
-        reconcileLoss: losses.compactMapValues(pace),
-        othersSpending: others.compactMapValues(pace))
+      func paced(_ nets: [BalanceKey: AmountE4]) -> [BalanceKey: AmountE4] {
+        var result: [BalanceKey: AmountE4] = [:]
+        for (key, net) in nets where net.raw > 0 {
+          let days = windowDays(key)
+          guard days >= MonthForecast.minimumWindow else { continue }
+          result[key] = SubscriptionMath.rounded(net.decimal / Decimal(days) * Decimal(daysLeft))
+        }
+        return result
+      }
+      return Outflows(reconcileLoss: paced(losses), othersSpending: paced(others))
     }
   }
 

@@ -386,6 +386,11 @@ enum LiveCountsWriter {
     }
     switch settlement.operation {
     case .create(let entry):
+      // The count's own operation, once put in the bin, gives its place to the new one: the
+      // owner asked the count to record again (`LiveCounts.settle`).
+      if let binned = state.operation, binned.id == entry.id, binned.transaction.isDeleted {
+        try purge([binned.id], db: db)
+      }
       try entry.transaction.insert(db)
       for part in entry.parts { try part.insert(db) }
       result.upserted.append(entry)
@@ -476,6 +481,27 @@ enum LiveCountsWriter {
       ).compactMap(UUID.init(uuidString:))
     }
     try purge(found, db: db)
+  }
+
+  /// Takes back the operations a settle wrote for counts that only kept their numbers before it
+  /// — the change asked them to record («Записывать разницу») —, and puts the operation the
+  /// owner had in the bin back where it was: a live operation would turn the count to recording
+  /// again in the settle after the undo. `before` are the counts as the change found them; run
+  /// once their rows are back.
+  static func restoreKeeping(
+    _ before: [ReconciledBalance], settled: CountsSettled, db: Database
+  ) throws {
+    let keeping = before.filter { $0.recordsDifference == false }
+    guard !keeping.isEmpty else { return }
+    let current = try keyedOperations(of: keeping, db: db)
+    for count in keeping {
+      guard let written = current[count.id], !written.transaction.isDeleted else { continue }
+      try purge([written.id], db: db)
+      if let binned = settled.operationsBefore[count.id] ?? nil, binned.transaction.isDeleted {
+        try binned.transaction.insert(db)
+        for part in binned.parts { try part.insert(db) }
+      }
+    }
   }
 
   /// Puts back, as they were before a settle, the counts it changed that no longer follow the

@@ -44,6 +44,8 @@ enum AnalyticsReason: String, Hashable, Sendable, CaseIterable {
   case noEvents
   case noEventSpending
   case noPayments
+  /// «По людям» with spending, none of it naming a person: all of it is the owner's own.
+  case noPeople
   case noSpendingThisMonth
   case noIncomeOrSpending
   case notStarted

@@ -146,6 +146,31 @@ public final class AppEnvironment {
     EntryStyle(stored: defaults.string(forKey: entryStyleKey))
   }
 
+  /// Which tiles Overview shows and in what order, chosen in Settings → «Оформление»
+  /// (`OverviewTiles`): at most twelve, the twelve cards of 1.2 until the owner chooses. A habit
+  /// of the owner, kept in `UserDefaults` beside the order of the fields, carried by the archive
+  /// (`portableSettings`), never a step of ⌘Z. Written as a choice the grid can show, whatever is
+  /// set (`OverviewTiles.sanitized`).
+  public var overviewTiles: [OverviewTile] = AppEnvironment.storedOverviewTiles() {
+    didSet {
+      guard overviewTiles != oldValue else { return }
+      UserDefaults.standard.set(
+        OverviewTiles.encode(OverviewTiles.sanitized(overviewTiles)),
+        forKey: Self.overviewTilesKey)
+    }
+  }
+
+  /// The key of `overviewTiles` in `UserDefaults` and in the archive's `settings.json`.
+  nonisolated static let overviewTilesKey = "overview.tiles"
+
+  /// The choice `UserDefaults` keeps, read as a choice the grid can show; the standard one when
+  /// there is none.
+  nonisolated static func storedOverviewTiles(
+    in defaults: UserDefaults = .standard
+  ) -> [OverviewTile] {
+    OverviewTiles.decode(defaults.string(forKey: overviewTilesKey))
+  }
+
   /// «Найти пропущенные…» of a reconciliation: the Transactions window shows these days as
   /// soon as it is there, then clears this.
   public var pendingTransactionsRange: DayRange?
@@ -358,6 +383,26 @@ public final class AppEnvironment {
       tree: CategoryTree([]), now: now(), calendar: calendar)
   }
 
+  /// «Забыть» under a count in the history of the sheet: its remembered answer goes, and the
+  /// next operation of that day is asked again. A preference of the question, not a step of ⌘Z.
+  @discardableResult
+  func forgetCountAnswer(reconciliation: UUID) -> Bool {
+    let written = attempt("reconcile.answerRefused", on: settings) { settings in
+      var answers = PlanningSettings.countAnswers(
+        from: try settings.string(PlanningSettings.beforeCountAnswersKey))
+      answers[reconciliation] = nil
+      try settings.set(
+        PlanningSettings.beforeCountAnswersKey, to: PlanningSettings.countAnswersText(answers) ?? ""
+      )
+    }
+    if written {
+      AppLog.info(
+        "reconcile.answerDropped", .db, "an answer about a count is forgotten",
+        [LogPair("reconciliation", .id(reconciliation))])
+    }
+    return written
+  }
+
   /// Keeps the answer to the question about the count of `reconciliation`: the next operation
   /// or transfer of that day is dated by it without asking. The answers of counts no longer on
   /// the latest counted day of any balance go in the same write (`BeforeCountAnswers.pruned`),
@@ -493,6 +538,7 @@ public final class AppEnvironment {
       "theme.accent": theme.accent.rawValue,
       Self.entryFieldOrderKey: EntryFieldOrder.encode(entryFieldOrder),
       Self.entryStyleKey: entryStyle.rawValue,
+      Self.overviewTilesKey: OverviewTiles.encode(overviewTiles),
     ]
     if let currencies = try? settings?.enabledCurrencies() {
       values["currencies"] = currencies.map(\.code).joined(separator: ",")

@@ -227,7 +227,9 @@ final class CountsSettleOnRunTests: XCTestCase {
   }
 
   @discardableResult
-  private func count(_ key: BalanceKey, _ whole: Int64, at moment: Date) throws
+  private func count(
+    _ key: BalanceKey, _ whole: Int64, at moment: Date
+  ) throws
     -> ReconciledBalance
   {
     let planning = try XCTUnwrap(environment.planning)

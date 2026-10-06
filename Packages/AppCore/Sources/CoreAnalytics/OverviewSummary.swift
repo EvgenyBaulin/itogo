@@ -50,11 +50,17 @@ public struct OverviewSummary: Hashable, Sendable {
     let rows = ledger.rows(in: span).filter { !$0.contribution.isZero }
     // The tables put «Uncategorized» last; here it would then drop out of the five however
     // large it were, and the card would hide the largest bucket behind smaller ones.
+    // The difference of a reconciliation is no purchase: «Сверка» and what a count wrote
+    // elsewhere stay out of the top, and out of the shares of it.
+    let counts = ledger.dataset.planning.settings.limitlessCategoryIds
+    let spending = rows.filter { !Self.isCountDifference($0, countCategories: counts) }
     topCategories = Array(
-      Tabulation.oneLevel(rows.map { (ReportGrouping.category.outerKey(of: $0), $0.contribution) })
-        .filter { $0.amount.raw > 0 }
-        .sorted(by: Tabulation.largestFirst)
-        .prefix(Self.topCount))
+      Tabulation.oneLevel(
+        spending.map { (ReportGrouping.category.outerKey(of: $0), $0.contribution) }
+      )
+      .filter { $0.amount.raw > 0 }
+      .sorted(by: Tabulation.largestFirst)
+      .prefix(Self.topCount))
     qualities = Self.qualities(of: rows)
 
     let previousBad = ledger.rows(in: previousSpan).filter { $0.quality == .bad }
@@ -95,6 +101,19 @@ public struct OverviewSummary: Hashable, Sendable {
       consider(transfer.createdAt)
     }
     return latest
+  }
+
+  /// A part of a reconciliation's difference: written by a count (its link says so), or filed
+  /// under the category a count writes to — «Сверка» or anything under it.
+  static func isCountDifference(_ row: LedgerRow, countCategories: Set<UUID>) -> Bool {
+    switch row.link {
+    case .reconciliation, .reconciledBalance: return true
+    default: break
+    }
+    guard !countCategories.isEmpty else { return false }
+    if let id = row.categoryId, countCategories.contains(id) { return true }
+    if let root = row.rootCategoryId, countCategories.contains(root) { return true }
+    return false
   }
 
   /// Good → neutral → bad, zero lines included so the bar keeps its order.

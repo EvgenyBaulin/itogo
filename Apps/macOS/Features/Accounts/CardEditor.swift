@@ -57,10 +57,8 @@ struct CardEditor: View {
       Text(verbatim: t(previous == nil ? "card.editor.newTitle" : "card.editor.title"))
         .font(.headline)
       Form {
-        TextField(text: $draft.name) {
-          Text(verbatim: t("card.editor.name"))
-        }
-        .accessibilityIdentifier("card.editor.name")
+        NameField(
+          title: t("card.editor.name"), text: $draft.name, identifier: "card.editor.name")
         LabeledContent {
           Text(verbatim: accountName)
         } label: {

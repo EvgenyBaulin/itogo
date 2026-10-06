@@ -106,11 +106,14 @@ private struct OverviewHeader: View {
   /// then fills the row it stands in.
   private var grid: some View {
     Grid(horizontalSpacing: 12, verticalSpacing: 12) {
-      ForEach(OverviewCard.rows(columns: OverviewCard.columns(forWidth: width)), id: \.self) {
-        row in
+      ForEach(
+        OverviewCard.rows(
+          environment.overviewTiles, columns: OverviewCard.columns(forWidth: width)),
+        id: \.self
+      ) { row in
         GridRow {
-          ForEach(row, id: \.self) { card in
-            OverviewCardView(card: card, actions: actions)
+          ForEach(row, id: \.self) { tile in
+            OverviewCardView(tile: tile, actions: actions)
           }
         }
       }

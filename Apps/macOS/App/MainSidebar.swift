@@ -6,6 +6,8 @@ enum SidebarItem: Hashable, Sendable {
   case section(MainWindow.Section)
   case account(UUID)
   case group(UUID)
+  /// «Всего»: every account of the summary, as one screen of a group.
+  case allAccounts
 
   var section: MainWindow.Section? {
     if case .section(let section) = self { return section }
@@ -25,6 +27,7 @@ enum SidebarItem: Hashable, Sendable {
     case .section(let section): section.rawValue
     case .account: "account"
     case .group: "group"
+    case .allAccounts: "accounts"
     }
   }
 
@@ -33,7 +36,7 @@ enum SidebarItem: Hashable, Sendable {
   var listsOperations: Bool {
     switch self {
     case .section(let section): section == .overview
-    case .account, .group: true
+    case .account, .group, .allAccounts: true
     }
   }
 
@@ -42,7 +45,7 @@ enum SidebarItem: Hashable, Sendable {
   /// `liveAccounts` and `liveGroups` are what the sidebar lists.
   func fallback(liveAccounts: Set<UUID>, liveGroups: Set<UUID>) -> SidebarItem? {
     switch self {
-    case .section: nil
+    case .section, .allAccounts: nil
     case .account(let id): liveAccounts.contains(id) ? nil : .section(.overview)
     case .group(let id): liveGroups.contains(id) ? nil : .section(.overview)
     }

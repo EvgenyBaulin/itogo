@@ -1,9 +1,10 @@
 #!/bin/bash
-# Makes a release with nobody at the keyboard: the same steps as a release by hand, in the same
-# order, each one checked before the next, and nothing public before everything local is done.
+# Makes a release of Itogo from start to finish, the same way every time, with or without
+# somebody at the keyboard: each step checked before the next, and nothing public before
+# everything local is done.
 #
-#   1. checks: the branch, the version not out yet, no release this night already, nothing
-#      untracked outside the folders of source code and tests, the author and the hooks;
+#   1. checks: the branch, the version not out yet, nothing untracked outside the folders of
+#      source code, tests and scripts, the author and the hooks;
 #   2. make verify — any failure stops here, before a commit;
 #   3. the commit of the working tree (files named one by one, never `git add -A`);
 #   4. the build, its signature and the Sparkle archive (make release-local), checked as an
@@ -11,19 +12,19 @@
 #   5. main pushed, and CI on that commit waited for: red stops before anything is published;
 #   6. the GitHub release, which makes the tag; the entry of the feed as a new commit on
 #      gh-pages; the published release read back from outside (make release-check V=…);
-#   7. the address of the release printed, a line in the journal, the marker of the night.
+#   7. the address of the release printed and a line in the journal of releases.
 #
 # There is no notarization: the app is signed with the owner's own certificate or ad-hoc, and
 # there is no Developer ID to notarize with.
 #
 # It never asks: every command reads from /dev/null, git and gh are told not to prompt. It never
 # forces a push and never rewrites a commit: a push that is not a fast-forward simply fails. A
-# second run after a release of the same night, or of the same version, refuses.
+# second run for a version that is out refuses: its tag exists.
 #
-# Usage: night-release.sh [--dry-run]
-#   --dry-run          prints the checks and the plan; changes nothing, fetches nothing
-#   NIGHT_RELEASE_MESSAGE  the subject of the release commit; «Itogo <version>» when not given
-#   NIGHT_RELEASE_CI_MINUTES  how long CI is waited for, 90 when not given
+# Usage: release.sh [--dry-run]
+#   --dry-run              prints the checks and the plan; changes nothing, fetches nothing
+#   RELEASE_MESSAGE        the subject of the release commit; «Itogo <version>» when not given
+#   RELEASE_CI_MINUTES     how long CI is waited for, 90 when not given
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -39,38 +40,29 @@ author_name="evgenybaulin"
 author_email="e.baulin@icloud.com"
 archive_dir="${HOME}/Library/Developer/Itogo-archive"
 release_dir="${HOME}/Library/Developer/Itogo/release"
-journal="${archive_dir}/night-releases.log"
-ci_minutes="${NIGHT_RELEASE_CI_MINUTES:-90}"
-# A night belongs to the evening it began on: a run at 03:00 on the 6th is the night of the 5th.
-night="$(date -v-12H +%F)"
-marker="${archive_dir}/night-release-${night}.done"
+journal="${archive_dir}/releases.log"
+ci_minutes="${RELEASE_CI_MINUTES:-90}"
 
 export GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1
 exec < /dev/null
 
-say() { printf 'night-release: %s\n' "$1"; }
-stop() { printf 'night-release: STOP: %s\n' "$1" >&2; exit 1; }
+say() { printf 'release: %s\n' "$1"; }
+stop() { printf 'release: STOP: %s\n' "$1" >&2; exit 1; }
 
 # Checks collect their findings, so a dry run shows every one of them, not only the first.
 problems=""
-problem() { problems="${problems}  - $1"$'\n'; printf 'night-release: check failed: %s\n' "$1" >&2; }
-ok() { printf 'night-release: ok: %s\n' "$1"; }
+problem() { problems="${problems}  - $1"$'\n'; printf 'release: check failed: %s\n' "$1" >&2; }
+ok() { printf 'release: ok: %s\n' "$1"; }
 
 # --- 1. Checks -------------------------------------------------------------------------------
 
 version="$("${here}/release-version.sh" version)" || stop "no MARKETING_VERSION in project.yml"
 build="$("${here}/release-version.sh" build)" || stop "no CURRENT_PROJECT_VERSION in project.yml"
 tag="v${version}"
-say "version ${version} (build ${build}), night of ${night}"
+say "version ${version} (build ${build})"
 
 current="$(git branch --show-current)"
 if [ "${current}" = "${branch}" ]; then ok "on ${branch}"; else problem "on «${current}», not ${branch}"; fi
-
-if [ -e "${marker}" ]; then
-  problem "a release already came out this night: ${marker}"
-else
-  ok "no release this night yet"
-fi
 
 # The tags as this clone knows them; a real run fetches first, a dry run fetches nothing.
 if [ -z "${dry_run}" ]; then
@@ -93,8 +85,8 @@ fi
 if grew="$("${here}/release-version.sh" grew 2>&1)"; then ok "${grew}"; else problem "${grew}"; fi
 
 # Untracked files may only be new source code, tests, resources and migrations. Whatever else
-# lies around — notes, exports, a database — is not the night's to publish.
-allowed='^(Apps/macOS/(App|Shared|Features|Platform|Resources|Tests|UITests)/|Packages/(AppCore|AppDatabase)/(Sources|Tests)/|Schema/[0-9]{4}_[a-z0-9_]+\.sql$)'
+# lies around — notes, exports, a database — is not a release's to publish.
+allowed='^(Apps/macOS/(App|Shared|Features|Platform|Resources|Tests|UITests)/|Packages/(AppCore|AppDatabase)/(Sources|Tests)/|Schema/[0-9]{4}_[a-z0-9_]+\.sql$|scripts/[A-Za-z0-9_-]+\.(sh|py)$|guide/[a-z-]+\.md$)'
 personal='\.(sqlite|sqlite-wal|sqlite-shm|numbers|pem|key|p12|itogoarchive)$'
 untracked="$(git ls-files --others --exclude-standard)"
 outside="$(printf '%s\n' "${untracked}" | grep -vE "${allowed}" | grep -v '^$' || true)"
@@ -134,9 +126,9 @@ changed="$( (git diff --name-only; git diff --cached --name-only; printf '%s\n' 
 
 plan() {
   cat << EOF
-night-release: plan
+release: plan
   1. make verify                          — must end with «verify: green» and «pandas: checked»
-  2. commit $(printf '%s\n' "${changed}" | grep -c . || true) file(s) as «${NIGHT_RELEASE_MESSAGE:-Itogo ${version}}» (git add -- <files>)
+  2. commit $(printf '%s\n' "${changed}" | grep -c . || true) file(s) as «${RELEASE_MESSAGE:-Itogo ${version}}» (git add -- <files>)
   3. make release-local ARGS=--dry-run, then make release-local
                                           — Release build, signature, ${release_dir##*/}/Itogo-${version}.zip, appcast entry
   4. codesign --verify --deep --strict; sign_update --verify; unzip -l holds Itogo.app only
@@ -147,7 +139,7 @@ night-release: plan
   7. appcast.xml of origin/gh-pages + the entry → new commit on gh-pages → git push origin <commit>:refs/heads/gh-pages
      gh api -X POST repos/${repo}/pages/builds
   8. make release-check V=${version}, every minute for up to 20 min
-  9. print the address of the release; a line in ${journal}; marker ${marker}
+  9. print the address of the release; a line in ${journal}
   notarization: none — no Developer ID, the app is signed locally
 EOF
 }
@@ -162,14 +154,14 @@ if [ -n "${dry_run}" ]; then
   exit 0
 fi
 
-# From here on everything said goes to a log of the night as well.
-log="${archive_dir}/night-release-${night}.log"
+# From here on everything said goes to the log of this release as well.
+log="${archive_dir}/release-${version}.log"
 exec > >(tee -a "${log}") 2>&1
 say "log: ${log}"
 
 # --- 2. make verify --------------------------------------------------------------------------
 
-verify_log="$(mktemp -t itogo-night-verify)"
+verify_log="$(mktemp -t itogo-release-verify)"
 if ! make verify 2>&1 | tee "${verify_log}"; then
   stop "make verify failed; nothing was committed or published"
 fi
@@ -188,7 +180,7 @@ if [ -n "${files}" ]; then
   # One name per line into git: names with spaces stay whole.
   printf '%s\n' "${files}" | tr '\n' '\0' | xargs -0 git add --
   make check-privacy
-  git commit --quiet -m "${NIGHT_RELEASE_MESSAGE:-Itogo ${version}}"
+  git commit --quiet -m "${RELEASE_MESSAGE:-Itogo ${version}}"
   say "committed $(printf '%s\n' "${files}" | grep -c .) file(s): $(git rev-parse --short HEAD)"
 else
   say "nothing to commit; releasing HEAD $(git rev-parse --short HEAD)"
@@ -216,7 +208,7 @@ if unzip -Z1 "${zip}" | grep -vE '^(Itogo\.app/|__MACOSX/)' | grep -q .; then
 fi
 make release-check CANDIDATE="${app}"
 
-notes="$(mktemp -t itogo-night-notes)"
+notes="$(mktemp -t itogo-release-notes)"
 awk -v head="## [${version}]" '
   index($0, head) == 1 { on = 1; next }
   on && /^## / { exit }
@@ -253,7 +245,7 @@ say "released ${tag}"
 
 # The feed: a new commit on gh-pages without a working tree, every other file of the branch kept.
 git fetch --quiet origin "+refs/heads/gh-pages:refs/remotes/origin/gh-pages"
-feed="$(mktemp -t itogo-night-appcast)"
+feed="$(mktemp -t itogo-release-appcast)"
 git show origin/gh-pages:appcast.xml > "${feed}"
 "${here}/release-entry.sh" into "${feed}" "${version}" "${build}" "${length}" "${signature}"
 xmllint --noout "${feed}" || stop "the new feed does not parse; the release is out, the feed is not"
@@ -276,5 +268,4 @@ done
 url="$(gh release view "${tag}" --repo "${repo}" --json url --jq .url)"
 printf '%s %s (%s) %s %s%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "${tag}" "${build}" \
   "$(git rev-parse --short "${commit}")" "${url}" "${checked:+ checked}" >> "${journal}"
-printf '%s %s\n' "${tag}" "${url}" > "${marker}"
 say "release: ${url}"

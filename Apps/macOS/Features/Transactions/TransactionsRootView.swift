@@ -204,12 +204,21 @@ struct TransactionsRootView: View {
 
   private var detail: some View {
     content
+      // The last rows stay clear of the bar by a fixed margin inside the table's scrolling,
+      // never by its measured height: with the inspector open, a measured height fed back
+      // into the padding never settled — the window kept asking for another Update
+      // Constraints pass until AppKit gave up and threw.
+      .contentMargins(.bottom, showsBar ? Self.barClearance : 0, for: .scrollContent)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      // The bar floats over the last rows and keeps them clear of it. The height it needs is
-      // left to the safe area, never measured back into `@State`: with the inspector open,
-      // a measured height fed back into the padding never settled — the window kept asking
-      // for another Update Constraints pass until AppKit gave up and threw.
-      .safeAreaInset(edge: .bottom, spacing: 0) {
+      // The bar floats over the last rows, laid over the table and not inset into it. As a
+      // safe-area inset it did two things to the layout of the window, and either one could
+      // loop with the inspector open at any width but its ideal one — dragged by the owner, or
+      // left there by the window's first layout (05.10): its width took part in the minimum
+      // the table's column reports to the split, so the split moved the inspector and the bar
+      // chose another form, and its height moved the table itself, which told every hosting
+      // view inside it that its safe area had changed, inside the very layout pass. An overlay
+      // takes the size the column has and gives nothing back to it.
+      .overlay(alignment: .bottom) {
         if showsBar {
           GlassEffectContainer {
             SelectionBar(actions: actions, hugsContent: true)
@@ -281,6 +290,8 @@ struct TransactionsRootView: View {
       .font(.callout)
       .padding(.horizontal, 12)
       .padding(.vertical, 6)
+      // Clear of the bar laid over the bottom of the table, as the last rows are.
+      .padding(.bottom, showsBar ? Self.barClearance : 0)
     }
   }
 
@@ -351,6 +362,9 @@ struct TransactionsRootView: View {
 
   private static let barGap: CGFloat = 18
   private static let barMaxWidth: CGFloat = 720
+  /// The room the last rows keep below them while the bar is up: the bar's capsule and its
+  /// distance from the bottom on both sides. A constant, so nothing of the bar is measured back.
+  private static let barClearance: CGFloat = 36 + 2 * barGap
 
   /// A selection, or a large write landing with nothing selected (`SelectionBar.Form`).
   private var showsBar: Bool {
@@ -591,24 +605,20 @@ struct TransactionFiltersForm: View {
         OptionalPicker(
           title: entry("entry.forWhom"), any: any, selection: $filters.forWhom,
           options: ForWhom.allCases.map { ($0, environment.label(for: $0)) })
+        // An archived person, place or event stays in its operations, so the filter still
+        // finds them: after the live ones, named «(архив)».
+        let people = choices.personOptions(archivedName: archivedName)
         OptionalPicker(
           title: t("filters.person"), any: any, selection: $filters.personId,
-          options: choices.people.map { ($0.id, $0.name) })
-        // An archived place stays in its operations, so the filter still finds them: after
-        // the live places, named «(архив)».
+          options: people.options, dividerBefore: people.dividerBefore)
+        let places = choices.placeOptions(archivedName: archivedName)
         OptionalPicker(
           title: entry("entry.place"), any: any, selection: $filters.placeId,
-          options: choices.places.map {
-            (
-              $0.id,
-              choices.archivedPlaceIds.contains($0.id)
-                ? environment.format("common.archivedName", $0.name) : $0.name
-            )
-          },
-          dividerBefore: choices.places.firstIndex { choices.archivedPlaceIds.contains($0.id) })
+          options: places.options, dividerBefore: places.dividerBefore)
+        let events = choices.eventOptions(archivedName: archivedName)
         OptionalPicker(
           title: entry("entry.event"), any: any, selection: $filters.eventId,
-          options: choices.events.map { ($0.id, $0.name) })
+          options: events.options, dividerBefore: events.dividerBefore)
         // An account finds every operation of it and its cards; a card only what it paid.
         OptionalPicker(
           title: entry("entry.paymentMethod"), any: any, selection: accountOrCard,
@@ -662,6 +672,9 @@ struct TransactionFiltersForm: View {
   }
 
   private var any: String { t("filters.any") }
+  private func archivedName(_ name: String) -> String {
+    environment.format("common.archivedName", name)
+  }
   private func t(_ key: String) -> String { environment.language(key, table: "Transactions") }
   private func entry(_ key: String) -> String { environment.language(key, table: "Entry") }
 }

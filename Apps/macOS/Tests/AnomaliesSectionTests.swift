@@ -149,7 +149,7 @@ final class AnomaliesSectionTests: XCTestCase {
 
   /// The anomalies are a card of Overview now, not a line saying they are coming.
   func testOverviewHasACardForThem() {
-    XCTAssertTrue(OverviewCard.allCases.contains(.anomalies))
+    XCTAssertTrue(OverviewTiles.standard.contains(.worthALook))
   }
 
   /// The section is no longer a placeholder, and it follows the period of the toolbar.

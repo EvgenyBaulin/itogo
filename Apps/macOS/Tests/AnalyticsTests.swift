@@ -322,6 +322,28 @@ final class AnalyticsModelTests: XCTestCase {
     XCTAssertEqual(october.overview?.comparison.reason, .notStarted)
   }
 
+  /// «По людям»: spending that names nobody is my own, never a line «Без человека». A period
+  /// where nobody is named says so in its own words; a named person's share is still a share of
+  /// all my spending.
+  func testPeopleListOnlyThePeopleNamed() throws {
+    let mine = entry(.expense, "900", on: day(3))
+    let none = AnalyticsBuilder.model(
+      request(.forWhom, .month(september), today: day(18)), ledger: ledger([mine]))
+    XCTAssertEqual(none.forWhom?.people.reason, .noPeople)
+    XCTAssertNotNil(none.forWhom?.values.content)
+
+    let anna = Person(name: "Anna", relation: .friend)
+    var gift = entry(.expense, "100", on: day(4), forWhom: .friends)
+    gift.parts[0].forPersonId = anna.id
+    let dataset = Dataset(entries: [mine, gift], categories: [food, salary], people: [anna])
+    let named = AnalyticsBuilder.model(
+      request(.forWhom, .month(september), today: day(18)),
+      ledger: Ledger(dataset: dataset, calendar: .utc))
+    let people = try XCTUnwrap(named.forWhom?.people.content)
+    XCTAssertEqual(people.map(\.key), [.person(anna.id)])
+    XCTAssertEqual(people.first?.share, 1_000)
+  }
+
   // MARK: - Series and stacks
 
   /// The lines of «for whom»: largest total first, equal totals in the order of the values;

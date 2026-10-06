@@ -7,6 +7,89 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.3.0] — 2026-10-07
+
+Banks above accounts and cards, cashback rules that belong to the account, an entry that asks for
+what it needs, debt dues closed by money, reconciliations that follow every recompute, and an
+Overview whose tiles you choose.
+
+### Upgrading
+
+- The first launch of 1.3.0 migrates the database forward, once (schema 6). The update adds a
+  table of banks and columns at the end of existing tables. Every account goes under a bank of
+  its name — accounts with the same name under one bank. Cashback rules that every card of an
+  account repeated move up to the account; rules on «Loans» are removed, as a debt payment
+  never earns cashback. No other stored value changes.
+- As before, the app first writes a checked copy `finance-<date and time>-before-migration.sqlite`
+  into the backups folder and into `before-migration/` of the backup folder you chose; without a
+  checked copy there is no migration.
+- The update is one-way: 1.2.x opens neither a migrated database nor an archive written by
+  1.3.0. To go back, restore the `-before-migration` copy in 1.2.x; what was entered in 1.3.0 is
+  not in it.
+- The transfer archive gets `banks.csv`, and `debt_entries.csv` and `payment_methods.csv` new
+  columns at the end; `formatVersion` stays 1, the schema in the manifest is 6.
+
+### Added
+
+- **Banks.** Settings → Accounts → **New Bank…** makes a bank, an account and a card in one step
+  of ⌘Z. An account is deleted without its bank, a card without its account. In every list a bank
+  with one account and one card is just the bank («Sber · Sber» is gone), an account with two
+  cards shows «Bank › Card», a bank with several accounts «Bank › Account». The entry line reads
+  a bank's name as its first account.
+- **Cashback on the account.** Rules belong to the account; a card keeps only what differs. A
+  purchase without a card counts by the account's rules. Per account: rounding (whole rubles or
+  kopecks; nearest, down or up), when the bank pays («right away» or «by the 10th of next
+  month», with a warning when nothing came), and cashback paid as points to another account.
+  Cashback no confirmation came for is grey «≈» and part of the estimated income.
+- **Entry.** Return without a category does not save — choose one, or «Don't remember»; ↓ and ↑
+  go through the suggestions, then the other categories. The ↓ panel reads the line as you type.
+  ↓ in the line walks the list of operations from the newest; Tab opens the panel. «Add another
+  one?» for the same amount within five minutes; a date after today asks whether to record it as
+  is or plan a payment or an income. **Transfer…** in the panel; date and time of a transfer in
+  one field. Return saves an edited operation. Settings → Entry offers a detailed form on the
+  right of the window instead of the line.
+- **Debts and payments.** A debt's due is closed by money: two halves close one due, a payment
+  for two closes two, and an underpaid due stays as its remainder everywhere; «No more payments
+  this month» closes a due paid in part. A new debt on its payment day asks whether this month's
+  payment was made. Income named after a «They owe me» debt is money back; what a person returns
+  over their parts goes toward their debt. Deleting the payment that closed a debt offers to
+  reopen it. Overdue payments can be skipped, one or all. An expected income can come several
+  times a month. A switch for the rest of event budgets in the free sum.
+- **Reconciliation.** Every recompute (⌘R and the run at launch) brings the differences of later
+  counts up to date; a difference that comes to zero is removed. The history of the
+  reconciliation sheet offers **Record the difference** for a count saved without it, and shows
+  a remembered answer «before the count?» with **Forget**. The forecast of an account's balance
+  counts the losses of reconciliations and spending for others.
+- **Accounts and groups.** «Total» in the sidebar opens a screen of every account in the summary.
+  The screen of a group and of «Total» lists the payments, subscriptions and expected income of
+  its accounts. An account's and a group's screen says when an operation was last added there.
+- **Overview tiles.** Up to 12 tiles, chosen and ordered in Settings → Appearance from 18:
+  month to date, top categories, good and bad, can save, forecasts of spending, income and the
+  balance to the end of the month, limits, payments for 7 days, expected income, owed to me, I
+  owe, event, last reconciliation, last operation, both together, worth a look, free money.
+- **Windows as tabs.** Analytics, Transactions and Reports open as tabs of the main window, so
+  in full screen they stay on its space.
+- **About** has a link to support the author.
+
+### Changed
+
+- «By person» in Analytics and Reports no longer shows «No person»: spending that names nobody
+  is mine and stays only in the base of the shares.
+- «Top categories» leaves «Reconciliation» out.
+- People and events in the archive are offered in the Transactions filter after the live ones,
+  marked «(archived)».
+- Name fields in Settings → Accounts are left-aligned, so a trailing space shows as you type.
+- The account sheet of Settings → Accounts is no taller than the Settings window; its form
+  scrolls inside.
+
+### Fixed
+
+- Transactions: selecting operations while the inspector was wider or narrower than its usual
+  width — after a drag of its divider — could send the window into a layout loop that ended the
+  app. The selection bar now floats over the table and no longer changes its layout.
+- Moving a balance off an archived account dates the transfer after the latest count of the
+  account it goes to, so it never makes up a difference there.
+
 ## [1.2.0] — 2026-09-28
 
 Cards and cashback inside accounts, a first reconciliation that is the truth and later

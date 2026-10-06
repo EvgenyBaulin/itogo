@@ -704,6 +704,8 @@ public struct PlanningRepository: Sendable {
     _ undo: PlanningUndo, at instant: Date, context: LiveCountsContext = .standard, db: Database
   ) throws -> CountsSettled {
     try revertRows(undo, at: instant, db: db)
+    try LiveCountsWriter.restoreKeeping(
+      undo.before.reconciledBalances, settled: undo.counts, db: db)
     try LiveCountsWriter.restoreUnsettled(undo.counts, context: context, now: instant, db: db)
     return try LiveCountsWriter.settle(
       undo.countTouch, context: context, now: instant, templates: undo.counts.operationsBefore,

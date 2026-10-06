@@ -427,7 +427,7 @@ final class AccountScreenTests: XCTestCase {
       AccountScreen(accountId: freedom.id, actions: actions).appDependencies(deps),
       width: 820, height: 620)
     await show(
-      GroupScreen(groupId: kz.id, actions: actions, openAccount: { _ in })
+      GroupScreen(scope: .group(kz.id), actions: actions, openAccount: { _ in })
         .appDependencies(deps),
       width: 820, height: 620)
     await show(

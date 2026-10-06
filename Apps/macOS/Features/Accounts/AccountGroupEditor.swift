@@ -34,10 +34,8 @@ struct AccountGroupEditor: View {
       Text(verbatim: t(previous == nil ? "account.group.newTitle" : "account.group.title"))
         .font(.headline)
       Form {
-        TextField(text: $group.name) {
-          Text(verbatim: t("account.group.name"))
-        }
-        .accessibilityIdentifier("account.group.name")
+        NameField(
+          title: t("account.group.name"), text: $group.name, identifier: "account.group.name")
         Section {
           Toggle(isOn: $group.inSummary) {
             Text(verbatim: t("account.group.inSummary"))

@@ -9,6 +9,9 @@ struct ArchivedMoneyForm: Sendable {
     let leftover: ArchivedLeftover
     /// The live accounts that hold the currency, in menu order; empty when none does.
     let counterparts: [PaymentMethod]
+    /// The moment of the latest count of each counterpart in the row's currency: the transfer
+    /// goes after it, never inside the window of that count (`ArchivedMoney.settlingTransfer`).
+    var counterpartCounts: [UUID: Date] = [:]
     var chosen: UUID?
     var id: BalanceKey { leftover.key }
   }
@@ -16,12 +19,25 @@ struct ArchivedMoneyForm: Sendable {
   var rows: [Row]
 
   /// The main account is chosen where it holds the currency, else the first that does.
-  init(check: ArchivedMoneyCheck, accounts: [PaymentMethod], locale: Locale) {
+  /// `balances` give the latest count of each counterpart; without them none is known.
+  init(
+    check: ArchivedMoneyCheck, accounts: [PaymentMethod], locale: Locale,
+    balances: AccountBalances? = nil
+  ) {
     rows = check.leftovers.map { leftover in
       let counterparts = ArchivedMoney.counterparts(
         for: leftover.key, accounts: accounts, locale: locale)
       let main = counterparts.first(where: \.isDefault) ?? counterparts.first
-      return Row(leftover: leftover, counterparts: counterparts, chosen: main?.id)
+      var counts: [UUID: Date] = [:]
+      if let balances {
+        for account in counterparts {
+          counts[account.id] = ArchivedMoney.counterpartCount(
+            account.id, for: leftover.key, balances: balances)
+        }
+      }
+      return Row(
+        leftover: leftover, counterparts: counterparts, counterpartCounts: counts,
+        chosen: main?.id)
     }
   }
 
@@ -29,12 +45,15 @@ struct ArchivedMoneyForm: Sendable {
   var canConfirm: Bool { !rows.isEmpty && rows.allSatisfy { $0.chosen != nil } }
 
   /// The transfers that bring every archived key back to zero (`settlingTransfers`): what a
-  /// change leaves, a second after the key's last movement; a whole balance, now — and, for
-  /// money typed ahead on a key, the rest dated with its latest movement.
+  /// change leaves, a second after the key's last movement — or after the latest count of the
+  /// chosen account, when that is later; a whole balance, now — and, for money typed ahead on a
+  /// key, the rest dated with its latest movement.
   func transfers(now: Date, note: String?) -> [Transfer] {
     rows.flatMap { row in
       row.chosen.map {
-        ArchivedMoney.settlingTransfers(row.leftover, counterpart: $0, now: now, note: note)
+        ArchivedMoney.settlingTransfers(
+          row.leftover, counterpart: $0, counterpartCountedAt: row.counterpartCounts[$0],
+          now: now, note: note)
       } ?? []
     }
   }
@@ -43,7 +62,8 @@ struct ArchivedMoneyForm: Sendable {
   func legs(of row: Row, now: Date) -> [SettlingLeg] {
     guard let chosen = row.chosen else { return [] }
     let transfers = ArchivedMoney.settlingTransfers(
-      row.leftover, counterpart: chosen, now: now, note: nil)
+      row.leftover, counterpart: chosen, counterpartCountedAt: row.counterpartCounts[chosen],
+      now: now, note: nil)
     return ArchivedMoney.legs(of: transfers, archived: row.leftover.key.accountId, now: now)
   }
 
@@ -285,8 +305,13 @@ struct ArchivedMoneySheet: View {
   private func load() async {
     switch purpose {
     case .change(let check, _):
+      // The books give the latest count of every account the money may go to: the transfer
+      // is dated after it. Without them the change is still answered, by the last movement.
+      let books = await actions.books()
+      self.books = books
       form = ArchivedMoneyForm(
-        check: check, accounts: actions.all, locale: environment.language.locale)
+        check: check, accounts: books?.dataset.paymentMethods ?? actions.all,
+        locale: environment.language.locale, balances: books?.balances)
     case .archiving(let account, _), .leftovers(let account):
       guard let books = await actions.books() else {
         failed = true
@@ -295,7 +320,8 @@ struct ArchivedMoneySheet: View {
       self.books = books
       form = ArchivedMoneyForm(
         check: ArchivedMoney.balancesToMove(of: account, balances: books.balances),
-        accounts: books.dataset.paymentMethods, locale: environment.language.locale)
+        accounts: books.dataset.paymentMethods, locale: environment.language.locale,
+        balances: books.balances)
     }
   }
 

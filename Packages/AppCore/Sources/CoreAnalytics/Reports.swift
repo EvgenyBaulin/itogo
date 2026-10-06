@@ -104,7 +104,7 @@ public struct ReportBuilder: Sendable {
       }
       return breakdownTable(
         kind, period: period, grouping: grouping,
-        nodes: Tabulation.twoLevel(items, directChild: grouping.directChildKey))
+        nodes: Tabulation.twoLevel(items, directChild: grouping.directChildKey(under:)))
     case .expensesByCategory:
       let nodes = Tabulation.oneLevel(
         spendingRows(period).map { (grouping.outerKey(of: $0), $0.contribution) })

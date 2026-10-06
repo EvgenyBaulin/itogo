@@ -112,9 +112,11 @@ public enum ReportGrouping: String, Hashable, Sendable, CaseIterable, Codable {
     }
   }
 
-  /// The line that collects money filed on the upper line itself, next to its children.
-  var directChildKey: ReportKey {
-    self == .forWhom ? .noPerson : .noSubcategory
+  /// The line that collects money filed on the upper line itself, next to its children:
+  /// «(no subcategory)» under a category; under a «for whom» value, the value itself — money
+  /// that names no person is the value's own (for «me», simply mine), never «no person».
+  func directChildKey(under outer: ReportKey) -> ReportKey {
+    self == .forWhom ? outer : .noSubcategory
   }
 }
 
@@ -145,12 +147,20 @@ enum Tabulation {
   /// over the lowest level of the whole table — every child, plus the upper lines that have
   /// none — so they read as parts of the same total as their parents.
   static func twoLevel(_ items: [Item], directChild: ReportKey) -> [BreakdownNode] {
+    twoLevel(items) { _ in directChild }
+  }
+
+  /// The same, with the direct child line chosen per upper line. A direct child that carries
+  /// its parent's own key goes last under it, like a «none» line.
+  static func twoLevel(
+    _ items: [Item], directChild: (ReportKey) -> ReportKey
+  ) -> [BreakdownNode] {
     var outerOrder: [ReportKey] = []
     var inner: [ReportKey: [ReportKey: AmountE4]] = [:]
     var hasChildren: Set<ReportKey> = []
     for item in items {
       if inner[item.outer] == nil { outerOrder.append(item.outer) }
-      let childKey = item.inner ?? directChild
+      let childKey = item.inner ?? directChild(item.outer)
       inner[item.outer, default: [:]][childKey, default: .zero] += item.amount
       if item.inner != nil { hasChildren.insert(item.outer) }
     }
@@ -162,7 +172,10 @@ enum Tabulation {
       if hasChildren.contains(outer) {
         node.children = children.filter { !$0.value.isZero }
           .map { BreakdownNode(key: $0.key, amount: $0.value) }
-          .sorted(by: ordered)
+          .sorted { left, right in
+            if (left.key == outer) != (right.key == outer) { return right.key == outer }
+            return ordered(left, right)
+          }
       }
       guard !amount.isZero || !node.children.isEmpty else { continue }
       nodes.append(node)
@@ -232,7 +245,7 @@ public struct CategoryBreakdown: Hashable, Sendable {
         Tabulation.Item(
           outer: grouping.outerKey(of: $0), inner: grouping.innerKey(of: $0), amount: amount($0))
       },
-      directChild: grouping.directChildKey)
+      directChild: grouping.directChildKey(under:))
     total = AmountE4.sum(nodes.map(\.amount))
   }
 
