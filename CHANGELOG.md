@@ -79,9 +79,6 @@ stays at 6: nothing is migrated.
   «Bank › Account» for one with several.
 - The Analytics and Reports windows cannot be made narrower than their content; showing the
   sidebar again takes its room from the content instead of widening the window.
-- The release workflow on GitHub Actions can now build, sign and publish a release on its own,
-  once the signing certificate and the update key are given to it as secrets; without them it
-  publishes nothing.
 
 ### Fixed
 
