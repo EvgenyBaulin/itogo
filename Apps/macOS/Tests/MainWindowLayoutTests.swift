@@ -125,7 +125,10 @@ final class MainWindowLayoutTests: XCTestCase {
     // here, so the width the entry bar takes its column from is handed over directly.
     let root =
       AppScenes.root(deps, window: .main, launches: false) { deps in
-        MainWindow(deps: deps, actions: actions, opensDetails: opensDetails)
+        // «Траты» lists the operations the selection bar and the room under it are about.
+        MainWindow(
+          deps: deps, actions: actions, opensDetails: opensDetails,
+          selection: .section(.spending))
       }
       .environment(\.windowWidth, width)
       .defaultAppStorage(defaults)
@@ -156,7 +159,7 @@ final class MainWindowLayoutTests: XCTestCase {
         return
       }
     } while Date() < deadline
-    XCTFail("the Overview list never filled")
+    XCTFail("the list of «Траты» never filled")
     throw XCTSkip("no list, nothing to measure")
   }
 
@@ -489,7 +492,8 @@ final class MainWindowLayoutTests: XCTestCase {
       Self.allSubviews(of: scroll, into: &tables)
       if tables.contains(where: { $0.numberOfRows > 10 }) { return scroll.contentInsets.bottom }
     }
-    throw XCTSkip("the list of Overview was not found, so there is no room to measure")
+    XCTFail("the list of «Траты» was not found")
+    return 0
   }
 
   /// Rows are selected under the bar, so while it is shown the last of them must be able to

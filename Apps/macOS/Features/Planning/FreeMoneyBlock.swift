@@ -37,6 +37,10 @@ struct FreeMoneyBlock: View {
       }
     }
     .refusedWriteAlert($refused, environment)
+    .guideTarget("planning.freeToSpend")
+    // The tutorial's task «Посмотрите, сколько свободно до конца месяца» is done by the block
+    // coming on screen.
+    .onAppear { GuideStore.shared.report(GuideEvent.freeToSpendSeen) }
   }
 
   // MARK: What the block shows

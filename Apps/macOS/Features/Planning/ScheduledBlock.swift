@@ -27,6 +27,7 @@ struct ScheduledBlock: View {
           .foregroundStyle(.secondary)
           Spacer()
           Button(t("scheduled.add")) { sheet = .payment(nil) }
+            .guideTarget("planning.addPayment")
             .buttonStyle(.bordered)
             .controlSize(.small)
         }

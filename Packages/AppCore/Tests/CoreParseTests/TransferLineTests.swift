@@ -104,6 +104,33 @@ struct TransferLineTests {
     #expect(parse("перевод 500 сбер сбер").transfer == nil)
   }
 
+  /// An account whose name holds «для» — «Карта для поездок» — is that account, either way
+  /// round and declined behind «с», and an expense paid from it too: «для поездок» inside the
+  /// name is no person the line pays for.
+  @Test func anAccountNamedWithForIsNoPerson() {
+    let trip = Fixture.id("87")
+    let parser = InputLineParser(
+      vocabulary: ParserVocabulary(
+        people: [.init(id: Self.masha, name: "Маша")],
+        paymentMethods: [
+          .init(id: Self.cash, name: "Наличные"), .init(id: trip, name: "Карта для поездок"),
+        ]),
+      calendar: .utc)
+    func parse(_ line: String) -> ParsedInput { parser.parse(line, today: Fixture.today) }
+    let there = parse("перевод 1000 наличные карта для поездок")
+    #expect(there.transfer == TransferReading(fromAccountId: Self.cash, toAccountId: trip))
+    #expect(there.unknownPersonName == nil)
+    #expect(there.amount == 1000)
+    let back = parse("перевод 500 на наличные с карты для поездок")
+    #expect(back.transfer == TransferReading(fromAccountId: trip, toAccountId: Self.cash))
+    let coffee = parse("кофе 300 карта для поездок")
+    #expect(coffee.paymentMethodId == trip)
+    #expect(coffee.unknownPersonName == nil && coffee.personId == nil)
+    #expect(coffee.note == "кофе")
+    // «для» outside a name still names whom it is for.
+    #expect(parse("цветы 500 для маши карта для поездок").personId == Self.masha)
+  }
+
   /// A line without a transfer word is never a transfer, two accounts or not.
   @Test func noTransferWordNoTransfer() {
     #expect(parse("кофе 300 сбер т-банк").transfer == nil)

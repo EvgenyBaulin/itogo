@@ -63,6 +63,14 @@ struct SpendingView: View {
   /// The last two months, or everything the search finds.
   private var shownGroups: [TransactionsStore.DayGroup] {
     guard let snapshot = compute.snapshot else { return [] }
+    return Self.groups(of: snapshot, search: search, calendar: environment.calendar)
+  }
+
+  /// What the list shows of `snapshot`: the last two months while the search is empty, else
+  /// every operation of the whole history the search finds.
+  static func groups(
+    of snapshot: DataSnapshot, search: String, calendar: CalendarContext
+  ) -> [TransactionsStore.DayGroup] {
     let query = search.trimmingCharacters(in: .whitespaces)
     guard !query.isEmpty else { return snapshot.recentGroups }
     let ledger = snapshot.ledger
@@ -72,8 +80,7 @@ struct SpendingView: View {
       !entry.transaction.isDeleted && SpendingSearch.matches(entry, query: query, names: names)
     }
     return TransactionsStore.group(
-      found, calendar: environment.calendar, debts: dataset.debtsById,
-      refunds: ledger.refundIndex)
+      found, calendar: calendar, debts: dataset.debtsById, refunds: ledger.refundIndex)
   }
 
   private var waiting: ListWaiting? {

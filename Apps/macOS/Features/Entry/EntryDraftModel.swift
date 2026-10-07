@@ -1089,6 +1089,22 @@ public final class EntryDraftModel {
     draft.parts[index].categoryId = id
     draft.parts[index].categorySource = source
     nameTheGoal(ofPartAt: index)
+    shareTheCategoryOfTheFirstPart(index)
+  }
+
+  /// «Пополам» and «Поровну»: the shares are one purchase, so the category chosen for the first
+  /// part is every share's — chosen in the form, with no line to read again, too.
+  private func shareTheCategoryOfTheFirstPart(_ index: Int) {
+    guard index == 0, draft.parts.count > 1 else { return }
+    switch payingFor {
+    case .half, .evenly:
+      for other in draft.parts.indices.dropFirst() {
+        draft.parts[other].categoryId = draft.parts[0].categoryId
+        draft.parts[other].categorySource = draft.parts[0].categorySource
+      }
+    case .me, .somebody:
+      return
+    }
   }
 
   /// Choosing a subcategory stores the child. The dash means the operation hangs on the
@@ -1100,6 +1116,7 @@ public final class EntryDraftModel {
     guard let id else {
       draft.parts[index].categoryId = categoryOfPart(draft.parts[index])
       draft.parts[index].categorySource = source
+      shareTheCategoryOfTheFirstPart(index)
       return
     }
     // Only a real child may be stored here: a top-level id would lose the pair silently.
@@ -1112,6 +1129,7 @@ public final class EntryDraftModel {
     draft.parts[index].categoryId = child.id
     draft.parts[index].categorySource = source
     nameTheGoal(ofPartAt: index)
+    shareTheCategoryOfTheFirstPart(index)
   }
 
   /// A suggestion taken from history fills both pickers at once: it is stored as the most

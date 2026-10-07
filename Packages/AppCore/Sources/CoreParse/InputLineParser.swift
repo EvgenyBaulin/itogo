@@ -310,7 +310,7 @@ private struct ParseSession {
     let markers =
       isMoneyBack ? Lexicon.personMarkers.union(Lexicon.fromMarkers) : Lexicon.personMarkers
     for index in words.indices where !words[index].claimed {
-      guard markers.contains(words[index].normalized),
+      guard markers.contains(words[index].normalized), !isInsideAKnownName(index),
         let next = nameStart(after: index)
       else { continue }
       if let forWhom = Lexicon.forWhomWords[words[next].normalized] {
@@ -359,6 +359,20 @@ private struct ParseSession {
   /// note the app gives them back to reads as the line did.
   private func phrase(from marker: Int, to start: Int, name: String) -> String {
     (words[marker..<start].map(\.original) + [name]).joined(separator: " ")
+  }
+
+  /// The word at `index` is inside the name of a known account, card, place or event that
+  /// starts before it — «для» of «Карта для поездок» — and marks nobody.
+  private func isInsideAKnownName(_ index: Int) -> Bool {
+    let entries =
+      vocabulary.paymentMethods + vocabulary.cards.map(\.entry) + vocabulary.places
+      + vocabulary.events
+    return (0..<index).contains { start in
+      !words[start].claimed
+        && [false, true].contains { loose in
+          bestMatch(entries, at: start, loose: loose)?.range.contains(index) == true
+        }
+    }
   }
 
   /// A known place, event, payment method or card starts behind the marker.

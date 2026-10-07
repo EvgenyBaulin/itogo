@@ -443,7 +443,7 @@ struct MainWindow: View {
             // the sheets, popovers and confirmations of the list hang here, not on its rows.
             .coordinateSpace(.named(OperationActions.coordinateSpace))
             .operationPresentations(overviewActions)
-            .guideOverlay(guide)
+            .guideOverlay(guide, toolbar: true)
         }
         // The form of a new operation, when the owner chose it in Settings → «Ввод»: a column
         // of its own at the right, always there, in place of the line (`EntryStyle.form`).

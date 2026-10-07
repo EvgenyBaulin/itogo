@@ -8,7 +8,10 @@ import Observation
 /// and counts.
 @MainActor @Observable
 final class GuideStore {
-  static let shared = GuideStore()
+  /// The one store of the app. A test may put a store of its own here — one on a set of
+  /// defaults of its own, in the tutorial — to watch what the views report, and put the app's
+  /// back after.
+  static var shared = GuideStore()
 
   /// The key of the memory. The Debug build has a domain of its own, so its guide is its own.
   static let progressKey = "guide.progress"
@@ -27,8 +30,12 @@ final class GuideStore {
   /// The task whose place is framed on the screen.
   var framedTask: String?
 
-  init(defaults: UserDefaults = AppEnvironment.isTestHost ? GuideStore.testDefaults : .standard) {
+  init(
+    defaults: UserDefaults = AppEnvironment.isTestHost ? GuideStore.testDefaults : .standard,
+    tutorial: Bool? = nil
+  ) {
     self.defaults = defaults
+    tutorialOverride = tutorial
     if let data = defaults.data(forKey: Self.progressKey),
       let stored = try? JSONDecoder().decode(GuideProgress.self, from: data)
     {
@@ -47,8 +54,12 @@ final class GuideStore {
   /// this Mac is new to the app (`begin(databaseInUse:)`).
   @ObservationIgnored private var hasMemory: Bool
 
+  /// Whether the tutorial is on, when the store was told so instead of reading the launch: a
+  /// test runs on no set, and asks for the tutorial this way.
+  @ObservationIgnored private let tutorialOverride: Bool?
+
   /// The tutorial is on: the app runs on its set.
-  var isTutorial: Bool { AppPaths.dataSet == .learn }
+  var isTutorial: Bool { tutorialOverride ?? (AppPaths.dataSet == .learn) }
 
   private func save() {
     guard let data = try? JSONEncoder().encode(progress) else { return }

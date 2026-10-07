@@ -784,16 +784,25 @@ struct EntryBar<Accessory: View>: View {
 
   /// «Перевод: Сбер → Т-Банк, 5,000 ₽» — a side no account answers to is «?».
   private func transferPreview(_ transfer: TransferReading, _ parsed: ParsedInput) -> String {
-    let accounts = model?.paymentMethods ?? []
+    Self.transferPreview(
+      transfer, amount: parsed.amount.flatMap { try? AmountE4(decimal: $0) },
+      currency: EntryPreview.currency(of: parsed, model: model, in: environment),
+      accounts: model?.paymentMethods ?? [], environment: environment)
+  }
+
+  /// The words over the line for a transfer it names, from the accounts and the amount read.
+  static func transferPreview(
+    _ transfer: TransferReading, amount: AmountE4?, currency: CurrencyCode,
+    accounts: [PaymentMethod], environment: AppEnvironment
+  ) -> String {
     func name(_ id: UUID?) -> String {
       accounts.first { $0.id == id }?.name ?? "?"
     }
     var text =
       environment.language("entry.transfer.preview", table: "Entry") + " "
       + "\(name(transfer.fromAccountId)) → \(name(transfer.toAccountId))"
-    if let amount = parsed.amount, let value = try? AmountE4(decimal: amount) {
-      let currency = EntryPreview.currency(of: parsed, model: model, in: environment)
-      text += ", " + environment.money.exact(value, currency: currency)
+    if let amount {
+      text += ", " + environment.money.exact(amount, currency: currency)
     }
     return text
   }

@@ -20,17 +20,21 @@ extension View {
   }
 
   /// The root of a window: the frame around the place of the current task, and the labels of
-  /// «Показать, куда нажимать».
-  func guideOverlay(_ guide: GuideStore) -> some View {
+  /// «Показать, куда нажимать». `toolbar`: this root lies under the toolbar, and names its
+  /// buttons in a strip along its top edge.
+  func guideOverlay(_ guide: GuideStore, toolbar: Bool = false) -> some View {
     overlayPreferenceValue(GuideTargetKey.self) { anchors in
       GeometryReader { proxy in
-        GuideOverlay(guide: guide, anchors: anchors, proxy: proxy)
+        GuideOverlay(guide: guide, anchors: anchors, proxy: proxy, namesToolbar: toolbar)
       }
     }
   }
 }
 
-/// What «Показать, куда нажимать» names on the main window, with its keys on a Mac.
+/// What «Показать, куда нажимать» names on the main window, with its keys on a Mac: the places
+/// of the window by the frames of the views that mark them, and the buttons of the toolbar in a
+/// strip under it — an item of the toolbar is drawn by AppKit and lends the window no place to
+/// point at.
 enum GuideLabels {
   struct Label {
     let target: String
@@ -45,6 +49,9 @@ enum GuideLabels {
     Label(target: "sidebar.planning", key: "guide.label.planning", keys: "⌘2"),
     Label(target: "sidebar.debts", key: "guide.label.debts", keys: "⌘3"),
     Label(target: "sidebar.spending", key: "guide.label.spending", keys: "↓"),
+  ]
+
+  static let toolbar: [Label] = [
     Label(target: "toolbar.transactions", key: "guide.label.transactions", keys: "⌘⇧T"),
     Label(target: "toolbar.reconcile", key: "guide.label.reconcile", keys: nil),
     Label(target: "toolbar.settings", key: "guide.label.settings", keys: "⌘,"),
@@ -57,6 +64,7 @@ private struct GuideOverlay: View {
   let guide: GuideStore
   let anchors: [String: Anchor<CGRect>]
   let proxy: GeometryProxy
+  let namesToolbar: Bool
 
   private func t(_ key: String) -> String { environment.language(key, table: "Guide") }
 
@@ -80,6 +88,18 @@ private struct GuideOverlay: View {
               .position(
                 x: min(max(frame.midX, 90), proxy.size.width - 90), y: max(frame.minY - 18, 14))
           }
+        }
+        if namesToolbar {
+          HStack(spacing: 8) {
+            Image(systemName: "arrow.up")
+              .foregroundStyle(.white)
+              .accessibilityHidden(true)
+            ForEach(GuideLabels.toolbar, id: \.target) { label in labelView(label) }
+          }
+          .fixedSize()
+          .padding(.top, 8)
+          .padding(.trailing, 12)
+          .frame(maxWidth: .infinity, alignment: .topTrailing)
         }
       } else if let task = guide.framedTask,
         let target = GuideCatalog.tutorial.tasks.first(where: { $0.id == task })?.hints.first?

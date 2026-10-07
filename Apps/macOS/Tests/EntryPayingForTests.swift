@@ -138,6 +138,18 @@ final class EntryPayingForTests: XCTestCase {
     XCTAssertNil(model.draft.parts[0].forPersonId)
   }
 
+  /// The form at the side has no line to read again: the category chosen after «Пополам» is
+  /// every share's.
+  func testTheCategoryChosenAfterHalfIsEveryShares() throws {
+    let model = makeModel()
+    let parsed = InputLineParser(vocabulary: .empty, calendar: .utc).parse("ужин 1200", today: today)
+    model.apply(parsed, amount: AmountE4(whole: 1200), today: today)
+    model.choosePayingForWay(.half)
+    model.setPayingForPerson(masha.id, slot: 0)
+    model.setCategory(cafe.id, forPartAt: 0)
+    XCTAssertEqual(model.draft.parts.map(\.categoryId), [cafe.id, cafe.id])
+  }
+
   func testIncomeHasNoPayingFor() throws {
     let model = makeModel()
     let parsed = InputLineParser(vocabulary: .empty, calendar: .utc).parse("+5000", today: today)

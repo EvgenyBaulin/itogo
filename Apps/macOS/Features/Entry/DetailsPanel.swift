@@ -223,10 +223,12 @@ struct DetailsPanel: View {
   /// stands in the order.
   private var mainFields: some View {
     fields {
-      let _ = model.offersPayingFor
-
       ForEach(environment.entryFieldOrder, id: \.self) { field in
         rows(for: field)
+      }
+      // «За кого» after the fields of the order: Tab from the line reaches the first of them.
+      if model.offersPayingFor || model.payingForWay != nil {
+        payingForRows
       }
     }
   }
@@ -322,26 +324,9 @@ struct DetailsPanel: View {
     }
   }
 
-  /// «Вы заплатили 1,200 ₽ за другого. Маша должна вам 1,200 ₽» — or «Ваша часть — 600 ₽, Маша
-  /// должна 600 ₽», or a gift that nobody owes.
+  /// What «За кого» comes to, under its fields (`PayingForSentence`).
   private var payingForSentence: String? {
-    guard model.draft.amount.raw > 0, model.payingFor != .me else { return nil }
-    let currency = model.draft.currency
-    let outcome = PayingForRules.outcome(of: model.payingFor, total: model.draft.amount)
-    func money(_ amount: AmountE4) -> String { environment.money.exact(amount, currency: currency) }
-    func name(_ id: UUID) -> String { model.people.first { $0.id == id }?.name ?? "—" }
-    let owes = outcome.owed.map {
-      String(format: t("entry.payingFor.owes"), name($0.person), money($0.amount))
-    }
-    if let gift = outcome.giftFor {
-      return String(format: t("entry.payingFor.gift"), money(outcome.paid), name(gift))
-    }
-    if outcome.mine.isZero {
-      return String(format: t("entry.payingFor.paid"), money(outcome.paid)) + " "
-        + owes.joined(separator: ", ") + "."
-    }
-    return String(format: t("entry.payingFor.mine"), money(outcome.mine)) + ", "
-      + owes.joined(separator: ", ") + "."
+    PayingForSentence.text(of: model, environment: environment)
   }
 
   /// The rows of fields: a grid of labels and controls, or one column.
