@@ -148,6 +148,10 @@ struct CardActions {
     CardMerge.plan(merging: id, into: keptId, cards: cards, rules: rules, accounts: accounts)
   }
 
+  /// What a merge of `id` moves to the kept card: the operations naming it, in the bin too, and
+  /// its scheduled payments — said in the question before the merge is made.
+  func mergeUsage(_ id: UUID) -> CardUsage? { try? repository?.usage(of: id) }
+
   /// «Объединить с…»: everything that named the card — operations, in the bin too, and scheduled
   /// payments — names `keptId`, the card's rules become the kept card's except where the kept
   /// card has a rule of the same month and category, the kept card is known by the card's names

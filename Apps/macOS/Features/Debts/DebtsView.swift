@@ -201,6 +201,15 @@ extension DebtLine {
     guard !debt.closed, let next = nextPayment else { return false }
     return next < today
   }
+
+  /// «Оплачено X из Y — осталось Z» on the card: money paid toward the earliest owed due, less
+  /// than the due, of a debt I owe with a monthly payment. The due stays owed until it is covered.
+  var partialDue: (paid: AmountE4, due: AmountE4, left: AmountE4)? {
+    guard debt.direction == .iOwe, dues.owes, dues.partialE4.raw > 0,
+      let monthly = debt.monthlyPaymentE4
+    else { return nil }
+    return (dues.partialE4, monthly, max(monthly - dues.partialE4, .zero))
+  }
 }
 
 /// The words of the confirmation of «Удалить…»: what leaves with the debt and what stays, one
@@ -395,16 +404,13 @@ private struct DebtDetail: View {
           }
         }
         // Money paid toward a due, less than the due: the due stays owed until it is covered.
-        if debt.direction == .iOwe, line.dues.owes, line.dues.partialE4.raw > 0,
-          let monthly = debt.monthlyPaymentE4
-        {
+        if let partial = line.partialDue {
           Text(
             verbatim: environment.format(
               "debts.partialDue", table: "Debts",
-              environment.money.exact(line.dues.partialE4, currency: debt.currency),
-              environment.money.exact(monthly, currency: debt.currency),
-              environment.money.exact(
-                max(monthly - line.dues.partialE4, .zero), currency: debt.currency))
+              environment.money.exact(partial.paid, currency: debt.currency),
+              environment.money.exact(partial.due, currency: debt.currency),
+              environment.money.exact(partial.left, currency: debt.currency))
           )
           .font(.caption).foregroundStyle(.secondary)
           .accessibilityIdentifier("debts.partialDue")

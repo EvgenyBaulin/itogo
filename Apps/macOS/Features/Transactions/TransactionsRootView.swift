@@ -206,11 +206,13 @@ struct TransactionsRootView: View {
 
   private var detail: some View {
     content
-      // The last rows stay clear of the bar by a fixed margin inside the table's scrolling,
-      // never by its measured height: with the inspector open, a measured height fed back
-      // into the padding never settled — the window kept asking for another Update
-      // Constraints pass until AppKit gave up and threw.
-      .contentMargins(.bottom, showsBar ? Self.barClearance : 0, for: .scrollContent)
+      // The last rows stay clear of the bar by a fixed margin, never by its measured height:
+      // with the inspector open, a measured height fed back into the padding never settled —
+      // the window kept asking for another Update Constraints pass until AppKit gave up and
+      // threw. The margin goes into the safe area, which the table's scroll view turns into a
+      // bottom inset of its scrolling; `contentMargins` would be the natural tool, but a
+      // `Table` on macOS ignores it, and the last rows stayed under the bar.
+      .safeAreaPadding(.bottom, showsBar ? Self.barClearance : 0)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       // The bar floats over the last rows, laid over the table and not inset into it. As a
       // safe-area inset it did two things to the layout of the window, and either one could
@@ -292,8 +294,6 @@ struct TransactionsRootView: View {
       .font(.callout)
       .padding(.horizontal, 12)
       .padding(.vertical, 6)
-      // Clear of the bar laid over the bottom of the table, as the last rows are.
-      .padding(.bottom, showsBar ? Self.barClearance : 0)
     }
   }
 

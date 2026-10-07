@@ -4182,6 +4182,23 @@
         }
       }
     },
+    "card.merge.moves": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moving to the kept card: operations — %1$lld, scheduled payments — %2$lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перейдут на оставшуюся карту: операций — %1$lld, плановых платежей — %2$lld"
+          }
+        }
+      }
+    },
     "card.merge.refusal.archived": {
       "extractionState": "manual",
       "localizations": {

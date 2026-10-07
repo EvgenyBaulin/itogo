@@ -150,34 +150,8 @@ struct RemindersSheet: View {
         .font(.caption)
         .foregroundStyle(.secondary)
       HStack(spacing: 8) {
-        Button(t("scheduled.markAsPaid")) { payOverdue(due) }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        // «Платежа не было»: a scheduled payment nobody cancelled — a debt is owed whatever the
-        // owner thinks of it, and has no skip.
-        if !due.isDebt {
-          Button(t("reminders.overdue.skip")) { skipOverdue(due, all: false) }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help(t("reminders.overdue.skipHelp"))
-          if due.moreOverdue > 0 {
-            Button(
-              environment.language.format(
-                "reminders.overdue.skipAll", table: "Planning", counts: due.moreOverdue + 1)
-            ) { skipOverdue(due, all: true) }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help(t("reminders.overdue.skipHelp"))
-          }
-        }
-        if let count = due.countAfter {
-          Button(t("reminders.overdue.settled")) { settle(due) }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help(
-              environment.format(
-                "reminders.overdue.settledHelp", table: "Planning",
-                environment.dates.dayAndMonth(environment.calendar.day(of: count))))
+        ForEach(Self.overdueActions(for: due), id: \.self) { action in
+          overdueButton(action, of: due)
         }
       }
       if let reason = failed[due.id] {
@@ -188,6 +162,61 @@ struct RemindersSheet: View {
       }
     }
     .accessibilityElement(children: .contain)
+  }
+
+  /// What an overdue row offers, in its order.
+  enum OverdueAction: Hashable {
+    /// «Провести».
+    case pay
+    /// «Пропустить» — the earliest unpaid due closes without an operation.
+    case skip
+    /// «Пропустить все N» — every unpaid due before today; `count` is N.
+    case skipAll(count: Int)
+    /// «Уже списано до сверки» — only when the account was counted after the due.
+    case settled(countedAt: Date)
+  }
+
+  /// The buttons of an overdue row. «Пропустить» is for a scheduled payment nobody cancelled — a
+  /// debt is owed whatever the owner thinks of it, and has no skip; «Пропустить все N» only
+  /// when the payment owes more than one due.
+  nonisolated static func overdueActions(for due: OverdueDue) -> [OverdueAction] {
+    var actions: [OverdueAction] = [.pay]
+    if !due.isDebt {
+      actions.append(.skip)
+      if due.moreOverdue > 0 { actions.append(.skipAll(count: due.moreOverdue + 1)) }
+    }
+    if let count = due.countAfter { actions.append(.settled(countedAt: count)) }
+    return actions
+  }
+
+  @ViewBuilder
+  private func overdueButton(_ action: OverdueAction, of due: OverdueDue) -> some View {
+    switch action {
+    case .pay:
+      Button(t("scheduled.markAsPaid")) { payOverdue(due) }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    case .skip:
+      Button(t("reminders.overdue.skip")) { skipOverdue(due, all: false) }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help(t("reminders.overdue.skipHelp"))
+    case .skipAll(let count):
+      Button(
+        environment.language.format("reminders.overdue.skipAll", table: "Planning", counts: count)
+      ) { skipOverdue(due, all: true) }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .help(t("reminders.overdue.skipHelp"))
+    case .settled(let count):
+      Button(t("reminders.overdue.settled")) { settle(due) }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help(
+          environment.format(
+            "reminders.overdue.settledHelp", table: "Planning",
+            environment.dates.dayAndMonth(environment.calendar.day(of: count))))
+    }
   }
 
   /// «Аренда — 5 сентября, 30,000.00 ₽», as the reminder of the due would say it.

@@ -447,7 +447,7 @@ struct DebtSheetView: View {
       made.interestRate = DebtPayoff.parseRate(rateText)
       made.paymentDay = Self.savedPaymentDay(monthly: made.monthlyPaymentE4, day: made.paymentDay)
       if made.direction == .owedToMe { made.paymentsAreExpenses = false }
-      let answered = !asksAboutThisMonth || monthPaid != nil
+      let answered = Self.monthIsAnswered(asks: asksAboutThisMonth, monthPaid: monthPaid)
       let termPaid = asksAboutThisMonth && monthPaid == true
       return (
         t("form.save"), valid && complete && answered,
@@ -591,6 +591,12 @@ struct DebtSheetView: View {
   /// What is left on the debt as the form shows it: the journal read when it opened, else the
   /// figure the card handed over.
   private func shown(_ carried: AmountE4) -> AmountE4 { balance ?? carried }
+
+  /// «Платёж за этот месяц уже сделан?» must be answered before the debt is saved: «Сохранить»
+  /// stays off while the question is asked and neither «Да» nor «Нет» is picked.
+  nonisolated static func monthIsAnswered(asks: Bool, monthPaid: Bool?) -> Bool {
+    !asks || monthPaid != nil
+  }
 
   /// A loan written today on the day its payment falls due asks whether this month's payment is
   /// made already (`DebtTerms.asksAboutThisMonth`).

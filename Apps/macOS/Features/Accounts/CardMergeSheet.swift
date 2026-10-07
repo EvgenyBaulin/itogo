@@ -23,6 +23,7 @@ struct CardMergeSheet: View {
     let targets = actions.mergeTargets(for: card)
     let selected = target ?? targets.first?.id
     let plan = selected.flatMap { try? actions.mergePlan(card.id, into: $0).get() }
+    let usage = actions.mergeUsage(card.id)
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: environment.format("card.merge.title", table: CardText.table, card.name))
         .font(.headline)
@@ -40,6 +41,12 @@ struct CardMergeSheet: View {
             line(
               environment.format(
                 "card.merge.message", table: CardText.table, plan.merged.name, plan.kept.name))
+            if let usage {
+              line(
+                environment.format(
+                  "card.merge.moves", table: CardText.table,
+                  counts: usage.operations, usage.scheduled))
+            }
             if !plan.movedRules.isEmpty {
               line(
                 environment.format(
