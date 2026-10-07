@@ -19,7 +19,9 @@ final class QuickEntryFormTests: XCTestCase {
     host = nil
   }
 
-  private func openForm(prepare: @escaping (AppEnvironment) throws -> Void = { _ in })
+  private func openForm(
+    prepare: @escaping (AppEnvironment) throws -> Void = { _ in }
+  )
     async throws -> EntryHost
   {
     let cafe = cafe
@@ -60,8 +62,13 @@ final class QuickEntryFormTests: XCTestCase {
     let line = try quickLine(of: host)
     XCTAssertTrue(host.window.makeFirstResponder(try host.field(prompt: "0")))
     NotificationCenter.default.post(name: .focusEntryLine, object: nil)
-    host.settle()
-    let focused = (host.window.firstResponder as? NSTextView)?.delegate as? NSTextField
+    // SwiftUI moves the keyboard on a later turn of its own: waited for, up to two seconds.
+    var focused: NSTextField?
+    let deadline = Date().addingTimeInterval(2)
+    repeat {
+      host.settle(0.1)
+      focused = (host.window.firstResponder as? NSTextView)?.delegate as? NSTextField
+    } while focused !== line && Date() < deadline
     XCTAssertTrue(focused === line, "⌘N went to «\(focused?.placeholderString ?? "?")»")
   }
 

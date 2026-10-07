@@ -700,6 +700,12 @@ struct EntryBar<Accessory: View>: View {
     // The form is always open: a new operation puts the keyboard on its first field.
     if style == .form {
       quickFocused = true
+      // Again on a later turn, as for the line: the focus asked while the menu's command is still
+      // being handled does not always land.
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(150))
+        quickFocused = true
+      }
       return
     }
     if !showsDetails { withAnimation(.snappy) { showsDetails = true } }
