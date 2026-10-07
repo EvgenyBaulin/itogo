@@ -98,7 +98,8 @@ struct DetailsPanel: View {
     .frame(maxWidth: 720, alignment: .leading)
     .onSubmit { submit?() }
     // The quick line answers Return itself: the form's «Save» is not its default button.
-    .onChange(of: focus) { _, field in focusedInside?.wrappedValue = field != nil && field != .quick }
+    .onChange(of: focus) { _, field in focusedInside?.wrappedValue = field != nil && field != .quick
+    }
     // The panel is asked to put the focus somewhere: the first or the last field of the order —
     // Tab and Shift-Tab in the line — or the field Enter asks for. Asked on the next turn: the
     // panel may be appearing just now.
