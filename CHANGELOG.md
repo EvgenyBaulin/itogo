@@ -7,6 +7,92 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.4.0] — 2026-10-07
+
+A guide and a tutorial, starter sets, Spending in the sidebar, paying for somebody else,
+transfers from the entry line, and a quick line in the form at the side. The database schema
+stays at 6: nothing is migrated.
+
+### Added
+
+- **A guide.** Seven cards at the first launch say what Itogo is for; arrows and the trackpad
+  turn them, **Skip** is always there. After an update, **What's New** shows one card per main
+  change, once. Both come back from the Help menu: **Welcome to Itogo** and **What's New**.
+- **A tutorial.** Help → **Tutorial** opens Itogo again on a set of practice data of its own; your
+  database is not opened and not touched. A strip over the window says «Tutorial · 3 of 10»,
+  lists the tasks — write «coffee 300», change a category, find last week's expense, add a
+  subscription, count an account, see what is free to spend, transfer from the line, pay for
+  somebody, open Spending, look at a currency chart — and frames the place to press. Each task
+  notices by itself that it is done, from what the data now holds. **Leave the Tutorial** returns
+  to your own data; Help → **Start the Tutorial Over** makes the practice data anew.
+- Help → **Show Where to Click** labels the main controls of the screen with their shortcuts;
+  Esc or a click closes it. Short tips appear once beside the control that matters; Settings →
+  General → **Don't show tips** turns them off.
+- **Starter sets.** On the first launch, and later from Settings → General → **Choose a Starter
+  Set…**: student, working, freelance or self-employed, family, living alone, with a partner,
+  with children — several at once — and whether you have loans and subscriptions, track cashback
+  or want a safety cushion. A set adds categories, example limits and Overview tiles; it lists
+  everything it will add before it does, never removes or renames anything, does not repeat a
+  category that is already there, and its categories and limits come back out with one ⌘Z.
+- A new database has **Salary** under **Work**, and **Taxes & fees** with vehicle tax, property
+  tax and income tax. An existing database gets them only from a starter set.
+- **Spending** in the sidebar (⌘4): every operation by day, newest first, with a search through
+  the whole history by words, category or place. Overview now holds its tiles alone; ↓ in the
+  empty entry line goes to the newest operation of Spending.
+- **A grey «≈» for other currencies.** An expense in dollars shows «≈ 1,240 ₽» beside it in the
+  default currency at the Bank of Russia's rate of its day — in Spending, in the ↓ panel and in
+  the entry line before Return. A rate of an earlier day is marked «rate of 05.10». Once you type
+  the rate or the account was charged in the default currency, the exact amount stands there.
+  Display only: no stored amount changes.
+- **Currency chart**, a new Overview tile: USD/RUB, EUR/RUB or a pair of your accounts'
+  currencies over a week, a month or a year, with the rate now and its change. It reads the
+  bank's daily tables the app keeps anyway; nothing else goes to the network.
+- **Paying for somebody else.** «For whom» in the ↓ panel: **Me**, **Somebody**, **Half each**,
+  **Evenly**. For somebody, **Pays back?** — «Yes — owes me» or «No — a gift, my treat». Under the
+  fields it says what comes of it: «Your share is 600 ₽, Masha owes you 600 ₽.». The entry line
+  reads «за машу», «пополам с машей», «угостил машу» with the name in any case. A row in the list
+  says «for Masha», «half with Masha» or «split 3 ways». It is the parts paid for others you had
+  before — what is owed waits in «Owed to me» — so nothing new is stored.
+- **A transfer from the entry line.** «transfer 5000 sber tbank» or «перевод 5000 сбер т-банк»
+  moves 5,000 from the first account to the second; «from» and «to» («с», «на») say otherwise,
+  and an account is found by its own name, its bank's or its card's. The line shows «Transfer:
+  Sber → T-Bank, 5,000 ₽» before Return. Two known accounts in one currency are transferred at
+  once (one ⌘Z); different currencies or an account the line does not know open the transfer
+  sheet with what was read. «перевод маше 500» stays an expense.
+- **Expected income** can be deleted (its menu → **Delete…**, with a question and ⌘Z): the income
+  already received stays, only the links go. An income that came in whole offers **Close fully**;
+  a closed one waits in the block's **Archive** with **Restore**. Two expected incomes may have
+  one name; menus tell them apart by amount and date.
+- **A quick line in the form at the side.** With Settings → Input → «Detailed form at the
+  right», the column begins with a line: Return shows «Will be written: coffee, 300 ₽,
+  Groceries, Sber, today» with **Write** and **Change**; nothing is written by the first Return.
+  **Change** leaves it all in the fields below, Esc throws the line away. Under the line — the
+  templates and past operations like it; ⌘N puts the cursor in the line.
+- In that form the kind of operation is a set of tiles, all always in sight — expense, income,
+  money back, refund and transfer — two to a row; with an odd number the one you use most
+  stretches across the column.
+
+### Changed
+
+- The pickers that offer accounts alone — a transfer, a count, moving a selection to another
+  account — name them as every other list does: the bank alone for a bank with one account,
+  «Bank › Account» for one with several.
+- The Analytics and Reports windows cannot be made narrower than their content; showing the
+  sidebar again takes its room from the content instead of widening the window.
+- The release workflow on GitHub Actions can now build, sign and publish a release on its own,
+  once the signing certificate and the update key are given to it as secrets; without them it
+  publishes nothing.
+
+### Fixed
+
+- The Transactions window could grow by the width of its sidebar when the inspector closed;
+  its narrowest width is now 560 pt, and the filters come back only when there is room for them.
+- A large write with the screen locked or asleep could leave the Transactions window laying
+  itself out without end; the bar of a large write no longer holds a system spinner.
+- A line with no word the category model had seen, such as «abc 250», was saved into the most
+  frequent category without a question. The model may still suggest a category there; it no
+  longer fills it in, and Return asks for one.
+
 ## [1.3.2] — 2026-10-07
 
 ### Fixed
