@@ -32,6 +32,10 @@ struct DetailsPanel: View {
   /// How the fields stand: beside their labels in a grid — the ↓ panel, 560–720 pt wide, and the
   /// editor — or under them in one column, for the form at the side of the window.
   var arrangement: Arrangement = .wide
+  /// The line of quick entry the form at the side puts over its fields. It shares the panel's
+  /// focus, so ⌘N asks for it the way Tab asks for a field (`PanelFocus.quick`) — one focus, never
+  /// two that pull against each other.
+  var quickLine: ((FocusState<PanelFocus?>.Binding) -> AnyView)? = nil
   /// The control of the panel that has the keyboard focus, when it is one of the fields.
   @FocusState private var focus: PanelFocus?
 
@@ -47,6 +51,10 @@ struct DetailsPanel: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
+      if let quickLine {
+        quickLine($focus)
+        Divider()
+      }
       typeRow
       Divider()
       mainFields
@@ -89,7 +97,8 @@ struct DetailsPanel: View {
     }
     .frame(maxWidth: 720, alignment: .leading)
     .onSubmit { submit?() }
-    .onChange(of: focus) { _, field in focusedInside?.wrappedValue = field != nil }
+    // The quick line answers Return itself: the form's «Save» is not its default button.
+    .onChange(of: focus) { _, field in focusedInside?.wrappedValue = field != nil && field != .quick }
     // The panel is asked to put the focus somewhere: the first or the last field of the order —
     // Tab and Shift-Tab in the line — or the field Enter asks for. Asked on the next turn: the
     // panel may be appearing just now.
@@ -408,6 +417,7 @@ struct DetailsPanel: View {
   /// Which controls are on screen, for Tab: by the same conditions the rows are laid by.
   private var shownControls: Set<PanelFocus> {
     var shown: Set<PanelFocus> = [.amount, .account, .note, .date, .currency]
+    if quickLine != nil { shown.insert(.quick) }
     if model.has(.category) { shown.formUnion([.category, .subcategory]) }
     if model.hasQuality && model.has(.quality) { shown.insert(.quality) }
     if model.has(.fromPerson) {

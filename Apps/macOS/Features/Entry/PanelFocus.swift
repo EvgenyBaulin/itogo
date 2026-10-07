@@ -7,12 +7,14 @@ import SwiftUI
 enum PanelFocus: Hashable, Sendable {
   case amount, category, subcategory, quality, forWhom, forPerson, place, event, account,
     charge, cashback, goal, debt, note, date, incomeMonth, expected, currency, rate
+  /// The line of quick entry over the fields of the form at the side; no field of the order.
+  case quick
 
   /// A text field — or the date's own field — takes the focus whatever «Навигация с
   /// клавиатуры» says; a menu, only with it on.
   var isText: Bool {
     switch self {
-    case .amount, .charge, .cashback, .note, .date, .rate: true
+    case .amount, .charge, .cashback, .note, .date, .rate, .quick: true
     default: false
     }
   }

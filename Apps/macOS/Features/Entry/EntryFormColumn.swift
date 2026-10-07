@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The form of a new operation at the right of the main window (`EntryStyle.form`): a title with
 /// «Очистить», the fields of the panel in one column, what the entry has to say, and «Сохранить».
-struct EntryFormColumn<Quick: View, Caption: View>: View {
+struct EntryFormColumn<Caption: View>: View {
   @Dependency(\.environment) private var environment
   @Bindable var model: EntryDraftModel
   /// Whether a field of the form has the keyboard: Return is «Save» only then.
@@ -11,8 +11,8 @@ struct EntryFormColumn<Quick: View, Caption: View>: View {
   let save: () -> Void
   let clear: () -> Void
   let transfer: () -> Void
-  /// The line of quick entry over the fields (`QuickEntryFlow`).
-  @ViewBuilder let quick: () -> Quick
+  /// The line of quick entry over the fields (`QuickEntryFlow`), in the focus of the panel.
+  var quickLine: ((FocusState<PanelFocus?>.Binding) -> AnyView)? = nil
   @ViewBuilder let caption: () -> Caption
 
   var body: some View {
@@ -27,15 +27,12 @@ struct EntryFormColumn<Quick: View, Caption: View>: View {
       }
       .padding(.horizontal, Self.inset)
       .padding(.vertical, 12)
-      quick()
-        .padding(.horizontal, Self.inset)
-        .padding(.bottom, 12)
       Divider()
       // The fields scroll; the title above and «Save» below stay where they are.
       ScrollView {
         DetailsPanel(
           model: model, submit: save, onTransfer: transfer, focusedInside: $focusedInside,
-          arrangement: .column
+          arrangement: .column, quickLine: quickLine
         )
         .padding(Self.inset)
       }

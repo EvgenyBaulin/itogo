@@ -115,7 +115,6 @@ struct EntryBar<Accessory: View>: View {
   @State private var templates = TemplatesModel()
   /// The quick line of the form: whether «Будет записано» is up.
   @State private var quick = QuickEntryFlow()
-  @FocusState private var quickFocused: Bool
   @Namespace private var glass
 
   private var interpreter: any LineInterpreter {
@@ -458,10 +457,8 @@ struct EntryBar<Accessory: View>: View {
     if let model {
       EntryFormColumn(
         model: model, focusedInside: $formFocused, save: save, clear: clearTheForm,
-        transfer: startTransfer
+        transfer: startTransfer, quickLine: { focus in AnyView(quickEntry(model, focus: focus)) }
       ) {
-        quickEntry(model)
-      } caption: {
         caption
       }
     } else {
@@ -472,7 +469,9 @@ struct EntryBar<Accessory: View>: View {
   /// The line of quick entry of the form (`QuickEntryFlow`): it fills the fields below as it is
   /// typed, and the first Return only shows what will be written.
   @ViewBuilder
-  private func quickEntry(_ model: EntryDraftModel) -> some View {
+  private func quickEntry(
+    _ model: EntryDraftModel, focus: FocusState<PanelFocus?>.Binding
+  ) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       TextField(
         text: $text,
@@ -481,8 +480,11 @@ struct EntryBar<Accessory: View>: View {
         Text(verbatim: environment.language("entry.quick", table: "Entry"))
       }
       .textFieldStyle(.roundedBorder)
-      .focused($quickFocused)
+      .focused(focus, equals: .quick)
       .onSubmit { submitQuick() }
+      // Return here is the quick line's alone: the panel around it saves on Return of its own
+      // fields, and the first Return of this line writes nothing.
+      .submitScope()
       .onExitCommand {
         quick.dismiss()
         text = ""
@@ -530,14 +532,14 @@ struct EntryBar<Accessory: View>: View {
         ForEach(similar, id: \.self) { line in
           Button(line) {
             text = line
-            quickFocused = true
+            model?.focusRequest = .control(.quick)
           }
         }
         ForEach(chips, id: \.id) { template in
           Button(template.text) {
             text = templateLine(for: template)
             templates.use(template)
-            quickFocused = true
+            model?.focusRequest = .control(.quick)
           }
         }
       }
@@ -699,13 +701,8 @@ struct EntryBar<Accessory: View>: View {
     prepareModel()
     // The form is always open: a new operation puts the keyboard on its first field.
     if style == .form {
-      quickFocused = true
-      // Again on a later turn, as for the line: the focus asked while the menu's command is still
-      // being handled does not always land.
-      Task { @MainActor in
-        try? await Task.sleep(for: .milliseconds(150))
-        quickFocused = true
-      }
+      // The quick line over the fields, asked through the panel's own focus.
+      model?.focusRequest = .control(.quick)
       return
     }
     if !showsDetails { withAnimation(.snappy) { showsDetails = true } }

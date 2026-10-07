@@ -103,12 +103,15 @@ final class EntryFormLayoutTests: XCTestCase {
           windows.append(window)
           let column = EntryFormColumn(
             model: model(variant, in: host.environment), focusedInside: .constant(false),
-            save: {}, clear: {}, transfer: {}
+            save: {}, clear: {}, transfer: {},
+            quickLine: { focus in
+              // The quick line stands over the fields as wide as the column.
+              AnyView(
+                TextField(text: .constant("кофе 300")) { Text(verbatim: "") }
+                  .textFieldStyle(.roundedBorder)
+                  .focused(focus, equals: .quick))
+            }
           ) {
-            // The quick line stands over the fields as wide as the column.
-            TextField(text: .constant("кофе 300")) { Text(verbatim: "") }
-              .textFieldStyle(.roundedBorder)
-          } caption: {
             EmptyView()
           }
           .frame(width: width, height: 1500)
