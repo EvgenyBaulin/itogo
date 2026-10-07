@@ -48,10 +48,7 @@ struct ItogoApp: App {
 
     Window(environment.language("window.transactions"), id: "transactions") {
       AppScenes.root(deps, window: .transactions) { deps in
-        SecondaryWindow(
-          titleKey: "window.transactions", scene: "transactions",
-          minWidth: TransactionsRootView.minimumWidth
-        ) {
+        SecondaryWindow(titleKey: "window.transactions", scene: "transactions") {
           TransactionsRootView(deps: deps)
         }
       }
@@ -794,25 +791,17 @@ struct SecondaryWindow<Content: View>: View {
   /// The id of the scene; with one, the window opens as a tab of the main window
   /// (`WindowTabs`). A test hosting the content in a window of its own gives none.
   var scene: String?
-  /// The narrowest the window may be. It is the window's minimum (`contentMinSize`), and AppKit
-  /// shows a sidebar inside the window only while the window, less the sidebar, stays at least
-  /// this wide — narrower, showing the sidebar widens the window by its width for good.
-  var minWidth: CGFloat
   @ViewBuilder let content: Content
 
-  init(
-    titleKey: String, scene: String? = nil, minWidth: CGFloat = 720,
-    @ViewBuilder content: () -> Content
-  ) {
+  init(titleKey: String, scene: String? = nil, @ViewBuilder content: () -> Content) {
     self.titleKey = titleKey
     self.scene = scene
-    self.minWidth = minWidth
     self.content = content()
   }
 
   var body: some View {
     content
-      .frame(minWidth: minWidth, minHeight: 480)
+      .frame(minWidth: 720, minHeight: 480)
       .navigationTitle(environment.language(titleKey))
       .background {
         if let scene { Color.clear.windowTab(.secondary(scene: scene)) }

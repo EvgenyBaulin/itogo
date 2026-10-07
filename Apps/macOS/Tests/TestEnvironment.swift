@@ -16,10 +16,28 @@ enum TestEnvironment {
   /// CI says so to the test host: `TEST_RUNNER_ITOGO_CI=1` in `.github/workflows/build.yml`.
   static var isCI: Bool { ProcessInfo.processInfo.environment["ITOGO_CI"] != nil }
 
-  /// Skips the calling test on CI, where SwiftUI builds no accessibility tree.
+  /// Skips the calling test on CI, where SwiftUI builds no accessibility tree, and while the
+  /// screen of this Mac is locked: the inspector's controls are then missing from the tree.
   static func requireSwiftUIAccessibility() throws {
     try XCTSkipIf(
       isCI, "no assistive client on a CI runner: SwiftUI builds no accessibility tree there")
+    try requireUnlockedScreen()
+  }
+
+  /// Whether the login session's screen is locked. With the screen locked, SwiftUI leaves
+  /// controls of a window out of its accessibility tree and AppKit moves no split divider, so a
+  /// test that finds a button or drags a column fails for the lock, not for the code.
+  static var screenIsLocked: Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return session["CGSSessionScreenIsLocked"] as? Bool ?? false
+  }
+
+  /// Skips the calling test while the screen of this Mac is locked (`screenIsLocked`).
+  static func requireUnlockedScreen() throws {
+    try XCTSkipIf(
+      screenIsLocked,
+      "the screen is locked: SwiftUI hides window controls from accessibility and splits do not move"
+    )
   }
 
   /// Skips the calling test when no screen of this Mac is as wide as the window it lays out.

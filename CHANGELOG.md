@@ -11,10 +11,6 @@ and both move forward only.
 
 ### Fixed
 
-- Transactions: in a window narrower than about 980 pt, closing the inspector brought the filters
-  back by making the window wider, and it stayed wider. The window keeps its width now; in a
-  narrow window the filters wait folded until the window is widened. The window can be made as
-  narrow as 560 pt.
 - The entry line read a date with a far-off year: «dinner 2500-10-5» became a dinner on
   5 October 2500. A written year now has to be within the years a two-digit year means
   (today − 79 to today + 20); otherwise the text is no date.

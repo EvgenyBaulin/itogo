@@ -85,11 +85,12 @@ final class TestEnvironmentTests: XCTestCase {
     XCTAssertFalse(TestEnvironment.fits(CGSize(width: 1, height: 1), in: .zero))
   }
 
-  /// Only CI says it is CI, and it says so to the test host with `TEST_RUNNER_ITOGO_CI=1`.
+  /// Only CI says it is CI, and it says so to the test host with `TEST_RUNNER_ITOGO_CI=1`; the
+  /// tree is not asked for while the screen is locked either.
   func testTheTreeOfSwiftUIIsAskedForEverywhereButOnCI() {
     let onCI = ProcessInfo.processInfo.environment["ITOGO_CI"] != nil
     XCTAssertEqual(TestEnvironment.isCI, onCI)
-    if onCI {
+    if onCI || TestEnvironment.screenIsLocked {
       XCTAssertThrowsError(try TestEnvironment.requireSwiftUIAccessibility())
     } else {
       XCTAssertNoThrow(try TestEnvironment.requireSwiftUIAccessibility())
