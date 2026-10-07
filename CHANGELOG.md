@@ -66,6 +66,7 @@ stays at 6: nothing is migrated.
 - **A quick line in the form at the side.** With Settings → Input → «Detailed form at the
   right», the column begins with a line: Return shows «Will be written: coffee, 300 ₽,
   Groceries, Sber, today» with **Write** and **Change**; nothing is written by the first Return.
+  Like the entry line, it files the category from your history.
   **Change** leaves it all in the fields below, Esc throws the line away. Under the line — the
   templates and past operations like it; ⌘N puts the cursor in the line.
 - In that form the kind of operation is a set of tiles, all always in sight — expense, income,
@@ -82,6 +83,10 @@ stays at 6: nothing is migrated.
 
 ### Fixed
 
+- The last rows of Transactions could stay under the selection bar: the table now scrolls
+  them clear of it.
+- Merging two cards says how many operations and planned payments move to the card that stays,
+  not only its cashback rules.
 - The Transactions window could grow by the width of its sidebar when the inspector closed;
   its narrowest width is now 560 pt, and the filters come back only when there is room for them.
 - A large write with the screen locked or asleep could leave the Transactions window laying
