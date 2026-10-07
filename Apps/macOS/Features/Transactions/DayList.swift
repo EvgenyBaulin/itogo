@@ -95,9 +95,17 @@ struct DayList<Header: View, MenuItems: View>: View {
     TransactionRow(
       entry: entry, names: ledger?.tree ?? CategoryTree(),
       quality: TransactionListing.quality(of: entry, ledger: ledger),
-      refund: ledger.flatMap { RefundMark.of(entry, ledger: $0) }
+      refund: ledger.flatMap { RefundMark.of(entry, ledger: $0) },
+      payingFor: PayingForLabel.text(of: entry, people: peopleNames, language: environment.language)
     )
     .tag(entry.id)
+  }
+
+  /// The names of the people, archived ones too: «за Машу», «пополам с Машей».
+  private var peopleNames: [UUID: String] {
+    Dictionary(
+      (ledger?.dataset.people ?? []).map { ($0.id, $0.name) },
+      uniquingKeysWith: { first, _ in first })
   }
 
   /// The names of the accounts, archived ones too: a transfer made from one retired since still
@@ -200,6 +208,7 @@ enum RowTotalsText {
 
 struct TransactionRow: View {
   @Dependency(\.environment) private var environment
+  @Dependency(\.compute) private var compute
 
   let entry: TransactionEntry
   let names: CategoryTree
@@ -210,6 +219,8 @@ struct TransactionRow: View {
   /// The card that paid, where the list tells cards apart: on the screen of an account with
   /// more than one.
   var cardName: String? = nil
+  /// «за Машу», «пополам с Машей», «поровну на 3» (`PayingForLabel`).
+  var payingFor: String? = nil
 
   var body: some View {
     HStack(spacing: 12) {
@@ -245,7 +256,14 @@ struct TransactionRow: View {
               verbatim: environment.language(
                 "transactions.moneyBackNotIncome", table: "Transactions"))
           }
-          if entry.isSplit {
+          if let payingFor {
+            Label {
+              Text(verbatim: payingFor)
+            } icon: {
+              Image(systemName: "person.2")
+            }
+            .lineLimit(1)
+          } else if entry.isSplit {
             Label {
               Text(verbatim: "\(entry.parts.count)")
             } icon: {
@@ -280,11 +298,21 @@ struct TransactionRow: View {
         .foregroundStyle(.secondary)
       }
       Spacer()
-      Text(
-        verbatim: environment.money.exact(
-          entry.transaction.amountE4, currency: entry.transaction.currency)
-      )
-      .font(.body.monospacedDigit())
+      VStack(alignment: .trailing, spacing: 1) {
+        Text(
+          verbatim: environment.money.exact(
+            entry.transaction.amountE4, currency: entry.transaction.currency)
+        )
+        .font(.body.monospacedDigit())
+        if let approximate = ApproximateText.of(
+          entry.transaction, environment: environment, compute: compute)
+        {
+          Text(verbatim: approximate)
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("operation.approximate")
+        }
+      }
     }
     .padding(.vertical, 2)
     .contentShape(.rect)
@@ -358,5 +386,93 @@ struct TransferRow: View {
     .contentShape(.rect)
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("operation.transfer")
+  }
+}
+
+/// What a row says about whom it was paid for, when its parts are laid out one of the ways of
+/// «За кого» (`PayingForRules.reading`): «за Машу», «за Машу · подарок», «пополам с Машей»,
+/// «поровну на 3». Nothing for an expense of mine alone or one split by categories. The name is
+/// not declined (the rule of every name in the app).
+@MainActor
+enum PayingForLabel {
+  static func text(
+    of entry: TransactionEntry, people: [UUID: String], language: AppLanguage
+  ) -> String? {
+    guard entry.transaction.kind == .expense else { return nil }
+    var draft = TransactionDraft(
+      kind: .expense, occurredAt: entry.transaction.occurredAt, amount: entry.transaction.amountE4)
+    draft.parts = entry.parts.map { part in
+      PartDraft(
+        id: part.id, categoryId: part.categoryId, amount: part.amountE4, forWhom: part.forWhom,
+        forPersonId: part.forPersonId, reimbursable: part.reimbursable,
+        debtorPersonId: part.debtorPersonId)
+    }
+    func name(_ id: UUID) -> String { people[id] ?? "—" }
+    switch PayingForRules.reading(of: draft) {
+    case .none, .me?: return nil
+    case .somebody(let person, let paysBack)?:
+      let words = language.format("payingFor.row.for", table: "Transactions", name(person))
+      return paysBack
+        ? words : words + " · " + language("payingFor.row.gift", table: "Transactions")
+    case .half(let person)?:
+      return language.format("payingFor.row.half", table: "Transactions", name(person))
+    case .evenly(let people)?:
+      return language.format("payingFor.row.evenly", table: "Transactions", "\(people.count + 1)")
+    }
+  }
+}
+
+/// The grey line under an amount in another currency (`ApproximateAmount`): «≈ 1,240 ₽», «≈ 1,240 ₽
+/// · курс от 05.10», or «= 1,240 ₽» once the rate is the owner's or the account was charged in
+/// the default currency. Only shown; nothing is stored.
+@MainActor
+enum ApproximateText {
+  static func of(
+    _ transaction: CoreKit.Transaction, environment: AppEnvironment, compute: ComputeStore
+  ) -> String? {
+    let target = environment.defaultCurrency
+    guard
+      let approximate = ApproximateAmount.of(
+        transaction, day: environment.calendar.day(of: transaction.occurredAt),
+        defaultCurrency: target,
+        rubPerUnitOfDefault: compute.snapshot?.context.rubPerUnit[target])
+    else { return nil }
+    switch approximate {
+    case .exact(let amount, let currency):
+      return "= " + environment.money.exact(amount, currency: currency)
+    case .approximate(let amount, let currency, let rateDay):
+      let text = "≈ " + environment.money.exact(amount, currency: currency)
+      guard let rateDay else { return text }
+      return text + " · "
+        + environment.language.format(
+          "approximate.rateOf", table: "Transactions", environment.dates.dayAndMonth(rateDay))
+    }
+  }
+
+  /// The same for an amount not written yet — the entry line and the ↓ panel: at the last rate the
+  /// bank gave, with its day when it is not today's.
+  static func of(
+    amount: AmountE4, currency: CurrencyCode, environment: AppEnvironment, compute: ComputeStore
+  ) -> String? {
+    let target = environment.defaultCurrency
+    guard currency != target, amount.raw > 0, let context = compute.snapshot?.context,
+      let perUnit = currency == .rub ? 1 : context.rubPerUnit[currency]
+    else { return nil }
+    let rubles = amount.decimal * perUnit
+    let value: Decimal
+    if target == .rub {
+      value = rubles
+    } else {
+      guard let targetPerUnit = context.rubPerUnit[target], targetPerUnit > 0 else { return nil }
+      value = rubles / targetPerUnit
+    }
+    guard let converted = try? AmountE4(decimal: DecimalMath.round(value, scale: 2)) else {
+      return nil
+    }
+    let text = "≈ " + environment.money.exact(converted, currency: target)
+    guard let day = context.rateDays[currency], day != environment.today else { return text }
+    return text + " · "
+      + environment.language.format(
+        "approximate.rateOf", table: "Transactions", environment.dates.dayAndMonth(day))
   }
 }

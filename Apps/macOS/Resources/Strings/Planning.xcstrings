@@ -2606,6 +2606,59 @@
         }
       }
     },
+    "expected.archive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Archive (%lld)"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Archive (%lld)"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Архив (%lld)"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Архив (%lld)"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Архив (%lld)"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Архив (%lld)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "expected.close": {
       "extractionState": "manual",
       "localizations": {
@@ -2619,6 +2672,108 @@
           "stringUnit": {
             "state": "translated",
             "value": "Закрыть"
+          }
+        }
+      }
+    },
+    "expected.closeFully": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close fully"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрыть полностью"
+          }
+        }
+      }
+    },
+    "expected.closeFully.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Everything expected has come in: move it to the archive"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пришло всё, что ждали: убрать в архив"
+          }
+        }
+      }
+    },
+    "expected.closed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Closed"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрыто"
+          }
+        }
+      }
+    },
+    "expected.delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить…"
+          }
+        }
+      }
+    },
+    "expected.deleteMessage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The income already received stays; only the expectation and its links go. ⌘Z brings them back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Полученные доходы останутся, удалится только ожидание и привязки к нему. ⌘Z вернёт их."
+          }
+        }
+      }
+    },
+    "expected.deleteTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete “%@”?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить «%@»?"
           }
         }
       }
@@ -2704,6 +2859,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "частей: %lld из %lld"
+          }
+        }
+      }
+    },
+    "expected.restore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть"
           }
         }
       }

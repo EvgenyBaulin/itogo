@@ -18,7 +18,7 @@ enum AppRestart {
   struct Steps {
     /// Starts what opens `bundle` again once this process has exited.
     var startHelper: @MainActor (_ bundle: URL) throws -> Void = { bundle in
-      RelaunchCarry.leave(RelaunchCarry.arguments(.current))
+      RelaunchCarry.leave(RelaunchCarry.next ?? RelaunchCarry.arguments(.current))
       do {
         try RelaunchHelper.start(bundle: bundle, marks: AppPaths.logsDirectory)
       } catch {
@@ -47,6 +47,14 @@ enum AppRestart {
       return
     }
     relaunch(using: Steps())
+  }
+
+  /// The relaunch that opens the app on another data set — the tutorial's, or with `nil` the
+  /// owner's own data again (`GuideActions`). Nothing else changes about the relaunch.
+  @MainActor
+  static func relaunch(into dataSet: AppPaths.DataSet?) {
+    RelaunchCarry.next = dataSet.map { ["--data-set", $0.rawValue] } ?? []
+    relaunch()
   }
 
   /// How many times the real relaunch was asked for in the test host, where it does nothing.
@@ -226,6 +234,8 @@ enum RelaunchHelper {
 /// (`LaunchOptions.current`).
 enum RelaunchCarry {
   static let key = "app.relaunch.carried"
+  /// What the next relaunch carries instead of this instance's own set (`relaunch(into:)`).
+  @MainActor static var next: [String]?
   static let freshness: TimeInterval = 60
 
   /// The arguments this instance hands on: `--data-set` and nothing else. Never `--generate`:

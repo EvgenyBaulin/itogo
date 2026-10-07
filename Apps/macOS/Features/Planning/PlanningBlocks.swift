@@ -4,11 +4,17 @@ import SwiftUI
 // The blocks of the Planning section below the payments. Content, never glass; states in
 // words and symbols, never colour alone.
 
-/// One-off and recurring income I expect: received of all, parts, what is left and when.
+/// One-off and recurring income I expect: received of all, parts, what is left and when. An
+/// income that came in whole offers «Закрыть полностью»; a closed one waits in «Архив» below the
+/// list, collapsed, with «Вернуть»; «Удалить…» asks first. Each is one step of ⌘Z.
 struct ExpectedIncomeBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
+  @Environment(\.dependencies) private var dependencies
   @Binding var sheet: PlanningSheet?
+  /// The income «Удалить…» asks about.
+  @State private var deleting: ExpectedIncome?
+  @State private var showsArchive = false
 
   var body: some View {
     ComputedBlock(
@@ -45,16 +51,95 @@ struct ExpectedIncomeBlock: View {
             HStack(spacing: 8) {
               Button(t("expected.link")) { sheet = .linkIncome(status) }
               Button(t("expected.edit")) { sheet = .expected(status.income) }
+              if ExpectedIncomeRules.offersClosing(status) {
+                Button(t("expected.closeFully")) { close(status.income) }
+                  .help(t("expected.closeFully.help"))
+                  .accessibilityIdentifier("expected.closeFully")
+              }
             }
             .buttonStyle(.link)
             .font(.caption)
+          }
+          .contextMenu {
+            Button(t("expected.edit")) { sheet = .expected(status.income) }
+            Button(t("expected.link")) { sheet = .linkIncome(status) }
+            if ExpectedIncomeRules.offersClosing(status) {
+              Button(t("expected.closeFully")) { close(status.income) }
+            }
+            Divider()
+            Button(t("expected.delete")) { deleting = status.income }
           }
         }
         Button(t("expected.add")) { sheet = .expected(nil) }
           .buttonStyle(.bordered)
           .controlSize(.small)
+        archive(Self.archived(snapshot.dataset.planning.expected))
       }
     }
+    .confirmationDialog(
+      environment.format("expected.deleteTitle", table: "Planning", deleting?.name ?? ""),
+      isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+      titleVisibility: .visible
+    ) {
+      Button(environment.language("action.delete"), role: .destructive) {
+        if let deleting, let dependencies { PlanningActions(dependencies).delete(deleting) }
+        deleting = nil
+      }
+      Button(environment.language("action.cancel"), role: .cancel) { deleting = nil }
+    } message: {
+      Text(verbatim: t("expected.deleteMessage"))
+    }
+  }
+
+  /// The closed incomes, the archive of the block, in the order of the book.
+  static func archived(_ incomes: [ExpectedIncome]) -> [ExpectedIncome] {
+    incomes.filter(\.closed)
+  }
+
+  /// «Архив»: the closed incomes, collapsed until opened, each with «Вернуть» — open again, one
+  /// step of ⌘Z — and «Удалить…» in its menu.
+  @ViewBuilder
+  private func archive(_ closed: [ExpectedIncome]) -> some View {
+    if !closed.isEmpty {
+      DisclosureGroup(isExpanded: $showsArchive) {
+        ForEach(closed) { income in
+          HStack(spacing: 6) {
+            Image(systemName: "archivebox")
+              .foregroundStyle(.secondary)
+              .accessibilityLabel(Text(verbatim: t("expected.closed")))
+            Text(verbatim: income.name)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+            Spacer(minLength: 6)
+            Text(verbatim: environment.money.rounded(income.totalE4, currency: income.currency))
+              .monospacedDigit()
+              .foregroundStyle(.secondary)
+            Button(t("expected.restore")) {
+              if let dependencies { PlanningActions(dependencies).reopen(income) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+          }
+          .contextMenu {
+            Button(t("expected.restore")) {
+              if let dependencies { PlanningActions(dependencies).reopen(income) }
+            }
+            Divider()
+            Button(t("expected.delete")) { deleting = income }
+          }
+        }
+      } label: {
+        Text(
+          verbatim: environment.format("expected.archive", table: "Planning", counts: closed.count))
+      }
+      .font(.callout)
+      .accessibilityIdentifier("expected.archive")
+    }
+  }
+
+  private func close(_ income: ExpectedIncome) {
+    guard let dependencies else { return }
+    PlanningActions(dependencies).close(income)
   }
 
   /// A one-off income as a whole; a regular one by the term of this month, or its latest.

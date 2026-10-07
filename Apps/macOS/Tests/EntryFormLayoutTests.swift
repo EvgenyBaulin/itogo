@@ -101,13 +101,19 @@ final class EntryFormLayoutTests: XCTestCase {
             backing: .buffered, defer: false)
           window.isReleasedWhenClosed = false
           windows.append(window)
-          window.contentView = NSHostingView(
-            rootView: EntryFormColumn(
-              model: model(variant, in: host.environment), focusedInside: .constant(false),
-              save: {}, clear: {}, transfer: {}
-            ) { EmptyView() }
-            .frame(width: width, height: 1500)
-            .appDependencies(deps))
+          let column = EntryFormColumn(
+            model: model(variant, in: host.environment), focusedInside: .constant(false),
+            save: {}, clear: {}, transfer: {}
+          ) {
+            // The quick line stands over the fields as wide as the column.
+            TextField(text: .constant("кофе 300")) { Text(verbatim: "") }
+              .textFieldStyle(.roundedBorder)
+          } caption: {
+            EmptyView()
+          }
+          .frame(width: width, height: 1500)
+          .appDependencies(deps)
+          window.contentView = NSHostingView(rootView: column)
           window.makeKeyAndOrderFront(nil)
           host.settle(0.4)
           let content = try XCTUnwrap(window.contentView)

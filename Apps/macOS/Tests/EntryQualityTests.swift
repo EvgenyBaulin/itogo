@@ -111,12 +111,20 @@ final class EntryQualityTests: XCTestCase {
     let items = open(menu)
     XCTAssertEqual(items.map(\.title), names)
     XCTAssertTrue(items.allSatisfy { $0.image != nil }, "a symbol for every value")
-    // Only the kind of the operation is chosen by segments now.
+    // Only the kind of the operation and «За кого» of an expense are chosen by segments; the
+    // quality is not among them.
     let typeNames = TransactionKind.allCases.map { environment.language("kind.\($0.rawValue)") }
     let groups = elements(in: window, role: "AXRadioGroup")
-    XCTAssertEqual(groups.count, 1, "the type row is the only segmented control")
+    XCTAssertEqual(groups.count, 2, "the type row and «За кого» are the segmented controls")
+    XCTAssertEqual(
+      groups.filter { attribute($0, "accessibilityIdentifier") as? String == "entry.payingFor" }
+        .count, 1, "one of them is «За кого»")
+    let payingForNames = EntryDraftModel.PayingForWay.allCases.map {
+      environment.language("entry.payingFor.\($0.rawValue)", table: "Entry")
+    }
     for name in names {
       XCTAssertFalse(typeNames.contains(name))
+      XCTAssertFalse(payingForNames.contains(name))
     }
   }
 

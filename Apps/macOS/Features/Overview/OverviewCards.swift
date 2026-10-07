@@ -45,6 +45,7 @@ struct OverviewCardView: View {
     case .lastCountAndRecord: LastCountAndRecordCard()
     case .worthALook: AnomaliesCard()
     case .freeMoney: FreeMoneyCard()
+    case .currencyChart: CurrencyChartCard()
     }
   }
 }

@@ -104,6 +104,10 @@ struct DetailsPanel: View {
     // The data was computed again — the bank's rates among it: «Списано со счёта» reads them
     // afresh the next time it is worked out.
     .onChange(of: compute.generation) { _, _ in model.ratesMayHaveChanged() }
+    // The shares of «Пополам» and «Поровну» follow the total.
+    .onChange(of: model.draft.amount) { _, _ in model.relayPayingFor() }
+    // A saved operation shows «За кого» as its parts say it.
+    .onAppear { if model.editsSavedOperation { model.readPayingFor() } }
     // «Add…» of a menu: a record of its kind, chosen in that menu once it is saved.
     .sheet(item: $model.adding) { kind in
       AddRecordSheet(kind: kind, model: model, today: environment.today) {
@@ -115,14 +119,82 @@ struct DetailsPanel: View {
 
   // MARK: Type
 
-  /// Four kinds side by side want about 450 pt, more than the column has: there they are a menu.
+  /// Four kinds side by side want about 450 pt, more than the column has: there every choice is
+  /// a tile, two to a row, the transfer among them, so none hides in a menu
+  /// (`EntryKindTiles`).
   @ViewBuilder
   private var typeRow: some View {
     switch arrangement {
     case .wide: kindPicker.pickerStyle(.segmented)
-    case .column:
-      kindPicker.pickerStyle(.menu).buttonSizing(.flexible)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    case .column: kindTiles
+    }
+  }
+
+  /// The tiles of the column: the kinds, and the transfer where the panel offers one.
+  private var kindTiles: some View {
+    let tiles = EntryKindTiles.all.filter { $0 != .transfer || onTransfer != nil }
+    let rows = EntryKindTiles.rows(of: tiles, mostUsed: model.mostUsedKindTile)
+    let locked = model.hasClosedPart || model.isReconcileDifference
+    return VStack(spacing: 6) {
+      ForEach(rows, id: \.self) { row in
+        HStack(spacing: 6) {
+          ForEach(row, id: \.self) { tile in
+            kindTile(tile, locked: locked)
+          }
+        }
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(Text(verbatim: t("entry.kind.tiles")))
+  }
+
+  @ViewBuilder
+  private func kindTile(_ tile: EntryKindTile, locked: Bool) -> some View {
+    switch tile {
+    case .kind(let kind):
+      let chosen = model.draft.kind == kind
+      Button {
+        guard model.draft.kind != kind else { return }
+        model.draft.kind = kind
+        model.applyDefaults(today: environment.today)
+      } label: {
+        Label {
+          Text(verbatim: environment.language("kind.\(kind.rawValue)"))
+        } icon: {
+          Image(systemName: Self.symbol(of: kind))
+        }
+        .frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.bordered)
+      .tint(chosen ? Color.accentColor : nil)
+      .fontWeight(chosen ? .semibold : .regular)
+      .disabled(locked && !chosen)
+      .accessibilityAddTraits(chosen ? .isSelected : [])
+      .accessibilityIdentifier("entry.kind.\(kind.rawValue)")
+    case .transfer:
+      Button {
+        onTransfer?()
+      } label: {
+        Label {
+          Text(verbatim: t("entry.kind.transfer"))
+        } icon: {
+          Image(systemName: "arrow.left.arrow.right.circle")
+        }
+        .frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.bordered)
+      .disabled(locked)
+      .accessibilityIdentifier("entry.kind.transfer")
+    }
+  }
+
+  private static func symbol(of kind: TransactionKind) -> String {
+    switch kind {
+    case .expense: "arrow.down.circle"
+    case .income: "arrow.up.circle"
+    case .refund: "arrow.uturn.left.circle"
+    case .reimbursement: "person.crop.circle.badge.checkmark"
     }
   }
 
@@ -151,10 +223,126 @@ struct DetailsPanel: View {
   /// stands in the order.
   private var mainFields: some View {
     fields {
+      if model.offersPayingFor || model.payingForWay != nil {
+        payingForRows
+      }
       ForEach(environment.entryFieldOrder, id: \.self) { field in
         rows(for: field)
       }
     }
+  }
+
+  // MARK: За кого
+
+  /// «За кого»: Себе, За другого, Пополам, Поровну — the people, «Вернёт?», and under them what
+  /// comes of it in plain words (`PayingForRules`).
+  @ViewBuilder
+  private var payingForRows: some View {
+    let way = model.shownPayingForWay
+    fieldRow("entry.payingFor") {
+      Picker(
+        selection: Binding(
+          get: { model.shownPayingForWay }, set: { model.choosePayingForWay($0) })
+      ) {
+        ForEach(EntryDraftModel.PayingForWay.allCases, id: \.self) { way in
+          Text(verbatim: t("entry.payingFor.\(way.rawValue)")).tag(way)
+        }
+      } label: {
+        Text(verbatim: t("entry.payingFor"))
+      }
+      .labelsHidden()
+      .modifier(PayingForStyle(arrangement: arrangement))
+      .accessibilityIdentifier("entry.payingFor")
+      .guideTarget("entry.forWhom")
+    }
+    if way != .me {
+      fieldRow(way == .evenly ? "entry.payingFor.people" : "entry.payingFor.person") {
+        payingForPeople(way)
+      }
+    }
+    if way == .somebody {
+      fieldRow("entry.payingFor.paysBack") {
+        Picker(
+          selection: Binding(
+            get: { model.payingForPaysBack }, set: { model.setPaysBack($0) })
+        ) {
+          Text(verbatim: t("entry.payingFor.paysBack.yes")).tag(true)
+          Text(verbatim: t("entry.payingFor.paysBack.no")).tag(false)
+        } label: {
+          Text(verbatim: t("entry.payingFor.paysBack"))
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .fixedSize()
+        .disabled(model.payingForPeople.isEmpty)
+        .accessibilityIdentifier("entry.payingFor.paysBack")
+      }
+    }
+    if let sentence = payingForSentence {
+      fieldRow(nil) {
+        Text(verbatim: sentence)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("entry.payingFor.outcome")
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func payingForPeople(_ way: EntryDraftModel.PayingForWay) -> some View {
+    let people = model.payingForPeople
+    let options = model.people.filter { !$0.archived }.map { ($0.id, $0.name) }
+    let slots = way == .evenly ? people.count + 1 : 1
+    buttonRow(spacing: 8).callAsFunction {
+      ForEach(0..<slots, id: \.self) { slot in
+        referencePicker(
+          selection: Binding(
+            get: { slot < people.count ? people[slot] : nil },
+            set: { model.setPayingForPerson($0, slot: slot) }),
+          options: options, adding: .payingFor(slot: slot)
+        )
+        .frame(maxWidth: 160)
+        .accessibilityIdentifier("entry.payingFor.person.\(slot)")
+      }
+    }
+  }
+
+  /// Four ways side by side want about 340 pt in Russian, more than the column has: there they
+  /// are a menu as wide as the column.
+  private struct PayingForStyle: ViewModifier {
+    let arrangement: Arrangement
+
+    func body(content: Content) -> some View {
+      switch arrangement {
+      case .wide: content.pickerStyle(.segmented)
+      case .column:
+        content.pickerStyle(.menu).buttonSizing(.flexible)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+  }
+
+  /// «Вы заплатили 1,200 ₽ за другого. Маша должна вам 1,200 ₽» — or «Ваша часть — 600 ₽, Маша
+  /// должна 600 ₽», or a gift that nobody owes.
+  private var payingForSentence: String? {
+    guard model.draft.amount.raw > 0, model.payingFor != .me else { return nil }
+    let currency = model.draft.currency
+    let outcome = PayingForRules.outcome(of: model.payingFor, total: model.draft.amount)
+    func money(_ amount: AmountE4) -> String { environment.money.exact(amount, currency: currency) }
+    func name(_ id: UUID) -> String { model.people.first { $0.id == id }?.name ?? "—" }
+    let owes = outcome.owed.map {
+      String(format: t("entry.payingFor.owes"), name($0.person), money($0.amount))
+    }
+    if let gift = outcome.giftFor {
+      return String(format: t("entry.payingFor.gift"), money(outcome.paid), name(gift))
+    }
+    if outcome.mine.isZero {
+      return String(format: t("entry.payingFor.paid"), money(outcome.paid)) + " "
+        + owes.joined(separator: ", ") + "."
+    }
+    return String(format: t("entry.payingFor.mine"), money(outcome.mine)) + ", "
+      + owes.joined(separator: ", ") + "."
   }
 
   /// The rows of fields: a grid of labels and controls, or one column.
@@ -279,6 +467,16 @@ struct DetailsPanel: View {
           Text(verbatim: ExpressionEvaluator.canonical(expression) ?? expression)
             .font(.caption.monospaced())
             .foregroundStyle(.secondary)
+        }
+        // Another currency than the default one: grey «≈ 1,240 ₽», display only.
+        if let approximate = ApproximateText.of(
+          amount: model.draft.amount, currency: model.draft.currency, environment: environment,
+          compute: compute)
+        {
+          Text(verbatim: approximate)
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("entry.approximate")
         }
       }
     }
@@ -588,10 +786,12 @@ struct DetailsPanel: View {
       if !openExpectations.isEmpty {
         fieldRow("entry.expected") {
           if model.linksExpectedIncome {
+            // Two of one name are told apart by amount and date.
+            let titles = ExpectedIncomeLabels.titles(openExpectations, environment)
             Picker(selection: $model.expectedIncomeId) {
               Text(verbatim: "—").tag(UUID?.none)
               ForEach(openExpectations) { status in
-                Text(verbatim: status.income.name).tag(Optional(status.id))
+                Text(verbatim: titles[status.id] ?? status.income.name).tag(Optional(status.id))
               }
             } label: {
               EmptyView()

@@ -9,14 +9,14 @@ import Testing
 /// can show.
 @Suite("The tiles of Overview")
 struct OverviewTilesTests {
-  /// Eighteen kinds, in the order of the settings; the raw values are what is stored.
-  @Test func eighteenKindsInTheOrderOfTheSettings() {
+  /// Nineteen kinds, in the order of the settings; the raw values are what is stored.
+  @Test func nineteenKindsInTheOrderOfTheSettings() {
     #expect(
       OverviewTile.allCases.map(\.rawValue) == [
         "monthToDate", "topCategories", "qualities", "canSave", "spendingForecast",
         "incomeForecast", "balanceForecast", "limits", "upcoming", "expectedIncome", "owedToMe",
         "iOwe", "event", "lastCount", "lastRecord", "lastCountAndRecord", "worthALook",
-        "freeMoney",
+        "freeMoney", "currencyChart",
       ])
   }
 

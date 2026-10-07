@@ -124,7 +124,7 @@ struct AddRecordSheet: View {
     switch form.kind {
     case .category: t("entry.add.title.category")
     case .subcategory: t("entry.add.title.subcategory")
-    case .person, .debtor: t("entry.newPerson")
+    case .person, .debtor, .payingFor: t("entry.newPerson")
     case .place: t("entry.newPlace")
     case .event: t("entry.add.title.event")
     case .paymentMethod: t("entry.add.title.paymentMethod")
@@ -144,7 +144,7 @@ struct AddRecordSheet: View {
         let parent = model.categories.first(where: { $0.id == parentId })
       else { return nil }
       return environment.format("entry.add.under", table: "Entry", parent.name)
-    case .person, .debtor, .place, .event, .paymentMethod:
+    case .person, .debtor, .payingFor, .place, .event, .paymentMethod:
       return nil
     }
   }

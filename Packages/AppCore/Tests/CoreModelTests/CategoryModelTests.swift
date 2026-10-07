@@ -241,6 +241,24 @@ struct CategoryModelTests {
     #expect(both.appliesTop == weighed.appliesTop)
   }
 
+  /// Words the model has never seen fill nothing in, however lopsided the history is: the
+  /// prior, the weekday and the amount alone would put «абв 250» and «кофе 300» into the
+  /// biggest category without a question.
+  @Test func wordsTheModelNeverSawFillNothingIn() {
+    var examples = (0..<90).map { index in
+      example("продукты в магазине \(index % 5)", groceries, daysAgo: index % 20)
+    }
+    examples += (0..<10).map { index in example("такси домой", transport, daysAgo: index) }
+    let model = CategoryModel.train(on: examples, anchor: anchor)
+
+    let unknown = model.predict(query("абв"), among: [groceries, transport])
+    #expect(!unknown.appliesTop, "an unknown word is not evidence")
+    let empty = model.predict(query(""), among: [groceries, transport])
+    #expect(!empty.appliesTop, "no words, no place — nothing to go on")
+    let known = model.predict(query("продукты"), among: [groceries, transport])
+    #expect(known.appliesTop && known.suggestions.first?.categoryId == groceries)
+  }
+
   /// One sighting is a coincidence: the exact dictionary stays silent and the weighing answers.
   @Test func oneSightingIsNotEnoughToFillAnythingIn() {
     var examples = history(count: 60) + booksWorthOffering()

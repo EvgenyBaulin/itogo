@@ -395,3 +395,42 @@ struct LinkIncomeForm: View {
 
   private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
 }
+
+/// How a menu names the expected incomes it offers. Names may repeat: an income whose name
+/// another one of the menu has too is told apart by its amount and the date it is awaited —
+/// «Зарплата · 50,000 ₽ · 15 октября» —, one with a name of its own is its name alone.
+@MainActor
+enum ExpectedIncomeLabels {
+  static func titles(
+    _ statuses: [ExpectedIncomeStatus], money: (AmountE4, CurrencyCode) -> String,
+    day: (DateOnly) -> String
+  ) -> [UUID: String] {
+    let namesakes = ExpectedIncomeRules.namesakes(among: statuses.map(\.income))
+    var titles: [UUID: String] = [:]
+    for status in statuses {
+      guard namesakes.contains(status.id) else {
+        titles[status.id] = status.income.name
+        continue
+      }
+      var pieces = [status.income.name, money(status.income.totalE4, status.currency)]
+      if let due = awaited(status) { pieces.append(day(due)) }
+      titles[status.id] = pieces.joined(separator: " · ")
+    }
+    return titles
+  }
+
+  static func titles(
+    _ statuses: [ExpectedIncomeStatus], _ environment: AppEnvironment
+  ) -> [UUID: String] {
+    titles(
+      statuses, money: { environment.money.rounded($0, currency: $1) },
+      day: { environment.dates.dayAndMonth($0) })
+  }
+
+  /// The date the income waits for money on: its first due date still short of money, else the
+  /// latest one listed, else the stored first one.
+  private static func awaited(_ status: ExpectedIncomeStatus) -> DateOnly? {
+    status.occurrences.first { !$0.isFulfilled }?.due ?? status.current?.due
+      ?? status.income.dueDate
+  }
+}

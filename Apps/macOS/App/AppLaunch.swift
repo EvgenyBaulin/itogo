@@ -36,6 +36,17 @@ enum AppLaunch {
     models: (@MainActor (DatabaseStack, AppEnvironment) -> CategoryModelService)? =
       CategoryModelService.live
   ) async {
+    // The tutorial's set is made by the app itself, in Release too: when it is not there yet,
+    // or «Начать заново» asked for it anew. The owner's database is another folder, never opened.
+    if LaunchOptions.current.dataSet == .learn, LaunchOptions.current.generation == nil,
+      GuideStore.shared.takeRestart()
+        || !FileManager.default.fileExists(
+          atPath: AppPaths.databaseURL(in: AppPaths.dataDirectory).path)
+    {
+      GuideStore.shared.setWasMade()
+      await DataSetGeneration.start(
+        environment, generation: .months(DataSetGeneration.learnMonths))
+    }
     #if DEBUG
       // A data set generated at launch is written before anything opens it.
       if let generation = LaunchOptions.current.generation {

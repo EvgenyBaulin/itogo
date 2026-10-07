@@ -1,6 +1,23 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "approximate.rateOf": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "rate of %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "курс от %@"
+          }
+        }
+      }
+    },
     "bulk.apply": {
       "extractionState": "manual",
       "localizations": {
@@ -1197,6 +1214,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сохранить правки этой операции?"
+          }
+        }
+      }
+    },
+    "payingFor.row.evenly": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "split %@ ways"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "поровну на %@"
+          }
+        }
+      }
+    },
+    "payingFor.row.for": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "for %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "за: %@"
+          }
+        }
+      }
+    },
+    "payingFor.row.gift": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a gift"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "подарок"
+          }
+        }
+      }
+    },
+    "payingFor.row.half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "half with %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "пополам: %@"
           }
         }
       }

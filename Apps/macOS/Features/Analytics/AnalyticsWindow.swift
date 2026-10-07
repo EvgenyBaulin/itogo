@@ -40,7 +40,8 @@ struct AnalyticsWindow: View {
         .badge(item.plannedFor.map { Text(verbatim: $0) })
         .tag(item)
       }
-      .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
+      .navigationSplitViewColumnWidth(
+        min: Self.sidebarMinWidth, ideal: Self.sidebarIdealWidth, max: Self.sidebarMaxWidth)
     } detail: {
       AnalyticsSectionView(
         section: section, title: AnalyticsText.title(of: period, environment), state: state,
@@ -55,7 +56,7 @@ struct AnalyticsWindow: View {
     // in the toolbar too, since its subtitle carries the time (`make bench-app`).
     .toolbar(removing: AnalyticsMeasurement.isRequested ? nil : .title)
     .navigationSubtitle(subtitle)
-    .frame(minWidth: 820, minHeight: 560)
+    .frame(minWidth: Self.minimumWidth, minHeight: 560)
     .environment(analytics)
     .journalsSection(section.rawValue, in: .analytics)
     .onAppear { beginMeasurement() }
@@ -265,6 +266,17 @@ struct AnalyticsWindow: View {
   }
 
   private func t(_ key: String) -> String { AnalyticsText.t(key, environment) }
+
+  // MARK: Widths
+
+  static let sidebarMinWidth: CGFloat = 190
+  static let sidebarIdealWidth: CGFloat = 220
+  static let sidebarMaxWidth: CGFloat = 300
+
+  /// The narrowest the content goes, and so the window's minimum (`SecondaryWindow(minWidth:)`):
+  /// a window allowed narrower cut the content off at both edges. The sidebar hidden at this
+  /// width and shown again takes its room from the content, not from the window.
+  static let minimumWidth: CGFloat = 820
 }
 
 /// The popover under the title of the period: the months of a year for a month or twelve

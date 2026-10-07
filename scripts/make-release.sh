@@ -3,7 +3,8 @@
 # Sparkle key and writes the entry that announces it.
 #
 # What this script will not do, ever: make a key, or put one in the repository. The private
-# key lives in the owner's keychain, the public key is passed in, and the tool that signs is
+# key lives in the owner's keychain (on a runner of the release workflow, in a file of that run
+# named by SPARKLE_ED_KEY_FILE), the public key is passed in, and the tool that signs is
 # Sparkle's own.
 #
 # Usage: make-release.sh [--dry-run]
@@ -15,6 +16,12 @@
 #                        Xcode fetched when not given.
 #   ITOGO_BUILD_ROOT     the build root, as `make release-local` passes its BUILD_ROOT; when
 #                        not set, the real path the `Build.nosync` link points to.
+#   SPARKLE_ED_KEY_FILE  a file holding the EdDSA private key as `generate_keys -x` writes it;
+#                        `sign_update` reads the key from there instead of the login keychain.
+#                        Not set on the owner's Mac; the release workflow sets it on a runner.
+#   ITOGO_REQUIRE_CERTIFICATE
+#                        when not empty, a missing «Itogo Local Signing» stops the release
+#                        instead of signing ad-hoc: a runner must never ship a stranger.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -72,6 +79,8 @@ say "${grew}"
 identity="-"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q '"Itogo Local Signing"'; then
   identity="Itogo Local Signing"
+elif [ -n "${ITOGO_REQUIRE_CERTIFICATE:-}" ]; then
+  stop "no valid «Itogo Local Signing» certificate in the keychains of this user, and an ad-hoc signature is not allowed here: installed copies would refuse the update as another app."
 else
   say "warning: no «Itogo Local Signing» certificate; signing ad-hoc, and every build will look like a different author."
 fi
@@ -100,6 +109,13 @@ if [ -z "${signer}" ] || [ ! -x "${signer}" ]; then
   stop "Sparkle's sign_update was not found. Run make build once so the package is fetched, or set SPARKLE_BIN."
 fi
 say "signing tool: ${signer}"
+# The private key: the login keychain, or the file the caller names. The file is read by
+# Sparkle's tool alone; nothing here prints it.
+key_file="${SPARKLE_ED_KEY_FILE:-}"
+if [ -n "${key_file}" ]; then
+  [ -s "${key_file}" ] || stop "SPARKLE_ED_KEY_FILE names no file with a key in it."
+  say "private key: from a file, not the keychain"
+fi
 
 out="${build_root}/release"
 app="${out}/Release/Itogo.app"
@@ -157,7 +173,11 @@ rm -f "${archive}"
 ditto -c -k --sequesterRsrc --keepParent "${app}" "${archive}"
 # `-p`: the signature alone. Without it the tool prints a `length` attribute as well, and the
 # entry below writes its own: twice on one element, and the feed would not parse at all.
-signature="$("${signer}" -p "${archive}")"
+if [ -n "${key_file}" ]; then
+  signature="$("${signer}" --ed-key-file "${key_file}" -p "${archive}")"
+else
+  signature="$("${signer}" -p "${archive}")"
+fi
 say "signed: ${signature}"
 
 # 8. The entry that announces it. Written next to the archive, not into the repository: what

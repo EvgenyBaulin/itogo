@@ -5579,6 +5579,57 @@
         }
       }
     },
+    "settings.starter": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starter set"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Стартовый набор"
+          }
+        }
+      }
+    },
+    "settings.starter.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adds categories, example limits and Overview tiles for the way you live. Only adds; ⌘Z takes it back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавляет категории, примеры лимитов и плитки «Обзора» под ваш образ жизни. Только добавляет; ⌘Z отменяет."
+          }
+        }
+      }
+    },
+    "settings.starter.open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a Starter Set…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выбрать стартовый набор…"
+          }
+        }
+      }
+    },
     "settings.tab.accounts": {
       "extractionState": "manual",
       "localizations": {
@@ -5847,6 +5898,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сбросить"
+          }
+        }
+      }
+    },
+    "settings.tips.off": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don’t show tips"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Больше не показывать подсказки"
           }
         }
       }

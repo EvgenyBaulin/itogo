@@ -32,12 +32,13 @@ struct ReportsWindow: View {
   var body: some View {
     NavigationSplitView {
       sidebar
-        .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 340)
+        .navigationSplitViewColumnWidth(
+          min: Self.sidebarMinWidth, ideal: Self.sidebarIdealWidth, max: Self.sidebarMaxWidth)
     } detail: {
       detail
     }
     .toolbar { exportToolbar }
-    .frame(minWidth: 760, minHeight: 480)
+    .frame(minWidth: Self.minimumWidth, minHeight: 480)
     .task(id: loadKey) { await load() }
     .onChange(of: request) { _, _ in collapsed = [] }
     .journalsSection(selection.kind.journalName, in: .reports)
@@ -270,6 +271,17 @@ struct ReportsWindow: View {
   }
 
   private func t(_ key: String) -> String { ReportsText.t(key, environment) }
+
+  // MARK: Widths
+
+  static let sidebarMinWidth: CGFloat = 230
+  static let sidebarIdealWidth: CGFloat = 260
+  static let sidebarMaxWidth: CGFloat = 340
+
+  /// The narrowest the content goes, and so the window's minimum (`SecondaryWindow(minWidth:)`):
+  /// a window allowed narrower cut the content off at both edges. The sidebar hidden at this
+  /// width and shown again takes its room from the content, not from the window.
+  static let minimumWidth: CGFloat = 760
 }
 
 /// The table on screen: a SwiftUI `Table`, no glass — content is never glass. Every line of

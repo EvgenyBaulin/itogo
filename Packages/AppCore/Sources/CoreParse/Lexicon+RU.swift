@@ -141,6 +141,21 @@ extension Lexicon {
   /// other line «от» stays in the note («торт от Ани» is a cake, not a person's money).
   static let russianFromMarkers: Set<String> = ["от"]
   static let russianPlaceMarkers: Set<String> = ["в", "во"]
+  /// A transfer between accounts: «перевод 5000 сбер т-банк», «перевёл со сбера на т-банк».
+  static let russianTransferWords: Set<String> = [
+    "перевод", "перевел", "перевела", "перевели", "перевести", "перевожу", "перекинул",
+    "перекинула",
+  ]
+  /// «пополам с машей», «угостил машу», «за машу».
+  static let russianHalfWords: Set<String> = ["пополам"]
+  static let russianWithWords: Set<String> = ["с", "со"]
+  static let russianGiftWords: Set<String> = [
+    "угостил", "угостила", "угостили", "угощаю", "подарил", "подарила",
+  ]
+  static let russianPaidForMarkers: Set<String> = ["за"]
+  /// The account the money leaves and the one it comes to.
+  static let russianTransferFromMarkers: Set<String> = ["с", "со"]
+  static let russianTransferToMarkers: Set<String> = ["на", "в", "во"]
   static let russianGoalMarkers: Set<String> = ["цель", "цели", "целей", "накопление"]
   static let russianDebtMarkers: Set<String> = [
     "кредит", "кредиту", "кредита", "долг", "долгу", "долга", "займ", "займу", "ипотека",

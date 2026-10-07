@@ -43,6 +43,18 @@ import Foundation
 ///     when no other number is left: «доска 20x30 1500» costs 1 500;
 ///  8. **note** — everything left, joined by single spaces.
 ///
+/// Between 4's marked place and its known names stands the **transfer**: a transfer word
+/// («перевод», «перевёл», "transfer") with two accounts — by the name of the account, its bank
+/// or its card — is a transfer from the first to the second («с»/«from» and «на»/«to» say
+/// otherwise); with one account and a word no account answers to, a transfer the sheet has to
+/// finish; with no account, one account alone, or a person the dictionary knows, the operation
+/// it always was («перевод маше 500»).
+///
+/// After it, **whom an expense was paid for**: «за машу» (a person the dictionary knows),
+/// «угостил машу» — a gift —, «пополам с машей»; the name in any case. A name the dictionary
+/// does not know after «пополам с» is `unknownName`; after «за» or «угостил» it is no name at
+/// all — «кофе за 300», «аванс за ремонт», «угостил кофе».
+///
 /// A name read behind its marker keeps the marker in its token — «для мамы», «в Пятёрочке»,
 /// «цель Отпуск» — so an operation that has no such field (income has no place and no «на
 /// кого») can give the very words back to its note.
@@ -65,6 +77,8 @@ public struct InputLineParser: Sendable {
     session.readGoalAndDebt()
     session.readPeople()
     session.readMarkedPlace()
+    session.readTransfer()
+    session.readPayingFor()
     session.readKnownNames()
     session.readCurrency()
     session.readDate()
@@ -477,6 +491,196 @@ private struct ParseSession {
   private mutating func take(_ card: CardReading) {
     result.cardId = card.card
     result.paymentMethodId = card.accountId
+  }
+
+  /// A transfer between accounts (see the type's comment). Runs after the people, so a person
+  /// the dictionary knows keeps the line an operation, and before the known names, so both
+  /// accounts are read here and not the first one alone.
+  mutating func readTransfer() {
+    guard
+      let word = words.indices.first(where: {
+        !words[$0].claimed && Lexicon.transferWords.contains(words[$0].normalized)
+      }),
+      result.personId == nil, result.unknownPersonName == nil, result.goalId == nil,
+      result.debtId == nil, !claims.contains(where: { $0.role == .kind })
+    else { return }
+
+    struct Side {
+      var account: UUID
+      var card: UUID?
+      var range: Range<Int>
+      var marker: Int?
+    }
+    let markers = Lexicon.transferFromMarkers.union(Lexicon.transferToMarkers)
+    var sides: [Side] = []
+    // Every word that named an account, the same one twice included.
+    var named = Set<Int>()
+    // An account the place marker read already: «перевод 5000 сбер в т-банк».
+    if let account = result.paymentMethodId,
+      let read = claims.firstIndex(where: { $0.role == .paymentMethod }),
+      let at = words.indices.first(where: { words[$0].start == claims[read].start })
+    {
+      let marker = markers.contains(words[at].normalized) ? at : nil
+      sides.append(
+        Side(account: account, card: result.cardId, range: at..<(at + 1), marker: marker))
+    }
+    var index = 0
+    while index < words.count {
+      guard !words[index].claimed, index != word else {
+        index += 1
+        continue
+      }
+      let marker = index > 0 && markers.contains(words[index - 1].normalized) ? index - 1 : nil
+      let loose = marker != nil
+      var best: Side?
+      if let match = bestMatch(vocabulary.paymentMethods, at: index, loose: loose) {
+        best = Side(account: match.entry.id, card: nil, range: match.range, marker: marker)
+      }
+      for card in vocabulary.cards {
+        guard let match = bestMatch([card.entry], at: index, loose: loose),
+          match.range.count > (best?.range.count ?? 0)
+        else { continue }
+        best = Side(
+          account: card.accountId, card: card.entry.id, range: match.range, marker: marker)
+      }
+      if let best {
+        named.formUnion(best.range)
+        if !sides.contains(where: { $0.account == best.account }) { sides.append(best) }
+        index = best.range.upperBound
+      } else {
+        index += 1
+      }
+    }
+    guard !sides.isEmpty else { return }
+
+    var unknown: (index: Int, marker: Int?)?
+    if sides.count == 1 {
+      // One account: a transfer only when a word stands where the other one would — a word
+      // that is no number, no currency, no date, no «for whom» and no other known name.
+      for candidate in words.indices
+      where !words[candidate].claimed && candidate != word
+        && !sides[0].range.contains(candidate) && !named.contains(candidate)
+        && sides[0].marker != candidate
+        && !markers.contains(words[candidate].normalized) && !isAmountish(words[candidate])
+        && currencyAffix(in: words[candidate].amountText) == nil
+        && Lexicon.forWhomWords[words[candidate].normalized] == nil
+        && !Lexicon.datePhrases.contains(where: { matches($0.words, at: candidate, loose: false) })
+      {
+        let marker =
+          candidate > 0 && markers.contains(words[candidate - 1].normalized) ? candidate - 1 : nil
+        unknown = (candidate, marker)
+        break
+      }
+      guard unknown != nil else { return }
+    }
+
+    // Who is who: a «с»/«на» decides; otherwise the order of the line.
+    func isFrom(_ marker: Int?) -> Bool? {
+      guard let marker else { return nil }
+      return Lexicon.transferFromMarkers.contains(words[marker].normalized)
+    }
+    var from: Side?
+    var to: Side?
+    for side in sides.prefix(2) {
+      switch isFrom(side.marker) {
+      case true?: from = from ?? side
+      case false?: to = to ?? side
+      case nil: break
+      }
+    }
+    for side in sides.prefix(2) where from?.account != side.account && to?.account != side.account {
+      if from == nil, isFrom(unknown?.marker) != true {
+        from = side
+      } else if to == nil {
+        to = side
+      } else {
+        from = from ?? side
+      }
+    }
+
+    var reading = TransferReading(
+      fromAccountId: from?.account, fromCardId: from?.card, toAccountId: to?.account,
+      toCardId: to?.card)
+    claim(word, as: .kind)
+    for side in [from, to].compactMap({ $0 }) {
+      let range = (side.marker ?? side.range.lowerBound)..<side.range.upperBound
+      if !words[side.range.lowerBound].claimed {
+        claim(range, as: .paymentMethod, text: marked(range))
+      } else if let marker = side.marker, !words[marker].claimed {
+        claim(marker, as: nil)
+      }
+    }
+    if let unknown {
+      reading.unknownName = TextNormalizer.trimmingEdgePunctuation(words[unknown.index].original)
+      let range = (unknown.marker ?? unknown.index)..<(unknown.index + 1)
+      claim(range, as: .paymentMethod, text: marked(range))
+    }
+    result.transfer = reading
+    result.paymentMethodId = from?.account
+    result.cardId = from?.card
+  }
+
+  /// The person whose name starts at `index`, in any case (`TextNormalizer.samePerson`).
+  private func personMatch(at index: Int) -> (id: UUID, range: Range<Int>)? {
+    var best: (id: UUID, range: Range<Int>)?
+    for entry in vocabulary.people {
+      for spelling in entry.spellings {
+        let parts = spelling.split(separator: " ").map { TextNormalizer.normalized(String($0)) }
+        guard index + parts.count <= words.count,
+          parts.indices.allSatisfy({ offset in
+            !words[index + offset].claimed
+              && TextNormalizer.samePerson(words[index + offset].normalized, parts[offset])
+          })
+        else { continue }
+        if best == nil || parts.count > best!.range.count {
+          best = (entry.id, index..<(index + parts.count))
+        }
+      }
+    }
+    return best
+  }
+
+  /// «за машу», «угостил машу», «пополам с машей» (see the type's comment).
+  mutating func readPayingFor() {
+    guard result.transfer == nil, result.kind == .expense,
+      panelKind == nil || panelKind == .expense, result.goalId == nil, result.debtId == nil
+    else { return }
+    for index in words.indices where !words[index].claimed {
+      let word = words[index].normalized
+      var way: PayingForReading.Way?
+      var nameAt = index + 1
+      if Lexicon.halfWords.contains(word), index + 1 < words.count,
+        Lexicon.withWords.contains(words[index + 1].normalized)
+      {
+        way = .half
+        nameAt = index + 2
+      } else if Lexicon.giftWords.contains(word) {
+        way = .gift
+      } else if Lexicon.paidForMarkers.contains(word) {
+        way = .forSomebody
+      }
+      guard let way, nameAt < words.count, !words[nameAt].claimed else { continue }
+      if let person = personMatch(at: nameAt) {
+        result.payingFor = PayingForReading(way: way, personId: person.id)
+        let phrase = index..<person.range.upperBound
+        claim(phrase, as: .person, text: marked(phrase))
+        return
+      }
+      // «за» or «угостил» before anything but a known person are words of the note: «кофе за
+      // 300», «угостил кофе». Only «пополам с» names somebody whoever they are.
+      guard way == .half else { continue }
+      let next = words[nameAt]
+      guard !isAmountish(next), currencyAffix(in: next.amountText) == nil,
+        !Lexicon.timeWords.contains(next.normalized)
+      else { continue }
+      let name = TextNormalizer.trimmingEdgePunctuation(next.original)
+      result.payingFor = PayingForReading(way: way, unknownName: name)
+      result.unknownPersonName = result.unknownPersonName ?? name
+      let phrase = index..<(nameAt + 1)
+      result.unknownPersonPhrase = result.unknownPersonPhrase ?? marked(phrase)
+      claim(phrase, as: .person, text: marked(phrase))
+      return
+    }
   }
 
   /// Places, events and payment methods written without any marker. Inside one position

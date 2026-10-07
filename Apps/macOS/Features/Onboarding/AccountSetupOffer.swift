@@ -16,6 +16,18 @@ struct AccountSetupOffer: ViewModifier {
 
   func body(content: Content) -> some View {
     content
+      // The starter set first on a new database — after the cards of the guide —, then the
+      // accounts: one flow of questions, one sheet at a time.
+      .sheet(
+        isPresented: Binding(
+          get: {
+            StarterSetOffer.shared.isRequested
+              || StarterSetOffer.isDue(deps.environment, guide: GuideStore.shared)
+          },
+          set: { if !$0 { StarterSetOffer.shared.isRequested = false } })
+      ) {
+        StarterSetSheet().appDependencies(deps)
+      }
       .sheet(
         isPresented: Binding(
           get: { Self.isUp(deps.environment) },
@@ -45,7 +57,10 @@ struct AccountSetupOffer: ViewModifier {
     _ environment: AppEnvironment, isTestHost: Bool = AppEnvironment.isTestHost,
     request: AccountSetupRequest = .shared
   ) -> Bool {
-    asks(environment, isTestHost: isTestHost) || request.isRequested
+    (asks(environment, isTestHost: isTestHost) || request.isRequested)
+      && !StarterSetOffer.shared.isRequested
+      && !StarterSetOffer.isDue(environment, guide: GuideStore.shared)
+      && GuideStore.shared.cards == nil
   }
 
   /// Whether the offer of a report after a crash may be raised in this window now.

@@ -198,6 +198,29 @@ struct GeneralSettingsView: View {
       }
       .pickerStyle(.inline)
 
+      // «Стартовый набор»: categories, limits and tiles for the way the owner lives; only adds.
+      Section {
+        Button(environment.language("settings.starter.open", table: "Settings")) {
+          StarterSetOffer.shared.isRequested = true
+        }
+        .accessibilityIdentifier("settings.starter.open")
+      } header: {
+        Text(verbatim: environment.language("settings.starter", table: "Settings"))
+      } footer: {
+        Text(verbatim: environment.language("settings.starter.hint", table: "Settings"))
+          .foregroundStyle(.secondary)
+      }
+
+      // The tips on the spot (`GuideTips`): on this Mac only, never in the data.
+      Section {
+        Toggle(
+          isOn: Binding(get: { GuideStore.shared.tipsOff }, set: { GuideTips.setOff($0) })
+        ) {
+          Text(verbatim: environment.language("settings.tips.off", table: "Settings"))
+        }
+        .accessibilityIdentifier("settings.tips.off")
+      }
+
       Section {
         Toggle(
           isOn: Binding(

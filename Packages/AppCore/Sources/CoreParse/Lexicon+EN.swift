@@ -102,6 +102,12 @@ extension Lexicon {
   /// «от» / "from": the person money back came from, in both languages.
   static let fromMarkers: Set<String> = englishFromMarkers.union(russianFromMarkers)
   static let englishPlaceMarkers: Set<String> = ["at", "in"]
+  static let englishHalfWords: Set<String> = ["split", "halves"]
+  static let englishWithWords: Set<String> = ["with"]
+  static let englishGiftWords: Set<String> = ["treated"]
+  static let englishTransferWords: Set<String> = ["transfer", "transferred", "moved"]
+  static let englishTransferFromMarkers: Set<String> = ["from"]
+  static let englishTransferToMarkers: Set<String> = ["to", "into"]
   static let englishGoalMarkers: Set<String> = ["goal", "goals"]
   static let englishDebtMarkers: Set<String> = ["loan", "loans", "credit", "debt", "mortgage"]
 }

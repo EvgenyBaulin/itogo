@@ -203,9 +203,10 @@ signature="$(sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p' "${entry}" | hea
 length="$(stat -f%z "${zip}")"
 [ -n "${signature}" ] || stop "the entry carries no signature"
 "${signer}" --verify "${zip}" "${signature}" || stop "the archive does not verify against the signature of its entry"
-if unzip -Z1 "${zip}" | grep -vE '^(Itogo\.app/|__MACOSX/)' | grep -q .; then
-  stop "the archive holds something besides Itogo.app"
-fi
+# Read whole, not with `grep -q`: under pipefail a reader that leaves early fails the pipeline,
+# and the failure would let an archive with more in it pass.
+extra="$(unzip -Z1 "${zip}" | grep -vE '^(Itogo\.app/|__MACOSX/)' || true)"
+[ -z "${extra}" ] || stop "the archive holds something besides Itogo.app"
 make release-check CANDIDATE="${app}"
 
 notes="$(mktemp -t itogo-release-notes)"

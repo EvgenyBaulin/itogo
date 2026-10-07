@@ -26,6 +26,8 @@ enum AddFromPicker {
     case person(part: Int)
     /// Who gives back a part paid for someone.
     case debtor(part: Int)
+    /// A person of «За кого»: the one paid for, or one more of «Поровну».
+    case payingFor(slot: Int)
     case place
     case event(part: Int)
     case paymentMethod
@@ -113,7 +115,7 @@ struct NewRecordForm {
     self.kind = kind
     switch kind {
     case .place: name = model.suggestedPlaceName ?? ""
-    case .person, .debtor: name = model.suggestedPersonName ?? ""
+    case .person, .debtor, .payingFor: name = model.suggestedPersonName ?? ""
     case .category, .subcategory, .event, .paymentMethod: name = ""
     }
     start = today
@@ -150,7 +152,7 @@ struct NewRecordForm {
     case .subcategory(let part):
       taken = Self.isTaken(
         category: name, under: model.categoryOfPart(model.part(at: part)), in: model)
-    case .person, .debtor:
+    case .person, .debtor, .payingFor:
       taken = !ReferenceBooksView.canAdd(name, to: .people, people: model.people, places: [])
     case .place:
       taken = !ReferenceBooksView.canAdd(name, to: .places, people: [], places: model.places)
@@ -196,7 +198,7 @@ struct NewRecordForm {
   var failureKey: String {
     switch kind {
     case .category, .subcategory: "entry.error.categoryNotCreated"
-    case .person, .debtor: "entry.error.personNotCreated"
+    case .person, .debtor, .payingFor: "entry.error.personNotCreated"
     case .place: "entry.error.placeNotCreated"
     case .event: "entry.error.eventNotCreated"
     case .paymentMethod: "entry.error.paymentMethodNotCreated"
@@ -250,6 +252,11 @@ struct NewRecordForm {
       guard model.draft.parts.indices.contains(part) else { return failed }
       switch person(named: name, context: context, model: model) {
       case .success(let id): model.draft.parts[part].debtorPersonId = id
+      case .failure(let failure): return failure
+      }
+    case .payingFor(let slot):
+      switch person(named: name, context: context, model: model) {
+      case .success(let id): model.setPayingForPerson(id, slot: slot)
       case .failure(let failure): return failure
       }
     case .place:

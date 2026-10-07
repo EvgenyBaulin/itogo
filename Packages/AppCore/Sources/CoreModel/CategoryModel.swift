@@ -140,7 +140,8 @@ public struct CategoryModel: Sendable, Equatable, Codable {
     guard !classes.isEmpty else { return CategoryPrediction(readiness: readiness) }
 
     var ranked = weighed(query, among: classes)
-    if var exact = exactSuggestion(query, among: classes) {
+    let exactAnswer = exactSuggestion(query, among: classes)
+    if var exact = exactAnswer {
       if let same = ranked.first(where: { $0.categoryId == exact.categoryId }) {
         exact.confidenceBp = max(exact.confidenceBp, same.confidenceBp)
       }
@@ -155,8 +156,20 @@ public struct CategoryModel: Sendable, Equatable, Codable {
       .map { $0 }
     return CategoryPrediction(
       suggestions: shown,
-      appliesTop: (shown.first?.confidenceBp ?? 0) >= options.confidenceThresholdBp,
+      appliesTop: (shown.first?.confidenceBp ?? 0) >= options.confidenceThresholdBp
+        && (exactAnswer != nil || hasSeenAnythingOf(query)),
       readiness: readiness)
+  }
+
+  /// Whether the operation carries a word or a place the model was taught. Without one the
+  /// weighing rests on the prior, the weekday and the amount — what any operation has — and a
+  /// lopsided history would fill its biggest category into «абв 250» without a question. It
+  /// may still offer it; it does not fill it in.
+  private func hasSeenAnythingOf(_ query: CategoryQuery) -> Bool {
+    query.featureKeys.contains { key in
+      (key.hasPrefix("w:") || (key.hasPrefix("p:") && key != "p:none"))
+        && featureWeight[key] != nil
+    }
   }
 
   private func exactSuggestion(_ query: CategoryQuery, among classes: [UUID]) -> CategorySuggestion?

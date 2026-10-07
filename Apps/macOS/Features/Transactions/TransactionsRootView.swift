@@ -82,7 +82,9 @@ struct TransactionsRootView: View {
   var body: some View {
     NavigationSplitView(columnVisibility: $sidebar) {
       TransactionFiltersForm(filters: $filters, choices: choices)
-        .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 340)
+        .navigationSplitViewColumnWidth(
+          min: Self.sidebarMinWidth, ideal: Self.sidebarIdealWidth, max: Self.sidebarMaxWidth
+        )
         // A column of a split view is a host of its own, and such a host does not always get
         // the environment of the scene on macOS 26 — the same reason the inspector
         // below is handed the dependencies explicitly.
@@ -127,7 +129,7 @@ struct TransactionsRootView: View {
       }
     }
     .navigationSubtitle(subtitle)
-    .frame(minWidth: 820, minHeight: 480)
+    .frame(minWidth: Self.minimumWidth, minHeight: 480)
     // The window is never widened for the inspector; the sidebar steps aside instead.
     // A width taken off the screen is allowed to decide a layout — it comes
     // from the window, top down, and settles in one pass; a height would not.
@@ -339,6 +341,16 @@ struct TransactionsRootView: View {
   /// window any narrower the three columns cannot all be satisfied, and the layout runs away.
   static let widthWithInspector: CGFloat = 1100
 
+  static let sidebarMinWidth: CGFloat = 230
+  static let sidebarIdealWidth: CGFloat = 260
+  static let sidebarMaxWidth: CGFloat = 340
+
+  /// The narrowest window. AppKit shows the sidebar inside the window only while the window,
+  /// less the sidebar, is still at least the window's minimum; narrower, showing it widens the
+  /// window by the sidebar, and nothing shrinks the window back. With this minimum a window of
+  /// 820 pt holds the filters at their usual width beside the table.
+  static let minimumWidth: CGFloat = 820 - sidebarIdealWidth
+
   /// Who gives way when the three columns do not fit: the sidebar, never the window.
   ///
   /// Asking the window to be 1100 pt wide while the inspector was open did make the layout
@@ -355,6 +367,16 @@ struct TransactionsRootView: View {
       collapsedForTheInspector = true
       sidebar = .detailOnly
     } else if !needsRoom, collapsedForTheInspector {
+      // The owner has shown the filters again himself: nothing is held closed any more.
+      if sidebar != .detailOnly {
+        collapsedForTheInspector = false
+        return
+      }
+      // Coming back in a window too narrow for them, the filters would widen the window for
+      // good; they wait, folded, until the window is wide enough (or the owner opens them).
+      // Their usual width is the measure: a width measured off the column and fed back here
+      // hid the column's own width request and looped the layout beside an open inspector.
+      guard width - Self.sidebarIdealWidth >= Self.minimumWidth else { return }
       collapsedForTheInspector = false
       sidebar = .all
     }

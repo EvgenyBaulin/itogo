@@ -56,8 +56,13 @@ struct TransferSheet: View {
     var id: Date { count }
   }
 
-  init(form: TransferForm, finish: @escaping (Bool) -> Void) {
+  /// Save as soon as the books are read: a transfer the entry line named whole. What the save
+  /// asks — a count of its day, money of an archived account — is asked here all the same.
+  let saveAtOnce: Bool
+
+  init(form: TransferForm, saveAtOnce: Bool = false, finish: @escaping (Bool) -> Void) {
     _form = State(initialValue: form)
+    self.saveAtOnce = saveAtOnce
     self.finish = finish
   }
 
@@ -68,12 +73,41 @@ struct TransferSheet: View {
   /// The live accounts in the order of every menu; the ones of the transfer being edited stay
   /// even when they went to the archive since, so the form shows what was written.
   private var accounts: [PaymentMethod] {
-    let all =
-      books?.dataset.paymentMethods ?? AccountActions(environment: environment, store: store).all
-    let kept = Set([form.previous?.fromAccountId, form.previous?.toAccountId].compactMap { $0 })
-    return AccountRules.ordered(
-      all.filter { !$0.archived || kept.contains($0.id) }, locale: environment.language.locale,
-      includeArchived: true)
+    Self.offered(all: allAccounts, keeping: kept, locale: environment.language.locale)
+  }
+
+  private var allAccounts: [PaymentMethod] {
+    books?.dataset.paymentMethods ?? AccountActions(environment: environment, store: store).all
+  }
+
+  private var kept: Set<UUID> {
+    Set([form.previous?.fromAccountId, form.previous?.toAccountId].compactMap { $0 })
+  }
+
+  /// The choices of the account menus, as every list of accounts names them.
+  private var accountItems: [AccountCardChoices.Item] {
+    Self.accountItems(
+      all: allAccounts,
+      banks: books?.dataset.banks ?? AccountActions(environment: environment, store: store).banks,
+      keeping: kept, locale: environment.language.locale)
+  }
+
+  private static func offered(
+    all: [PaymentMethod], keeping kept: Set<UUID>, locale: Locale
+  ) -> [PaymentMethod] {
+    AccountRules.ordered(
+      all.filter { !$0.archived || kept.contains($0.id) }, locale: locale, includeArchived: true)
+  }
+
+  /// What the account menus offer: the live accounts, and the archived ones `kept` — those of
+  /// the transfer being edited —, named as every list of accounts names them (`AccountLabels`):
+  /// the bank alone for a bank with one live account, «Банк › Счёт» for one with several.
+  static func accountItems(
+    all: [PaymentMethod], banks: [Bank], keeping kept: Set<UUID>, locale: Locale
+  ) -> [AccountCardChoices.Item] {
+    AccountCardChoices.accountItems(
+      accounts: offered(all: all, keeping: kept, locale: locale), banks: banks, among: all,
+      locale: locale)
   }
 
   private func account(_ id: UUID?) -> PaymentMethod? {
@@ -181,6 +215,7 @@ struct TransferSheet: View {
     .task {
       books = await transfers.books()
       feeComingBack = transfers.feeCategoryComingBack()
+      if saveAtOnce { save() }
     }
     .onChange(of: form) { _, _ in refusal = nil }
     // A count whose answer would not be kept (`CountQuestions.remembers`) is asked without
@@ -253,8 +288,8 @@ struct TransferSheet: View {
       if selection == nil {
         Text(verbatim: "—").tag(UUID?.none)
       }
-      ForEach(accounts, id: \.id) { account in
-        Text(verbatim: account.name).tag(UUID?.some(account.id))
+      ForEach(accountItems) { item in
+        Text(verbatim: item.name).tag(UUID?.some(item.id))
       }
     } label: {
       Text(verbatim: t("transfer.sheet.account"))

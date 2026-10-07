@@ -123,6 +123,18 @@ enum TextNormalizer {
     return stems(lhs).contains { right.contains($0) }
   }
 
+  /// A person's name in any case after «с», «за» and the like: «Машей», «Петей», «Андреем» —
+  /// the instrumental endings `looselyEqual` does not read — as well as «Машу», «Маше».
+  static func samePerson(_ lhs: String, _ rhs: String) -> Bool {
+    if looselyEqual(lhs, rhs) { return true }
+    guard lhs.count >= 4, rhs.count >= 3 else { return false }
+    let right = stems(rhs)
+    for ending in ["ей", "ем", "ём", "ом"] where lhs.hasSuffix(ending) {
+      if right.contains(String(lhs.dropLast(2))) { return true }
+    }
+    return false
+  }
+
   private static func stems(_ text: String) -> [String] {
     var stems: [String] = []
     if let last = text.last, softEndings.contains(last) {

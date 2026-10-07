@@ -18,6 +18,8 @@ struct ItogoApp: App {
     // Before any window is made: the frames the secondary windows kept from their early
     // placeholders go once, so their present sizes apply (`WindowFrames`).
     if !AppEnvironment.isTestHost { WindowFrames.resetOnce(in: .standard) }
+    // The tips on the spot, with the switch of Settings → General.
+    GuideTips.configure()
   }
 
   /// What every window gets, made from the three objects the app owns.
@@ -48,7 +50,10 @@ struct ItogoApp: App {
 
     Window(environment.language("window.transactions"), id: "transactions") {
       AppScenes.root(deps, window: .transactions) { deps in
-        SecondaryWindow(titleKey: "window.transactions", scene: "transactions") {
+        SecondaryWindow(
+          titleKey: "window.transactions", scene: "transactions",
+          minWidth: TransactionsRootView.minimumWidth
+        ) {
           TransactionsRootView(deps: deps)
         }
       }
@@ -60,7 +65,9 @@ struct ItogoApp: App {
 
     Window(environment.language("window.analytics"), id: "analytics") {
       AppScenes.root(deps, window: .analytics) { deps in
-        SecondaryWindow(titleKey: "window.analytics", scene: "analytics") {
+        SecondaryWindow(
+          titleKey: "window.analytics", scene: "analytics", minWidth: AnalyticsWindow.minimumWidth
+        ) {
           AnalyticsWindow(deps: deps)
         }
       }
@@ -72,7 +79,9 @@ struct ItogoApp: App {
 
     Window(environment.language("window.reports"), id: "reports") {
       AppScenes.root(deps, window: .reports) { deps in
-        SecondaryWindow(titleKey: "window.reports", scene: "reports") {
+        SecondaryWindow(
+          titleKey: "window.reports", scene: "reports", minWidth: ReportsWindow.minimumWidth
+        ) {
           ReportsWindow(deps: deps)
         }
       }
@@ -194,6 +203,11 @@ struct AppCommands: Commands {
         NotificationCenter.default.post(name: .selectSection, object: 3)
       }
       .keyboardShortcut("3", modifiers: .command)
+
+      Button(environment.language("section.spending")) {
+        NotificationCenter.default.post(name: .selectSection, object: 4)
+      }
+      .keyboardShortcut("4", modifiers: .command)
     }
   }
 }
@@ -363,13 +377,14 @@ struct MainWindow: View {
   }
 
   enum Section: String, CaseIterable, Identifiable {
-    case overview, planning, debts
+    case overview, spending, planning, debts
 
     var id: String { rawValue }
 
     var titleKey: String {
       switch self {
       case .overview: "section.overview"
+      case .spending: "section.spending"
       case .planning: "section.planning"
       case .debts: "section.debts"
       }
@@ -378,17 +393,20 @@ struct MainWindow: View {
     var symbol: String {
       switch self {
       case .overview: "chart.pie"
+      case .spending: "list.bullet.rectangle"
       case .planning: "calendar"
       case .debts: "creditcard"
       }
     }
 
-    /// ⌘1 / ⌘2 / ⌘3, as the specification's table of shortcuts lists them.
+    /// ⌘1 / ⌘2 / ⌘3, as the specification's table of shortcuts lists them; «Траты», added
+    /// after them, is ⌘4.
     var shortcutIndex: Int {
       switch self {
       case .overview: 1
       case .planning: 2
       case .debts: 3
+      case .spending: 4
       }
     }
   }
@@ -410,6 +428,10 @@ struct MainWindow: View {
         GeometryReader { proxy in
           content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The tutorial's strip: «Учебный режим · 3 из 10», the tasks, the way out.
+            .safeAreaInset(edge: .top, spacing: 0) {
+              if guide.isTutorial, environment.state == .ready { TutorialBar(guide: guide) }
+            }
             // The bar floats over the last rows and keeps them clear of it. The room it needs
             // is left to the safe area and never measured back into `@State`: a height handed
             // back into the layout of its own branch is what kept the window of Transactions
@@ -421,6 +443,7 @@ struct MainWindow: View {
             // the sheets, popovers and confirmations of the list hang here, not on its rows.
             .coordinateSpace(.named(OperationActions.coordinateSpace))
             .operationPresentations(overviewActions)
+            .guideOverlay(guide)
         }
         // The form of a new operation, when the owner chose it in Settings → «Ввод»: a column
         // of its own at the right, always there, in place of the line (`EntryStyle.form`).
@@ -440,6 +463,33 @@ struct MainWindow: View {
     .windowTab(.main)
     .navigationSubtitle(RecomputeText.subtitle(compute: compute, environment: environment))
     .journalsSection(selection.journalToken, in: .main)
+    // The cards of the first launch, of «Что нового» or of the Help menu.
+    .sheet(item: Bindable(guide).cards) { scenario in
+      GuideCardsView(scenario: scenario) { skipped in
+        guide.cardsDone(version: Self.version, skipped: skipped)
+      }
+      .appDependencies(deps)
+    }
+    .modifier(GuideWhereToClickKeys(guide: guide))
+    .onChange(of: environment.state, initial: true) { _, state in
+      guard state == .ready else { return }
+      guide.begin(
+        databaseInUse: environment.accountSetup != nil, version: Self.version,
+        dataSet: AppPaths.dataSet)
+    }
+    // The tutorial's tasks are found done by what the data holds after every change.
+    .onChange(of: compute.generation, initial: true) { _, _ in
+      if let dataset = compute.snapshot?.dataset { guide.check(dataset) }
+    }
+    // ↓ in the entry line over a screen without a list: «Траты» opens and takes it.
+    .onReceive(NotificationCenter.default.publisher(for: .walkOperationsList)) { _ in
+      guard environment.state == .ready, !selection.listsOperations else { return }
+      selection = .section(.spending)
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(150))
+        NotificationCenter.default.post(name: .walkOperationsList, object: nil)
+      }
+    }
     .task {
       LaunchWindows.open(with: openWindow, today: environment.today)
       if let name = LaunchOptions.current.section, let chosen = Section(rawValue: name) {
@@ -554,6 +604,14 @@ struct MainWindow: View {
   /// The width of the form of a new operation at the right of the window.
   static let entryFormWidth: CGFloat = 380
 
+  /// The guide of this Mac: the cards, the tutorial and «Показать, куда нажимать».
+  private var guide: GuideStore { GuideStore.shared }
+
+  /// The version of the app, as «Что нового» counts them.
+  static var version: String {
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0"
+  }
+
   /// What stands at the bottom of the list: the entry line with the selection bar in its glass
   /// container, or — with the form at the side, which has no line to carry it — the selection bar
   /// alone.
@@ -592,6 +650,7 @@ struct MainWindow: View {
     case .ready:
       switch selection {
       case .section(.overview): OverviewView(actions: overviewActions)
+      case .section(.spending): SpendingView(actions: overviewActions)
       case .section(.planning): PlanningView()
       case .section(.debts): DebtsView()
       case .account(let id):
@@ -758,7 +817,11 @@ struct MainWindow: View {
     #if DEBUG
       badges.append(environment.language("common.debugBadge"))
     #endif
-    if let dataSet = AppPaths.dataSet { badges.append(dataSet.badge) }
+    if let dataSet = AppPaths.dataSet {
+      badges.append(
+        dataSet == .learn
+          ? environment.language("guide.tutorial.badge", table: "Guide") : dataSet.badge)
+    }
     let name = environment.language("app.name")
     return badges.isEmpty ? name : "\(name) — \(badges.joined(separator: " · "))"
   }
@@ -791,17 +854,27 @@ struct SecondaryWindow<Content: View>: View {
   /// The id of the scene; with one, the window opens as a tab of the main window
   /// (`WindowTabs`). A test hosting the content in a window of its own gives none.
   var scene: String?
+  /// The narrowest the window may be (`contentMinSize`). It is never below what the content
+  /// asks for: a window narrower than its content lays the content out wider than itself and
+  /// cuts it off at both edges. And AppKit shows a sidebar inside the window only while the
+  /// window, less the sidebar, stays at least this wide — narrower, showing the sidebar widens
+  /// the window by its width for good.
+  var minWidth: CGFloat
   @ViewBuilder let content: Content
 
-  init(titleKey: String, scene: String? = nil, @ViewBuilder content: () -> Content) {
+  init(
+    titleKey: String, scene: String? = nil, minWidth: CGFloat = 720,
+    @ViewBuilder content: () -> Content
+  ) {
     self.titleKey = titleKey
     self.scene = scene
+    self.minWidth = minWidth
     self.content = content()
   }
 
   var body: some View {
     content
-      .frame(minWidth: 720, minHeight: 480)
+      .frame(minWidth: minWidth, minHeight: 480)
       .navigationTitle(environment.language(titleKey))
       .background {
         if let scene { Color.clear.windowTab(.secondary(scene: scene)) }

@@ -13,6 +13,7 @@ import PackageDescription
 let coreTargets = [
   "CoreParse", "CoreCSV", "CoreSample", "CoreArchive", "CoreRates", "CoreAccounting",
   "CorePipeline", "CoreAnalytics", "CorePlanning", "CoreLog", "CoreModel", "CoreInsights",
+  "CoreGuide",
 ]
 
 let package = Package(
@@ -71,6 +72,10 @@ let package = Package(
     .target(
       name: "CorePlanning", dependencies: ["CoreKit", "CoreAccounting", "CoreAnalytics"],
       swiftSettings: [.swiftLanguageMode(.v6)]),
+    // The guide as data — cards, scenarios, tasks and the conditions that find them done — so
+    // every platform shows the same guide its own way.
+    .target(
+      name: "CoreGuide", dependencies: ["CoreKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
     .target(
       name: "AppCore",
       dependencies: ["CoreKit"] + coreTargets.map { .target(name: $0) },
@@ -91,6 +96,8 @@ let package = Package(
     .testTarget(
       name: "CoreRatesTests", dependencies: ["CoreRates"], resources: [.copy("Fixtures")],
       swiftSettings: [.swiftLanguageMode(.v6)]),
+    .testTarget(
+      name: "CoreGuideTests", dependencies: ["CoreGuide"], swiftSettings: [.swiftLanguageMode(.v6)]),
     .testTarget(
       name: "CoreLogTests", dependencies: ["CoreLog"], swiftSettings: [.swiftLanguageMode(.v6)]),
     .executableTarget(

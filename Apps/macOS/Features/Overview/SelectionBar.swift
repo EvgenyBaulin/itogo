@@ -81,8 +81,7 @@ struct SelectionBar: View {
       .monospacedDigit()
       .lineLimit(1)
       if store.isWritingInBackground {
-        ProgressView()
-          .controlSize(.small)
+        WritingIndicator()
           .help(t("selection.writing"))
           .accessibilityLabel(Text(verbatim: t("selection.writing")))
       }
@@ -138,8 +137,7 @@ struct SelectionBar: View {
   /// No count and nothing to press: the indicator and the words, where the count stands.
   private var writingContent: some View {
     HStack(spacing: 8) {
-      ProgressView()
-        .controlSize(.small)
+      WritingIndicator()
         .accessibilityHidden(true)
       Text(verbatim: t("selection.writing"))
         .font(.callout)
@@ -149,6 +147,22 @@ struct SelectionBar: View {
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Transactions") }
+}
+
+/// The bar's sign that a write is on its way: a symbol SwiftUI draws itself, never a
+/// `ProgressView`. That one is an AppKit `NSProgressIndicator` hosted inside SwiftUI, and the
+/// bar slides in and out: SwiftUI moves a hosted view by its frame transform on every render,
+/// and every move dirties the constraints of the window. With the display asleep or the
+/// screen locked the window renders inside its own layout, so each layout pass moved the
+/// indicator again and asked for another — until AppKit ran out of Update Constraints passes
+/// and threw. A drawn symbol is moved with the rest of the bar and asks the layout for nothing.
+struct WritingIndicator: View {
+  var body: some View {
+    Image(systemName: "progress.indicator")
+      .symbolEffect(.variableColor.iterative, options: .repeating)
+      .foregroundStyle(.secondary)
+      .imageScale(.medium)
+  }
 }
 
 /// The bar of a selection in the main window when there is no entry line to carry it — the form

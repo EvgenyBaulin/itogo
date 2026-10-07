@@ -1,6 +1,7 @@
 import AppCore
 import AppKit
 import SwiftUI
+import TipKit
 
 /// The column the entry bar floats in. It is 560 to 720 pt wide but never wider
 /// than 70% of the whole window, and never comes closer than 16 pt to the sides of the
@@ -112,6 +113,9 @@ struct EntryBar<Accessory: View>: View {
   @State private var transfer: TransferRequest?
   /// The chips under the line.
   @State private var templates = TemplatesModel()
+  /// The quick line of the form: whether «Будет записано» is up.
+  @State private var quick = QuickEntryFlow()
+  @FocusState private var quickFocused: Bool
   @Namespace private var glass
 
   private var interpreter: any LineInterpreter {
@@ -210,8 +214,9 @@ struct EntryBar<Accessory: View>: View {
     // «Перевести…» of the panel: the sheet of a transfer started with what the panel holds. Once
     // a transfer is written the line and the panel start over; cancelled, they stay as they were.
     .sheet(item: $transfer) { request in
-      TransferSheet(form: request.form) { written in
+      TransferSheet(form: request.form, saveAtOnce: request.saveAtOnce) { written in
         transfer = nil
+        if written, request.fromTheLine { GuideStore.shared.report(GuideEvent.transferFromLine) }
         if written, let model { finishSaving(model) }
       }
       .handingOver(dependencies)
@@ -265,6 +270,21 @@ struct EntryBar<Accessory: View>: View {
       form: TransferForm(
         fromThePanel: model.draft, account: model.selectedAccount,
         accounts: model.paymentMethods, calendar: environment.calendar))
+  }
+
+  /// The transfer the line named: the sheet with its accounts, amount, day and note — saving at
+  /// once when there is nothing left to ask (`TransferForm.fromTheLine`).
+  private func startTransfer(fromTheLine reading: TransferReading, model: EntryDraftModel) {
+    let accounts = model.paymentMethods
+    let form = TransferForm(
+      fromTheLine: reading, draft: model.draft, accounts: accounts,
+      calendar: environment.calendar)
+    let atOnce = form.savesAtOnce(reading)
+    AppLog.info(
+      "entry.transferFromLine", .ui, "the line named a transfer",
+      [LogPair("complete", .flag(reading.isComplete)), LogPair("atOnce", .flag(atOnce))])
+    message = nil
+    transfer = TransferRequest(form: form, saveAtOnce: atOnce, fromTheLine: true)
   }
 
   /// «Записать как есть»: the operation dated ahead is written on its date; the question is not
@@ -348,6 +368,8 @@ struct EntryBar<Accessory: View>: View {
             .textFieldStyle(.plain)
             .focused($focused)
             .accessibilityIdentifier("entry.line")
+            .guideTarget("entry.line")
+            .popoverTip(EntryLineTip(), arrowEdge: .bottom)
             .onSubmit(save)
             // ↓ walks the list of operations from the newest, and only while the line has
             // focus: a window-wide shortcut would swallow arrow keys meant for the list.
@@ -387,6 +409,7 @@ struct EntryBar<Accessory: View>: View {
                   ? environment.language("entry.detailsCarried", table: "Entry") : "")
             )
             .accessibilityIdentifier("entry.details.toggle")
+            .guideTarget("entry.details.toggle")
 
             Button(environment.language("entry.save", table: "Entry"), action: save)
               .buttonStyle(.glassProminent)
@@ -434,10 +457,105 @@ struct EntryBar<Accessory: View>: View {
         model: model, focusedInside: $formFocused, save: save, clear: clearTheForm,
         transfer: startTransfer
       ) {
+        quickEntry(model)
+      } caption: {
         caption
       }
     } else {
       Spacer()
+    }
+  }
+
+  /// The line of quick entry of the form (`QuickEntryFlow`): it fills the fields below as it is
+  /// typed, and the first Return only shows what will be written.
+  @ViewBuilder
+  private func quickEntry(_ model: EntryDraftModel) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextField(
+        text: $text,
+        prompt: Text(verbatim: environment.language("entry.quick.prompt", table: "Entry"))
+      ) {
+        Text(verbatim: environment.language("entry.quick", table: "Entry"))
+      }
+      .textFieldStyle(.roundedBorder)
+      .focused($quickFocused)
+      .onSubmit { submitQuick() }
+      .onExitCommand {
+        quick.dismiss()
+        text = ""
+      }
+      .onChange(of: text) { _, _ in quick.dismiss() }
+      .accessibilityIdentifier("entry.quick")
+      .guideTarget("entry.quick")
+      if quick.confirming {
+        VStack(alignment: .leading, spacing: 8) {
+          Text(verbatim: environment.language("entry.quick.willWrite", table: "Entry"))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(verbatim: QuickEntrySummary.text(of: model, environment: environment))
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("entry.quick.summary")
+          HStack {
+            Button(environment.language("entry.quick.change", table: "Entry")) {
+              quick.dismiss()
+              text = ""
+              model.focusRequest = .first
+            }
+            .accessibilityIdentifier("entry.quick.change")
+            Spacer()
+            Button(environment.language("entry.quick.write", table: "Entry")) { submitQuick() }
+              .buttonStyle(.borderedProminent)
+              .accessibilityIdentifier("entry.quick.write")
+          }
+        }
+        .padding(10)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+      } else {
+        quickSuggestions
+      }
+    }
+  }
+
+  /// The templates and the latest operations like the line: a click puts their line in the field.
+  @ViewBuilder
+  private var quickSuggestions: some View {
+    let similar = QuickEntrySuggestions.lines(
+      typed: text, entries: compute.snapshot?.dataset.entries ?? [], money: environment.money)
+    let chips = Array(templates.templates.prefix(4))
+    if !similar.isEmpty || !chips.isEmpty {
+      FlowRow(spacing: 6, lineSpacing: 6) {
+        ForEach(similar, id: \.self) { line in
+          Button(line) {
+            text = line
+            quickFocused = true
+          }
+        }
+        ForEach(chips, id: \.id) { template in
+          Button(template.text) {
+            text = templateLine(for: template)
+            templates.use(template)
+            quickFocused = true
+          }
+        }
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+    }
+  }
+
+  /// Return in the quick line, or «Записать»: the card first, the save on the second.
+  private func submitQuick() {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let parsed = interpreter.interpret(trimmed, today: environment.today, kind: model?.draft.kind)
+    let readable = !trimmed.isEmpty && parsed.dateProblem == nil && parsed.amount != nil
+    switch quick.submit(lineIsReadable: readable) {
+    case .refuse:
+      if !trimmed.isEmpty { message = .error(parsed.missingAmountErrorKey) }
+    case .confirm:
+      message = nil
+      readTheLineIntoThePanel()
+    case .save:
+      save()
     }
   }
 
@@ -578,7 +696,7 @@ struct EntryBar<Accessory: View>: View {
     prepareModel()
     // The form is always open: a new operation puts the keyboard on its first field.
     if style == .form {
-      model?.focusRequest = .first
+      quickFocused = true
       return
     }
     if !showsDetails { withAnimation(.snappy) { showsDetails = true } }
@@ -645,11 +763,36 @@ struct EntryBar<Accessory: View>: View {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     let parsed = interpreter.interpret(trimmed, today: environment.today)
+    if let transfer = parsed.transfer { return transferPreview(transfer, parsed) }
+    // An amount in another currency: grey «≈ 1,240 ₽» at the last rate, before Enter.
+    if parsed.amountToPreview == nil, let amount = parsed.amount, let currency = parsed.currency,
+      let value = try? AmountE4(decimal: amount),
+      let approximate = ApproximateText.of(
+        amount: value, currency: currency, environment: environment, compute: compute)
+    {
+      return environment.money.exact(value, currency: currency) + " " + approximate
+    }
     guard let expression = parsed.amountToPreview, let amount = parsed.amount,
       let value = try? AmountE4(decimal: amount)
     else { return nil }
     let currency = EntryPreview.currency(of: parsed, model: model, in: environment)
     return "\(expression) = \(environment.money.exact(value, currency: currency))"
+  }
+
+  /// «Перевод: Сбер → Т-Банк, 5,000 ₽» — a side no account answers to is «?».
+  private func transferPreview(_ transfer: TransferReading, _ parsed: ParsedInput) -> String {
+    let accounts = model?.paymentMethods ?? []
+    func name(_ id: UUID?) -> String {
+      accounts.first { $0.id == id }?.name ?? "?"
+    }
+    var text =
+      environment.language("entry.transfer.preview", table: "Entry") + " "
+      + "\(name(transfer.fromAccountId)) → \(name(transfer.toAccountId))"
+    if let amount = parsed.amount, let value = try? AmountE4(decimal: amount) {
+      let currency = EntryPreview.currency(of: parsed, model: model, in: environment)
+      text += ", " + environment.money.exact(value, currency: currency)
+    }
+    return text
   }
 
   /// The line read into the open panel at every change of it: the amount, the currency, the
@@ -723,6 +866,12 @@ struct EntryBar<Accessory: View>: View {
     do {
       let amount = try parsed.amount.map { try AmountE4(decimal: $0) } ?? model.draft.amount
       model.apply(parsed, amount: amount, today: environment.today, text: trimmed)
+      // «перевод 5000 сбер т-банк» is a transfer, not an operation: written by the transfer
+      // sheet at once when both accounts are known in one currency, else left to it to finish.
+      if let transfer = parsed.transfer {
+        startTransfer(fromTheLine: transfer, model: model)
+        return
+      }
       if let refusal = model.saveRefusalKey {
         message = .error(refusal)
         return

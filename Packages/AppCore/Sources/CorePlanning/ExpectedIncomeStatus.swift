@@ -161,6 +161,30 @@ public enum ExpectedIncomeRules {
     return candidates.first?.id
   }
 
+  /// Whether «Закрыть полностью» is offered: a one-off income that is not closed and has
+  /// received no less than it expected — the whole amount or more. A recurring income is never
+  /// received whole (its next term is coming), and one whose currency has no rate may have
+  /// received what is not counted, so neither is offered on a guess; the form of an income still
+  /// closes any of them by hand.
+  public static func offersClosing(_ status: ExpectedIncomeStatus) -> Bool {
+    guard !status.income.closed, status.income.kind == .oneOff, !status.withoutRate else {
+      return false
+    }
+    return status.received >= status.income.totalE4
+  }
+
+  /// The incomes whose name another one of `incomes` has too, whatever the case and the spaces
+  /// around it. Names may repeat; a menu tells these apart by amount and date.
+  public static func namesakes(among incomes: [ExpectedIncome]) -> Set<UUID> {
+    func key(_ name: String) -> String {
+      name.trimmingCharacters(in: .whitespacesAndNewlines)
+        .folding(options: [.caseInsensitive], locale: nil)
+    }
+    var counts: [String: Int] = [:]
+    for income in incomes { counts[key(income.name), default: 0] += 1 }
+    return Set(incomes.filter { (counts[key($0.name)] ?? 0) > 1 }.map(\.id))
+  }
+
   // MARK: - Where the money comes and what an operation pays
 
   /// The account the money of `income` is to come to: the one the owner chose for it; without

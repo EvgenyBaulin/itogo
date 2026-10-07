@@ -4,6 +4,7 @@
 @_exported import CoreAnalytics
 @_exported import CoreArchive
 @_exported import CoreCSV
+@_exported import CoreGuide
 @_exported import CoreInsights
 @_exported import CoreKit
 @_exported import CoreLog

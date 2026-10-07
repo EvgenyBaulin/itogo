@@ -99,6 +99,8 @@ struct BulkDictionaries {
   var places: [Place] = []
   var events: [Event] = []
   var paymentMethods: [PaymentMethod] = []
+  /// Every bank, so an account is named in a menu as in every list of accounts.
+  var banks: [Bank] = []
 }
 
 /// The selection of a screen and everything that is opened from it: the edit sheet, the
@@ -143,7 +145,8 @@ final class OperationActions {
       people: dataset.people.filter { !$0.archived },
       places: dataset.places.filter { !$0.archived },
       events: dataset.events.filter { !$0.archived },
-      paymentMethods: dataset.paymentMethods.filter { !$0.archived })
+      paymentMethods: dataset.paymentMethods.filter { !$0.archived },
+      banks: dataset.banks)
   }
 
   /// The selection is only ever what can be seen: whatever leaves the list — deleted, or
@@ -296,11 +299,12 @@ struct BulkMenuItems: View {
     // to none. The main account comes first, as in every menu of accounts.
     Menu(t("bulk.paymentMethod")) {
       ForEach(
-        Self.accountChoices(
-          actions.dictionaries.paymentMethods, locale: environment.language.locale),
+        Self.accountItems(
+          actions.dictionaries.paymentMethods, banks: actions.dictionaries.banks,
+          locale: environment.language.locale),
         id: \.id
-      ) { method in
-        Button(method.name) { request(.paymentMethod(method.id)) }
+      ) { item in
+        Button(item.name) { request(.paymentMethod(item.id)) }
       }
     }
     Divider()
@@ -316,6 +320,16 @@ struct BulkMenuItems: View {
   /// The accounts the account menu offers: each live one, the main one first.
   static func accountChoices(_ accounts: [PaymentMethod], locale: Locale) -> [PaymentMethod] {
     AccountRules.ordered(accounts, locale: locale)
+  }
+
+  /// The account menu's items: `accountChoices` named as every list of accounts names them —
+  /// the bank alone for a bank with one live account, «Банк › Счёт» for one with several.
+  static func accountItems(
+    _ accounts: [PaymentMethod], banks: [Bank], locale: Locale
+  ) -> [AccountCardChoices.Item] {
+    AccountCardChoices.accountItems(
+      accounts: accountChoices(accounts, locale: locale), banks: banks, among: accounts,
+      locale: locale)
   }
 
   /// What the account menu does: a move to one of `accountChoices`, never to none — every

@@ -141,11 +141,15 @@ final class EntryPipelineTests: XCTestCase {
   }
 
   /// First launch seeds the very list the synthetic sets and the screenshots are built from
-  /// (`SampleCatalog`), numbered by one running `sort`, so the two can never drift apart.
+  /// (`SampleCatalog`), numbered by one running `sort`, so the two can never drift apart — with
+  /// the categories of every new database put in their places («Зарплата» under «Заработок»,
+  /// «Налоги и сборы» with three taxes), and nothing else added or moved.
   func testFirstLaunchSeedsTheCoreCatalog() {
     for language in ["en", "ru"] {
       let seeded = StarterCategories.tree(language: language)
-      let catalog = SampleCatalog.makeCategories(language: language)
+      let catalog = SampleCatalog.makeCategories(
+        language: language, seeds: StarterSets.starterSeeds)
+      let samples = SampleCatalog.makeCategories(language: language)
       func shape(_ tree: [CoreKit.Category]) -> [String] {
         let names = Dictionary(uniqueKeysWithValues: tree.map { ($0.id, $0.name) })
         return tree.map { category in
@@ -157,6 +161,26 @@ final class EntryPipelineTests: XCTestCase {
       }
       XCTAssertEqual(shape(seeded), shape(catalog), language)
       XCTAssertEqual(seeded.map(\.sort), Array(0..<seeded.count), language)
+      // The samples' catalog is the seeded list without the new categories, in the same order.
+      let added = Set(shape(seeded)).subtracting(shape(samples))
+      XCTAssertEqual(
+        shape(seeded).filter { !added.contains($0) }, shape(samples), language)
+      let russian = language == "ru"
+      XCTAssertEqual(
+        added,
+        Set(
+          russian
+            ? [
+              "income|Заработок|Зарплата|-|-", "expense|-|Налоги и сборы|neutral|-",
+              "expense|Налоги и сборы|Транспортный налог|-|-",
+              "expense|Налоги и сборы|Имущественный налог|-|-",
+              "expense|Налоги и сборы|НДФЛ|-|-",
+            ]
+            : [
+              "income|Work|Salary|-|-", "expense|-|Taxes & fees|neutral|-",
+              "expense|Taxes & fees|Vehicle tax|-|-", "expense|Taxes & fees|Property tax|-|-",
+              "expense|Taxes & fees|Income tax|-|-",
+            ]), language)
     }
   }
 

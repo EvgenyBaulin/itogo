@@ -425,6 +425,26 @@ struct PlanningActions {
     return save(income)
   }
 
+  /// «Вернуть» from the archive: the income open again, as the database holds it now — not as
+  /// the screen last saw it. One step of ⌘Z, as closing was.
+  @discardableResult
+  func reopen(_ income: ExpectedIncome) -> Bool {
+    let stored = (try? environment.planning?.expected())?.first { $0.id == income.id }
+    var income = stored ?? income
+    guard income.closed else { return false }
+    income.closed = false
+    return save(income)
+  }
+
+  /// «Удалить…»: the income goes, and its links to the income received with it; the operations
+  /// stay as they were. One write, one step of ⌘Z, which brings the links back too.
+  @discardableResult
+  func delete(_ income: ExpectedIncome) -> Bool {
+    var ids = PlanningRowIDs.empty
+    ids.expected = [income.id]
+    return apply(PlanningChange(delete: ids))
+  }
+
   @discardableResult
   func link(income transactionId: UUID, to expectation: ExpectedIncome) -> Bool {
     var rows = PlanningRows.empty

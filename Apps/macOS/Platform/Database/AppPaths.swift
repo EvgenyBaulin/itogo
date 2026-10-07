@@ -22,8 +22,11 @@ public enum AppPaths {
     case bench
     case uiTest = "ui-test"
     case demo
+    /// The tutorial of «Справка → Учебный режим»: made by the app itself, in Release too.
+    case learn
 
-    /// What the title of the main window says: «SAMPLE», «BENCH», «DEMO».
+    /// What the title of the main window says: «SAMPLE», «BENCH», «DEMO». The tutorial's says
+    /// «УЧЕБНЫЙ» in the language of the interface (`MainWindow.windowTitle`).
     public var badge: String { rawValue.uppercased() }
   }
 

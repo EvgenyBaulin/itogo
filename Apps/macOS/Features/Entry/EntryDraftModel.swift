@@ -89,7 +89,7 @@ public final class EntryDraftModel {
   private let calendar: CalendarContext
   /// The draft is a saved operation in the editor — the sheet or the inspector — not the
   /// entry line's new one.
-  private let editsSavedOperation: Bool
+  let editsSavedOperation: Bool
   /// The kind the draft had when its debt «on credit» came with it. In the editor the debt
   /// only ever comes with the saved operation, so this is the kind it was saved with.
   private var kindWithTheCredit: TransactionKind?
@@ -633,8 +633,142 @@ public final class EntryDraftModel {
       if !missing.isEmpty { draft.note = ([note] + missing).joined(separator: " ") }
     }
     applyDefaults(today: today)
+    // «за машу», «пополам с машей», «угостил машу»: the parts laid out for it. A name the
+    // dictionary does not know waits for «Добавить человека…».
+    if let paying = parsed.payingFor, let person = paying.personId, offersPayingFor {
+      switch paying.way {
+      case .forSomebody: choosePayingFor(.somebody(person, paysBack: true))
+      case .gift: choosePayingFor(.somebody(person, paysBack: false))
+      case .half: choosePayingFor(.half(person))
+      }
+    } else {
+      relayPayingFor()
+    }
     // After the defaults, so what the next reading compares is what the panel shows.
     typedFills = whileTyping ? recordingTypedFills(of: parsed, before: before) : TypedFills()
+  }
+
+  // MARK: За кого
+
+  /// «За кого» as chosen — in the panel or by the line —, kept so the parts follow the amount:
+  /// the parts are the truth, and this only says how to lay them out again (`PayingForRules`).
+  public private(set) var payingFor: PayingFor = .me
+
+  /// The way chosen in the panel before anybody was: «За другого», «Пополам» or «Поровну» with
+  /// no person yet. The parts stay mine until a person is chosen.
+  public var payingForWay: PayingForWay?
+
+  public enum PayingForWay: String, CaseIterable, Sendable {
+    case me, somebody, half, evenly
+  }
+
+  /// The way the panel shows: what the parts say, else what was chosen without a person.
+  public var shownPayingForWay: PayingForWay {
+    if let payingForWay { return payingForWay }
+    switch payingFor {
+    case .me: return .me
+    case .somebody: return .somebody
+    case .half: return .half
+    case .evenly: return .evenly
+    }
+  }
+
+  /// «За кого» is there for an expense that can be paid for somebody, while its parts are laid
+  /// out one of the four ways — not over a split by categories.
+  public var offersPayingFor: Bool {
+    draft.kind == .expense && canMarkPaidForSomeone && !isGoalOnly
+      && (PayingForRules.reading(of: draft) != nil || payingFor != .me)
+  }
+
+  /// The parts laid out for `choice`: one step, and the qualities of new parts resolved.
+  public func choosePayingFor(_ choice: PayingFor) {
+    payingFor = choice
+    payingForWay = nil
+    draft = PayingForRules.laying(choice, on: draft)
+    for index in draft.parts.indices where draft.parts[index].quality == nil {
+      resolveQuality(ofPartAt: index, in: categoryTree)
+    }
+  }
+
+  /// The amount changed: the shares follow it.
+  public func relayPayingFor() {
+    guard payingFor != .me, draft.kind == .expense else { return }
+    let laid = PayingForRules.laying(payingFor, on: draft)
+    if laid != draft { draft = laid }
+  }
+
+  /// The people of the choice, in their order: one for «За другого» and «Пополам», each of
+  /// «Поровну».
+  public var payingForPeople: [UUID] {
+    switch payingFor {
+    case .me: []
+    case .somebody(let person, _), .half(let person): [person]
+    case .evenly(let people): people
+    }
+  }
+
+  /// «Вернёт?» of «За другого»: yes — owed to me; no — a gift.
+  public var payingForPaysBack: Bool {
+    if case .somebody(_, let paysBack) = payingFor { return paysBack }
+    return true
+  }
+
+  /// The way of «За кого» chosen in the panel: «Себе» lays the parts out at once, the others
+  /// once a person is chosen — with the person already chosen, at once.
+  public func choosePayingForWay(_ way: PayingForWay) {
+    let people = payingForPeople
+    switch way {
+    case .me: choosePayingFor(.me)
+    case .somebody:
+      if let first = people.first {
+        choosePayingFor(.somebody(first, paysBack: payingForPaysBack))
+      } else {
+        payingForWay = way
+      }
+    case .half:
+      if let first = people.first { choosePayingFor(.half(first)) } else { payingForWay = way }
+    case .evenly:
+      if !people.isEmpty { choosePayingFor(.evenly(people)) } else { payingForWay = way }
+    }
+  }
+
+  /// A person chosen in a menu of «За кого»: `slot` is the place in «Поровну», one past the end
+  /// for one more; nil takes a person of «Поровну» away.
+  public func setPayingForPerson(_ person: UUID?, slot: Int) {
+    let way = shownPayingForWay
+    var people = payingForPeople
+    if let person {
+      if slot < people.count { people[slot] = person } else { people.append(person) }
+    } else if slot < people.count {
+      people.remove(at: slot)
+    }
+    switch way {
+    case .me: return
+    case .somebody:
+      guard let first = people.first else { return choosePayingFor(.me) }
+      choosePayingFor(.somebody(first, paysBack: payingForPaysBack))
+    case .half:
+      guard let first = people.first else { return choosePayingFor(.me) }
+      choosePayingFor(.half(first))
+    case .evenly:
+      if people.isEmpty {
+        choosePayingFor(.me)
+        payingForWay = .evenly
+      } else {
+        choosePayingFor(.evenly(people))
+      }
+    }
+  }
+
+  public func setPaysBack(_ paysBack: Bool) {
+    guard case .somebody(let person, _) = payingFor else { return }
+    choosePayingFor(.somebody(person, paysBack: paysBack))
+  }
+
+  /// The choice the parts of a saved operation say, when the editor opens it.
+  public func readPayingFor() {
+    payingFor = PayingForRules.reading(of: draft) ?? .me
+    payingForWay = nil
   }
 
   /// The amount of the line, kept with its formula — its numbers written the way the app writes
@@ -1130,6 +1264,17 @@ public final class EntryDraftModel {
 
   /// What history is read from: the last 200 operations, newest first, without the one the
   /// editor has open — a saved operation is not history of itself.
+  /// The kind of the latest operations used most: the tile that stretches across the form when
+  /// the tiles are odd. Read once per model — the order of the tiles must not jump while typing.
+  var mostUsedKindTile: EntryKindTile {
+    if let mostUsedKindRead { return mostUsedKindRead }
+    let kinds = ((try? transactions?.recentEntries(limit: 200)) ?? []).map(\.transaction.kind)
+    let tile = EntryKindTiles.mostUsed(among: kinds)
+    mostUsedKindRead = tile
+    return tile
+  }
+  @ObservationIgnored private var mostUsedKindRead: EntryKindTile?
+
   private func otherOperations() -> [TransactionEntry] {
     guard let transactions else { return [] }
     let own = Set(draft.parts.map(\.id))
@@ -2619,6 +2764,9 @@ public final class EntryDraftModel {
     lastLineText = nil
     typedFills = TypedFills()
     personPhraseFromTheLine = nil
+    // «За кого» belonged to the operation just saved.
+    payingFor = .me
+    payingForWay = nil
     gapStop = nil
     focusRequest = nil
     stampedAt = nil

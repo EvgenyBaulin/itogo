@@ -31,11 +31,11 @@ enum SidebarItem: Hashable, Sendable {
     }
   }
 
-  /// A screen of operations: Overview and the screens of an account and of a group list them,
+  /// A screen of operations: «Траты» and the screens of an account and of a group list them,
   /// select them and float the selection bar.
   var listsOperations: Bool {
     switch self {
-    case .section(let section): section == .overview
+    case .section(let section): section == .spending
     case .account, .group, .allAccounts: true
     }
   }
@@ -72,6 +72,8 @@ struct MainSidebar: View {
             Image(systemName: item.symbol)
           }
           .tag(SidebarItem.section(item))
+          .accessibilityIdentifier("sidebar.\(item.rawValue)")
+          .guideTarget("sidebar.\(item.rawValue)")
         }
       }
       if environment.state == .ready {
@@ -79,6 +81,7 @@ struct MainSidebar: View {
       }
     }
     .accountsSidebarPresentations(accounts, selection: $selection)
+    .guideOverlay(GuideStore.shared)
     .onReceive(NotificationCenter.default.publisher(for: .selectSection)) { note in
       guard let index = note.object as? Int,
         let chosen = MainWindow.Section.allCases.first(where: { $0.shortcutIndex == index })

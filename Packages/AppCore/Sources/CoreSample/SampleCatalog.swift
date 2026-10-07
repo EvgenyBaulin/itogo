@@ -51,6 +51,7 @@ public enum SampleCatalog {
   /// the whole synthetic dataset stays byte-for-byte reproducible.
   public static func makeCategories(
     language: String,
+    seeds categorySeeds: [CategorySeed] = categorySeeds,
     idGenerator: () -> UUID = UUID.init
   ) -> [CoreKit.Category] {
     let useRussian = language.lowercased().hasPrefix("ru")

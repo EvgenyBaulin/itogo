@@ -25,11 +25,14 @@
 # origin/gh-pages does is said to be that.
 #
 # Usage: check-release.sh [<version>]   the entry of that version; the newest when not given
-#        check-release.sh --candidate <Itogo.app>
+#        check-release.sh --candidate <Itogo.app> [<Itogo-X.Y.Z.zip> <signature>]
 #                                       an app built for release and not yet published, against
 #                                       the newest entry: its build above it, the same id, key
 #                                       and feed, the owner's certificate, the Sparkle pinned,
-#                                       and the designated requirement of the release before
+#                                       and the designated requirement of the release before;
+#                                       with its archive and the EdDSA signature of its entry,
+#                                       the signature holds for the repository's public key and
+#                                       the archive holds Itogo.app alone
 #        check-release.sh --self-test   the checks on made-up feeds, keys and apps, offline
 #   ITOGO_FEED_URL      the feed to read instead of the published one
 #   SPARKLE_PUBLIC_KEY  the key to check against; sparkle-public-key.txt when not set
@@ -453,8 +456,15 @@ wanted="${1:-}"
 candidate=""
 if [ "${wanted}" = "--candidate" ]; then
   candidate="${2:-}"
+  candidate_archive="${3:-}"
+  candidate_signature="${4:-}"
   wanted=""
-  [ -d "${candidate}" ] || fail "usage: check-release.sh --candidate <Itogo.app>"
+  [ -d "${candidate}" ] ||
+    fail "usage: check-release.sh --candidate <Itogo.app> [<Itogo-X.Y.Z.zip> <signature>]"
+  if [ -n "${candidate_archive}" ]; then
+    [ -f "${candidate_archive}" ] && [ -n "${candidate_signature}" ] ||
+      fail "usage: check-release.sh --candidate <Itogo.app> [<Itogo-X.Y.Z.zip> <signature>]"
+  fi
 fi
 key="${SPARKLE_PUBLIC_KEY:-}"
 if [ -z "${key}" ] && [ -f "${root}/sparkle-public-key.txt" ]; then
@@ -514,6 +524,18 @@ if [ -n "${candidate}" ]; then
   sparkle="$(pinned_sparkle "${root}/project.yml")"
   check_bundle "${candidate}" "${certificate}" "${sparkle}"
   check_successor "${app}" "${candidate}"
+  # The archive installed copies would download, signed with the private key that pairs with
+  # the public key inside the app: a key file of another pair signs an update every Mac refuses.
+  if [ -n "${candidate_archive}" ]; then
+    check_archive "${candidate_archive}" "$(stat -f%z "${candidate_archive}")" \
+      "${candidate_signature}" "${key}"
+    # Read whole, not with `grep -q`: under pipefail a reader that leaves early fails the
+    # pipeline, and the failure would read as «nothing found».
+    extra="$(unzip -Z1 "${candidate_archive}" | grep -vE '^(Itogo\.app/|__MACOSX/)' || true)"
+    [ -z "${extra}" ] ||
+      fail "the archive ${candidate_archive##*/} holds something besides Itogo.app: $(printf '%s\n' "${extra}" | sed -n 1p)"
+    say "candidate archive: ${candidate_archive##*/}, EdDSA signature holds for the repository's key"
+  fi
   say "candidate: ${said_version} (${said_build}) above ${version} (${build}), the repository's key and feed, signed by ${certificate}, Sparkle ${sparkle}, meets the designated requirement of ${version}"
   say "ok"
   exit 0

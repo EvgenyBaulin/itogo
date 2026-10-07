@@ -93,6 +93,34 @@ struct TransferForm: Hashable, Sendable {
     note = (draft.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
+  /// «перевод 5000 сбер т-банк»: the accounts the line named, then what the draft holds — the
+  /// amount, its currency, the day and the note — as «Перевести…» takes them. A side the line
+  /// did not name stays empty for the sheet to choose: the main account is never put there by
+  /// itself.
+  init(
+    fromTheLine reading: TransferReading, draft: TransactionDraft, accounts: [PaymentMethod],
+    calendar: CalendarContext
+  ) {
+    let from = accounts.first { $0.id == reading.fromAccountId }
+    self.init(fromThePanel: draft, account: from, accounts: accounts, calendar: calendar)
+    if from == nil {
+      fromAccountId = nil
+    }
+    if let to = accounts.first(where: { $0.id == reading.toAccountId }) {
+      chooseTo(to)
+    } else {
+      toAccountId = nil
+      toCurrency = nil
+    }
+  }
+
+  /// Whether the sheet may write the transfer the line named without a word: both accounts
+  /// known and different, one currency, and an amount.
+  func savesAtOnce(_ reading: TransferReading) -> Bool {
+    reading.isComplete && fromAccountId != nil && toAccountId != nil && !isExchange
+      && sent.raw > 0
+  }
+
   /// The form of a saved transfer and its fee.
   init(editing transfer: Transfer, fee: AmountE4?, calendar: CalendarContext) {
     previous = transfer

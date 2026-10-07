@@ -311,7 +311,14 @@ struct ReconcileSheet: View {
   }
 
   private func accountName(_ id: UUID, _ snapshot: DataSnapshot) -> String {
-    snapshot.dataset.paymentMethods.first { $0.id == id }?.name ?? "—"
+    Self.accountName(
+      id, accounts: snapshot.dataset.paymentMethods, banks: snapshot.dataset.banks)
+  }
+
+  /// The account of a row as every list of accounts names it (`AccountLabels`): the bank alone
+  /// when it has one live account, «Банк › Счёт» when it has several; «—» for one not there.
+  static func accountName(_ id: UUID, accounts: [PaymentMethod], banks: [Bank]) -> String {
+    AccountLabels(accounts: accounts, cards: [], banks: banks).label(account: id) ?? "—"
   }
 
   private func notice(_ text: String, symbol: String, translated: Bool = false) -> some View {

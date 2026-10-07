@@ -88,6 +88,56 @@ public struct ParsedToken: Hashable, Sendable {
   }
 }
 
+/// A transfer the line names: the transfer word and the accounts it found. A side the line
+/// names with a word no account answers to is nil, with that word in `unknownName`: nothing is
+/// written then without the transfer sheet.
+public struct TransferReading: Hashable, Sendable {
+  public var fromAccountId: UUID?
+  public var fromCardId: UUID?
+  public var toAccountId: UUID?
+  public var toCardId: UUID?
+  /// The word that stood where an account was expected and named none.
+  public var unknownName: String?
+
+  public init(
+    fromAccountId: UUID? = nil, fromCardId: UUID? = nil, toAccountId: UUID? = nil,
+    toCardId: UUID? = nil, unknownName: String? = nil
+  ) {
+    self.fromAccountId = fromAccountId
+    self.fromCardId = fromCardId
+    self.toAccountId = toAccountId
+    self.toCardId = toCardId
+    self.unknownName = unknownName
+  }
+
+  /// Both accounts are known and differ: the transfer can be written as it is (when their
+  /// currencies agree — the app checks that).
+  public var isComplete: Bool {
+    fromAccountId != nil && toAccountId != nil && fromAccountId != toAccountId
+  }
+}
+
+/// Whom the line says an expense was paid for: «за машу» — for her, to be given back;
+/// «угостил машу» — a gift; «пополам с машей» — half each. A name the dictionary does not know
+/// is `unknownName`; the app offers to add the person.
+public struct PayingForReading: Hashable, Sendable {
+  public enum Way: Hashable, Sendable {
+    case forSomebody
+    case gift
+    case half
+  }
+
+  public var way: Way
+  public var personId: UUID?
+  public var unknownName: String?
+
+  public init(way: Way, personId: UUID? = nil, unknownName: String? = nil) {
+    self.way = way
+    self.personId = personId
+    self.unknownName = unknownName
+  }
+}
+
 /// Result of reading one line of input. English and Russian are understood regardless of
 /// the interface language. Anything not recognised becomes the note.
 public struct ParsedInput: Hashable, Sendable {
@@ -148,6 +198,11 @@ public struct ParsedInput: Hashable, Sendable {
   public var cardId: UUID?
   /// Set when the line wrote a day the calendar does not have; `date` is nil then.
   public var dateProblem: DateProblem?
+  /// Set when the line is a transfer between accounts — «перевод 5000 сбер т-банк» — and not
+  /// an operation; `paymentMethodId` and `cardId` are then those of the account it leaves.
+  public var transfer: TransferReading?
+  /// «за машу», «пополам с машей», «угостил машу»: whom the expense was paid for, and how.
+  public var payingFor: PayingForReading?
 
   public init(
     kind: TransactionKind = .expense,

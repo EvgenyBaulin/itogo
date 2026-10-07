@@ -1860,6 +1860,23 @@
         }
       }
     },
+    "section.spending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spending"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Траты"
+          }
+        }
+      }
+    },
     "update.unavailable.message": {
       "extractionState": "manual",
       "localizations": {
