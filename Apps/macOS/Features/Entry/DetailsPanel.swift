@@ -223,9 +223,8 @@ struct DetailsPanel: View {
   /// stands in the order.
   private var mainFields: some View {
     fields {
-      if model.offersPayingFor || model.payingForWay != nil {
-        payingForRows
-      }
+      let _ = model.offersPayingFor
+
       ForEach(environment.entryFieldOrder, id: \.self) { field in
         rows(for: field)
       }
