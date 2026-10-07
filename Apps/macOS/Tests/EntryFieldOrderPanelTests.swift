@@ -85,11 +85,6 @@ final class EntryFieldOrderPanelTests: XCTestCase {
   func testTabInTheLineGoesToTheFirstFieldOfTheOrder() async throws {
     let host = try await EntryHost()
     self.host = host
-    // SwiftUI hands a key press to `onKeyPress` only in the active app: while something else of
-    // this Mac has the screen, Tab goes the way of AppKit's key views and there is nothing to
-    // check.
-    try XCTSkipUnless(
-      NSApp.isActive, "the app is not active: SwiftUI does not move the keyboard in its windows")
     let line = try host.line()
     // The order of 1.1: the amount first.
     XCTAssertTrue(host.window.makeFirstResponder(line))
