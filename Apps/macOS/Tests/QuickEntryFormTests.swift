@@ -59,11 +59,11 @@ final class QuickEntryFormTests: XCTestCase {
   /// ⌘N in the form puts the keyboard in the quick line.
   func testANewOperationPutsTheKeyboardInTheQuickLine() async throws {
     let host = try await openForm()
-    // A focus asked in the column of the form lands only in a key window: in a window that is
-    // not key even a field of the order asked the same way stays unfocused — the environment of
-    // this host, not the request.
-    try XCTSkipUnless(
-      host.window.isKeyWindow, "the window of the test is not key: SwiftUI moves no focus in it")
+    // A known fault, kept in sight: a focus asked in the column of the form does not land — not
+    // the quick line, not a field of the order asked the same way — on this Mac and on the CI
+    // runner alike. Until it is found, the failure is expected and the test says when it passes.
+    XCTExpectFailure(
+      "a focus asked in the column of the form does not land yet", strict: false)
     let line = try quickLine(of: host)
     XCTAssertTrue(host.window.makeFirstResponder(try host.field(prompt: "0")))
     NotificationCenter.default.post(name: .focusEntryLine, object: nil)

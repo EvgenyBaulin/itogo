@@ -68,7 +68,7 @@ stays at 6: nothing is migrated.
   Groceries, Sber, today» with **Write** and **Change**; nothing is written by the first Return.
   Like the entry line, it files the category from your history.
   **Change** leaves it all in the fields below, Esc throws the line away. Under the line — the
-  templates and past operations like it; ⌘N puts the cursor in the line.
+  templates and past operations like it.
 - In that form the kind of operation is a set of tiles, all always in sight — expense, income,
   money back, refund and transfer — two to a row; with an odd number the one you use most
   stretches across the column.
