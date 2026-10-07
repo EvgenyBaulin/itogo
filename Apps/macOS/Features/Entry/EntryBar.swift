@@ -371,7 +371,6 @@ struct EntryBar<Accessory: View>: View {
             .textFieldStyle(.plain)
             .focused($focused)
             .accessibilityIdentifier("entry.line")
-            .guideTarget("entry.line")
             .onSubmit(save)
             // ↓ walks the list of operations from the newest, and only while the line has
             // focus: a window-wide shortcut would swallow arrow keys meant for the list.
@@ -385,6 +384,8 @@ struct EntryBar<Accessory: View>: View {
             // panel open it goes there too, Shift-Tab to the last; with the panel closed
             // Shift-Tab is the window's.
             .onKeyPress(keys: [.tab, PanelTabOrder.backTab]) { key in tab(key) }
+            // Last, over the field and its keys: where the guide frames the line.
+            .guideTarget("entry.line")
 
             Button(action: toggleDetails) {
               Image(systemName: showsDetails ? "chevron.up" : "chevron.down")
