@@ -815,6 +815,11 @@ struct EntryBar<Accessory: View>: View {
       guard let read = try? AmountE4(decimal: typed) else { return }
       amount = read
     }
+    // The quick line of the form reads as the entry line does: history and the category model
+    // file what it says, while the fields typed by hand in the form stay the owner's alone.
+    let assisted = model.assisted
+    if style == .form { model.assisted = true }
+    defer { model.assisted = assisted }
     model.apply(
       parsed, amount: amount, today: environment.today, text: trimmed, whileTyping: true)
   }

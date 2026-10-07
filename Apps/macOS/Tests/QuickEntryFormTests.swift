@@ -78,6 +78,28 @@ final class QuickEntryFormTests: XCTestCase {
     XCTAssertEqual(try host.field(prompt: note).stringValue, "кофе")
   }
 
+  /// The quick line reads as the entry line does: an operation written before with the same
+  /// words brings its category, so the card says where the money goes.
+  func testTheQuickLineTakesTheCategoryFromHistory() async throws {
+    let cafe = cafe
+    let host = try await openForm { environment in
+      var draft = TransactionDraft(
+        kind: .expense, occurredAt: Date().addingTimeInterval(-86_400),
+        amount: AmountE4(whole: 250), note: "кофе")
+      draft.normalizeSinglePart()
+      draft.parts[0].categoryId = cafe.id
+      _ = try environment.transactions!.save(try draft.materialize())
+    }
+    try host.type("кофе 300", into: try quickLine(of: host))
+    try returnInTheQuickLine(of: host)
+    try returnInTheQuickLine(of: host)
+    let saved = try host.transactions.recentEntries(limit: 5)
+    XCTAssertEqual(saved.count, 2, "the second Return wrote, the category came from history")
+    XCTAssertEqual(
+      saved.first { $0.transaction.amountE4 == AmountE4(whole: 300) }?.parts.first?.categoryId,
+      cafe.id)
+  }
+
   /// A line with words the app does not know: the second Return is the usual save, and the usual
   /// save does not write an operation without a category.
   func testALineWithoutACategoryIsNotWrittenByTheSecondReturn() async throws {
