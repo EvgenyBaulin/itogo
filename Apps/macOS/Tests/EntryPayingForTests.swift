@@ -142,7 +142,8 @@ final class EntryPayingForTests: XCTestCase {
   /// every share's.
   func testTheCategoryChosenAfterHalfIsEveryShares() throws {
     let model = makeModel()
-    let parsed = InputLineParser(vocabulary: .empty, calendar: .utc).parse("ужин 1200", today: today)
+    let parsed = InputLineParser(vocabulary: .empty, calendar: .utc).parse(
+      "ужин 1200", today: today)
     model.apply(parsed, amount: AmountE4(whole: 1200), today: today)
     model.choosePayingForWay(.half)
     model.setPayingForPerson(masha.id, slot: 0)

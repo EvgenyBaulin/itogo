@@ -111,7 +111,8 @@ final class AccountEditorTypingTests: XCTestCase {
     settle(0.2)
 
     XCTAssertTrue(
-      window.performKeyEquivalent(with: EntryHost.key("\u{1b}", code: 53)), "Esc reached «Отменить»")
+      window.performKeyEquivalent(with: EntryHost.key("\u{1b}", code: 53)), "Esc reached «Отменить»"
+    )
     settle()
     XCTAssertEqual(finished, [nil], "the form closed saying nothing was saved")
     let stored = try references.paymentMethods(includeArchived: true)

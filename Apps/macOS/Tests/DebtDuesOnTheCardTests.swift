@@ -130,7 +130,8 @@ final class DebtDuesOnTheCardTests: XCTestCase {
     language.choice = .russian
     XCTAssertEqual(language("debts.journal.closesTerm", table: "Debts"), "срок закрыт")
     language.choice = .english
-    XCTAssertNotEqual(language("debts.journal.closesTerm", table: "Debts"), "debts.journal.closesTerm")
+    XCTAssertNotEqual(
+      language("debts.journal.closesTerm", table: "Debts"), "debts.journal.closesTerm")
   }
 
   // MARK: A loan written on its payment day

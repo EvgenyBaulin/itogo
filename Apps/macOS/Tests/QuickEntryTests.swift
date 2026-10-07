@@ -70,7 +70,9 @@ final class QuickEntryTests: XCTestCase {
   /// «ко»: the latest expenses whose words begin so, newest first, each line once and three at
   /// most; income and other words are not offered.
   func testSuggestionsAreTheNewestExpensesOnceAndThreeAtMost() throws {
-    func entry(_ note: String, _ whole: Int64, kind: TransactionKind = .expense) throws
+    func entry(
+      _ note: String, _ whole: Int64, kind: TransactionKind = .expense
+    ) throws
       -> TransactionEntry
     {
       var draft = TransactionDraft(
