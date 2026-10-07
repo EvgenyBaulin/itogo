@@ -13,13 +13,13 @@ final class GuideTests: XCTestCase {
   private let scratch = FileManager.default.temporaryDirectory
     .appendingPathComponent("itogo-guide-\(UUID().uuidString)", isDirectory: true)
   private var defaults: UserDefaults!
-  private var suite = "itogo.tests.guide.\(UUID().uuidString)"
+  private let suite = "itogo.tests.guide.\(UUID().uuidString)"
 
-  override func setUp() {
+  override func setUp() async throws {
     defaults = UserDefaults(suiteName: suite)
   }
 
-  override func tearDown() {
+  override func tearDown() async throws {
     try? FileManager.default.removeItem(at: scratch)
     UserDefaults().removePersistentDomain(forName: suite)
   }

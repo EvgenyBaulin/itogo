@@ -12,22 +12,14 @@ final class AccountOnlyPickerTests: XCTestCase {
 
   private let sber = Bank(name: "Sber")
   private let tbank = Bank(name: "T-Bank")
-  private var sberMain: PaymentMethod!
-  private var black: PaymentMethod!
-  private var savings: PaymentMethod!
-  private var oldSavings: PaymentMethod!
-  private var cash: PaymentMethod!
-
-  override func setUp() {
-    super.setUp()
-    // Sber has one account, called otherwise than the bank; T-Bank has two live ones and one
-    // in the archive; the cash has no bank at all.
-    sberMain = PaymentMethod(name: "Main", isDefault: true, bankId: sber.id)
-    black = PaymentMethod(name: "Black", bankId: tbank.id)
-    savings = PaymentMethod(name: "Savings", kind: .account, bankId: tbank.id)
-    oldSavings = PaymentMethod(name: "Old savings", archived: true, bankId: tbank.id)
-    cash = PaymentMethod(name: "Cash", kind: .cash)
-  }
+  // Sber has one account, called otherwise than the bank; T-Bank has two live ones and one in
+  // the archive; the cash has no bank at all.
+  private lazy var sberMain = PaymentMethod(name: "Main", isDefault: true, bankId: sber.id)
+  private lazy var black = PaymentMethod(name: "Black", bankId: tbank.id)
+  private lazy var savings = PaymentMethod(name: "Savings", kind: .account, bankId: tbank.id)
+  private lazy var oldSavings = PaymentMethod(
+    name: "Old savings", archived: true, bankId: tbank.id)
+  private let cash = PaymentMethod(name: "Cash", kind: .cash)
 
   private var every: [PaymentMethod] { [sberMain, black, savings, oldSavings, cash] }
   private var banks: [Bank] { [sber, tbank] }
