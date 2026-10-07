@@ -359,6 +359,9 @@ struct EntryBar<Accessory: View>: View {
           HStack(spacing: 10) {
             Image(systemName: "plus.circle")
               .foregroundStyle(.secondary)
+              // The tip hangs on the symbol beside the line, not on the field: the field keeps
+              // its keys — Tab into the panel — to itself.
+              .popoverTip(EntryLineTip(), arrowEdge: .top)
             TextField(
               text: $text,
               prompt: Text(verbatim: environment.language("entry.placeholder", table: "Entry"))
@@ -369,7 +372,6 @@ struct EntryBar<Accessory: View>: View {
             .focused($focused)
             .accessibilityIdentifier("entry.line")
             .guideTarget("entry.line")
-            .popoverTip(EntryLineTip(), arrowEdge: .bottom)
             .onSubmit(save)
             // ↓ walks the list of operations from the newest, and only while the line has
             // focus: a window-wide shortcut would swallow arrow keys meant for the list.
