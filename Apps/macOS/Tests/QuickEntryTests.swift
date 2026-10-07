@@ -66,4 +66,30 @@ final class QuickEntryTests: XCTestCase {
       QuickEntrySuggestions.lines(typed: "коф", entries: entries, money: money).count, 1)
     XCTAssertTrue(QuickEntrySuggestions.lines(typed: "", entries: entries, money: money).isEmpty)
   }
+
+  /// «ко»: the latest expenses whose words begin so, newest first, each line once and three at
+  /// most; income and other words are not offered.
+  func testSuggestionsAreTheNewestExpensesOnceAndThreeAtMost() throws {
+    func entry(_ note: String, _ whole: Int64, kind: TransactionKind = .expense) throws
+      -> TransactionEntry
+    {
+      var draft = TransactionDraft(
+        kind: kind, occurredAt: Date(), amount: AmountE4(whole: whole), note: note)
+      draft.normalizeSinglePart()
+      return try draft.materialize()
+    }
+    // Oldest first, as the dataset holds them.
+    let entries = [
+      try entry("кофе", 100), try entry("компот", 90), try entry("кофе", 300),
+      try entry("кофе", 300), try entry("корм", 500), try entry("коврик", 700),
+      try entry("кофе", 999, kind: .income), try entry("чай", 50),
+    ]
+    let lines = QuickEntrySuggestions.lines(
+      typed: "ко", entries: entries, money: AppEnvironment().money)
+    XCTAssertEqual(lines.count, 3, "\(lines)")
+    XCTAssertTrue(lines[0].hasPrefix("коврик"), "\(lines)")
+    XCTAssertTrue(lines[1].hasPrefix("корм"), "\(lines)")
+    XCTAssertTrue(lines[2].hasPrefix("кофе 300"), "\(lines)")
+    XCTAssertFalse(lines.contains { $0.contains("999") }, "income is not offered")
+  }
 }

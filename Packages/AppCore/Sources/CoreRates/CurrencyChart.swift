@@ -87,6 +87,26 @@ public enum CurrencyChart {
     return Int64(truncating: value as NSDecimalNumber)
   }
 
+  /// The points of the pair on `days`, in their order. `rate` gives the rubles per unit of a
+  /// currency on a day — for a day the bank published nothing, the publication that stands that
+  /// day — and is never asked about the ruble. A day a side has no rate of is left out. Nil when
+  /// the task was cancelled on the way.
+  public static func points(
+    of pair: CurrencyPair, on days: [DateOnly],
+    rate: @Sendable (CurrencyCode, DateOnly) async -> Decimal?
+  ) async -> [CurrencyChartPoint]? {
+    var found: [CurrencyChartPoint] = []
+    for day in days {
+      if Task.isCancelled { return nil }
+      let base = pair.base == .rub ? nil : await rate(pair.base, day)
+      let quote = pair.quote == .rub ? nil : await rate(pair.quote, day)
+      if let value = rateE4(of: pair, basePerRub: base, quotePerRub: quote) {
+        found.append(CurrencyChartPoint(day: day, rateE4: value))
+      }
+    }
+    return found
+  }
+
   /// The rate now and its change over the period: the last point against the first. The change
   /// in basis points of the first rate; nil with fewer than two points.
   public static func summary(

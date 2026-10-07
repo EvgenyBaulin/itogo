@@ -105,16 +105,11 @@ struct CurrencyChartCard: View {
       points = []
       return
     }
-    var found: [CurrencyChartPoint] = []
-    for day in CurrencyChart.days(period, today: environment.today, calendar: environment.calendar)
-    {
-      if Task.isCancelled { return }
-      let base = pair.base == .rub ? nil : await rates.rate(for: pair.base, on: day)?.perUnit
-      let quote = pair.quote == .rub ? nil : await rates.rate(for: pair.quote, on: day)?.perUnit
-      if let value = CurrencyChart.rateE4(of: pair, basePerRub: base, quotePerRub: quote) {
-        found.append(CurrencyChartPoint(day: day, rateE4: value))
-      }
+    let days = CurrencyChart.days(period, today: environment.today, calendar: environment.calendar)
+    let found = await CurrencyChart.points(of: pair, on: days) { currency, day in
+      await rates.rate(for: currency, on: day)?.perUnit
     }
+    guard let found else { return }
     points = found
   }
 
