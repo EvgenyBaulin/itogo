@@ -438,11 +438,9 @@ struct MoneyBackConfirmSheet: View {
       owed, purchases: purchases, rates: repricing, calendar: environment.calendar)
   }
 
-  /// The rate typed, when it is a number above zero.
+  /// The rate typed, when it is a number or a formula above zero (`RateText`).
   private var manualRate: Decimal? {
-    let trimmed = typedRate.trimmingCharacters(in: .whitespaces)
-    guard let value = DecimalMath.parse(trimmed), value > 0 else { return nil }
-    return value
+    MoneyBackRateRows.typedRate(typedRate)
   }
 
   // MARK: Summary
@@ -634,15 +632,10 @@ struct MoneyBackConfirmSheet: View {
             .font(.caption).foregroundStyle(.secondary)
           HStack(spacing: 6) {
             Text(verbatim: "1 \(debt.currency.code) =").foregroundStyle(.secondary)
-            TextField(
+            RateTextField(
+              title: environment.format("moneyBack.debtRate", table: "Entry", debt.name),
               text: $debtRateText,
-              prompt: Text(
-                verbatim: defaultDebtRate(debt).map { MoneyBackRateRows.shown($0) } ?? "0.00")
-            ) {
-              Text(verbatim: environment.format("moneyBack.debtRate", table: "Entry", debt.name))
-            }
-            .labelsHidden()
-            .frame(width: 110)
+              prompt: defaultDebtRate(debt).map { MoneyBackRateRows.shown($0) } ?? "0.00")
             Text(verbatim: "RUB").foregroundStyle(.secondary)
           }
         }

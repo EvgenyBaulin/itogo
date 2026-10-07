@@ -11,7 +11,8 @@ struct LimitsCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: t("overview.limits"), state: compute.states.data, fillsHeight: true,
+      title: OverviewTileText.name(of: .limits, environment), state: compute.states.data,
+      fillsHeight: true,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let lines = Self.lines(snapshot, environment)

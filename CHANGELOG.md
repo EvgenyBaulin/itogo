@@ -9,7 +9,29 @@ and both move forward only.
 
 ## [1.3.1] — 2026-10-07
 
-Fixes found by tests after 1.3.0.
+Fixes found by tests after 1.3.0, a tidy detailed form, merging cards and banks, and rates as
+formulas.
+
+### Added
+
+- **Merging cards and banks.** A card can be merged with another card of its account
+  (**Merge with…** in its menu): its operations, payments and cashback rules go to the kept card,
+  which also takes its names. Banks can be merged too: every account of one goes under the other.
+  One step of ⌘Z each; no money moves.
+- An exchange rate can be typed as a formula, «95,5/1,02»; what it comes to shows beside the
+  field.
+- The tiles of Overview are reordered by dragging in Settings → Appearance; the arrows are gone.
+- Cashback received before the bank's payout day counts, by default, for the month before:
+  cashback for September that comes on 8 October is September's income.
+
+### Changed
+
+- The detailed form at the right of the window is laid out as one tidy column: a label above
+  each field, every field the width of the column, buttons that wrap, and **Save** always at the
+  bottom.
+- Accounts merge only within one bank; to merge accounts of two banks, merge the banks first.
+- Every card of Overview is titled by the name of its tile: «Spending forecast to the end of the
+  month».
 
 ### Fixed
 

@@ -535,6 +535,64 @@ final class ForeignCurrencyTests: XCTestCase {
 
     XCTAssertEqual(model.draft.rate, Decimal(string: "81.43")!)
   }
+
+  /// The rate of the ↓ panel can be a formula, like the amount: typed key by key the way the
+  /// field takes keys — its text rewritten only when the rate changes —, the half-typed formula
+  /// stays as typed and leaves the rate as it was, the whole one is the rate, by hand, with every
+  /// digit a rate keeps; the field says what the formula comes to, and Enter writes the rate.
+  func testARateCanBeTypedAsAFormula() throws {
+    let cases: [(String, Decimal)] = [
+      ("95,5/1,02", Decimal(string: "93.6274509804")!),
+      ("1/0.0105", Decimal(string: "95.2380952381")!),
+      ("(90+92)/2", Decimal(91)),
+    ]
+    for (typing, expected) in cases {
+      let model = try makeModel()
+      model.draft.currency = usd
+      var shown = ""
+      for key in typing {
+        let typed = shown + String(key)
+        let before = model.draft.rate
+        if !RateField.reads(typed, as: before) { model.setManualRate(typed) }
+        shown =
+          model.draft.rate == before
+          ? typed : RateField.text(afterTyping: typed, rate: model.draft.rate)
+      }
+      XCTAssertEqual(shown, typing)
+      XCTAssertEqual(model.draft.rate, expected, typing)
+      XCTAssertEqual(model.draft.rateSource, .manual, typing)
+      XCTAssertTrue(RateField.reads(typing, as: expected), typing)
+      XCTAssertEqual(RateField.formulaResult(typing), expected, typing)
+      XCTAssertEqual(RateField.settledText(typing, rate: expected), NumberText.plain(expected))
+    }
+    // A plain rate is no formula: nothing to say beside it.
+    XCTAssertNil(RateField.formulaResult("81,43"))
+    XCTAssertNil(RateField.formulaResult("95/"))
+  }
+
+  /// A formula that comes to zero or less, or divides by zero, is no rate: the rate stays.
+  func testAFormulaThatIsNoRateLeavesTheRate() throws {
+    let model = try makeModel()
+    model.draft.currency = usd
+    model.setManualRate("81,43")
+    for text in ["1-1", "90-92", "1/0", "95/", "(90+92"] {
+      model.setManualRate(text)
+      XCTAssertEqual(model.draft.rate, Decimal(string: "81.43")!, text)
+      XCTAssertEqual(RateField.settledText(text, rate: model.draft.rate), text)
+    }
+  }
+
+  /// The money-back sheet and «Провести» read their rates the same way.
+  func testTheOtherRateFieldsReadAFormulaToo() {
+    XCTAssertEqual(MoneyBackRateRows.typedRate("(90+92)/2"), Decimal(91))
+    XCTAssertEqual(MoneyBackRateRows.typedRate("83,125"), Decimal(string: "83.125")!)
+    XCTAssertNil(MoneyBackRateRows.typedRate("1-1"))
+    XCTAssertNil(MoneyBackRateRows.typedRate("95/"))
+    XCTAssertEqual(RateTextField.settled("95,5/1,02"), "93.6274509804")
+    XCTAssertEqual(RateTextField.settled("81,40"), "81.4")
+    XCTAssertEqual(RateTextField.settled("95/"), "95/")
+    XCTAssertEqual(RateTextField.settled(""), "")
+  }
 }
 
 /// Buying on credit: the expense is recorded once, now, and the debt takes the payments.

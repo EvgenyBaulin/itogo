@@ -176,6 +176,7 @@ struct CashbackSettingsStorageTests {
     let target = PaymentMethod(name: "Bonus")
     let account = PaymentMethod(name: "Black", cashbackPointsAccountId: source.id)
     for row in [main, source, target, account] { try insert(row, into: stack) }
+    try TestSupport.fileUnderOneBank([source.id, target.id], stack: stack)
     let plan = AccountMergePlan(sourceId: source.id, target: target, at: Date())
     try repository.merge(plan, calendar: .utc)
     #expect(try stored(account.id, in: stack)?.cashbackPointsAccountId == target.id)
@@ -190,6 +191,7 @@ struct CashbackSettingsStorageTests {
     let source = PaymentMethod(name: "Bonus")
     let target = PaymentMethod(name: "Black", cashbackPointsAccountId: source.id)
     for row in [main, source, target] { try insert(row, into: stack) }
+    try TestSupport.fileUnderOneBank([source.id, target.id], stack: stack)
     let plan = AccountMergePlan(sourceId: source.id, target: target, at: Date())
     try repository.merge(plan, calendar: .utc)
     #expect(try stored(target.id, in: stack)?.cashbackPointsAccountId == nil)

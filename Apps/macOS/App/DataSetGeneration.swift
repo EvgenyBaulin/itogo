@@ -180,17 +180,17 @@
         return min(max(drawn, earliest), now ?? drawn)
       }
 
-      // The old card, and its merge into the main card.
+      // The old card, and its merge into the main card. Only accounts of one bank merge, so the
+      // old card stands under the main card's bank, as the database has filed it.
       let mergedAt = moment(daysBeforeEnd: 45, hour: 10)
-      // Under a bank of its own name, as every account is.
-      let oldBank = Bank(
-        id: BanksMigration.bankId(forAccount: ids.oldCard), name: word("Old card", "Старая карта"))
+      let main =
+        try AccountRepository(writer: stack.writer).accounts(includeArchived: true)
+        .first { $0.id == roles.main.id } ?? roles.main
       let oldCard = PaymentMethod(
         id: ids.oldCard, name: word("Old card", "Старая карта"), kind: .card, currency: .rub,
-        groupId: roles.main.groupId, bankId: oldBank.id)
+        groupId: main.groupId, bankId: main.bankId)
       _ = try planning.apply(
-        PlanningChange(
-          upsert: PlanningRows(paymentMethods: [oldCard], banks: [oldBank]), at: mergedAt))
+        PlanningChange(upsert: PlanningRows(paymentMethods: [oldCard]), at: mergedAt))
       let balances = AccountBalances.build(
         entries: set.entries, transfers: set.transfers, debtEntries: set.debtEntries,
         debts: Dictionary(set.debts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
@@ -198,7 +198,7 @@
         accounts: set.paymentMethods + [oldCard], tree: CategoryTree(set.categories),
         now: mergedAt, calendar: calendar)
       var (plan, _) = AccountMerge.plan(
-        source: oldCard, target: roles.main, transfers: set.transfers, balances: balances,
+        source: oldCard, target: main, transfers: set.transfers, balances: balances,
         at: mergedAt)
       plan.target.aliases.append(oldCard.name)
       try AccountRepository(writer: stack.writer).merge(plan, calendar: calendar)

@@ -431,6 +431,97 @@ final class SettingsAccessibilityTests: XCTestCase {
     }
   }
 
+  /// Settings → Оформление → «Плитки «Обзора»»: the tiles shown are moved by dragging them —
+  /// the list takes a drag —, no arrow buttons are left in the rows, and VoiceOver moves a tile
+  /// by the actions «Выше» and «Ниже» of its row: the first tile has no «Выше», the last shown
+  /// no «Ниже», a tile not shown neither.
+  func testTheTilesAreDraggedAndVoiceOverMovesThemByActions() throws {
+    environment.overviewTiles = [.monthToDate, .limits, .event]
+    let deps = AppDependencies(
+      environment: environment, store: TransactionsStore(),
+      compute: ComputeStore(calendar: .system))
+    let window = show(
+      AppearanceSettingsView().appDependencies(deps), size: CGSize(width: 620, height: 900))
+    let up = environment.language("settings.entry.moveUp", table: "Settings")
+    let down = environment.language("settings.entry.moveDown", table: "Settings")
+    func row(_ tile: OverviewTile) -> NSObject? {
+      (Self.everything(in: window) + Self.elements(inRowsOf: window) { _ in true }).first {
+        Self.attribute($0, "accessibilityIdentifier") as? String
+          == "settings.tiles.\(tile.rawValue)"
+      }
+    }
+    waitFor { row(.limits) != nil }
+    func actions(_ tile: OverviewTile) -> [String] {
+      guard let element = row(tile) else { return [] }
+      let custom =
+        Self.attribute(element, "accessibilityCustomActions") as? [NSAccessibilityCustomAction]
+      return (custom ?? []).map(\.name)
+    }
+    XCTAssertEqual(Set(actions(.limits)), [up, down], "the middle tile")
+    XCTAssertEqual(actions(.monthToDate), [down], "the first tile")
+    XCTAssertEqual(actions(.event), [up], "the last tile shown")
+    XCTAssertEqual(actions(.freeMoney), [], "a tile not shown")
+
+    let buttons =
+      (Self.elements(in: window, role: "AXButton")
+      + Self.elements(inRowsOf: window, role: "AXButton")).map(Self.spoken)
+    XCTAssertFalse(
+      buttons.contains { $0.contains(up) || $0.contains(down) }, "an arrow is left: \(buttons)")
+
+    // The grouped form is drawn by SwiftUI, not a table, so a list's move would do nothing in
+    // it: each tile shown is a place to drop a tile on — AppKit holds one dragging destination
+    // for each —, and a tile not shown is not.
+    func views(in view: NSView) -> [NSView] { [view] + view.subviews.flatMap(views) }
+    let destinations = (window.contentView.map(views) ?? []).filter {
+      String(describing: type(of: $0)).contains("DraggingDestination")
+        && !$0.registeredDraggedTypes.isEmpty
+    }
+    XCTAssertEqual(destinations.count, 3, "a drop place for each tile shown")
+
+    let element = try XCTUnwrap(row(.limits))
+    let custom =
+      Self.attribute(element, "accessibilityCustomActions") as? [NSAccessibilityCustomAction]
+    let moveUp = try XCTUnwrap(custom?.first { $0.name == up })
+    _ = moveUp.handler?()
+    waitFor { environment.overviewTiles == [.limits, .monthToDate, .event] }
+    XCTAssertEqual(environment.overviewTiles, [.limits, .monthToDate, .event])
+  }
+
+  /// Every card of Overview is titled by the name its tile has in Settings, in both languages:
+  /// the forecast of spending says it is about spending — «Прогноз расхода до конца месяца».
+  func testEveryCardOfOverviewIsTitledByTheNameOfItsTile() throws {
+    let deps = AppDependencies(
+      environment: environment, store: TransactionsStore(),
+      compute: ComputeStore(calendar: .system))
+    let before = environment.language.choice
+    defer { environment.language.choice = before }
+    for choice in [AppLanguage.Choice.russian, .english] {
+      environment.language.choice = choice
+      for tile in OverviewTile.allCases {
+        let name = OverviewTileText.name(of: tile, environment)
+        let window = show(
+          OverviewCardView(tile: tile, actions: OperationActions())
+            .appDependencies(deps).padding(),
+          size: CGSize(width: 420, height: 320))
+        var heard: [String] = []
+        waitFor {
+          heard = Self.everything(in: window).flatMap(Self.words)
+          return heard.contains(name)
+        }
+        XCTAssertTrue(
+          heard.contains(name), "\(tile), \(choice.rawValue): «\(name)» not in \(heard)")
+        window.close()
+      }
+    }
+    environment.language.choice = .russian
+    XCTAssertEqual(
+      OverviewTileText.name(of: .spendingForecast, environment), "Прогноз расхода до конца месяца")
+    environment.language.choice = .english
+    XCTAssertEqual(
+      OverviewTileText.name(of: .spendingForecast, environment),
+      "Spending forecast to the end of the month")
+  }
+
   // MARK: Helpers
 
   /// The texts of one element as VoiceOver can read them, each on its own.

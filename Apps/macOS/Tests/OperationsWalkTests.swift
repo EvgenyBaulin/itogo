@@ -178,9 +178,10 @@ final class EntryWalkTests: XCTestCase {
     // SwiftUI follows the keyboard of a window only while its app is the active one: the host of
     // the tests is not when something else of this Mac has the screen, and the keyboard then
     // stays where the test put it or comes back, as the timing falls. Nothing to check there.
-    // Only the active app: a window that merely was key let the test run once in a full run
-    // with the app in the background, and the keyboard stayed put. The message of the check
-    // says which it was, should it fail again.
+    // SwiftUI moves the keyboard of a window only where it builds its accessibility tree: on
+    // the runner of CI, whose screen has none, the line stayed without it with the app active and
+    // its window key. And only in the active app.
+    try TestEnvironment.requireSwiftUIAccessibility()
     try XCTSkipUnless(
       NSApp.isActive, "the app is not active: SwiftUI does not move the keyboard in its windows")
     let line = try host.line()

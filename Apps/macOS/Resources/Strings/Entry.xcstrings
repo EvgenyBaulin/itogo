@@ -1990,6 +1990,23 @@
         }
       }
     },
+    "entry.periodMonth.cashback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback for the month before: the bank pays it the month after. Month: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэшбэк за прошлый месяц: банк платит его в следующем. Месяц: %@"
+          }
+        }
+      }
+    },
     "entry.place": {
       "extractionState": "manual",
       "localizations": {

@@ -83,7 +83,16 @@ enum ExpressionLexer {
     }
   }
 
-  static func tokenize(_ characters: [Character]) throws -> [ExpressionToken] {
+  /// How the numbers of a formula are read: as amounts typed by hand (`TypedNumber`, the `k` of
+  /// thousands) or as rates (`DecimalMath.parse`: a lone separator is the decimal one, no `k`).
+  enum NumberRule {
+    case amount
+    case rate
+  }
+
+  static func tokenize(
+    _ characters: [Character], numbers rule: NumberRule = .amount
+  ) throws -> [ExpressionToken] {
     var tokens: [ExpressionToken] = []
     var index = 0
     while index < characters.count {
@@ -97,7 +106,9 @@ enum ExpressionLexer {
         || (decimalSeparators.contains(character) && index + 1 < characters.count
           && isDigit(characters[index + 1]))
       if startsNumber {
-        let scanned = try scanNumber(characters, from: index)
+        let scanned =
+          rule == .amount
+          ? try scanNumber(characters, from: index) : try scanRate(characters, from: index)
         tokens.append(
           ExpressionToken(
             kind: .number(scanned.value, exact: scanned.exact), position: index,
@@ -119,11 +130,29 @@ enum ExpressionLexer {
     return tokens
   }
 
-  /// Reads one number starting at `start` and returns it with the offset just past it and
-  /// its canonical text.
-  private static func scanNumber(
+  /// Reads one number of a rate formula starting at `start`: the digits, separators and
+  /// grouping spaces an amount takes, read by the rule of rates — «83,125» is 83.125. A `k`
+  /// after it is no suffix here: it is left to fail as the character it is.
+  private static func scanRate(
     _ characters: [Character], from start: Int
   ) throws -> (value: Decimal, exact: ExactFraction?, end: Int, canonical: String) {
+    let (digits, end) = scanDigits(characters, from: start)
+    guard let value = DecimalMath.parse(digits) else {
+      throw CoreError.malformedExpression(position: start)
+    }
+    let written = NumberText.plain(value)
+    let halves = written.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+    let exact = ExactFraction(
+      integerDigits: String(halves[0]),
+      fractionDigits: halves.count > 1 ? String(halves[1]) : "")
+    return (value, exact, end, written)
+  }
+
+  /// The digits, separators and grouping spaces of one number from `start`, the spaces left
+  /// out, and the offset just past them.
+  private static func scanDigits(
+    _ characters: [Character], from start: Int
+  ) -> (digits: String, end: Int) {
     var index = start
     var digits = ""
     // Spaces group thousands before the decimal part only. Once a `.` or `,` has been read,
@@ -148,6 +177,16 @@ enum ExpressionLexer {
         break
       }
     }
+    return (digits, index)
+  }
+
+  /// Reads one number starting at `start` and returns it with the offset just past it and
+  /// its canonical text.
+  private static func scanNumber(
+    _ characters: [Character], from start: Int
+  ) throws -> (value: Decimal, exact: ExactFraction?, end: Int, canonical: String) {
+    let (digits, scanned) = scanDigits(characters, from: start)
+    var index = scanned
 
     var multiplier = Decimal(1)
     var suffix = ""

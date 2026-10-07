@@ -6,8 +6,9 @@ import SwiftUI
 ///
 /// The banks come first, each with how many accounts and cards stand under it: «bank → account →
 /// card». A new bank brings its first account and card; an account is added to a bank from its
-/// menu; a bank goes to the archive once every account under it has, and is deleted only with no
-/// account under it — an account deleted leaves its bank where it was.
+/// menu; a bank is merged into another — its accounts move under that one, one step of ⌘Z —, goes
+/// to the archive once every account under it has, and is deleted only with no account under it —
+/// an account deleted leaves its bank where it was. Accounts merge only within one bank.
 ///
 /// The accounts are listed the way every menu lists them — the main account first and marked,
 /// then in the order the owner dragged them to, alphabetical until then — and can be dragged,
@@ -61,6 +62,10 @@ struct AccountsSettingsView: View {
     case card(PaymentCard?, accountId: UUID)
     /// The cashback rules of a card, or of an account without cards.
     case cashback(accountId: UUID, CashbackHolder)
+    /// «Объединить с…» of a card: into another live card of its account.
+    case mergeCard(PaymentCard)
+    /// «Объединить с…» of a bank: into another live bank.
+    case mergeBank(Bank)
 
     /// What the main account is leaving for: the archive, or a deletion of these accounts —
     /// the main one and any others picked with it.
@@ -81,6 +86,8 @@ struct AccountsSettingsView: View {
       case .card(let card, let accountId):
         "card.\(card?.id.uuidString ?? "new").\(accountId.uuidString)"
       case .cashback(let accountId, let holder): "cashback.\(accountId.uuidString).\(holder)"
+      case .mergeCard(let card): "mergeCard.\(card.id.uuidString)"
+      case .mergeBank(let bank): "mergeBank.\(bank.id.uuidString)"
       }
     }
   }
@@ -399,6 +406,11 @@ struct AccountsSettingsView: View {
     Button(environment.language("card.cashback", table: CardText.table)) {
       sheet = .cashback(accountId: card.accountId, .card(card.id))
     }
+    if liveCards(of: card.accountId).count > 1 {
+      Button(environment.language("card.merge", table: CardText.table)) {
+        sheet = .mergeCard(card)
+      }
+    }
     Divider()
     Button(environment.language("card.archive", table: CardText.table)) {
       perform(cardActions.archive(card.id))
@@ -546,6 +558,9 @@ struct AccountsSettingsView: View {
   private func bankMenuItems(_ bank: Bank) -> some View {
     Button(t("accounts.edit")) { sheet = .bank(bank) }
     Button(t("bank.addAccount")) { sheet = .accountInBank(bank.id) }
+    if BankMerge.offered(for: bank, banks: banks) {
+      Button(t("accounts.mergeWith")) { sheet = .mergeBank(bank) }
+    }
     Divider()
     Button(t("accounts.archive")) { perform(actions.archiveBank(bank.id)) }
     Button(t("accounts.delete"), role: .destructive) { askToDelete(bank) }
@@ -790,6 +805,18 @@ struct AccountsSettingsView: View {
     case .cashback(let accountId, let holder):
       CashbackRulesSheet(accountId: accountId, holder: holder) {
         self.sheet = nil
+        reload()
+      }
+    case .mergeCard(let card):
+      CardMergeSheet(card: card) { merged in
+        self.sheet = nil
+        if merged { cardRefusal = nil }
+        reload()
+      }
+    case .mergeBank(let bank):
+      BankMergeSheet(bank: bank) { merged in
+        self.sheet = nil
+        if merged { refusal = nil }
         reload()
       }
     }

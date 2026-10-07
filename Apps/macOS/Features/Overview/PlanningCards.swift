@@ -14,7 +14,7 @@ struct CanSaveCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: t("overview.canSave"), state: state, fillsHeight: true,
+      title: OverviewTileText.name(of: .canSave, environment), state: state, fillsHeight: true,
       emptyReason: t("advice.reason.noIncome"), retry: { compute.retry(ComputeStep.forecast) }
     ) { canSave in
       VStack(alignment: .leading, spacing: 4) {
@@ -65,7 +65,7 @@ struct UpcomingPaymentsCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("overview.upcoming", table: "Planning"),
+      title: OverviewTileText.name(of: .upcoming, environment),
       state: compute.states.data, fillsHeight: true, retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let upcoming = snapshot.planning.upcoming
@@ -141,7 +141,8 @@ struct ExpectedIncomeCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: t("overview.expected"), state: compute.states.data, fillsHeight: true,
+      title: OverviewTileText.name(of: .expectedIncome, environment), state: compute.states.data,
+      fillsHeight: true,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let open = snapshot.planning.expected.filter { !$0.isFulfilled }
@@ -180,7 +181,8 @@ struct EventCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: t("overview.event"), state: compute.states.data, fillsHeight: true,
+      title: OverviewTileText.name(of: .event, environment), state: compute.states.data,
+      fillsHeight: true,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let events = snapshot.planning.events

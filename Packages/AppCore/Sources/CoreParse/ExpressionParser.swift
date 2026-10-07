@@ -33,30 +33,39 @@ public enum ExpressionEvaluator: Sendable {
   ///   `CoreError.malformedExpression(position:)` with the offset of the offending
   ///   character (the length of the text when the formula ends too early).
   public static func evaluate(_ text: String) throws -> Decimal {
+    try worked(text, numbers: .amount, fractionDigits: fractionDigits)
+  }
+
+  /// The formula worked out with its numbers read by `rule` and the result rounded once, half
+  /// away from zero, to `scale` fraction digits — four for an amount, more for a rate
+  /// (`RateText`). The limits of an amount hold for both.
+  static func worked(
+    _ text: String, numbers rule: ExpressionLexer.NumberRule, fractionDigits scale: Int
+  ) throws -> Decimal {
     let characters = Array(text)
     guard characters.contains(where: { !ExpressionLexer.isSpace($0) }) else {
       throw CoreError.emptyInput
     }
-    let tokens = try ExpressionLexer.tokenize(characters)
+    let tokens = try ExpressionLexer.tokenize(characters, numbers: rule)
     guard !tokens.isEmpty else { throw CoreError.emptyInput }
     var parser = ExpressionParser(tokens: tokens, endPosition: characters.count)
     let value = try parser.parseExpression()
     try parser.expectEnd()
     let rounded: Decimal
-    if let exact = value.exact {
+    if let exact = value.exact, let units = exact.units(scale: scale) {
       // Rounded on the exact value: a tie behind a quotient that never ends goes away from
       // zero, as it would on paper.
-      guard let units = exact.units(scale: fractionDigits) else {
-        throw CoreError.amountOutOfRange
-      }
       rounded = DecimalMath.round(
         Decimal(
-          sign: units < 0 ? .minus : .plus, exponent: -fractionDigits,
+          sign: units < 0 ? .minus : .plus, exponent: -scale,
           significand: Decimal(units.magnitude)),
-        scale: fractionDigits)
+        scale: scale)
+    } else if value.exact != nil, scale == fractionDigits {
+      // An amount whose units do not fit is too large for any amount.
+      throw CoreError.amountOutOfRange
     } else {
       guard !value.decimal.isNaN else { throw CoreError.amountOutOfRange }
-      rounded = DecimalMath.round(value.decimal, scale: fractionDigits)
+      rounded = DecimalMath.round(value.decimal, scale: scale)
     }
     guard rounded.magnitude <= maxMagnitude else { throw CoreError.amountOutOfRange }
     return rounded

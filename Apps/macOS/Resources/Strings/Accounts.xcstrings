@@ -1771,6 +1771,23 @@
         }
       }
     },
+    "account.refusal.otherBank": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only accounts of one bank are merged. To bring two banks together, merge the banks first in Settings → Accounts."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединяются только счета одного банка. Чтобы свести два банка вместе, сначала объедините банки в «Настройки → Счета»."
+          }
+        }
+      }
+    },
     "account.refusal.otherNameTaken": {
       "extractionState": "manual",
       "localizations": {
@@ -3602,6 +3619,212 @@
         }
       }
     },
+    "bank.merge.accounts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Moving: %lld account"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Moving: %lld accounts"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Перейдут %lld счёта"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Перейдут %lld счетов"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Перейдёт %lld счёт"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Перейдут %lld счёта"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "bank.merge.archivedAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (archived)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (в архиве)"
+          }
+        }
+      }
+    },
+    "bank.merge.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединить"
+          }
+        }
+      }
+    },
+    "bank.merge.into": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "With bank"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "С банком"
+          }
+        }
+      }
+    },
+    "bank.merge.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every account of “%1$@”, archived ones too, moves under “%2$@”, and “%1$@” is deleted. “%2$@” keeps its name."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все счета банка «%1$@», и архивные тоже, перейдут в банк «%2$@», а банк «%1$@» будет удалён. Название «%2$@» останется прежним."
+          }
+        }
+      }
+    },
+    "bank.merge.money": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No money moves and every account keeps its name and its balance. Accounts of one bank can then be merged with each other."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги никуда не переходят, у каждого счёта остаются его название и остаток. После этого счета одного банка можно объединять между собой."
+          }
+        }
+      }
+    },
+    "bank.merge.noAccounts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bank has no accounts: it is only deleted."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В банке нет счетов: он будет просто удалён."
+          }
+        }
+      }
+    },
+    "bank.merge.refusal.archived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A bank in the archive is not merged: bring it back first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк в архиве не объединяется: сначала верните его."
+          }
+        }
+      }
+    },
+    "bank.merge.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge the bank “%@”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединить банк «%@»"
+          }
+        }
+      }
+    },
+    "bank.merge.undo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘Z brings the bank back as it was."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘Z вернёт банк как был."
+          }
+        }
+      }
+    },
     "card.add": {
       "extractionState": "manual",
       "localizations": {
@@ -3870,6 +4093,176 @@
           "stringUnit": {
             "state": "translated",
             "value": "Карта"
+          }
+        }
+      }
+    },
+    "card.merge": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge with…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединить с…"
+          }
+        }
+      }
+    },
+    "card.merge.cashback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The expected cashback of past operations is worked out again by the rules of “%@”."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидаемый кэшбэк прошлых операций пересчитается по правилам «%@»."
+          }
+        }
+      }
+    },
+    "card.merge.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединить"
+          }
+        }
+      }
+    },
+    "card.merge.into": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Into the card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "С картой"
+          }
+        }
+      }
+    },
+    "card.merge.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operations of “%1$@” (in the bin too) and its scheduled payments move to “%2$@”, and its name and other names become other names of “%2$@”. The card “%1$@” is deleted. No money moves: both cards are of one account, so balances and reconciliations stay as they are. ⌘Z brings everything back."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Операции карты «%1$@» (и в корзине) и её платежи перейдут на «%2$@», а её название и другие названия станут другими названиями «%2$@». Карта «%1$@» удалится. Деньги не двигаются: обе карты одного счёта, остатки и сверки не меняются. ⌘Z вернёт всё."
+          }
+        }
+      }
+    },
+    "card.merge.refusal.archived": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A card in the archive is not merged: bring it back first."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карту в архиве объединить нельзя — сначала верните её."
+          }
+        }
+      }
+    },
+    "card.merge.refusal.otherAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only cards of one account can be merged."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединить можно только карты одного счёта."
+          }
+        }
+      }
+    },
+    "card.merge.rulesDropped": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rules for a month and category the kept card already has a rule for — its own stays, these are deleted: %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правил на месяц и категорию, для которых у оставшейся карты уже есть своё правило, — остаётся её, эти удалятся: %lld"
+          }
+        }
+      }
+    },
+    "card.merge.rulesMoved": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cashback rules moving to the kept card: %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правил кэшбэка перейдёт на оставшуюся карту: %lld"
+          }
+        }
+      }
+    },
+    "card.merge.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merge the card “%@”"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объединить карту «%@»"
           }
         }
       }

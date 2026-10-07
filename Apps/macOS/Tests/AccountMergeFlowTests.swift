@@ -291,6 +291,18 @@ final class AccountMergeFlowTests: XCTestCase {
 
   // MARK: Helpers
 
+  /// Every account of these tests is under one bank: only accounts of one bank merge.
+  private var bank: Bank?
+
+  private func theBank() throws -> UUID {
+    if let bank { return bank.id }
+    let made = Bank(name: "Банк")
+    _ = try XCTUnwrap(environment.planning).apply(
+      PlanningChange(upsert: PlanningRows(banks: [made])))
+    bank = made
+    return made.id
+  }
+
   @discardableResult
   private func account(
     _ name: String, main: Bool = false, kind: PaymentMethodKind = .card,
@@ -298,7 +310,7 @@ final class AccountMergeFlowTests: XCTestCase {
   ) throws -> PaymentMethod {
     let account = PaymentMethod(
       name: name, kind: kind, currency: currencies.first, aliases: aliases, isDefault: main,
-      groupId: group, otherCurrencies: Array(currencies.dropFirst()))
+      groupId: group, otherCurrencies: Array(currencies.dropFirst()), bankId: try theBank())
     try XCTUnwrap(environment.references).save(account)
     return account
   }

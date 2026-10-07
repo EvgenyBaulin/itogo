@@ -94,6 +94,7 @@ struct AccountSeamTests {
           cashbackRules: [
             targetAlways, targetGroceries, sourceAlways, sourceSeptember, sourceCardGroceries,
           ])))
+    try TestSupport.fileUnderOneBank([target.id, source.id], stack: stack)
     try TransactionRepository(writer: stack.writer).save(
       TransactionEntry(
         transaction: CoreKit.Transaction(

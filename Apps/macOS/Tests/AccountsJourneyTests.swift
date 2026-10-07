@@ -377,6 +377,7 @@ final class AccountsJourneyTests: XCTestCase {
     XCTAssertEqual(before.planning.freeMoney.main, AmountE4(whole: sberAfter + cashAfter))
 
     let current = try await freshBooks()
+    try inOneBank(books.cash.id, books.sber.id)
     let preview = try XCTUnwrap(
       accounts.mergePreview(books.cash.id, into: books.sber.id, books: current))
     XCTAssertEqual(preview.deletedTransfers, 1)
@@ -412,6 +413,7 @@ final class AccountsJourneyTests: XCTestCase {
     XCTAssertEqual(before.planning.freeMoney.main, AmountE4(whole: 10_000 + 250 * 90))
 
     let books = try await freshBooks()
+    try inOneBank(wise.id, sber.id)
     let preview = try XCTUnwrap(accounts.mergePreview(wise.id, into: sber.id, books: books))
     XCTAssertTrue(preview.needsBalance.isEmpty, "\(preview.needsBalance)")
     XCTAssertEqual(accounts.merge(preview), .done)
@@ -1137,6 +1139,7 @@ final class AccountsJourneyTests: XCTestCase {
       from: books.sber, .rub, to: books.cash, .rub, sent: 1_000,
       at: noon.addingTimeInterval(-3_600))
     let current = try await freshBooks()
+    try inOneBank(spare.id, books.freedom.id)
     let preview = try XCTUnwrap(
       accounts.mergePreview(spare.id, into: books.freedom.id, books: current))
     XCTAssertEqual(accounts.merge(preview), .done)
@@ -1401,6 +1404,7 @@ final class AccountsJourneyTests: XCTestCase {
   func testAMergeIsNoCountForWhatHappenedBeforeIt() async throws {
     let books = try await openTheBooks()
     let current = try await freshBooks()
+    try inOneBank(books.cash.id, books.sber.id)
     let preview = try XCTUnwrap(
       accounts.mergePreview(books.cash.id, into: books.sber.id, books: current))
     XCTAssertEqual(accounts.merge(preview), .done)
@@ -1734,6 +1738,7 @@ final class AccountsJourneyTests: XCTestCase {
   func testAnAccountOfAGroupLeftOutMergedIntoTheSummaryBringsItsMoneyIn() async throws {
     let books = try await openTheBooks()
     let current = try await freshBooks()
+    try inOneBank(books.freedom.id, books.sber.id)
     let preview = try XCTUnwrap(
       accounts.mergePreview(books.freedom.id, into: books.sber.id, books: current))
     XCTAssertTrue(preview.needsBalance.isEmpty, "every balance of Freedom is counted")
@@ -2035,6 +2040,7 @@ final class AccountsJourneyTests: XCTestCase {
   func testTheMainAccountMergedIntoAnotherPassesTheFlagAndKeepsTheMoney() async throws {
     let books = try await openTheBooks()
     let current = try await freshBooks()
+    try inOneBank(books.sber.id, books.cash.id)
     let preview = try XCTUnwrap(
       accounts.mergePreview(books.sber.id, into: books.cash.id, books: current))
     XCTAssertEqual(accounts.merge(preview), .done)
@@ -2130,6 +2136,7 @@ final class AccountsJourneyTests: XCTestCase {
     XCTAssertEqual(overdue.planning.freeMoney.grey, AmountE4(whole: 98_000))
 
     let both = try await freshBooks()
+    try inOneBank(cash.id, sber.id)
     let preview = try XCTUnwrap(accounts.mergePreview(cash.id, into: sber.id, books: both))
     XCTAssertEqual(accounts.merge(preview), .done)
     let merged = try await show()
@@ -2217,6 +2224,16 @@ final class AccountsJourneyTests: XCTestCase {
       accounts.save(account, previous: nil, openings: openings, books: books), .done,
       account.name)
     return try XCTUnwrap(accounts.all.first { $0.id == account.id })
+  }
+
+  /// Only accounts of one bank merge: the bank of `source` is merged into the bank of `target`
+  /// first, as the owner would — one step of ⌘Z, which the account merge then forgets.
+  private func inOneBank(_ source: UUID, _ target: UUID) throws {
+    let all = accounts.all
+    let from = try XCTUnwrap(all.first { $0.id == source }?.bankId)
+    let into = try XCTUnwrap(all.first { $0.id == target }?.bankId)
+    guard from != into else { return }
+    XCTAssertEqual(accounts.mergeBank(from, into: into), .done)
   }
 
   private func freshBooks() async throws -> AccountBooks {

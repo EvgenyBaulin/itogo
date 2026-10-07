@@ -16,7 +16,7 @@ struct ReconciliationCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("overview.reconciliation", table: "Overview"),
+      title: OverviewTileText.name(of: .lastCount, environment),
       state: compute.states.data, fillsHeight: true,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in

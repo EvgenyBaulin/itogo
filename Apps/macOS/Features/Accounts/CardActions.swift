@@ -12,6 +12,8 @@ enum CardRefusal: Error, Hashable, Sendable {
   case rules(CashbackRuleIssue)
   /// The account the cashback comes to as points.
   case points(CashbackPointsIssue)
+  /// «Объединить с…»: the cards are not two live cards of one account.
+  case merge(CardMergeIssue)
   case notFound
 }
 
@@ -134,6 +136,50 @@ struct CardActions {
     return outcome
   }
 
+  // MARK: Merging
+
+  /// The cards `card` can be merged into: the other live cards of its account, in list order.
+  func mergeTargets(for card: PaymentCard) -> [PaymentCard] {
+    CardMerge.targets(for: card, cards: cards, locale: environment.language.locale)
+  }
+
+  /// The merge of `id` into `keptId`, worked out for the question before it is written.
+  func mergePlan(_ id: UUID, into keptId: UUID) -> Result<CardMergePlan, CardMergeIssue> {
+    CardMerge.plan(merging: id, into: keptId, cards: cards, rules: rules, accounts: accounts)
+  }
+
+  /// «Объединить с…»: everything that named the card — operations, in the bin too, and scheduled
+  /// payments — names `keptId`, the card's rules become the kept card's except where the kept
+  /// card has a rule of the same month and category, the kept card is known by the card's names
+  /// too, and the card is deleted — one write and one step of ⌘Z. No money moves: both cards
+  /// are of one account.
+  func merge(_ id: UUID, into keptId: UUID) -> CardActionOutcome {
+    let plan: CardMergePlan
+    switch mergePlan(id, into: keptId) {
+    case .failure(let issue): return refuse(.merge(issue))
+    case .success(let worked): plan = worked
+    }
+    let usage = try? repository?.usage(of: id)
+    let outcome = apply(
+      PlanningChange(
+        upsert: PlanningRows(cards: [plan.kept], cashbackRules: plan.movedRules),
+        delete: PlanningRowIDs(
+          cards: [plan.merged.id], cashbackRules: plan.droppedRules.map(\.id)),
+        at: environment.now(), movingCards: [plan.merged.id: plan.kept.id]))
+    if outcome == .done {
+      AppLog.info(
+        "cards.merged", .db, "a card was merged into another card of its account",
+        [
+          LogPair("card", .id(plan.merged.id)), LogPair("into", .id(plan.kept.id)),
+          LogPair("operations", .count(usage?.operations ?? 0)),
+          LogPair("scheduled", .count(usage?.scheduled ?? 0)),
+          LogPair("rulesMoved", .count(plan.movedRules.count)),
+          LogPair("rulesDropped", .count(plan.droppedRules.count)),
+        ])
+    }
+    return outcome
+  }
+
   // MARK: Rules
 
   /// The save of the rules sheet: `edited` are the rules of `holders` as the sheet holds them.
@@ -231,6 +277,10 @@ struct CardActions {
     case .points(.isItself): "pointsItself"
     case .points(.notFound): "pointsMissing"
     case .points(.archived): "pointsArchived"
+    case .merge(.notFound): "mergeNotFound"
+    case .merge(.sameCard): "mergeSameCard"
+    case .merge(.otherAccount): "mergeOtherAccount"
+    case .merge(.archived): "mergeArchived"
     case .notFound: "notFound"
     }
   }
@@ -347,6 +397,9 @@ enum CardText {
     case .points(.isItself): return t("cashback.refusal.pointsItself")
     case .points(.notFound): return t("cashback.refusal.pointsMissing")
     case .points(.archived): return t("cashback.refusal.pointsArchived")
+    case .merge(.otherAccount): return t("card.merge.refusal.otherAccount")
+    case .merge(.archived): return t("card.merge.refusal.archived")
+    case .merge(.sameCard), .merge(.notFound): return t("card.refusal.notFound")
     case .notFound: return t("card.refusal.notFound")
     }
   }

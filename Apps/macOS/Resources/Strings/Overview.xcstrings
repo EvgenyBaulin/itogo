@@ -211,13 +211,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Forecast to the end of the month"
+            "value": "Spending forecast to the end of the month"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Прогноз до конца месяца"
+            "value": "Прогноз расхода до конца месяца"
           }
         }
       }
@@ -755,7 +755,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Balance at the end of the month"
+            "value": "Balance forecast to the end of the month"
           }
         },
         "ru": {
@@ -857,7 +857,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Income to the end of the month"
+            "value": "Income forecast to the end of the month"
           }
         },
         "ru": {
@@ -993,7 +993,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Spending to the end of the month"
+            "value": "Spending forecast to the end of the month"
           }
         },
         "ru": {

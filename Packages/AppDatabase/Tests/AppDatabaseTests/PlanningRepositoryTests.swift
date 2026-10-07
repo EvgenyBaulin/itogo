@@ -1386,10 +1386,12 @@ struct AccountMergeStorageTests {
   @Test func theMergedAwayAccountIsCountedAtZero() throws {
     let stack = try TestSupport.makeStack()
     _ = try TestSupport.seedReferences(stack)
-    let card = PaymentMethod(name: "Card", currency: .rub)
+    // Only accounts of one bank merge.
+    let bank = Bank(name: "Bank")
+    let card = PaymentMethod(name: "Card", currency: .rub, bankId: bank.id)
     let wallet = PaymentMethod(
       name: "Wallet", kind: .cash, currency: .rub, isDefault: true,
-      otherCurrencies: [.usd])
+      otherCurrencies: [.usd], bankId: bank.id)
     let repository = PlanningRepository(writer: stack.writer)
     let within = Transfer(
       occurredAt: PlanningTests.instant(hour: 8), fromAccountId: wallet.id, fromCurrency: .rub,
@@ -1413,7 +1415,7 @@ struct AccountMergeStorageTests {
         created: [coffee],
         upsert: PlanningRows(
           reconciliations: [firstCount], paymentMethods: [card, wallet],
-          transfers: [within, exchange], reconciledBalances: [walletCount])))
+          transfers: [within, exchange], reconciledBalances: [walletCount], banks: [bank])))
 
     var target = card
     target.otherCurrencies = [.usd]
@@ -1466,11 +1468,14 @@ struct AccountMergeStorageTests {
   /// keeps the only main account.
   @Test func aMergeNeverLeavesTheAccountsWithoutAMainOne() throws {
     let stack = try TestSupport.makeStack()
-    let card = PaymentMethod(name: "Card")
-    let wallet = PaymentMethod(name: "Wallet", kind: .cash, isDefault: true)
+    // Only accounts of one bank merge.
+    let bank = Bank(name: "Bank")
+    let card = PaymentMethod(name: "Card", bankId: bank.id)
+    let wallet = PaymentMethod(name: "Wallet", kind: .cash, isDefault: true, bankId: bank.id)
     let old = PaymentMethod(name: "Old", isDefault: true, archived: true)
-    let cash = PaymentMethod(name: "Cash", kind: .cash)
+    let cash = PaymentMethod(name: "Cash", kind: .cash, bankId: bank.id)
     try stack.writer.write { db in
+      try bank.insert(db)
       for method in [card, wallet, old, cash] { try method.insert(db) }
     }
     let accounts = AccountRepository(writer: stack.writer)
@@ -1500,8 +1505,10 @@ struct AccountMergeStorageTests {
   /// longer pointing at a transfer that is gone.
   @Test func aMergeWritesNoEmptyReconciliationAndLetsTheFeesOfDeletedTransfersGo() throws {
     let stack = try TestSupport.makeStack()
-    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true)
-    let wallet = PaymentMethod(name: "Wallet", kind: .cash, currency: .rub)
+    // Only accounts of one bank merge.
+    let bank = Bank(name: "Bank")
+    let card = PaymentMethod(name: "Card", currency: .rub, isDefault: true, bankId: bank.id)
+    let wallet = PaymentMethod(name: "Wallet", kind: .cash, currency: .rub, bankId: bank.id)
     let within = Transfer(
       occurredAt: PlanningTests.instant(hour: 8), fromAccountId: wallet.id, fromCurrency: .rub,
       fromAmountE4: AmountE4(whole: 100), toAccountId: card.id, toCurrency: .rub,
@@ -1514,7 +1521,8 @@ struct AccountMergeStorageTests {
     _ = try repository.apply(
       PlanningChange(
         created: [fee],
-        upsert: PlanningRows(paymentMethods: [card, wallet], transfers: [within])))
+        upsert: PlanningRows(
+          paymentMethods: [card, wallet], transfers: [within], banks: [bank])))
 
     try AccountRepository(writer: stack.writer).merge(
       AccountMergePlan(

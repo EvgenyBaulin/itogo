@@ -111,6 +111,8 @@ struct MergeForeignKeyPropertyTests {
             SELECT id FROM payment_methods ORDER BY rowid LIMIT 1)
           """)
     }
+    // Only accounts of one bank merge: every account is filed under one.
+    try TestSupport.fileUnderOneBank(try ids("payment_methods", stack), stack: stack)
     return stack
   }
 

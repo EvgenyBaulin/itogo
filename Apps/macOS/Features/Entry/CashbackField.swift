@@ -116,23 +116,27 @@ struct CashbackField: View {
   let expectation: CashbackExpectation?
   let context: CashbackFieldContext
   let remember: (CashbackRule) -> Void
+  /// The field as wide as it is given and the caption under it from the leading edge — the form
+  /// at the side of the window —, rather than both at the trailing edge of the ↓ panel.
+  let leading: Bool
 
   init(
     state: Binding<CashbackFieldState>, draft: TransactionDraft,
-    expectation: CashbackExpectation?, context: CashbackFieldContext,
+    expectation: CashbackExpectation?, context: CashbackFieldContext, leading: Bool = false,
     remember: @escaping (CashbackRule) -> Void
   ) {
     _state = state
     self.draft = draft
     self.expectation = expectation
     self.context = context
+    self.leading = leading
     self.remember = remember
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Entry") }
 
   var body: some View {
-    VStack(alignment: .trailing, spacing: 4) {
+    VStack(alignment: leading ? .leading : .trailing, spacing: 4) {
       HStack(spacing: 4) {
         TextField(text: $state.text) {
           Text(verbatim: placeholder)
@@ -140,7 +144,7 @@ struct CashbackField: View {
         .labelsHidden()
         .multilineTextAlignment(.trailing)
         .monospacedDigit()
-        .frame(width: 140)
+        .frame(width: leading ? nil : 140)
         .accessibilityLabel(Text(verbatim: t("entry.cashback")))
         .accessibilityIdentifier("entry.cashback")
         Text(verbatim: environment.money.symbol(for: context.movedCurrency))
@@ -149,7 +153,8 @@ struct CashbackField: View {
       caption
         .font(.caption)
         .foregroundStyle(.secondary)
-        .multilineTextAlignment(.trailing)
+        .multilineTextAlignment(leading ? .leading : .trailing)
+        .fixedSize(horizontal: false, vertical: leading)
     }
   }
 

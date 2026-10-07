@@ -10,7 +10,7 @@ struct BankCreation: Hashable, Sendable {
 }
 
 /// The actions on the banks: a new bank with its account and card, a rename, the archive and
-/// «Вернуть», a deletion. Each is one `PlanningChange` — one write, one step of ⌘Z — but a
+/// «Вернуть», a merge, a deletion. Each is one `PlanningChange` — one write, one step of ⌘Z — but a
 /// deletion, which is for good, as the deletion of a group or of an account is (`AccountRepository`).
 ///
 /// A bank owns no money: the accounts under it keep the balances, the operations and the counts,
@@ -90,6 +90,44 @@ extension AccountActions {
     bank.archived = false
     if let refusal = Self.refusal(saving: bank, among: banks) { return .refused(refusal) }
     return apply(PlanningChange(upsert: PlanningRows(banks: [bank]), at: environment.now()))
+  }
+
+  // MARK: Merging
+
+  /// The banks `bank` can be merged into: the other live banks, in list order.
+  func mergeTargets(for bank: Bank) -> [Bank] {
+    BankMerge.targets(for: bank, banks: banks, locale: environment.language.locale)
+  }
+
+  /// The merge of `id` into `keptId`, worked out for the question before it is written.
+  func bankMergePlan(_ id: UUID, into keptId: UUID) -> Result<BankMergePlan, BankMergeIssue> {
+    BankMerge.plan(merging: id, into: keptId, banks: banks, accounts: all)
+  }
+
+  /// «Объединить с…» of a bank: every account under it, archived ones too, is filed under
+  /// `keptId`, which keeps its name, and the bank is deleted — one write and one step of ⌘Z. No
+  /// money moves and no account changes its name, so the entry line reads what it read before;
+  /// the lists name the accounts by how many stand under the kept bank now. Two accounts of the
+  /// banks can be merged afterwards, as accounts of one bank.
+  func mergeBank(_ id: UUID, into keptId: UUID) -> AccountActionOutcome {
+    let plan: BankMergePlan
+    switch bankMergePlan(id, into: keptId) {
+    case .failure(let issue): return .refused(.bankMerge(issue))
+    case .success(let worked): plan = worked
+    }
+    let outcome = apply(
+      PlanningChange(
+        upsert: PlanningRows(paymentMethods: plan.movedAccounts),
+        delete: PlanningRowIDs(banks: [plan.merged.id]), at: environment.now()))
+    if outcome == .done {
+      AppLog.info(
+        "banks.merged", .db, "a bank was merged into another",
+        [
+          LogPair("bank", .id(plan.merged.id)), LogPair("into", .id(plan.kept.id)),
+          LogPair("accounts", .count(plan.movedAccounts.count)),
+        ])
+    }
+    return outcome
   }
 
   // MARK: For good

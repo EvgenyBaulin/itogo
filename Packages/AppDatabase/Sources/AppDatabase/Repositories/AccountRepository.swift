@@ -59,6 +59,9 @@ public enum AccountWriteError: Error, Equatable, Sendable {
   /// Accounts are filed under the bank, archived ones included: an empty bank is deleted, one
   /// with an account is not.
   case bankInUse
+  /// The two accounts of a merge are under different banks — or one is under none, which makes
+  /// it a bank of its own: money of one bank never lands on an account of another by a merge.
+  case otherBank
   /// The accounts would need more currencies switched on than the ten allowed.
   case tooManyCurrencies
   /// An operation that moves money on an account that does not hold its currency, saved
@@ -228,7 +231,8 @@ public struct AccountRepository: Sendable {
 
   /// Merges one account into another in one write, for good (a merge is not undone, as with
   /// every other merge of the reference books). The plan is worked out beforehand
-  /// (`AccountMergePlan`): the repository only writes it.
+  /// (`AccountMergePlan`): the repository only writes it. Only two accounts of one bank merge:
+  /// any other pair is refused with `AccountWriteError.otherBank` and nothing is written.
   ///
   /// 1. The transfers of `deletedTransferIds` go: between the two accounts in one currency
   ///    they would be transfers of an account to itself. Their fees stay, as ordinary
@@ -258,6 +262,7 @@ public struct AccountRepository: Sendable {
       guard try PaymentMethod.exists(db, key: plan.sourceId.uuidString),
         try PaymentMethod.exists(db, key: plan.target.id.uuidString)
       else { throw AccountWriteError.notFound }
+      try Self.refuseOtherBanks(plan.sourceId, plan.target.id, db: db)
       let wasMain =
         try Bool.fetchOne(
           db,
@@ -476,6 +481,17 @@ public struct AccountRepository: Sendable {
   }
 
   // MARK: Helpers
+
+  /// Refuses, with `AccountWriteError.otherBank`, a merge of two accounts that are not under one
+  /// bank, as they are written now. An account under no bank is a bank of its own.
+  static func refuseOtherBanks(_ source: UUID, _ target: UUID, db: Database) throws {
+    let banks = try String.fetchAll(
+      db,
+      sql: "SELECT COALESCE(bank_id, id) FROM payment_methods WHERE id IN (?, ?)",
+      arguments: [source.uuidString, target.uuidString])
+    guard banks.count == 2 else { throw AccountWriteError.notFound }
+    guard banks[0] == banks[1] else { throw AccountWriteError.otherBank }
+  }
 
   /// Refuses, with `AccountWriteError.isMain`, to delete these accounts when one of them is
   /// flagged main and no other live account is: the accounts are never left without a main

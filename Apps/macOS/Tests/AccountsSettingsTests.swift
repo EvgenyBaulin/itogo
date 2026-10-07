@@ -402,13 +402,16 @@ final class AccountsSettingsTests: XCTestCase {
   }
 
   /// The main account merged away hands the flag to its target, so a target in a group left
-  /// out of the summary is not offered; any other account is offered every live account.
+  /// out of the summary is not offered; any other account is offered every live account of its
+  /// bank.
   func testTheMainAccountIsNotOfferedAMergeIntoAGroupLeftOut() async throws {
-    let main = try account("Сбер", main: true)
-    let alfa = try account("Альфа")
+    let bank = Bank(name: "Банк")
+    XCTAssertEqual(actions.save(bank: bank), .done)
+    let main = try account("Сбер", main: true, bank: bank.id)
+    let alfa = try account("Альфа", bank: bank.id)
     let kazakhstan = AccountGroup(name: "Казахстан", inSummary: false)
     XCTAssertEqual(actions.save(group: kazakhstan), .done)
-    _ = try account("Kaspi", group: kazakhstan.id)
+    _ = try account("Kaspi", group: kazakhstan.id, bank: bank.id)
     XCTAssertEqual(actions.mergeTargets(for: main).map(\.name), ["Альфа"])
     XCTAssertEqual(actions.mergeTargets(for: alfa).map(\.name), ["Сбер", "Kaspi"])
   }
@@ -807,11 +810,12 @@ final class AccountsSettingsTests: XCTestCase {
   @discardableResult
   private func account(
     _ name: String, main: Bool = false, kind: PaymentMethodKind = .card,
-    currencies: [CurrencyCode] = [.rub], group: UUID? = nil, aliases: [String] = []
+    currencies: [CurrencyCode] = [.rub], group: UUID? = nil, aliases: [String] = [],
+    bank: UUID? = nil
   ) throws -> PaymentMethod {
     let account = PaymentMethod(
       name: name, kind: kind, currency: currencies.first, aliases: aliases, isDefault: main,
-      groupId: group, otherCurrencies: Array(currencies.dropFirst()))
+      groupId: group, otherCurrencies: Array(currencies.dropFirst()), bankId: bank)
     try XCTUnwrap(environment.references).save(account)
     return account
   }

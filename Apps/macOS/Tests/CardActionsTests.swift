@@ -135,6 +135,89 @@ final class CardActionsTests: XCTestCase {
     XCTAssertTrue(actions.cards.contains { $0.id == black.id })
   }
 
+  /// «Объединить с…»: one write and one step of ⌘Z. The merged card's operations, scheduled
+  /// payments and rules go to the kept card — a rule of a month and category the kept card
+  /// already has gives way to it —, the kept card is known by the merged card's names, the entry
+  /// line learns that at once, and ⌘Z brings everything back as it was.
+  func testMergingACardIntoAnotherCardOfItsAccountIsOneStep() throws {
+    let tBank = try account("Т-Банк")
+    let cafe = try category("Кафе")
+    let black = PaymentCard(accountId: tBank.id, name: "Black")
+    let virtual = PaymentCard(accountId: tBank.id, name: "Virtual", aliases: ["virt"])
+    XCTAssertEqual(actions.save(black, previous: nil), .done)
+    XCTAssertEqual(actions.save(virtual, previous: nil), .done)
+    let blackCafe = CashbackRule(
+      accountId: tBank.id, cardId: black.id, categoryId: cafe.id, percent: percent(50_000))
+    let virtualCafe = CashbackRule(
+      accountId: tBank.id, cardId: virtual.id, categoryId: cafe.id, percent: percent(100_000))
+    let virtualRest = CashbackRule(
+      accountId: tBank.id, cardId: virtual.id, percent: percent(20_000))
+    XCTAssertEqual(
+      actions.saveRules(
+        of: [.card(black.id), .card(virtual.id)], [blackCafe, virtualCafe, virtualRest]),
+      .done)
+    let purchase = try TransactionDraft(
+      amount: AmountE4(whole: 100), paymentMethodId: tBank.id,
+      parts: [PartDraft(amount: AmountE4(whole: 100))], cardId: virtual.id
+    ).materialize()
+    XCTAssertTrue(store.save(purchase))
+    let payment = ScheduledPayment(
+      name: "Телефон", amountE4: AmountE4(whole: 500), paymentMethodId: tBank.id,
+      cardId: virtual.id)
+    XCTAssertTrue(store.apply(PlanningChange(upsert: PlanningRows(scheduled: [payment]))))
+    let cardsBefore = actions.cards
+    let rulesBefore = actions.rules
+
+    let plan = try actions.mergePlan(virtual.id, into: black.id).get()
+    XCTAssertEqual(plan.droppedRules, [virtualCafe], "the kept card's own rule wins")
+    XCTAssertEqual(actions.merge(virtual.id, into: black.id), .done)
+
+    XCTAssertEqual(actions.cards.map(\.id), [black.id], "the merged card is gone")
+    XCTAssertEqual(actions.cards.first?.aliases, ["Virtual", "virt"])
+    XCTAssertEqual(
+      Set(actions.rules.map(\.id)), [blackCafe.id, virtualRest.id])
+    XCTAssertEqual(actions.rules.first { $0.id == virtualRest.id }?.cardId, black.id)
+    let transactions = try XCTUnwrap(environment.transactions)
+    XCTAssertEqual(try transactions.entry(id: purchase.id)?.transaction.cardId, black.id)
+    XCTAssertEqual(
+      try XCTUnwrap(environment.planning).scheduled().first { $0.id == payment.id }?.cardId,
+      black.id)
+    XCTAssertTrue(
+      environment.vocabulary.cards.contains {
+        $0.entry.id == black.id && $0.entry.aliases.contains("virt")
+      }, "the entry line reads the merged card's names as the kept card")
+
+    store.undo()
+    XCTAssertEqual(Set(actions.cards), Set(cardsBefore), "one ⌘Z brings the card back")
+    XCTAssertEqual(Set(actions.rules), Set(rulesBefore))
+    XCTAssertEqual(try transactions.entry(id: purchase.id)?.transaction.cardId, virtual.id)
+    XCTAssertEqual(
+      try XCTUnwrap(environment.planning).scheduled().first { $0.id == payment.id }?.cardId,
+      virtual.id)
+  }
+
+  /// Only a live card of the same account is merged into; nothing is written otherwise.
+  func testACardOfAnotherAccountIsNotMergedInto() throws {
+    let tBank = try account("Т-Банк")
+    let sber = try account("Сбер")
+    let black = PaymentCard(accountId: tBank.id, name: "Black")
+    let sberCard = PaymentCard(accountId: sber.id, name: "Сбер Visa")
+    XCTAssertEqual(actions.save(black, previous: nil), .done)
+    XCTAssertEqual(actions.save(sberCard, previous: nil), .done)
+    XCTAssertEqual(actions.merge(black.id, into: sberCard.id), .refused(.merge(.otherAccount)))
+    XCTAssertEqual(actions.merge(black.id, into: black.id), .refused(.merge(.sameCard)))
+    XCTAssertEqual(actions.cards.count, 2)
+    XCTAssertFalse(CardMerge.offered(for: black, cards: actions.cards))
+  }
+
+  /// What the lists lay over their data after a merge and after its ⌘Z: the live operation that
+  /// moved, read again.
+  func testTheListsLearnTheOperationsAMergeMoved() {
+    let moved = MovedCardReference(rowId: UUID(), from: UUID(), into: UUID())
+    let undo = PlanningUndo(movedCards: [moved])
+    XCTAssertEqual(TransactionsStore.broughtBack(by: undo), [moved.rowId])
+  }
+
   /// Cash had rules of its own; its first card changes nothing about them: the card follows
   /// them, and ⌘Z takes the card away alone.
   func testTheFirstCardLeavesTheAccountsRules() throws {

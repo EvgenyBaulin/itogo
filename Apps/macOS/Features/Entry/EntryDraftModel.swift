@@ -22,6 +22,7 @@ public final class EntryDraftModel {
         noteWhatWasOpened()
       }
       followTheCashbackField()
+      followTheIncomeMonth()
       guard draft.creditDebtId != oldValue.creditDebtId else { return }
       kindWithTheCredit = draft.creditDebtId == nil ? nil : draft.kind
     }
@@ -254,6 +255,10 @@ public final class EntryDraftModel {
         (try? repository.cards(includeArchived: true)) ?? [], (try? repository.rules()) ?? []
       )
     }
+    readsCashbackCategory = { [weak environment] in
+      (try? environment?.settings?.string(AnalyticsSettings.cashbackCategoryKey))
+        .flatMap { $0 }.flatMap(UUID.init(uuidString:))
+    }
     predictor = environment.categoryModel
     // The rate is read from the cache only: asking the bank is the save's business, not a
     // keystroke's.
@@ -290,6 +295,9 @@ public final class EntryDraftModel {
     goals = (try? references.goals()) ?? []
     debts = (try? references.debts()) ?? []
     allDebts = (try? references.debts(includeClosed: true, includeDeleted: true)) ?? debts
+    if let readsCashbackCategory { cashbackCategoryId = readsCashbackCategory() }
+    // The accounts and the cashback category may have changed how the bank pays.
+    followTheIncomeMonth()
   }
 
   // MARK: Places and debts of a saved operation
@@ -1715,6 +1723,61 @@ public final class EntryDraftModel {
     draft.periodMonth ?? calendar.day(of: draft.occurredAt).monthKey
   }
 
+  /// The cashback category of the settings (`analytics.cashbackCategoryId`), read with the
+  /// dictionaries: an income in it may be for the month before (`CashbackIncomeMonth`).
+  public var cashbackCategoryId: UUID?
+  /// Where it is read from: the app's settings, handed over in `init(environment:)`.
+  var readsCashbackCategory: (() -> UUID?)?
+
+  /// The month the defaults last laid for the income: the month before, for cashback its bank
+  /// pays by a day of the next month; `nil` for the month of the date. While the draft still
+  /// holds it, the defaults lay it again as the category, the account or the date change.
+  private var periodMonthFromDefaults: MonthKey?
+  /// The owner picked the month in the panel: it stays whatever changes after.
+  private var periodMonthChosen = false
+  /// The month is being laid by the defaults: the change it makes is not followed again.
+  private var layingThePeriodMonth = false
+
+  /// The month an income is for by default: the month of its date, or for cashback that its
+  /// bank pays by a day of the next month, the month before (`CashbackIncomeMonth`). `nil` for
+  /// anything but an income.
+  public var defaultPeriodMonth: MonthKey? {
+    guard draft.kind == .income else { return nil }
+    let account = draft.paymentMethodId ?? mainAccountId
+    return CashbackIncomeMonth.month(
+      forIncomeOn: calendar.day(of: draft.occurredAt), categoryIds: draft.parts.map(\.categoryId),
+      accountId: account, cashbackCategoryId: cashbackCategoryId, tree: categoryTree,
+      accounts: allAccounts, calendar: calendar)
+  }
+
+  /// Whether the month shown is the one before, laid because the bank pays cashback later: the
+  /// panel says so under the picker.
+  public var periodMonthIsCashbackOfTheMonthBefore: Bool {
+    guard !periodMonthChosen, let laid = periodMonthFromDefaults else { return false }
+    return draft.periodMonth == laid
+  }
+
+  /// A month picked in the panel: the owner's, kept whatever changes after it.
+  public func choosePeriodMonth(_ month: MonthKey?) {
+    periodMonthChosen = true
+    draft.periodMonth = month
+  }
+
+  /// Lays the default month of a new income while nobody chose one: a saved operation keeps the
+  /// month it was saved with, and a month picked in the panel stays.
+  private func followTheIncomeMonth() {
+    guard !editsSavedOperation, !periodMonthChosen, !layingThePeriodMonth else { return }
+    // A month the draft got from elsewhere — not laid here — is left alone.
+    guard draft.periodMonth == nil || draft.periodMonth == periodMonthFromDefaults else { return }
+    let own = calendar.day(of: draft.occurredAt).monthKey
+    let laid = defaultPeriodMonth.flatMap { $0 == own ? nil : $0 }
+    periodMonthFromDefaults = laid
+    guard draft.periodMonth != laid else { return }
+    layingThePeriodMonth = true
+    defer { layingThePeriodMonth = false }
+    draft.periodMonth = laid
+  }
+
   /// What the «for month» picker offers: the month of the date, the two before it and the
   /// one after — and, in its place in time, the month the income is already for when it is
   /// none of these: chosen before the date moved, or saved that way (an import, a transfer
@@ -1751,7 +1814,8 @@ public final class EntryDraftModel {
       refreshCharge()
       return
     }
-    guard let value = DecimalMath.parse(trimmed), value > 0 else { return }
+    // A plain number reads as rates always read; a formula is worked out (`RateText`).
+    guard let value = RateText.value(trimmed), value > 0 else { return }
     guard value != draft.rate || draft.rateSource != .manual || rateFromTheCharge else { return }
     noteTheOpenedDraft()
     rateFromTheCharge = false
@@ -2276,7 +2340,7 @@ public final class EntryDraftModel {
     let byTheDraft =
       draft.kind != .expense || isSplit || draft.placeId != nil || draft.debtId != nil
       || draft.currency != (currencyFromDefaults ?? defaultCurrency) || chargeTyped
-      || draft.periodMonth != nil
+      || (draft.periodMonth != nil && draft.periodMonth != periodMonthFromDefaults)
       || (draft.paymentMethodId != nil && draft.paymentMethodId != paymentMethodFromDefaults)
       || (draft.note != nil && draft.note != noteFromTheLine)
       || draft.occurredAt != dateFromTheLine
@@ -2512,6 +2576,9 @@ public final class EntryDraftModel {
   public func reset() {
     // First: the figure typed for the operation just saved is not the next one's.
     cashbackField = CashbackFieldState()
+    // Nor is the month chosen or laid for it.
+    periodMonthChosen = false
+    periodMonthFromDefaults = nil
     draft = TransactionDraft(currency: defaultCurrency)
     draft.normalizeSinglePart()
     currencyFromDefaults = defaultCurrency

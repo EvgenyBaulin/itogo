@@ -63,6 +63,23 @@ struct CreatedMainAccountMergeTests {
         at: Date(timeIntervalSince1970: 1_790_000_000)),
       calendar: calendar)
 
+    // The update filed «Основной счёт» under a bank of its own name, and only accounts of one
+    // bank merge: the owner merges that bank into the card's first, one planning change.
+    let filed = try stack.writer.read { db in
+      (try Bank.fetchAll(db), try PaymentMethod.fetchAll(db))
+    }
+    let madeBank = try #require(filed.1.first { $0.id == made.id }?.bankId)
+    let cardBank = try #require(filed.1.first { $0.id == cardId }?.bankId)
+    if madeBank != cardBank {
+      let banks = try BankMerge.plan(
+        merging: madeBank, into: cardBank, banks: filed.0, accounts: filed.1
+      ).get()
+      _ = try PlanningRepository(writer: stack.writer).apply(
+        PlanningChange(
+          upsert: PlanningRows(paymentMethods: banks.movedAccounts),
+          delete: PlanningRowIDs(banks: [banks.merged.id])))
+    }
+
     // The merge of «Основной счёт» into the card, the way the settings work it out.
     let at = Date(timeIntervalSince1970: 1_790_100_000)
     let dataset = try stack.writer.read { db in try DatasetRepository.dataset(db, version: 1) }

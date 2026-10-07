@@ -383,9 +383,11 @@ public final class TransactionsStore {
         planningChanged: true))
   }
 
-  /// The operations the undo of a change of planning brings back.
+  /// The operations the undo of a change of planning brings back — and those whose card a
+  /// merge of cards moved, which it gives their card back.
   nonisolated static func broughtBack(by undo: PlanningUndo) -> [UUID] {
     undo.rewrittenBefore.map(\.id) + undo.deletion.deletedIds + undo.deletion.companionIds
+      + undo.movedCards.map(\.rowId)
   }
 
   /// What became of the edit of a saved operation.

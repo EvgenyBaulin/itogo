@@ -49,14 +49,9 @@ struct MoneyBackRateRows: View {
             Text(verbatim: moneyRate.map { environment.money.rate($0) } ?? "—")
               .monospacedDigit()
           } else {
-            TextField(
-              text: $typedMoneyRate,
-              prompt: Text(verbatim: moneyRate.map { environment.money.rate($0) } ?? "0.00")
-            ) {
-              Text(verbatim: t("moneyBack.moneyRate"))
-            }
-            .labelsHidden()
-            .frame(width: 110)
+            RateTextField(
+              title: t("moneyBack.moneyRate"), text: $typedMoneyRate,
+              prompt: moneyRate.map { environment.money.rate($0) } ?? "0.00")
           }
           Text(verbatim: "RUB").foregroundStyle(.secondary)
         }
@@ -68,16 +63,11 @@ struct MoneyBackRateRows: View {
         VStack(alignment: .leading, spacing: 4) {
           HStack(spacing: 6) {
             Text(verbatim: "1 \(purchase.currency.code) =").foregroundStyle(.secondary)
-            TextField(
-              text: binding(purchase.id),
-              prompt: Text(verbatim: Self.shown(purchase.costRate))
-            ) {
-              Text(
-                verbatim: environment.format(
-                  "moneyBack.purchaseRate", table: "Entry", purchase.description))
-            }
-            .labelsHidden()
-            .frame(width: 110)
+            RateTextField(
+              title: environment.format(
+                "moneyBack.purchaseRate", table: "Entry", purchase.description),
+              text: binding(purchase.id), prompt: Self.shown(purchase.costRate)
+            )
             .accessibilityIdentifier("moneyBack.purchaseRate")
             Text(verbatim: "RUB").foregroundStyle(.secondary)
           }
@@ -122,12 +112,10 @@ struct MoneyBackRateRows: View {
 
   // MARK: The rules of the rows
 
-  /// A rate typed as a number above zero; `nil` for empty or unreadable text.
+  /// A rate typed as a number or a formula above zero (`RateText`); `nil` for empty or
+  /// unreadable text.
   static func typedRate(_ text: String?) -> Decimal? {
-    guard let trimmed = text?.trimmingCharacters(in: .whitespaces), !trimmed.isEmpty,
-      let value = DecimalMath.parse(trimmed), value > 0
-    else { return nil }
-    return value
+    text.flatMap(RateText.rate)
   }
 
   /// A rate as the rows show it: four decimals, as a statement has it.

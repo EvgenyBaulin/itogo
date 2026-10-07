@@ -59,7 +59,7 @@ private struct MonthToDateCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("overview.monthToDate", table: "Overview"),
+      title: OverviewTileText.name(of: .monthToDate, environment),
       state: compute.states.data, fillsHeight: true,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
@@ -89,7 +89,7 @@ private struct TopCategoriesCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("overview.topCategories", table: "Overview"),
+      title: OverviewTileText.name(of: .topCategories, environment),
       state: compute.states.data.flatMap { snapshot, at in
         snapshot.summary.topCategories.isEmpty ? .notEnoughData : .ready(snapshot, at: at)
       },
@@ -130,7 +130,7 @@ private struct QualitiesCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("overview.qualities", table: "Overview"),
+      title: OverviewTileText.name(of: .qualities, environment),
       state: compute.states.data.flatMap { snapshot, at in
         // Shares need something positive to be shares of: before the first spending of the
         // month there is nothing to split.
@@ -191,7 +191,7 @@ private struct ForecastCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("overview.forecast", table: "Overview"),
+      title: OverviewTileText.name(of: .spendingForecast, environment),
       state: state, fillsHeight: true, retry: { compute.retry(ComputeStep.forecast) }
     ) { model in
       let forecast = model.forecast
@@ -561,7 +561,7 @@ private struct AnomaliesCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("overview.anomalies", table: "Overview"),
+      title: OverviewTileText.name(of: .worthALook, environment),
       state: compute.states.anomalies, fillsHeight: true,
       retry: { compute.retry(ComputeStep.anomalies) }
     ) { report in

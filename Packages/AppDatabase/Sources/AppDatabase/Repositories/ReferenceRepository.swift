@@ -337,12 +337,14 @@ public struct ReferenceRepository: Sendable {
   /// The merge of one account into another as the settings have made it so far: what points
   /// at the source moves to the target, the name becomes an alias, the source goes to the
   /// archive — and when it was the main account, the target becomes the only main one, so the
-  /// archive never holds the only main account. It works out no balances; a transfer between
+  /// archive never holds the only main account. Only two accounts of one bank merge
+  /// (`AccountWriteError.otherBank`). It works out no balances; a transfer between
   /// the two in one currency would become one from an account to itself, and the schema
   /// refuses the whole merge then.
   public func mergePaymentMethod(_ source: UUID, into target: UUID) throws {
     guard source != target else { return }
     try writer.write { db in
+      try AccountRepository.refuseOtherBanks(source, target, db: db)
       try AccountRepository.dropCollidingRules(of: source, into: target, db: db)
       try Self.repoint("payment_methods", from: source, to: target, db: db)
       try Self.mergeAliases(PaymentMethod.self, source: source, into: target, db: db)

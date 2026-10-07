@@ -31,7 +31,7 @@ struct AccountCardsModel: Equatable {
 }
 
 /// «Карты» of an account's screen: each live card with its other names and a menu — «Изменить…»,
-/// «Кэшбэк…», «В архив», «Удалить…» —, «Добавить карту…», and the archived cards behind «В архиве:
+/// «Кэшбэк…», «Объединить с…» (while the account has another live card), «В архив», «Удалить…» —, «Добавить карту…», and the archived cards behind «В архиве:
 /// N» with «Вернуть». Every action is one step of ⌘Z.
 struct AccountCardsBlock: View {
   @Dependency(\.environment) private var environment
@@ -49,11 +49,13 @@ struct AccountCardsBlock: View {
   enum Sheet: Identifiable {
     case edit(PaymentCard?)
     case rules(CashbackHolder)
+    case merge(PaymentCard)
 
     var id: String {
       switch self {
       case .edit(let card): "card.\(card?.id.uuidString ?? "new")"
       case .rules(let holder): "rules.\(holder)"
+      case .merge(let card): "merge.\(card.id.uuidString)"
       }
     }
   }
@@ -88,7 +90,7 @@ struct AccountCardsBlock: View {
         Text(verbatim: t("card.none")).foregroundStyle(.secondary)
       }
       ForEach(model.live) { item in
-        row(item)
+        row(item, mergeable: model.live.count > 1)
       }
       if !model.archived.isEmpty {
         DisclosureGroup {
@@ -131,7 +133,7 @@ struct AccountCardsBlock: View {
     .refusedWriteAlert($failed, environment)
   }
 
-  private func row(_ item: AccountCardsModel.Card) -> some View {
+  private func row(_ item: AccountCardsModel.Card, mergeable: Bool) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Image(systemName: "creditcard")
         .foregroundStyle(.secondary)
@@ -153,6 +155,9 @@ struct AccountCardsBlock: View {
       Menu {
         Button(environment.language("action.edit")) { sheet = .edit(item.card) }
         Button(t("card.cashback")) { sheet = .rules(.card(item.id)) }
+        if mergeable {
+          Button(t("card.merge")) { sheet = .merge(item.card) }
+        }
         Button(t("card.archive")) { run(actions.archive(item.id)) }
         Button(t("card.delete"), role: .destructive) { deleting = item.card }
       } label: {
@@ -172,6 +177,11 @@ struct AccountCardsBlock: View {
       CardEditor(previous: card, accountId: accountId) { _ in self.sheet = nil }
     case .rules(let holder):
       CashbackRulesSheet(accountId: accountId, holder: holder) { self.sheet = nil }
+    case .merge(let card):
+      CardMergeSheet(card: card) { merged in
+        self.sheet = nil
+        if merged { refusal = nil }
+      }
     }
   }
 

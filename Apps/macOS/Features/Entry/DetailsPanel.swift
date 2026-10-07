@@ -29,8 +29,21 @@ struct DetailsPanel: View {
   /// Told whether a field of the panel has the keyboard: the form at the side of the window
   /// answers Return with «Save» only while one does.
   var focusedInside: Binding<Bool>? = nil
+  /// How the fields stand: beside their labels in a grid — the ↓ panel, 560–720 pt wide, and the
+  /// editor — or under them in one column, for the form at the side of the window.
+  var arrangement: Arrangement = .wide
   /// The control of the panel that has the keyboard focus, when it is one of the fields.
   @FocusState private var focus: PanelFocus?
+
+  enum Arrangement {
+    /// A label column and a control column: the ↓ panel and the editor.
+    case wide
+    /// Every label above its control, every control as wide as the column, the buttons wrapping:
+    /// the form at the side of the window, about 380 pt wide.
+    case column
+  }
+
+  private var inColumn: Bool { arrangement == .column }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -102,7 +115,18 @@ struct DetailsPanel: View {
 
   // MARK: Type
 
+  /// Four kinds side by side want about 450 pt, more than the column has: there they are a menu.
+  @ViewBuilder
   private var typeRow: some View {
+    switch arrangement {
+    case .wide: kindPicker.pickerStyle(.segmented)
+    case .column:
+      kindPicker.pickerStyle(.menu).buttonSizing(.flexible)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private var kindPicker: some View {
     Picker(selection: $model.draft.kind) {
       ForEach(TransactionKind.allCases, id: \.self) { kind in
         Text(verbatim: environment.language("kind.\(kind.rawValue)")).tag(kind)
@@ -110,7 +134,6 @@ struct DetailsPanel: View {
     } label: {
       Text(verbatim: t("entry.category"))
     }
-    .pickerStyle(.segmented)
     .labelsHidden()
     // Money came back for a part: what the operation is stays as the reimbursement found it.
     // The difference of a count is what the count found.
@@ -127,12 +150,68 @@ struct DetailsPanel: View {
   /// The fields in the owner's order. A field the kind does not have is not shown, wherever it
   /// stands in the order.
   private var mainFields: some View {
-    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+    fields {
       ForEach(environment.entryFieldOrder, id: \.self) { field in
         rows(for: field)
       }
     }
   }
+
+  /// The rows of fields: a grid of labels and controls, or one column.
+  @ViewBuilder
+  private func fields<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    switch arrangement {
+    case .wide:
+      Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) { content() }
+    case .column:
+      VStack(alignment: .leading, spacing: 12) { content() }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  /// One field: its label and its control — side by side in the grid; in the column the label
+  /// above and the control as wide as the column. No `key`: a line under the control above.
+  @ViewBuilder
+  private func fieldRow<Control: View>(
+    _ key: String?, marked: Bool = false, @ViewBuilder control: () -> Control
+  ) -> some View {
+    switch arrangement {
+    case .wide:
+      GridRow {
+        if let key {
+          fieldLabel(key, marked: marked)
+        } else {
+          Color.clear.frame(width: 1, height: 1)
+        }
+        control()
+      }
+    case .column:
+      VStack(alignment: .leading, spacing: 4) {
+        if let key { fieldLabel(key, marked: marked) }
+        control()
+          .buttonSizing(.flexible)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+  }
+
+  /// A control with what goes beside it: side by side in the grid, one under the other in the
+  /// column, where the two would not fit in a line.
+  private var beside: AnyLayout {
+    inColumn
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+      : AnyLayout(HStackLayout(spacing: 8))
+  }
+
+  /// A row of small buttons: one line in the grid, wrapping in the column.
+  private func buttonRow(spacing: CGFloat) -> AnyLayout {
+    inColumn
+      ? AnyLayout(FlowRow(spacing: spacing, lineSpacing: 8))
+      : AnyLayout(HStackLayout(spacing: spacing))
+  }
+
+  /// A fixed width in the grid; in the column the control is as wide as the column.
+  private func gridWidth(_ width: CGFloat) -> CGFloat? { inColumn ? nil : width }
 
   @ViewBuilder
   private func rows(for field: EntryField) -> some View {
@@ -183,15 +262,14 @@ struct DetailsPanel: View {
 
   @ViewBuilder
   private var amountRows: some View {
-    GridRow {
-      fieldLabel("entry.amount")
-      HStack(spacing: 8) {
+    fieldRow("entry.amount") {
+      beside {
         AmountField(
           amount: totalBinding,
           // The text goes along: a formula typed here is kept in `amount_expr`.
           onTyped: { model.setTotal($0, typed: $1) }
         )
-        .frame(width: 140)
+        .frame(width: gridWidth(140))
         .focused($focus, equals: .amount)
         // One part is the whole operation: its amount is the total.
         .disabled((!model.isSplit && model.hasClosedPart) || moneyLocked)
@@ -205,32 +283,24 @@ struct DetailsPanel: View {
       }
     }
     if !model.isSplit && model.hasClosedPart {
-      GridRow {
-        Color.clear.frame(width: 1, height: 1)
-        closedPartCaption
-      }
+      fieldRow(nil) { closedPartCaption }
     }
     if model.offersRefundPurchase {
-      GridRow {
-        fieldLabel("entry.refund.purchase")
-        refundPurchaseRow
-      }
+      fieldRow("entry.refund.purchase") { refundPurchaseRow }
     }
   }
 
   @ViewBuilder
   private var categoryRows: some View {
     if model.has(.category) {
-      GridRow {
-        fieldLabel("entry.category", marked: model.markedGap == .category)
+      fieldRow("entry.category", marked: model.markedGap == .category) {
         HStack(spacing: 8) {
           categoryPicker(forPartAt: 0)
             .focused($focus, equals: .category)
           if model.markedGap == .category { gapMark(.category) }
         }
       }
-      GridRow {
-        fieldLabel("entry.subcategory", marked: model.markedGap == .subcategory)
+      fieldRow("entry.subcategory", marked: model.markedGap == .subcategory) {
         HStack(spacing: 8) {
           subcategoryPicker(forPartAt: 0)
             .focused($focus, equals: .subcategory)
@@ -238,10 +308,7 @@ struct DetailsPanel: View {
         }
       }
       if !model.categorySuggestions.isEmpty {
-        GridRow {
-          Color.clear.frame(width: 1, height: 1)
-          suggestionChips
-        }
+        fieldRow(nil) { suggestionChips }
       }
     }
   }
@@ -263,8 +330,7 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var qualityRow: some View {
     if model.hasQuality && model.has(.quality) {
-      GridRow {
-        fieldLabel("entry.quality")
+      fieldRow("entry.quality") {
         // A menu like every other field: chosen by a click, and from the keyboard with Space,
         // the arrows and Return — a segmented control took Return for nothing.
         qualityMenu(for: partBinding(0))
@@ -277,8 +343,7 @@ struct DetailsPanel: View {
   private var forWhomRow: some View {
     if model.has(.fromPerson) {
       // Money back names the person it came from, and nothing else about them.
-      GridRow {
-        fieldLabel("entry.fromWhom")
+      fieldRow("entry.fromWhom") {
         referencePicker(
           selection: partBinding(0).forPersonId,
           options: model.people.map { ($0.id, $0.name) }, adding: .person(part: 0)
@@ -286,8 +351,7 @@ struct DetailsPanel: View {
         .focused($focus, equals: .forPerson)
       }
     } else if model.has(.forWhom) {
-      GridRow {
-        fieldLabel(forWhomKey)
+      fieldRow(forWhomKey) {
         forWhomPicker(forPartAt: 0, focusing: true)
       }
     }
@@ -296,8 +360,7 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var placeRow: some View {
     if model.has(.place) {
-      GridRow {
-        fieldLabel("entry.place")
+      fieldRow("entry.place") {
         // Through the model, like a place the line names: it brings its category and its
         // payment method. A place not been to yet is added from the menu, and the name the
         // line could not match is where its sheet starts. A place archived since is shown only
@@ -322,9 +385,8 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var eventRow: some View {
     if model.has(.event) {
-      GridRow {
-        fieldLabel("entry.event")
-        HStack(spacing: 8) {
+      fieldRow("entry.event") {
+        beside {
           referencePicker(
             selection: partBinding(0).eventId,
             options: model.events.map { ($0.id, $0.name) }, adding: .event(part: 0)
@@ -351,9 +413,8 @@ struct DetailsPanel: View {
 
   @ViewBuilder
   private var accountRows: some View {
-    GridRow {
-      // «Со счёта» for spending, «На счёт» for money that comes in, «Счёт» for a goal.
-      fieldLabel(model.accountFieldKey)
+    // «Со счёта» for spending, «На счёт» for money that comes in, «Счёт» for a goal.
+    fieldRow(model.accountFieldKey) {
       // An account chosen here is the owner's: no place chosen after it replaces it. The
       // main account first, the rest in the owner's order, each followed by its live cards
       // («Т-Банк · Black»): a card brings its account, an account picked names no card. No
@@ -375,9 +436,8 @@ struct DetailsPanel: View {
       .accessibilityIdentifier("entry.account")
     }
     if model.needsCharge {
-      GridRow {
-        fieldLabel("entry.accountCharge")
-        AccountChargeField(model: model)
+      fieldRow("entry.accountCharge") {
+        AccountChargeField(model: model, stacked: inColumn)
           .focused($focus, equals: .charge)
           .disabled(moneyLocked)
       }
@@ -391,11 +451,11 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var cashbackRow: some View {
     if model.showsCashback {
-      GridRow {
-        fieldLabel("entry.cashback")
+      fieldRow("entry.cashback") {
         CashbackField(
           state: $model.cashbackField, draft: model.draft,
           expectation: model.cashbackExpectation, context: model.cashbackContext,
+          leading: inColumn,
           remember: { rule in
             model.rememberCashback(rule) {
               CardActions(environment: environment, store: store).remember($0)
@@ -415,8 +475,7 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var goalRow: some View {
     if showsGoal {
-      GridRow {
-        fieldLabel("entry.goal")
+      fieldRow("entry.goal") {
         referencePicker(
           selection: Binding(
             get: { model.part(at: 0).goalId },
@@ -439,8 +498,7 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var debtRow: some View {
     if showsDebt {
-      GridRow {
-        fieldLabel("entry.debt")
+      fieldRow("entry.debt") {
         // A debt closed or deleted since stays in the menu of the payment that names it, and
         // says so; the payment keeps it unless another is picked. The difference of a count pays
         // no debt: its amount follows every recount, and a debt's balance would follow it.
@@ -468,8 +526,7 @@ struct DetailsPanel: View {
       }
       // Money that comes onto a debt owed to me is the debt paid back, not income.
       if model.incomeIsMoneyBack {
-        GridRow {
-          Color.clear.frame(width: 1, height: 1)
+        fieldRow(nil) {
           caption("entry.debt.moneyBack")
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("entry.debt.moneyBack")
@@ -479,8 +536,7 @@ struct DetailsPanel: View {
   }
 
   private var noteRow: some View {
-    GridRow {
-      fieldLabel("entry.note")
+    fieldRow("entry.note") {
       TextField(text: Binding($model.draft.note, replacingNilWith: "")) {
         Text(verbatim: t("entry.note"))
       }
@@ -490,8 +546,7 @@ struct DetailsPanel: View {
   }
 
   private var dateRow: some View {
-    GridRow {
-      fieldLabel("entry.date")
+    fieldRow("entry.date") {
       // A new day offers the event covering it instead of the old day's.
       DatePicker(
         selection: Binding(
@@ -511,14 +566,27 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var incomeMonthRows: some View {
     if model.draft.kind == .income {
-      GridRow {
-        fieldLabel("entry.periodMonth")
+      fieldRow("entry.periodMonth") {
         periodMonthPicker
           .focused($focus, equals: .incomeMonth)
       }
+      // Cashback the bank pays by a day of the next month is the month before's: said in words,
+      // so the month the picker shows is not taken for a slip.
+      if model.periodMonthIsCashbackOfTheMonthBefore {
+        fieldRow(nil) {
+          Text(
+            verbatim: environment.language.format(
+              "entry.periodMonth.cashback", table: "Entry",
+              environment.dates.monthTitle(model.shownPeriodMonth))
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("entry.periodMonth.cashback")
+        }
+      }
       if !openExpectations.isEmpty {
-        GridRow {
-          fieldLabel("entry.expected")
+        fieldRow("entry.expected") {
           if model.linksExpectedIncome {
             Picker(selection: $model.expectedIncomeId) {
               Text(verbatim: "—").tag(UUID?.none)
@@ -541,14 +609,12 @@ struct DetailsPanel: View {
 
   @ViewBuilder
   private var currencyRows: some View {
-    GridRow {
-      fieldLabel("entry.currency")
+    fieldRow("entry.currency") {
       currencyPicker
         .focused($focus, equals: .currency)
     }
     if model.draft.currency != .rub {
-      GridRow {
-        fieldLabel("entry.rate")
+      fieldRow("entry.rate") {
         rateField
           .focused($focus, equals: .rate)
       }
@@ -556,7 +622,7 @@ struct DetailsPanel: View {
   }
 
   private var suggestionChips: some View {
-    HStack(spacing: 6) {
+    buttonRow(spacing: 6).callAsFunction {
       ForEach(model.categorySuggestions, id: \.id) { category in
         // History remembers the most specific category, so a chip fills both pickers and
         // shows the whole path — otherwise two chips could read the same.
@@ -588,12 +654,12 @@ struct DetailsPanel: View {
                 categoryPicker(forPartAt: index)
                 subcategoryPicker(forPartAt: index)
               }
-              .frame(maxWidth: 200)
+              .frame(maxWidth: inColumn ? .infinity : 200)
             }
             // Each part has a quality of its own, so it sits next to the amount.
             VStack(alignment: .leading, spacing: 4) {
               AmountField(amount: partBinding(index).amount)
-                .frame(width: 120)
+                .frame(width: inColumn ? 104 : 120)
                 .disabled(model.isClosedPart(id: part.id))
               if model.hasQuality {
                 qualityMenu(for: partBinding(index))
@@ -705,7 +771,8 @@ struct DetailsPanel: View {
 
   private var footer: some View {
     VStack(alignment: .leading, spacing: 12) {
-      HStack(spacing: 12) {
+      // The column is too narrow for the four in a line: there they wrap.
+      buttonRow(spacing: inColumn ? 8 : 12).callAsFunction {
         // A refund of a purchase takes back one amount of one part: it is neither split nor
         // paid for somebody else.
         if model.canSplit {
@@ -741,7 +808,7 @@ struct DetailsPanel: View {
             .accessibilityIdentifier("entry.transfer")
         }
 
-        Spacer()
+        if !inColumn { Spacer() }
       }
 
       if !model.canChangeCredit && model.isOnCredit {
@@ -752,6 +819,7 @@ struct DetailsPanel: View {
       if offersClosingTerm {
         Toggle(isOn: $model.closesDebtTerm) {
           Text(verbatim: t("entry.closesTerm"))
+            .fixedSize(horizontal: false, vertical: true)
         }
         .toggleStyle(.checkbox)
         .help(t("entry.closesTerm.help"))
@@ -783,9 +851,8 @@ struct DetailsPanel: View {
       get: { model.creditPlan ?? EntryDraftModel.CreditPlan() },
       set: { model.creditPlan = $0 })
 
-    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-      GridRow {
-        fieldLabel("entry.debt")
+    fields {
+      fieldRow("entry.debt") {
         Picker(selection: plan.debtId) {
           Text(verbatim: t("entry.newDebt")).tag(UUID?.none)
           ForEach(model.debts, id: \.id) { debt in
@@ -799,8 +866,7 @@ struct DetailsPanel: View {
       // The count and the instalment move together, and only a new debt takes them: an
       // existing one keeps its own payment.
       if plan.wrappedValue.debtId == nil {
-        GridRow {
-          fieldLabel("entry.payments")
+        fieldRow("entry.payments") {
           Stepper(
             value: Binding(
               get: { plan.wrappedValue.payments }, set: { model.setCreditPayments($0) }),
@@ -811,13 +877,12 @@ struct DetailsPanel: View {
           }
           .fixedSize()
         }
-        GridRow {
-          fieldLabel("entry.monthlyPayment")
+        fieldRow("entry.monthlyPayment") {
           AmountField(
             amount: Binding(
               get: { plan.wrappedValue.monthlyAmount }, set: { model.setCreditMonthly($0) })
           )
-          .frame(width: 120)
+          .frame(width: gridWidth(120))
         }
       }
     }
@@ -906,7 +971,8 @@ struct DetailsPanel: View {
     }
     .pickerStyle(.menu)
     .labelsHidden()
-    .fixedSize()
+    // As wide as the column in the form; in the grid and in a part of a split, as its value.
+    .fixedSize(horizontal: !inColumn, vertical: false)
     .help(t("entry.quality"))
     .disabled(!model.canRateByHand(part.wrappedValue))
   }
@@ -1016,7 +1082,7 @@ struct DetailsPanel: View {
     Picker(
       selection: Binding(
         get: { model.shownPeriodMonth },
-        set: { model.draft.periodMonth = $0 })
+        set: { model.choosePeriodMonth($0) })
     ) {
       ForEach(model.periodMonthOptions, id: \.iso) { month in
         Text(verbatim: month.iso).tag(month)
@@ -1046,7 +1112,7 @@ struct DetailsPanel: View {
 
   /// The purchase a refund takes money back from: picked, «без покупки», or still to pick.
   private var refundPurchaseRow: some View {
-    HStack(spacing: 8) {
+    beside {
       if let target = model.refundTarget {
         Label {
           Text(verbatim: purchaseTitle(target))
@@ -1087,9 +1153,8 @@ struct DetailsPanel: View {
 
   private var rateField: some View {
     HStack(spacing: 8) {
-      RateField(model: model, title: t("entry.rate"))
+      RateField(model: model, title: t("entry.rate"), width: gridWidth(120))
         .labelsHidden()
-        .frame(width: 120)
         // A refund of a purchase is at the purchase's rate.
         .disabled(!model.canTypeRate || moneyLocked)
       if model.draft.rateSource == .manual {
@@ -1282,18 +1347,29 @@ struct AmountField: View {
 /// the separator vanished under the cursor and «81,43» came out as 8143. `AmountField` keeps its
 /// text the same way.
 ///
-/// A rate keeps the rule of rates: a lone separator is the decimal one, «83,125» is 83.125.
+/// A rate keeps the rule of rates: a lone separator is the decimal one, «83,125» is 83.125. It
+/// can be a formula, like an amount — «95,5/1,02», «(90+92)/2» (`RateText`) —: beside the field
+/// stands what it comes to while the text is a formula, and Enter writes that rate in its place.
 struct RateField: View {
   let model: EntryDraftModel
   let title: String
+  /// The width of the text field itself — `nil` fills the row, as in the form column; what a
+  /// formula comes to stands beside it.
+  var width: CGFloat? = 120
   @State private var text = ""
   @FocusState private var isFocused: Bool
 
   var body: some View {
-    TextField(text: $text) {
-      Text(verbatim: title)
+    HStack(spacing: 8) {
+      TextField(text: $text) {
+        Text(verbatim: title)
+      }
+      .frame(width: width)
+      .focused($isFocused)
+      if let result = Self.formulaResult(text) {
+        RateFormulaResult(rate: result)
+      }
     }
-    .focused($isFocused)
     .onAppear { text = Self.text(afterTyping: text, rate: model.draft.rate) }
     // Half-typed text must not clear the rate and claim the owner chose it: that combination
     // is what converts a foreign amount one to one (see the model). Text that already reads as
@@ -1309,6 +1385,12 @@ struct RateField: View {
     .onChange(of: isFocused) { _, focused in
       if !focused { settle() }
     }
+  }
+
+  /// What a formula in the field comes to, while it is one that reads; nil for a plain number,
+  /// which says itself, and for a formula still being typed.
+  static func formulaResult(_ text: String) -> Decimal? {
+    RateTextField.formulaResult(text)
   }
 
   private func settle() {
@@ -1333,7 +1415,7 @@ struct RateField: View {
   static func reads(_ text: String, as rate: Decimal?) -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespaces)
     guard let rate else { return trimmed.isEmpty }
-    return DecimalMath.parse(trimmed) == rate
+    return RateText.value(trimmed) == rate
   }
 }
 

@@ -515,8 +515,9 @@ struct MarkAsPaidForm: View {
           LabeledContent(
             environment.format("form.rate", table: "Planning", payment.currency.code)
           ) {
-            TextField("", text: $rateText)
-              .multilineTextAlignment(.trailing)
+            RateTextField(
+              title: environment.format("form.rate", table: "Planning", payment.currency.code),
+              text: $rateText)
           }
         }
         AccountPicker(
@@ -603,9 +604,10 @@ struct MarkAsPaidForm: View {
     amount.raw > 0 && chargeComplete && (!needsRate || rate != nil || charged?.currency == .rub)
   }
 
-  /// The rate typed by hand: a positive number, with a comma or a point.
+  /// The rate typed by hand: a positive number, with a comma or a point, or a formula that
+  /// comes to one (`RateText`).
   private var rate: Decimal? {
-    DecimalMath.parse(rateText.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil }
+    RateText.rate(rateText)
   }
 
   private func refreshCharge() {

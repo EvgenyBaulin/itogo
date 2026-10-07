@@ -15,7 +15,7 @@ struct OwedCard: View {
 
   var body: some View {
     ComputedBlock(
-      title: environment.language("owed.title", table: "Entry"), state: compute.states.owed,
+      title: OverviewTileText.name(of: .owedToMe, environment), state: compute.states.owed,
       fillsHeight: true, retry: { compute.retry(ComputeStep.owed) }
     ) { owed in
       if owed.count > 0 {

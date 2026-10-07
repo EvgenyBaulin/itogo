@@ -274,6 +274,7 @@ struct MergeTests {
     let sameTrip = Event(name: "Trip to Kazan", kind: .trip, startDate: days.0, endDate: days.1)
     for person in [keep, duplicate] { try references.save(person) }
     for method in [card, sameCard] { try references.save(method) }
+    try TestSupport.fileUnderOneBank([card.id, sameCard.id], stack: stack)
     for event in [trip, sameTrip] { try references.save(event) }
 
     let payment = ScheduledPayment(
@@ -368,6 +369,7 @@ struct MergeTests {
     let cash = PaymentMethod(name: "Cash", kind: .cash)
     let other = PaymentMethod(name: "Other", kind: .other)
     for method in [main, cash, other] { try references.save(method) }
+    try TestSupport.fileUnderOneBank([main.id, cash.id, other.id], stack: stack)
 
     try references.mergePaymentMethod(main.id, into: cash.id)
 
@@ -393,6 +395,7 @@ struct MergeTests {
     try stack.writer.write { db in
       for method in [main, second, cash] { try method.insert(db) }
     }
+    try TestSupport.fileUnderOneBank([main.id, cash.id], stack: stack)
     let references = ReferenceRepository(writer: stack.writer)
 
     try references.mergePaymentMethod(main.id, into: cash.id)
@@ -410,6 +413,7 @@ struct MergeTests {
     let duplicate = PaymentMethod(name: "Card 2", currency: .rub)
     let wallet = PaymentMethod(name: "Wallet", kind: .cash, currency: .rub)
     for method in [keep, duplicate, wallet] { try references.save(method) }
+    try TestSupport.fileUnderOneBank([keep.id, duplicate.id], stack: stack)
     let debt = Debt(direction: .iOwe, type: .personal, name: "Loan from Sam")
     try references.save(debt)
     let line = DebtEntry(

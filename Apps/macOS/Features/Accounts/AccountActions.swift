@@ -53,6 +53,11 @@ enum AccountRefusal: Error, Hashable, Sendable {
   case bankHasLiveAccounts
   /// Accounts, archived ones included, are filed under the bank: it is not deleted.
   case bankInUse
+  /// A merge of two accounts under different banks: money of one bank never lands on an
+  /// account of another by a merge — the banks are merged first.
+  case otherBank
+  /// «Объединить с…» of a bank: the banks are not two live banks.
+  case bankMerge(BankMergeIssue)
   case notFound
   /// The money on the key is not what the question showed any more — something was written
   /// meanwhile —: nothing was written, and the amounts are shown again.
@@ -627,13 +632,15 @@ struct AccountActions {
       source: source, target: target, answers: answers, books: books, at: environment.now())
   }
 
-  /// The accounts `source` can be merged into, in list order: the other live accounts — and,
-  /// when the main account is merged away, only those in the summary, since the target takes
-  /// over as main.
+  /// The accounts `source` can be merged into, in list order: the other live accounts of its
+  /// bank (`AccountMerge.canMerge`) — and, when the main account is merged away, only those in
+  /// the summary, since the target takes over as main. An account under no bank is offered
+  /// nothing.
   func mergeTargets(for source: PaymentMethod) -> [PaymentMethod] {
     let groups = self.groups
     return ordered(all).filter {
-      $0.id != source.id && !(source.isDefault && Self.isInExcludedGroup($0, groups: groups))
+      AccountMerge.canMerge(source, into: $0)
+        && !(source.isDefault && Self.isInExcludedGroup($0, groups: groups))
     }
   }
 
@@ -660,9 +667,15 @@ struct AccountActions {
       balancesAfter: AccountMerge.balancesAfter(plan, source: source.id, balances: books.balances))
   }
 
-  /// Merges the account into another, for good; the ⌘Z history is forgotten after it.
+  /// Merges the account into another of its bank, for good; the ⌘Z history is forgotten after
+  /// it. Accounts of two banks are refused (`otherBank`), here and by the repository.
   func merge(_ preview: AccountMergePreview) -> AccountActionOutcome {
     guard let repository = environment.accounts else { return .failed }
+    let all = self.all
+    guard let source = all.first(where: { $0.id == preview.plan.sourceId }),
+      let target = all.first(where: { $0.id == preview.plan.target.id })
+    else { return .refused(.notFound) }
+    guard AccountMerge.canMerge(source, into: target) else { return .refused(.otherBank) }
     if preview.plan.target.isDefault,
       Self.isInExcludedGroup(preview.plan.target, groups: groups)
     {
@@ -672,6 +685,8 @@ struct AccountActions {
       try repository.merge(preview.plan, calendar: environment.calendar)
     } catch AccountWriteError.notFound {
       return .refused(.notFound)
+    } catch AccountWriteError.otherBank {
+      return .refused(.otherBank)
     } catch {
       AppLog.error(
         "accounts.merge", .db, "the accounts were not merged",
@@ -989,6 +1004,9 @@ enum AccountText {
     case .bankNameTaken: return t("account.refusal.bankNameTaken")
     case .bankHasLiveAccounts: return t("account.refusal.bankHasLiveAccounts")
     case .bankInUse: return t("account.refusal.bankInUse")
+    case .otherBank: return t("account.refusal.otherBank")
+    case .bankMerge(.archived): return t("bank.merge.refusal.archived")
+    case .bankMerge(.notFound), .bankMerge(.sameBank): return t("account.refusal.notFound")
     case .notFound: return t("account.refusal.notFound")
     case .balanceChanged(let key):
       let name =

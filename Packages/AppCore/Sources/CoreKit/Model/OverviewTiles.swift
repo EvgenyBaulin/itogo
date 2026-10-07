@@ -128,6 +128,19 @@ public enum OverviewTiles {
     return rest
   }
 
+  /// The choice after `tile` was dragged onto the row of `target`: it takes the place of the
+  /// target, which moves one row towards where the tile came from — a tile dragged down lands
+  /// after it, dragged up before it. A tile or a target not shown, or a tile dropped on itself,
+  /// leaves the choice as it was.
+  public static func dropping(
+    _ tile: OverviewTile, onto target: OverviewTile, in tiles: [OverviewTile]
+  ) -> [OverviewTile] {
+    guard tile != target, let from = tiles.firstIndex(of: tile),
+      let to = tiles.firstIndex(of: target)
+    else { return tiles }
+    return moving(tiles, from: IndexSet(integer: from), to: from < to ? to + 1 : to)
+  }
+
   /// The choice is the standard one: «Сбросить» has nothing to do.
   public static func isStandard(_ tiles: [OverviewTile]) -> Bool {
     tiles == standard

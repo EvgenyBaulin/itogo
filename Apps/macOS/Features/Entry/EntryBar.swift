@@ -427,39 +427,18 @@ struct EntryBar<Accessory: View>: View {
 
   /// The form at the side of the window (`EntryStyle.form`): every field of the panel, always
   /// open, with a button of its own to save and one to clear. No line, no chips, no suggestions.
+  @ViewBuilder
   private var formBody: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        Text(verbatim: environment.language("entry.form.title", table: "Entry"))
-          .font(.headline)
-        Spacer()
-        Button(environment.language("entry.form.clear", table: "Entry"), action: clearTheForm)
-          .buttonStyle(.borderless)
-          .accessibilityIdentifier("entry.form.clear")
+    if let model {
+      EntryFormColumn(
+        model: model, focusedInside: $formFocused, save: save, clear: clearTheForm,
+        transfer: startTransfer
+      ) {
+        caption
       }
-      if let model {
-        ScrollView {
-          DetailsPanel(
-            model: model, submit: save, onTransfer: startTransfer, focusedInside: $formFocused
-          )
-          .padding(.trailing, 4)
-        }
-      } else {
-        Spacer()
-      }
-      caption
-        .frame(maxWidth: .infinity, alignment: .leading)
-      HStack {
-        Spacer()
-        Button(environment.language("entry.save", table: "Entry"), action: save)
-          .buttonStyle(.borderedProminent)
-          // Return saves from any field of the form — a menu, the date, a checkbox — while the
-          // focus is in it; with the focus in the list beside it Return is the list's.
-          .keyboardShortcut(formFocused ? .defaultAction : nil)
-          .accessibilityIdentifier("entry.form.save")
-      }
+    } else {
+      Spacer()
     }
-    .padding(14)
   }
 
   /// Money back of a person who owes nothing is income; of one who owes on a debt, that debt's
@@ -529,13 +508,17 @@ struct EntryBar<Accessory: View>: View {
     .glassEffectID("details", in: glass)
   }
 
+  /// The caption under the line stands in from the capsule's rounded ends; the form has its own
+  /// margin.
+  private var captionInset: CGFloat { style == .form ? 0 : 14 }
+
   @ViewBuilder
   private var caption: some View {
     if let message, message.isError {
       Text(verbatim: message.text(environment))
         .font(.caption)
         .foregroundStyle(.red)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, captionInset)
         .accessibilityIdentifier("entry.caption")
     } else if let message {
       // A question, not an error: a symbol and words, in the secondary colour.
@@ -546,14 +529,14 @@ struct EntryBar<Accessory: View>: View {
       }
       .font(.caption)
       .foregroundStyle(.secondary)
-      .padding(.horizontal, 14)
+      .padding(.horizontal, captionInset)
       .accessibilityIdentifier("entry.caption")
     } else if let preview {
       // "Результат виден сразу": the amount a formula comes to, before Enter.
       Text(verbatim: preview)
         .font(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, captionInset)
     }
   }
 

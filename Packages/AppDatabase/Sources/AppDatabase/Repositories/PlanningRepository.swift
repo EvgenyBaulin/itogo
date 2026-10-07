@@ -161,6 +161,13 @@ public struct PlanningChange: Sendable, Hashable {
   /// exactly those, so when the live operations among `softDeleted` are others — one deleted
   /// elsewhere since — nothing is written (`SettlingPlanOutdated`). `nil`: no such check.
   public var settlingPlanned: Set<UUID>?
+  /// Cards merged into another card of the same account, merged card → kept card: every
+  /// operation — in the bin too — and every scheduled payment that names the merged card names
+  /// the kept one, before the cards of `delete` go. Only the link moves: an operation keeps the
+  /// moment it was last written, since nothing the owner wrote in it changed, and no money moves,
+  /// since the account stays. A card of another account, or one that is not there, refuses the
+  /// change with `AccountWriteError.cardOfAnotherAccount`.
+  public var movingCards: [UUID: UUID]
 
   public init(
     created: [TransactionEntry] = [], upsert: PlanningRows = .empty,
@@ -168,7 +175,8 @@ public struct PlanningChange: Sendable, Hashable {
     rewritten: [TransactionEntry] = [], softDeleted: [UUID] = [], at: Date = Date(),
     unlinking: PlanningRowIDs = .empty, settles: Set<BalanceKey> = [],
     expectingBalances: [BalanceKey: AmountE4] = [:],
-    expectingBalancesNow: [BalanceKey: AmountE4] = [:], settlingPlanned: Set<UUID>? = nil
+    expectingBalancesNow: [BalanceKey: AmountE4] = [:], settlingPlanned: Set<UUID>? = nil,
+    movingCards: [UUID: UUID] = [:]
   ) {
     self.created = created
     self.upsert = upsert
@@ -182,6 +190,7 @@ public struct PlanningChange: Sendable, Hashable {
     self.expectingBalances = expectingBalances
     self.expectingBalancesNow = expectingBalancesNow
     self.settlingPlanned = settlingPlanned
+    self.movingCards = movingCards
   }
 }
 
@@ -221,6 +230,9 @@ public struct PlanningUndo: Sendable, Hashable {
   /// What the counts it reached wrote in the same write — for the caller to show, and for ⌘Z to
   /// give back the numbers of a count that no longer follows the books after it.
   public var counts: CountsSettled
+  /// The operations whose card `PlanningChange.movingCards` moved, live and in the bin, for ⌘Z
+  /// to give each its card back.
+  public var movedCards: [MovedCardReference]
 
   public init(
     createdTransactionIds: [UUID] = [], inserted: PlanningRowIDs = .empty,
@@ -229,8 +241,9 @@ public struct PlanningUndo: Sendable, Hashable {
     rewrittenBefore: [TransactionEntry] = [], removedLinks: [ReimbursementLink] = [],
     deletion: DeletionEffects = .none, releasedRefunds: [UUID: UUID] = [:],
     written: [TransactionEntry] = [], countTouch: CountTouch = .none,
-    counts: CountsSettled = .none
+    counts: CountsSettled = .none, movedCards: [MovedCardReference] = []
   ) {
+    self.movedCards = movedCards
     self.countTouch = countTouch
     self.counts = counts
     self.createdTransactionIds = createdTransactionIds
@@ -244,6 +257,19 @@ public struct PlanningUndo: Sendable, Hashable {
     self.deletion = deletion
     self.releasedRefunds = releasedRefunds
     self.written = written
+  }
+}
+
+/// An operation (`rowId`) that named the card `from` and names `into` after a merge of cards.
+public struct MovedCardReference: Sendable, Hashable {
+  public let rowId: UUID
+  public let from: UUID
+  public let into: UUID
+
+  public init(rowId: UUID, from: UUID, into: UUID) {
+    self.rowId = rowId
+    self.from = from
+    self.into = into
   }
 }
 
@@ -450,6 +476,10 @@ public struct PlanningRepository: Sendable {
     try journal.upsert(rows.transfers, db: db)
     try journal.upsert(rows.reconciliations, db: db)
     try journal.upsert(rows.reconciledBalances, db: db)
+    let moved = try Self.moveCards(change.movingCards, journal: &journal, db: db)
+    // The lists show the live operations with their new card; one in the bin is not shown.
+    written += try TransactionRepository.entries(ids: moved.map(\.rowId), db: db)
+      .filter { !$0.transaction.isDeleted }
 
     let gone = change.delete
     try journal.delete(ReconciledBalance.self, ids: gone.reconciledBalances, db: db)
@@ -518,7 +548,38 @@ public struct PlanningRepository: Sendable {
       cleared: journal.cleared, rewrittenBefore: rewrites.before,
       removedLinks: rewrites.removedLinks, deletion: deletion,
       releasedRefunds: rewrites.releasedRefunds, written: written, countTouch: touch,
-      counts: counts)
+      counts: counts, movedCards: moved)
+  }
+
+  /// Points what named each merged card at its kept card (`PlanningChange.movingCards`): the
+  /// operations, kept by id for ⌘Z, and the scheduled payments, kept whole. Both cards are to
+  /// be cards of one account.
+  private static func moveCards(
+    _ moves: [UUID: UUID], journal: inout UndoJournal, db: Database
+  ) throws -> [MovedCardReference] {
+    var moved: [MovedCardReference] = []
+    for (from, into) in moves.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+      let accounts = try String.fetchAll(
+        db, sql: "SELECT payment_method_id FROM cards WHERE id IN (?, ?)",
+        arguments: [from.uuidString, into.uuidString])
+      guard from != into, accounts.count == 2, accounts[0] == accounts[1] else {
+        throw AccountWriteError.cardOfAnotherAccount
+      }
+      let operations = try String.fetchAll(
+        db, sql: "SELECT id FROM transactions WHERE card_id = ? ORDER BY rowid",
+        arguments: [from.uuidString])
+      moved += operations.compactMap(UUID.init(uuidString:)).map {
+        MovedCardReference(rowId: $0, from: from, into: into)
+      }
+      try db.execute(
+        sql: "UPDATE transactions SET card_id = ? WHERE card_id = ?",
+        arguments: [into.uuidString, from.uuidString])
+      try journal.keepRows(ScheduledPayment.self, where: "card_id", is: from, db: db)
+      try db.execute(
+        sql: "UPDATE scheduled_payments SET card_id = ? WHERE card_id = ?",
+        arguments: [into.uuidString, from.uuidString])
+    }
+    return moved
   }
 
   /// The live operations with a part put into one of these goals, as they are.
@@ -804,6 +865,13 @@ public struct PlanningRepository: Sendable {
           WHERE id = ? AND \(reference.column) IS NULL
           """,
         arguments: [reference.referencedId.uuidString, reference.rowId])
+    }
+    // An operation takes its merged card back, the card being there again — unless the owner
+    // gave it another card since.
+    for moved in undo.movedCards {
+      try db.execute(
+        sql: "UPDATE transactions SET card_id = ? WHERE id = ? AND card_id = ?",
+        arguments: [moved.from.uuidString, moved.rowId.uuidString, moved.into.uuidString])
     }
     // Nothing written back points at a card, an account or a group the change added, while
     // rows it moved onto them did until now: they go here, still under the refusal of `apply`,

@@ -5783,6 +5783,23 @@
         }
       }
     },
+    "settings.tiles.drag": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag to reorder"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перетащите, чтобы переставить"
+          }
+        }
+      }
+    },
     "settings.tiles.full": {
       "extractionState": "manual",
       "localizations": {
@@ -5806,13 +5823,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ticked tiles are shown in this order; move them with the arrows."
+            "value": "Ticked tiles are shown in this order; drag them with the mouse to reorder."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Отмеченные плитки показываются в этом порядке; переставляйте их стрелками."
+            "value": "Отмеченные плитки показываются в этом порядке; чтобы переставить, перетаскивайте их мышью."
           }
         }
       }

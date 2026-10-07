@@ -14,20 +14,30 @@ import SwiftUI
 struct AccountChargeField: View {
   @Dependency(\.environment) private var environment
   @Bindable var model: EntryDraftModel
+  /// The notes under the field rather than beside it: a narrow column has no room for them.
+  var stacked = false
+
+  private var layout: AnyLayout {
+    stacked
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+      : AnyLayout(HStackLayout(spacing: 8))
+  }
 
   var body: some View {
-    HStack(spacing: 8) {
-      AmountField(
-        amount: Binding(
-          get: { model.draft.accountAmount ?? .zero },
-          set: { model.setCharge($0) })
-      )
-      .frame(width: 140)
-      .accessibilityLabel(Text(verbatim: t("entry.accountCharge")))
-      .accessibilityIdentifier("entry.accountCharge")
-      if let currency = model.draft.accountCurrency {
-        Text(verbatim: currency.code)
-          .foregroundStyle(.secondary)
+    layout {
+      HStack(spacing: 8) {
+        AmountField(
+          amount: Binding(
+            get: { model.draft.accountAmount ?? .zero },
+            set: { model.setCharge($0) })
+        )
+        .frame(width: stacked ? nil : 140)
+        .accessibilityLabel(Text(verbatim: t("entry.accountCharge")))
+        .accessibilityIdentifier("entry.accountCharge")
+        if let currency = model.draft.accountCurrency {
+          Text(verbatim: currency.code)
+            .foregroundStyle(.secondary)
+        }
       }
       if model.chargeIsProvisional {
         Label {
