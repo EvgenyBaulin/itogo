@@ -436,6 +436,46 @@ struct InputLineTrapsTests {
     }
   }
 
+  /// Названия валют, которые ещё и обычные слова, — «драма», «драм», «лира», английские «rub»,
+  /// «dram», «buck» — валютой становятся, только если приклеены к числу или стоят сразу после
+  /// него: «кино драма 500» — это кино, а не 500 армянских драмов; «massage rub 300» — в рублях
+  /// по умолчанию, но без слова «rub» в валюте. Слово, которое только начинается как валюта
+  /// («рубин», «лирика», «драматург», «rubber»), — всегда слово.
+  @Test("Слово, которое ещё и название валюты, посреди описания остаётся словом")
+  func aCurrencyNameThatIsAWordStaysAWord() {
+    let cases: [(line: String, note: String)] = [
+      ("кино драма 500", "кино драма"),
+      ("драма 500", "драма"),
+      ("сборник драм 400", "сборник драм"),
+      ("лира 3000", "лира"),
+      ("звуки лиры 300", "звуки лиры"),
+      ("massage rub 300", "massage rub"),
+      ("rub off 300", "rub off"),
+      ("a dram of whisky 12", "a dram of whisky"),
+      ("buck knife 300", "buck knife"),
+      ("рубин 500", "рубин"),
+      ("лирика 200", "лирика"),
+      ("драматург 300", "драматург"),
+      ("rubber 50", "rubber"),
+    ]
+    for (line, note) in cases {
+      let result = Fixture.parse(line)
+      #expect(result.currency == nil, "«\(line)»")
+      #expect(result.amount != nil, "«\(line)»")
+      #expect(result.note == note, "«\(line)»")
+    }
+    let read: [(String, String)] = [
+      ("билет 900 драм", "AMD"), ("билет 2 драма", "AMD"), ("билет 900драм", "AMD"),
+      ("кофе 80 лир", "TRY"), ("кофе 2 лиры", "TRY"), ("кофе 250 rub", "RUB"),
+      ("кофе 250rub", "RUB"), ("кофе 250 RUB", "RUB"), ("RUB 250 кофе", "RUB"),
+      ("drinks 5 drams", "AMD"), ("drinks 5 dram", "AMD"), ("lunch 5 buck", "USD"),
+      ("lunch 5 bucks", "USD"), ("хачапури 900 драмов", "AMD"),
+    ]
+    for (line, code) in read {
+      #expect(Fixture.parse(line).currency?.code == code, "«\(line)»")
+    }
+  }
+
   @Test("Знак дохода перед символом валюты не мешает сумме")
   func aSignBeforeACurrencySymbolKeepsTheAmount() {
     for line in ["+$500 бонус", "+500$ бонус", "+ $500 бонус"] {

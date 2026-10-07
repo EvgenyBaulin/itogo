@@ -149,4 +149,31 @@ struct DateOrNumberLineTests {
     #expect(result.dateProblem == nil)
     #expect(result.isSaveable)
   }
+  /// A written year is a date only inside the window a two-digit year is read in: no more than
+  /// twenty years after today and less than eighty before it (1947…2046 while today is
+  /// 2026). Outside it the word is no date at all, and the line reads as if it had never looked
+  /// like one: «ужин 2500-10-5» costs 2500 − 10 − 5, not a dinner on 5 October 2500.
+  @Test(
+    "A year far from today makes no date",
+    arguments: [
+      Reading("ужин 2500-10-5", amount: "2485", note: "ужин", expression: "2500-10-5"),
+      Reading("ужин 9999-12-31", amount: "9956", note: "ужин", expression: "9999-12-31"),
+      Reading("кофе 250 2099-01-01", amount: "250", note: "кофе 2099-01-01"),
+      Reading("кофе 250 12.09.2500", amount: "250", note: "кофе 12.09.2500"),
+      Reading("кофе 250 12.09.2047", amount: "250", note: "кофе 12.09.2047"),
+      Reading("кофе 250 1946-12-31", amount: "250", note: "кофе 1946-12-31"),
+      Reading("кофе 250 31.09.2500", amount: "250", note: "кофе 31.09.2500"),
+      // The edges of the window are dates.
+      Reading("кофе 250 12.09.2046", amount: "250", date: "2046-09-12"),
+      Reading("кофе 250 1947-01-01", amount: "250", date: "1947-01-01"),
+      Reading("кофе 250 2026-10-05", amount: "250", date: "2026-10-05"),
+    ])
+  func aYearFarFromTodayMakesNoDate(_ reading: Reading) {
+    let result = Fixture.parse(reading.line)
+    #expect(result.amount == reading.amount.map(dec))
+    #expect(result.date?.iso == reading.date)
+    #expect(result.dateProblem == nil)
+    #expect(result.note == reading.note)
+    #expect(result.amountExpression == reading.expression)
+  }
 }

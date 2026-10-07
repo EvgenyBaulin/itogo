@@ -36,6 +36,8 @@ enum Lexicon {
     englishCurrencyWords.merging(russianCurrencyWords) { first, _ in first }
 
   static let wordlikeCurrencyCodes: Set<String> = englishWordlikeCurrencyCodes
+  static let wordlikeCurrencyNames: Set<String> =
+    englishWordlikeCurrencyNames.union(russianWordlikeCurrencyNames)
 
   /// Symbols of the ten currencies enabled out of the box. The dirham has no single-rune
   /// symbol, so only its code and name are recognised.

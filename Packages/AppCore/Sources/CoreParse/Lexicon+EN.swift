@@ -59,6 +59,11 @@ extension Lexicon {
   /// ("250 TRY"); glued to it ("250try") they always are.
   static let englishWordlikeCurrencyCodes: Set<String> = ["try", "gel", "amd"]
 
+  /// Currency names that are everyday English words as well — to rub, a dram of whisky, a
+  /// buck: a currency only right after a number ("250 rub") or glued to it, and "RUB" — the
+  /// code in capitals — anywhere.
+  static let englishWordlikeCurrencyNames: Set<String> = ["rub", "dram", "drams", "buck"]
+
   /// Possessives and articles that stand between a marker and the word it introduces:
   /// "for my wife", "at the Ritz".
   static let englishDeterminers: Set<String> = [

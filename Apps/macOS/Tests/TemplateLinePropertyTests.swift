@@ -6,7 +6,8 @@ import XCTest
 /// A chip enters a line, and Enter saves what the line says: so a template made of what a line
 /// was read as — its note, amount and currency — gives the same note, amount and currency back
 /// through the line of its chip. Random lines of words, counts («2 шт», «3 бутылки»), a refused
-/// formula, a multiplication, and an amount written every way, in rubles and abroad.
+/// formula anywhere in the note, a multiplication, and an amount written every way, in rubles
+/// and abroad.
 final class TemplateLinePropertyTests: XCTestCase {
   private let today = DateOnly(year: 2026, month: 9, day: 18)
   private var parser: InputLineParser { InputLineParser(vocabulary: .empty, calendar: .utc) }
@@ -29,13 +30,13 @@ final class TemplateLinePropertyTests: XCTestCase {
     for seed in UInt64(1)...3_000 {
       var dice = Dice(state: seed)
       var words: [String] = []
-      // A note ending in a refused formula («100-250») is left out: the amount of the chip
-      // follows it, and «100-250 250» is one formula by the space that groups thousands.
+      // A note may end in a refused formula («обед 100-250»): the chip must not let its amount
+      // join it into «100-250 250», one formula by the space that groups thousands.
       for _ in 0...dice.below(3) {
         words.append(
           dice.pick([
             "круассаны", "кофе", "обед", "2 шт", "3 бутылки", "1,5 кг", "доска 20x30",
-            "к 8 марта", "lunch", "2 pcs",
+            "к 8 марта", "lunch", "2 pcs", "100-250",
           ]))
       }
       let whole = dice.pick([1, 2, 3, 5, 12, 25, 31, 250, 1_500, 12_000])

@@ -207,7 +207,7 @@ final class EntryAskTests: XCTestCase {
       try EntryHost.history("sofa", in: environment)
     }
     self.host = host
-    let editor = try host.type("sofa 250 31.12.2099", into: try host.line())
+    let editor = try host.type("sofa 250 31.12.2030", into: try host.line())
     editor.insertNewline(nil)
     host.settle(0.3)
     let asked = try XCTUnwrap(sheet(of: host), "the question was not asked")
@@ -227,7 +227,7 @@ final class EntryAskTests: XCTestCase {
       try EntryHost.history("sofa", in: environment)
     }
     self.host = host
-    let editor = try host.type("sofa 250 31.12.2099", into: try host.line())
+    let editor = try host.type("sofa 250 31.12.2030", into: try host.line())
     editor.insertNewline(nil)
     host.settle(0.3)
     let asked = try XCTUnwrap(sheet(of: host), "the question was not asked")
@@ -238,7 +238,7 @@ final class EntryAskTests: XCTestCase {
     XCTAssertEqual(plans.count, 1)
     XCTAssertEqual(plans.first?.name, "sofa")
     XCTAssertEqual(plans.first?.amountE4, AmountE4(whole: 250))
-    XCTAssertEqual(plans.first?.nextDate, DateOnly(year: 2099, month: 12, day: 31))
+    XCTAssertEqual(plans.first?.nextDate, DateOnly(year: 2030, month: 12, day: 31))
     XCTAssertEqual(try host.line().stringValue, "", "the line is cleared")
     XCTAssertTrue(host.store.canUndo)
     host.store.undo()

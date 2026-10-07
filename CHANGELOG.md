@@ -7,6 +7,23 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.3.2] — 2026-10-07
+
+### Fixed
+
+- Transactions: in a window narrower than about 980 pt, closing the inspector brought the filters
+  back by making the window wider, and it stayed wider. The window keeps its width now; in a
+  narrow window the filters wait folded until the window is widened. The window can be made as
+  narrow as 560 pt.
+- The entry line read a date with a far-off year: «dinner 2500-10-5» became a dinner on
+  5 October 2500. A written year now has to be within the years a two-digit year means
+  (today − 79 to today + 20); otherwise the text is no date.
+- Currency names that are ordinary words — «драма», «лира», «rub», «buck» — were read as
+  currencies wherever they stood. They are currencies only glued to the number or right after it;
+  «RUB» in capitals still is anywhere.
+- A template chip whose note held something like «100-250» entered no amount; the chip now puts
+  its amount where the line reads it back.
+
 ## [1.3.1] — 2026-10-07
 
 Fixes found by tests after 1.3.0, a tidy detailed form, merging cards and banks, and rates as

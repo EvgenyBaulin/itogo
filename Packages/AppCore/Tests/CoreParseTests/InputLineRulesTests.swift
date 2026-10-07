@@ -139,7 +139,9 @@ struct InputLineRulesTests {
     #expect(Fixture.parse("кофе 250 01.01.00").date == DateOnly(year: 2000, month: 1, day: 1))
     #expect(Fixture.parse("кофе 250 12.09.46").date == DateOnly(year: 2046, month: 9, day: 12))
     #expect(Fixture.parse("кофе 250 12.09.47").date == DateOnly(year: 1947, month: 9, day: 12))
-    #expect(Fixture.parse("кофе 250 12.09.2099").date == DateOnly(year: 2099, month: 9, day: 12))
+    // A four-digit year is taken in the same window: 2046 is a date, 2099 is none.
+    #expect(Fixture.parse("кофе 250 12.09.2046").date == DateOnly(year: 2046, month: 9, day: 12))
+    #expect(Fixture.parse("кофе 250 12.09.2099").date == nil)
   }
 
   @Test("Несуществующая дата — отказ с причиной, а не текст")

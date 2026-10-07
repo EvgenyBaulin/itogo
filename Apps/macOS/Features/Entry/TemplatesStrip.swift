@@ -157,8 +157,49 @@ enum Templates {
   /// stands apart — glued to the word it would stay in the description. The code of the
   /// currency is written whenever it is not `defaultCurrency`, the one the line reads an amount
   /// in when it names none: a ruble template says «RUB» once the default is the tenge.
+  ///
+  /// The amount goes after the description, unless the line would not read it back there: a
+  /// description ending in a number the line refused («обед 100-250») would make one formula
+  /// of the two by the space that groups thousands — «100-250 250» —, and the chip would enter
+  /// no amount at all. Then the amount moves in front of the description, or between its
+  /// words, to the first place where the line reads the same amount, currency and description
+  /// again; a description of such numbers alone keeps the amount apart with its currency's
+  /// code, written even when it is `defaultCurrency` — Enter reads the same currency either way.
   static func line(
     for template: Template, categories: [CoreKit.Category], defaultCurrency: CurrencyCode = .rub
+  ) -> String {
+    let plain = plainLine(for: template, categories: categories, defaultCurrency: defaultCurrency)
+    // Only a description with a digit in it can take the amount into a formula.
+    guard let units = template.amountE4, template.text.contains(where: \.isNumber) else {
+      return plain
+    }
+    let sign = isIncome(template.categoryId, among: categories) ? ["+"] : []
+    let note = template.text.split(separator: " ").map(String.init)
+    let currency = template.currency ?? defaultCurrency
+    let parser = InputLineParser(vocabulary: .empty, calendar: .utc)
+    let today = CalendarContext.utc.day(of: Date())
+    func readsBack(_ line: String) -> Bool {
+      let read = parser.parse(line, today: today)
+      return read.amount == units.decimal && read.note == note.joined(separator: " ")
+        && (read.currency ?? defaultCurrency) == currency && read.date == nil
+        && read.dateProblem == nil
+    }
+    if readsBack(plain) { return plain }
+    let number = FieldNumber.text(units)
+    let named = currency == defaultCurrency ? [number] : [number, currency.code]
+    for amount in [named, [number, currency.code]] {
+      for cut in [0] + Array((1..<max(note.count, 1)).reversed()) {
+        let line = (sign + note[..<cut] + amount + note[cut...]).joined(separator: " ")
+        if readsBack(line) { return line }
+      }
+    }
+    return plain
+  }
+
+  /// The chip's line with the amount after the description, the way it is written whenever the
+  /// line reads it back: «+ подарок 5000», «lunch 20.5 USD».
+  private static func plainLine(
+    for template: Template, categories: [CoreKit.Category], defaultCurrency: CurrencyCode
   ) -> String {
     var words: [String] = []
     if isIncome(template.categoryId, among: categories) { words.append("+") }
@@ -205,7 +246,7 @@ enum Templates {
     for template: Template, categories: [CoreKit.Category], in environment: AppEnvironment,
     model: EntryDraftModel?
   ) -> String {
-    let plain = line(
+    let plain = plainLine(
       for: template, categories: categories, defaultCurrency: template.currency ?? .rub)
     return line(
       for: template, categories: categories,
@@ -231,7 +272,7 @@ enum Templates {
     if let currency = template.currency { return currency }
     guard model != nil else { return lineCurrency(in: environment) }
     return readCurrency(
-      of: line(for: template, categories: [], defaultCurrency: .rub), in: environment,
+      of: plainLine(for: template, categories: [], defaultCurrency: .rub), in: environment,
       model: model)
   }
 

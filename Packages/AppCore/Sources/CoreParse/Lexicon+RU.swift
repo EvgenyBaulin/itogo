@@ -91,6 +91,11 @@ extension Lexicon {
     "бат": "THB", "бата": "THB", "батов": "THB",
   ]
 
+  /// Currency names that are everyday Russian words as well — «драма» and its «драм», the lyre
+  /// «лира» with «лиры» and «лир»: a currency only right after a number («900 драм», «80 лир»)
+  /// or glued to it; «кино драма 500» is a film.
+  static let russianWordlikeCurrencyNames: Set<String> = ["драма", "драм", "лира", "лиры", "лир"]
+
   /// Possessives that stand between a marker and the word it introduces: «для моей мамы»,
   /// «в нашей столовой». Every case of «мой», «твой», «свой», «наш», «ваш», and «его», «её»,
   /// «их», which do not decline.

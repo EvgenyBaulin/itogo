@@ -27,10 +27,12 @@ import Foundation
 ///     account's, and only a card of the account already read, if one was;
 ///  5. **currency** — a word, a code or a symbol, including the forms glued to the number;
 ///     a code that is also an English word ("try", "gel", "amd") only glued to the number or
-///     in capitals right after it;
-///  6. **date** — keywords, ISO, `12.09.2026` and `12.09`. A bare `12.09` is read as a date
-///     only when the line still holds another number that can be the amount, otherwise
-///     "кофе 12.09" would have no amount at all. A day the calendar does not have — «31.09»,
+///     in capitals right after it; a name that is an ordinary word too («драма», «лира», "rub")
+///     only glued to the number or right after it;
+///  6. **date** — keywords, ISO, `12.09.2026` and `12.09`, in a year no more than twenty
+///     years ahead of today and less than eighty back («2500-10-5» is a formula). A bare
+///     `12.09` is read as a date only when the line still holds another number that can be
+///     the amount, otherwise "кофе 12.09" would have no amount at all. A day the calendar does not have — «31.09»,
 ///     29 February of a common year — is taken as the date all the same and reported
 ///     (`dateProblem`): the line is refused with the reason instead of saving it as a number;
 ///  7. **amount** — the longest run of neighbouring unclaimed words that evaluates as an
@@ -556,14 +558,27 @@ private struct ParseSession {
 
   /// A code that is also an everyday word ("try", "gel", "amd") stands for its currency only
   /// written in capitals right after a number: "ужин 250 TRY" is in lira, "coffee 250 try new
-  /// latte" and "видеокарта AMD 25000" are not. Every other currency word
-  /// counts wherever it stands.
+  /// latte" and "видеокарта AMD 25000" are not. A currency name that is an ordinary word too
+  /// («драма», «лира», "rub", "dram") stands for it right after a number in any case — «билет 900
+  /// драм», "кофе 250 rub" —, and a code in capitals anywhere ("RUB 250"); «кино драма 500» is
+  /// a film. Every other currency word counts wherever it stands.
   private func standsAsCurrency(_ index: Int) -> Bool {
     let written = TextNormalizer.trimmingEdgePunctuation(words[index].original)
-    guard Lexicon.wordlikeCurrencyCodes.contains(TextNormalizer.normalized(written)) else {
-      return true
+    let normalized = TextNormalizer.normalized(written)
+    let capitals = written == written.uppercased()
+    if Lexicon.wordlikeCurrencyCodes.contains(normalized) {
+      return capitals && followsANumber(index)
     }
-    guard written == written.uppercased(), index > 0 else { return false }
+    if Lexicon.wordlikeCurrencyNames.contains(normalized) {
+      let code = capitals && written.count == 3 && written.allSatisfy(\.isASCII)
+      return code || followsANumber(index)
+    }
+    return true
+  }
+
+  /// The word in front of `index` is a number nothing has claimed yet.
+  private func followsANumber(_ index: Int) -> Bool {
+    guard index > 0 else { return false }
     let before = words[index - 1]
     return !before.claimed && isAmountish(before)
       && before.amountText.contains(where: ExpressionLexer.isDigit)
@@ -846,7 +861,7 @@ private struct ParseSession {
   /// A day and month shaped as a date: the day, the problem of a day the month lacks, or nil
   /// when the shape is not a date's.
   private func reading(year: Int, month: Int, day: Int, written: String) -> DateReading? {
-    guard (1...12).contains(month), (1...31).contains(day), year >= 1900, year <= 9999 else {
+    guard (1...12).contains(month), (1...31).contains(day), plausibleYears.contains(year) else {
       return nil
     }
     if let valid = validated(year: year, month: month, day: day) { return .day(valid) }
@@ -854,6 +869,14 @@ private struct ParseSession {
       return .problem(.notInYear(day: day, month: month, year: year))
     }
     return .problem(.noSuchDate(written: written))
+  }
+
+  /// The years a written date may fall in: the window a two-digit year is read in
+  /// (`nearestYear`), so «12.09.46» and «12.09.2046» are the same day. A year outside it is no
+  /// operation's date — «ужин 2500-10-5» is a formula, not a dinner five centuries ahead —
+  /// and the word is read as if it had never looked like a date.
+  private var plausibleYears: ClosedRange<Int> {
+    (today.year - 79)...(today.year + 20)
   }
 
   /// The year a two-digit year means: the one ending in those digits that lies no more than
