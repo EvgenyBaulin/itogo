@@ -83,8 +83,6 @@ stays at 6: nothing is migrated.
 
 ### Fixed
 
-- The last rows of Transactions could stay under the selection bar: the table now scrolls
-  them clear of it.
 - Merging two cards says how many operations and planned payments move to the card that stays,
   not only its cashback rules.
 - The Transactions window could grow by the width of its sidebar when the inspector closed;
