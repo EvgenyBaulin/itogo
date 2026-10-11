@@ -1199,6 +1199,91 @@
         }
       }
     },
+    "categories.essential": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Essential spending"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Необходимая трата"
+          }
+        }
+      }
+    },
+    "categories.essential.inherit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As the category above"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Как у категории"
+          }
+        }
+      }
+    },
+    "categories.essential.mark": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "essential"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "необходимая"
+          }
+        }
+      }
+    },
+    "categories.essential.no": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет"
+          }
+        }
+      }
+    },
+    "categories.essential.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Да"
+          }
+        }
+      }
+    },
     "categories.limit.hint": {
       "extractionState": "manual",
       "localizations": {
@@ -5233,6 +5318,127 @@
           "stringUnit": {
             "state": "translated",
             "value": "Места"
+          }
+        }
+      }
+    },
+    "settings.planning.cushion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Safety cushion"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подушка безопасности"
+          }
+        }
+      }
+    },
+    "settings.planning.cushionHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The accounts of the cushion and its goal are set on «Capital»; essential categories — there or in Categories."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счета подушки и её цель — в «Капитале»; необходимые категории — там же или в «Категориях»."
+          }
+        }
+      }
+    },
+    "settings.planning.cushionHistory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Obligatory spending: the median of %lld full month"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Obligatory spending: the median of %lld full months"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Обязательные траты — медиана за %lld полных месяца"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Обязательные траты — медиана за %lld полных месяцев"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Обязательные траты — медиана за %lld полный месяц"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Обязательные траты — медиана за %lld полного месяца"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "settings.planning.cushionOut": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the cushion out of the free sum"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не считать подушку в свободной сумме"
+          }
+        }
+      }
+    },
+    "settings.planning.cushionOutHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The money of the cushion accounts in the summary is not in «can spend now»."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги счетов подушки в сводке не входят в «можно тратить сейчас»."
           }
         }
       }

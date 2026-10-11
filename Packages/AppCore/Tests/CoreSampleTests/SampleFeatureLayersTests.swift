@@ -139,7 +139,13 @@ struct SampleFeatureLayersTests {
         == SampleAccountsTests.digest(accounts, over: history))
     #expect(
       Array(set.reconciliations.prefix(accounts.reconciliations.count)) == accounts.reconciliations)
-    #expect(Array(set.categories.prefix(accounts.categories.count)) == accounts.categories)
+    // The capital layer marks the essential spending; nothing else of a category changes.
+    let unmarked = set.categories.map { category in
+      var category = category
+      category.essential = nil
+      return category
+    }
+    #expect(Array(unmarked.prefix(accounts.categories.count)) == accounts.categories)
     #expect(Array(set.places.prefix(accounts.places.count)) == accounts.places)
     #expect(
       Array(set.paymentMethods.prefix(accounts.paymentMethods.count)) == accounts.paymentMethods)

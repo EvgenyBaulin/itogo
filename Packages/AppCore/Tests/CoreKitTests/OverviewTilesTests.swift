@@ -3,21 +3,30 @@ import Testing
 
 @testable import CoreKit
 
-/// The tiles of Overview as the settings keep them: twenty kinds to choose from, at most
+/// The tiles of Overview as the settings keep them: twenty-two kinds to choose from, at most
 /// twelve at once, the twelve of 1.2 in their order by default, and a stored line from anywhere —
 /// another build, an archive of another Mac, a hand edit — that always reads as a choice the grid
 /// can show.
 @Suite("The tiles of Overview")
 struct OverviewTilesTests {
-  /// Twenty kinds, in the order of the settings; the raw values are what is stored.
-  @Test func twentyKindsInTheOrderOfTheSettings() {
+  /// Twenty-two kinds, in the order of the settings; the raw values are what is stored.
+  @Test func twentyTwoKindsInTheOrderOfTheSettings() {
     #expect(
       OverviewTile.allCases.map(\.rawValue) == [
         "monthToDate", "topCategories", "qualities", "canSave", "spendingForecast",
         "incomeForecast", "balanceForecast", "limits", "upcoming", "expectedIncome", "owedToMe",
         "iOwe", "event", "lastCount", "lastRecord", "lastCountAndRecord", "worthALook",
-        "freeMoney", "currencyChart", "spendingCalendar",
+        "freeMoney", "currencyChart", "spendingCalendar", "capital", "cushion",
       ])
+  }
+
+  /// The capital and the cushion are chosen, never shown by default, and read back from a stored
+  /// line; a build that does not know them drops them as any unknown word.
+  @Test func theCapitalAndTheCushionAreChosenNotStandard() {
+    #expect(!OverviewTiles.standard.contains(.capital))
+    #expect(!OverviewTiles.standard.contains(.cushion))
+    #expect(OverviewTiles.decode("capital,cushion,limits") == [.capital, .cushion, .limits])
+    #expect(OverviewTiles.encode([.cushion, .capital]) == "cushion,capital")
   }
 
   /// By default exactly the twelve cards Overview had, in their order: nothing moves for an owner

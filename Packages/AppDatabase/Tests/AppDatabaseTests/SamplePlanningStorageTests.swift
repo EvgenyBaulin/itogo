@@ -262,6 +262,9 @@ struct SamplePlanningStorageTests {
     #expect(counts["reconciliation_balances"] == set.reconciledBalances.count)
     #expect(counts["scheduled_payments"] == set.planning.scheduled.count)
     #expect(counts["expected_income"] == set.planning.expected.count)
+    #expect(!set.assets.isEmpty && !set.assetValuations.isEmpty)
+    #expect(counts["assets"] == set.assets.count)
+    #expect(counts["asset_valuations"] == set.assetValuations.count)
 
     let settled = try ReconciliationRepository(writer: stack.writer).settleAll(
       context: LiveCountsContext(calendar: TestSupport.sampleCalendar, categoryName: "Sverka"))
@@ -272,6 +275,19 @@ struct SamplePlanningStorageTests {
 
     let dataset = try await DatasetRepository(writer: stack.writer).load(version: 1)
     #expect(dataset.cards.count == set.cards.count)
+    #expect(Set(dataset.assets) == Set(set.assets))
+    #expect(Set(dataset.assetValuations) == Set(set.assetValuations))
+    #expect(
+      Set(dataset.paymentMethods.filter(\.cushion).map(\.id))
+        == Set(set.paymentMethods.filter(\.cushion).map(\.id)))
+    #expect(dataset.paymentMethods.contains { $0.cushion })
+    let marks = Dictionary(uniqueKeysWithValues: set.categories.map { ($0.id, $0.essential) })
+    #expect(
+      dataset.categories.allSatisfy { category in
+        marks[category.id].map { $0 == category.essential } ?? true
+      })
+    #expect(dataset.categories.contains { $0.essential == true })
+    #expect(dataset.capitalSettings.targetMonths == 6)
     let named = set.entries.filter { !$0.transaction.isDeleted && $0.transaction.cardId != nil }
     #expect(dataset.entries.filter { $0.transaction.cardId != nil }.count == named.count)
     #expect(dataset.entries.contains { $0.transaction.cashback != nil })

@@ -517,6 +517,17 @@ struct AccountScreen: View {
             .font(.caption)
             .foregroundStyle(.secondary)
           }
+          if account.cushion {
+            Label {
+              Text(verbatim: t("accounts.cushion"))
+            } icon: {
+              Image(systemName: CushionText.symbol)
+            }
+            .labelStyle(.titleAndIcon)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("account.screen.cushion")
+          }
         }
         Spacer()
         buttons

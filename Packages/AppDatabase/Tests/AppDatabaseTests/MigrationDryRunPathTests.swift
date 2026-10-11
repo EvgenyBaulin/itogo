@@ -59,7 +59,7 @@ struct MigrationDryRunPathTests {
   @Test(arguments: [
     "UPDATE transactions SET amount_e4 = 'abc', note = 'secret note 4417' WHERE rowid = (SELECT MIN(rowid) FROM transactions)",
     "UPDATE people SET archived = 'x', name = 'secret note 4417' WHERE rowid = (SELECT MIN(rowid) FROM people)",
-    "UPDATE categories SET archived = 'yes', name = 'secret note 4417' WHERE rowid = (SELECT MIN(rowid) FROM categories)",
+    "UPDATE places SET archived = 'yes', name = 'secret note 4417' WHERE rowid = (SELECT MIN(rowid) FROM places)",
   ])
   func aValueOfTheWrongTypeIsAFailedLoadThatNamesNoValue(sql: String) throws {
     let book = try RandomLegacyDatabase(seed: 331, operations: 20, accounts: 1...2)
@@ -69,6 +69,10 @@ struct MigrationDryRunPathTests {
       try db.execute(
         sql:
           "INSERT OR IGNORE INTO people (id, name, relation, aliases, archived) VALUES ('\(UUID().uuidString)', 'p', 'other', '', 0)"
+      )
+      try db.execute(
+        sql:
+          "INSERT OR IGNORE INTO places (id, name, aliases, archived) VALUES ('\(UUID().uuidString)', 'q', '', 0)"
       )
       try db.execute(sql: "PRAGMA ignore_check_constraints = ON")
       try db.execute(sql: sql)
@@ -113,6 +117,28 @@ struct MigrationDryRunPathTests {
     #expect(try Data(contentsOf: book.url) == bytes)
   }
 
+  /// A category a hand edit broke stops the update at the capital step: adding a column with a
+  /// check makes SQLite test every check of the table again. The file stays the older database.
+  @Test func aCategoryAHandEditBrokeStopsTheCapitalStep() throws {
+    let book = try RandomLegacyDatabase(seed: 334, operations: 20, accounts: 2...3)
+    defer { book.remove() }
+    let queue = try DatabaseQueue(path: book.url.path)
+    try queue.writeWithoutTransaction { db in
+      try db.execute(sql: "PRAGMA ignore_check_constraints = ON")
+      try db.execute(
+        sql:
+          "UPDATE categories SET archived = 'x' WHERE rowid = (SELECT MIN(rowid) FROM categories)")
+    }
+    try queue.close()
+    let bytes = try Data(contentsOf: book.url)
+
+    let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
+
+    #expect(status == 3, "\(output)")
+    #expect(output.contains("migration: failed, stopped at 0008_capital (SQLite "), "\(output)")
+    #expect(try Data(contentsOf: book.url) == bytes)
+  }
+
   /// The same file opened by the app: the update stops at the check, throws what stopped it, and
   /// the file is the older database it was — the start then offers the copies.
   @Test func theAppSeesTheSameStopAndTheFileStaysOlder() throws {
@@ -141,7 +167,9 @@ struct MigrationDryRunPathTests {
     #expect(try DatabaseStack.sameData(fileAt: before, as: book.url))
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"])
+        == [
+          "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+        ])
   }
 
   /// A database of 1.1 tried on a copy: one migration applied, a card for every live card
@@ -158,7 +186,7 @@ struct MigrationDryRunPathTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 5 -> 7 (applied 2)"), "\(output)")
+    #expect(output.contains("schema: 5 -> 8 (applied 3)"), "\(output)")
     #expect(output.contains(" cashbackRulesMoved=4"), "\(output)")
     #expect(output.contains(" cashbackRulesDropped=3"), "\(output)")
     #expect(output.contains(" cashbackRulesVoided=1"), "\(output)")
@@ -182,7 +210,7 @@ struct MigrationDryRunPathTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 4 -> 7 (applied 3)"), "\(output)")
+    #expect(output.contains("schema: 4 -> 8 (applied 4)"), "\(output)")
     let name = "cards".padding(toLength: 26, withPad: " ", startingAt: 0)
     let lines = output.split(separator: "\n").map(String.init)
     #expect(lines.contains("  \(name) - -> \(cards)"), "\(output)")

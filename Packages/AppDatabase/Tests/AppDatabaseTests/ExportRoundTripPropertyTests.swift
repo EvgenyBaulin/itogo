@@ -6,7 +6,7 @@ import Testing
 
 @testable import AppDatabase
 
-/// Every value of the database reaches the export and comes back from it: the 24 files are
+/// Every value of the database reaches the export and comes back from it: the 26 files are
 /// read back with the CSV reader, and each cell is checked against the raw value of its column
 /// in SQLite by a rule written apart from the export — an amount times 10 000 is the stored
 /// integer, a boolean is a word, an instant is the stored one to the second in UTC, a
@@ -22,7 +22,7 @@ struct ExportRoundTripPropertyTests {
   private static let booleans: Set<String> = [
     "archived", "is_default", "reimbursable", "rate_provisional", "pinned", "recurring_yearly",
     "payments_are_expenses", "closed", "rollover", "active", "in_summary", "records_difference",
-    "closes_term", "accrues_interest", "tranche",
+    "closes_term", "accrues_interest", "tranche", "cushion", "essential",
   ]
   /// Columns holding an instant, written in UTC to the second.
   private static let instants: Set<String> = [
@@ -149,7 +149,7 @@ struct ExportRoundTripPropertyTests {
     }
   }
 
-  /// A history with accounts — every one of the 24 tables has rows, and every column the cards
+  /// A history with accounts — every one of the 26 tables has rows, and every column the cards
   /// brought a value somewhere — whose texts carry what a CSV file must never break on.
   @Test func aHistoryWithAccountsAndOddTextsIsExportedValueForValue() throws {
     let stack = try PlanningUndoPropertyTests.stack()
@@ -209,7 +209,7 @@ struct ExportRoundTripPropertyTests {
     try expectEveryValueKept(stack, "seed \(seed)")
   }
 
-  /// The archive of a history: the database snapshot and the 23 files go in, and opening the
+  /// The archive of a history: the database snapshot and the 26 files go in, and opening the
   /// archive — plain or sealed with a password — gives every one of them back byte for byte;
   /// the database inside holds the same data as the one it was taken of.
   @Test func theArchiveGivesBackEveryFileByteForByte() throws {
@@ -237,17 +237,17 @@ struct ExportRoundTripPropertyTests {
     try builder.add(path: ArchivePaths.settings, data: settings)
     files[ArchivePaths.settings] = settings
 
-    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 7)
+    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 8)
     #expect(plain.files == files)
-    #expect(plain.csvTables.count == 24)
-    #expect(plain.manifest.schemaVersion == 7)
+    #expect(plain.csvTables.count == 26)
+    #expect(plain.manifest.schemaVersion == 8)
 
     var random = SeededRandom(seed: 7)
     let sealed = try builder.build(
       password: "пароль 🔑", cipher: RoundTripCipher(), random: &random, iterations: 1_000)
     #expect(ArchiveOpener.isEncrypted(sealed))
     let opened = try ArchiveOpener.open(
-      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 7)
+      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 8)
     #expect(opened.files == files)
 
     let inside = folder.appendingPathComponent("inside.sqlite")
@@ -275,6 +275,7 @@ struct ExportRoundTripPropertyTests {
             && !Self.addedByTheCards.contains("\(table.fileName):\($0)")
             && !Self.addedByTheBanks.contains("\(table.fileName):\($0)")
             && !Self.addedByTheLoans.contains("\(table.fileName):\($0)")
+            && !Self.addedByTheCapital.contains("\(table.fileName):\($0)")
         })
     }
     var counts: [String: Int] = [:]
@@ -310,7 +311,7 @@ struct ExportRoundTripPropertyTests {
     }
     try builder.add(path: ArchivePaths.settings, text: #"{"language":"ru"}"#)
 
-    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 7)
+    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 8)
     #expect(opened.manifest.schemaVersion == 3)
     #expect(opened.csvTables.count == 18)
 
@@ -320,7 +321,9 @@ struct ExportRoundTripPropertyTests {
     #expect(try DatabaseStack.check(fileAt: staged, schema: TestSupport.schemaSource) == .sound)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: staged, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"])
+        == [
+          "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+        ])
     let stack = try DatabaseStack(url: staged, schema: TestSupport.schemaSource)
     defer { try? stack.close() }
     let after = try ExportRepository(writer: stack.writer).rowCounts()
@@ -328,14 +331,17 @@ struct ExportRoundTripPropertyTests {
     for (table, count) in counts {
       #expect(after[table] == count + (table == "payment_methods" ? created : 0), "\(table)")
     }
-    for table in ["account_groups", "transfers", "reconciliation_balances", "cashback_rules"] {
+    for table in [
+      "account_groups", "transfers", "reconciliation_balances", "cashback_rules", "assets",
+      "asset_valuations",
+    ] {
       #expect(after[table] == 0)
     }
     #expect(after["cards"] == stack.applied.dataSteps["cardsCreated"] ?? 0)
   }
 
   /// The archive checks its manifest against the rows it counts in each file, and it counts
-  /// them the way the reader reads them: for the 24 files of an export and for tables of drawn
+  /// them the way the reader reads them: for the 26 files of an export and for tables of drawn
   /// texts full of quotes and line breaks.
   @Test func theArchiveCountsTheRowsTheReaderReads() throws {
     let stack = try PlanningUndoPropertyTests.stack()
@@ -444,6 +450,11 @@ struct ExportRoundTripPropertyTests {
     "payment_methods.csv:deposit_opened_on", "payment_methods.csv:deposit_ends_on",
   ]
 
+  /// The columns the capital and the cushion brought (`0008_capital`).
+  private static let addedByTheCapital: Set<String> = [
+    "payment_methods.csv:cushion", "categories.csv:essential",
+  ]
+
   /// Cards on two accounts of the history, one with other names that break a CSV cell; the
   /// cashback rules of one of them, a month and a category among them; operations and a payment
   /// that name a card, cashback typed for some purchases; a payment of an event, the plan start
@@ -543,6 +554,44 @@ struct ExportRoundTripPropertyTests {
           UPDATE debt_entries SET closes_term = 1
           WHERE id IN (SELECT id FROM debt_entries WHERE kind = 'payment' ORDER BY rowid LIMIT 2)
           """)
+      // A cushion account, an essential category and one marked not essential; two assets, one
+      // sold, with valuations whose notes break a cell.
+      if let account = accounts.last {
+        try db.execute(
+          sql: "UPDATE payment_methods SET cushion = 1 WHERE id = ?", arguments: [account])
+      }
+      try db.execute(
+        sql: """
+          UPDATE categories SET essential = 1
+          WHERE id IN (
+            SELECT id FROM categories WHERE kind = 'expense' AND parent_id IS NULL
+              AND system_role IS NULL ORDER BY rowid LIMIT 1)
+          """)
+      try db.execute(
+        sql: """
+          UPDATE categories SET essential = 0
+          WHERE id IN (
+            SELECT id FROM categories WHERE kind = 'income' ORDER BY rowid LIMIT 1)
+          """)
+      let car = UUID().uuidString
+      let flat = UUID().uuidString
+      try db.execute(
+        sql: """
+          INSERT INTO assets (id, name, kind, currency, note, disposed_on, sort) VALUES
+            (?, 'Машина, «Шкода»', 'vehicle', 'EUR', 'куплена' || char(10) || 'в кредит', '2026-09-01', 1),
+            (?, 'Квартира', 'realty', 'RUB', NULL, NULL, 0)
+          """,
+        arguments: [car, flat])
+      try db.execute(
+        sql: """
+          INSERT INTO asset_valuations (id, asset_id, day, value_e4, note) VALUES
+            (?, ?, '2026-03-31', 150000005000, 'оценка "дилера"'),
+            (?, ?, '2026-06-30', 140000000000, NULL),
+            (?, ?, '2026-01-15', 90000000000000, NULL)
+          """,
+        arguments: [
+          UUID().uuidString, car, UUID().uuidString, car, UUID().uuidString, flat,
+        ])
     }
   }
 }

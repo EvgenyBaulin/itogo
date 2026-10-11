@@ -73,6 +73,17 @@ public struct CategoryTree: Hashable, Sendable {
     return parent(of: category.id)?.quality
   }
 
+  /// Whether spending in the category cannot be stopped («Необходимая трата»): its own mark,
+  /// else its parent's, else no. Only an expense category is ever essential, and never one that
+  /// belongs to the app — goals, loans, «Сверка» and the rest are not spending the owner chose.
+  public func isEssential(_ id: UUID?) -> Bool {
+    guard let category = category(id), category.kind == .expense,
+      systemRole(of: category.id) == nil
+    else { return false }
+    if let own = category.essential { return own }
+    return parent(of: category.id)?.essential ?? false
+  }
+
   /// `true` when the subcategory has no quality of its own and follows its parent.
   public func inheritsQuality(_ id: UUID?) -> Bool {
     guard let category = category(id) else { return false }

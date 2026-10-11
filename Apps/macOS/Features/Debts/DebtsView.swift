@@ -15,6 +15,8 @@ struct DebtsView: View {
   /// The debt «Удалить…» asks about.
   @State private var deleting: DebtLine?
   @State private var deleteFailed = false
+  /// The debt a row of «Капитал» asked to open; taken once by the screen that shows it.
+  @MainActor static var debtToOpen: UUID?
 
   var body: some View {
     ComputedBlock(
@@ -40,6 +42,17 @@ struct DebtsView: View {
       }
     }
     .navigationTitle(environment.language("section.debts"))
+    .onAppear {
+      if let id = Self.debtToOpen {
+        Self.debtToOpen = nil
+        selection = .debt(id)
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .capitalOpensDebt)) { note in
+      guard let id = note.object as? UUID else { return }
+      Self.debtToOpen = nil
+      selection = .debt(id)
+    }
     .task {
       // `--present debt`: the card of the first debt, as a click on it shows it.
       guard await LaunchPresentation.due(.debt) else { return }

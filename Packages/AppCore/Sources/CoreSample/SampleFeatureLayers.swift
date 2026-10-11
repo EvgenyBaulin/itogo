@@ -8,8 +8,9 @@ extension SampleDataSet {
   /// plan and an expected salary (`withPlanningLayer`), an archived place and a one-day event
   /// (`withReferencesLayer`), a credit card below zero with a later count whose difference
   /// follows the books (`withCountsLayer`), and an education loan with its tranches and grace
-  /// payments beside a savings account that earns interest (`withLoanAndSavingsLayer`) — what
-  /// `make sample` and `make demo` open on.
+  /// payments beside a savings account that earns interest (`withLoanAndSavingsLayer`), and a car
+  /// and a brokerage account valued by hand, the savings kept as the safety cushion and the
+  /// essential spending marked (`withCapitalLayer`) — what `make sample` and `make demo` open on.
   ///
   /// Each layer draws from random streams of its own (`seed` mixed with the layer's tag, then
   /// with what the row is and its day), so the history and the accounts under them keep every
@@ -31,10 +32,21 @@ extension SampleDataSet {
     guard accounts.cards.isEmpty else { return accounts }
     return
       accounts
-      .withLayersThroughTheCounts(
+      .withLayersThroughTheLoanAndSavings(
         seed: seed, calendar: calendar, language: language, now: now, demo: demo
       )
-      .withLoanAndSavingsLayer(seed: seed, calendar: calendar, language: language, now: now)
+      .withCapitalLayer(seed: seed, calendar: calendar, language: language, now: now)
+  }
+
+  /// The layers from the cards through the education loan and the savings account, on a set that
+  /// has its accounts: what the capital layer is written on.
+  func withLayersThroughTheLoanAndSavings(
+    seed: UInt64, calendar: CalendarContext, language: String, now: Date?, demo: Bool
+  ) -> SampleDataSet {
+    withLayersThroughTheCounts(
+      seed: seed, calendar: calendar, language: language, now: now, demo: demo
+    )
+    .withLoanAndSavingsLayer(seed: seed, calendar: calendar, language: language, now: now)
   }
 
   /// The layers from the cards through the later count, on a set that has its accounts: what

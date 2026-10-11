@@ -49,7 +49,7 @@ struct MigrationDryRunPropertyTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "seed \(seed): \(output)")
-    #expect(output.contains("schema: 3 -> 7 (applied 4)"), "seed \(seed)")
+    #expect(output.contains("schema: 3 -> 8 (applied 5)"), "seed \(seed)")
     #expect(output.contains("result: equal"), "seed \(seed)")
     #expect(output.contains("loads: ok"), "seed \(seed)")
     #expect(!output.contains(book.marker), "seed \(seed): the output names a row")
@@ -78,7 +78,7 @@ struct MigrationDryRunPropertyTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 7 -> 7 (applied 0)"))
+    #expect(output.contains("schema: 8 -> 8 (applied 0)"))
     #expect(output.contains("data step: none"))
     #expect(output.contains("result: equal"))
   }

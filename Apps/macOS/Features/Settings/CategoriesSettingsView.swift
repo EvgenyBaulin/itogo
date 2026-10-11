@@ -308,7 +308,32 @@ struct CategoriesSettingsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+        if kind == .expense, tree.isEssential(category.id) {
+          Label {
+            Text(verbatim: environment.language("categories.essential.mark", table: "Settings"))
+          } icon: {
+            Image(systemName: CushionText.symbol)
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("categories.row.essential")
+        }
         Menu {
+          if kind == .expense {
+            Picker(selection: essentialBinding(for: category, tree: tree)) {
+              ForEach(Self.essentialChoices(for: category), id: \.self) { choice in
+                Text(
+                  verbatim: environment.language(
+                    "categories.essential.\(choice.rawValue)", table: "Settings")
+                )
+                .tag(choice)
+              }
+            } label: {
+              Text(verbatim: environment.language("categories.essential", table: "Settings"))
+            }
+            .disabled(Self.essentialIsFixed(category, in: tree))
+            Divider()
+          }
           Button(environment.language("references.delete", table: "Settings")) {
             askToDelete(category)
           }
@@ -370,6 +395,52 @@ struct CategoriesSettingsView: View {
   /// own — there it is only the default («оценка по умолчанию neutral»).
   static func qualityIsFixed(_ category: CoreKit.Category, in tree: CategoryTree) -> Bool {
     tree.isGoalCategory(category.id)
+  }
+
+  /// Whether a category can be essential spending: only an expense category of the owner's —
+  /// a system one (and everything under it) never is.
+  static func essentialIsFixed(_ category: CoreKit.Category, in tree: CategoryTree) -> Bool {
+    category.kind != .expense || tree.systemRole(of: category.id) != nil
+  }
+
+  /// «Как у категории» only where there is a category above to follow.
+  static func essentialChoices(for category: CoreKit.Category) -> [EssentialChoice] {
+    category.parentId == nil ? [.yes, .no] : EssentialChoice.allCases
+  }
+
+  /// The new mark of a category as one step of ⌘Z; `nil` when it is what is stored already, or
+  /// when the category cannot be essential.
+  static func essentialChange(
+    _ category: CoreKit.Category, to choice: EssentialChoice, tree: CategoryTree, at now: Date
+  ) -> PlanningChange? {
+    guard !essentialIsFixed(category, in: tree) else { return nil }
+    let value = choice.value
+    guard value != category.essential else { return nil }
+    var updated = category
+    updated.essential = value
+    return PlanningChange(upsert: PlanningRows(categories: [updated]), at: now)
+  }
+
+  /// The mark a menu shows: nothing on a category at the top is «нет».
+  private func essentialBinding(
+    for category: CoreKit.Category, tree: CategoryTree
+  ) -> Binding<EssentialChoice> {
+    Binding(
+      get: { EssentialChoice(category.essential, isTop: category.parentId == nil) },
+      set: { choice in
+        guard
+          let change = Self.essentialChange(
+            category, to: choice, tree: tree, at: environment.now())
+        else { return }
+        guard store.apply(change) else {
+          refused = true
+          return
+        }
+        AppLog.info(
+          "cushion.essential.set", .db, "a category became or stopped being essential",
+          [LogPair("categories", .count(1))])
+        reload()
+      })
   }
 
   /// The income category whose money Analytics counts as cashback, subcategories included.
@@ -1079,5 +1150,30 @@ private struct CategoryDeletionSheet: View {
     }
     .padding(20)
     .frame(width: 460)
+  }
+}
+
+/// «Необходимая трата» of a category: its own yes or no, or — for a subcategory — what the
+/// category above says.
+enum EssentialChoice: String, CaseIterable, Hashable {
+  case inherit
+  case yes
+  case no
+
+  /// What is stored; on a category at the top nothing means no.
+  init(_ value: Bool?, isTop: Bool = false) {
+    switch value {
+    case true?: self = .yes
+    case false?: self = .no
+    case nil: self = isTop ? .no : .inherit
+    }
+  }
+
+  var value: Bool? {
+    switch self {
+    case .inherit: nil
+    case .yes: true
+    case .no: false
+    }
   }
 }

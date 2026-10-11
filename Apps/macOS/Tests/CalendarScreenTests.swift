@@ -188,7 +188,7 @@ final class CalendarScreenTests: XCTestCase {
 
   /// «Календарь» stands after «Траты» and is ⌘5; it lists no operations of the selection bar.
   func testTheSectionIsCommandFive() {
-    XCTAssertEqual(MainWindow.Section.allCases.last, .calendar)
+    XCTAssertEqual(MainWindow.Section.allCases.firstIndex(of: .calendar), 4)
     XCTAssertEqual(MainWindow.Section.calendar.shortcutIndex, 5)
     XCTAssertEqual(
       Set(MainWindow.Section.allCases.map(\.shortcutIndex)).count,
@@ -200,6 +200,6 @@ final class CalendarScreenTests: XCTestCase {
   func testTheTileIsNotInTheDefault() {
     XCTAssertTrue(OverviewTile.allCases.contains(.spendingCalendar))
     XCTAssertFalse(OverviewTiles.standard.contains(.spendingCalendar))
-    XCTAssertEqual(OverviewTile.allCases.last, .spendingCalendar)
+    XCTAssertEqual(OverviewTile.allCases.firstIndex(of: .spendingCalendar), 19)
   }
 }

@@ -127,6 +127,10 @@ public struct PlanningSnapshot: Hashable, Sendable {
   public var overdue: [OverdueDue]
   /// The payouts of the interest of deposits and savings accounts (`DepositPayouts`).
   public var deposits: [DepositPayout]
+  /// Net worth at the ends of the last full months and now (`NetWorth`).
+  public var capital: CapitalSnapshot
+  /// The safety cushion (`CushionRules`).
+  public var cushion: CushionStatus
 
   public init(
     today: DateOnly, now: Date, rubPerUnit: [CurrencyCode: Decimal], book: PlanningBook,
@@ -139,7 +143,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
     subscriptionsYearly: AmountE4, forOthersThisMonth: AmountE4,
     accounts: AccountsSnapshot = .empty, dayRates: DayRates = .empty,
     matches: ScheduledMatches = .empty, budgetedEvents: [EventPlan] = [],
-    freeMoney: FreeMoney? = nil, overdue: [OverdueDue] = [], deposits: [DepositPayout] = []
+    freeMoney: FreeMoney? = nil, overdue: [OverdueDue] = [], deposits: [DepositPayout] = [],
+    capital: CapitalSnapshot = .empty, cushion: CushionStatus = .empty
   ) {
     self.today = today
     self.now = now
@@ -177,6 +182,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
         until: today.monthKey.lastDay)
     self.overdue = overdue
     self.deposits = deposits
+    self.capital = capital
+    self.cushion = cushion
   }
 
   /// Nothing known yet: empty lists, zeros and no reminder — what a screen holds before the
@@ -247,6 +254,17 @@ public struct PlanningSnapshot: Hashable, Sendable {
       dataset: ledger.dataset, now: now, calendar: ledger.calendar, rubPerUnit: rubPerUnit,
       localeIdentifier: localeIdentifier)
     let mainId = ledger.dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id
+    let capitalSettings = ledger.dataset.capitalSettings
+    let capital = NetWorth.build(
+      ledger: ledger, balances: accounts.balances, debtsJournal: book.debtEntries,
+      assets: ledger.dataset.assets, valuations: ledger.dataset.assetValuations, today: today,
+      now: now, rubPerUnit: rubPerUnit, dayRates: dayRates)
+    let cushion = CushionRules.status(
+      capital: capital,
+      obligatory: ObligatoryRules.build(
+        ledger: ledger, book: book, matches: matches, debts: debts,
+        subscriptionsMonthly: subscriptions.monthly, settings: capitalSettings, today: today),
+      accounts: accounts, settings: capitalSettings, today: today)
 
     // My expenses of the month to date in one pass; goal contributions set apart the way
     // `CanSaveInputs(ledger:)` sets them apart.
@@ -296,14 +314,16 @@ public struct PlanningSnapshot: Hashable, Sendable {
       freeMoney: freeMoney(
         until: nil, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
         matches: matches, goals: goals, debts: debts, events: budgetedEvents,
-        expected: expected, dayRates: dayRates),
+        expected: expected, dayRates: dayRates, cushion: cushion),
       overdue: OverdueDues.build(
         ledger: ledger, book: book, matches: matches, debts: debts, accounts: accounts,
         today: today),
       deposits: DepositPayouts.build(
         ledger: ledger, balances: accounts.balances,
         interestCategoryId: ledger.dataset.accountSettings.interestCategoryId, today: today,
-        through: month.lastDay))
+        through: month.lastDay),
+      capital: capital,
+      cushion: cushion)
   }
 
   /// What the goals' monthly plans still ask this month, in rubles at today's rate: each
@@ -338,14 +358,14 @@ public struct PlanningSnapshot: Hashable, Sendable {
     return Self.freeMoney(
       until: end, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
       matches: matches, goals: goals, debts: debts, events: budgetedEvents,
-      expected: expected, dayRates: dayRates)
+      expected: expected, dayRates: dayRates, cushion: cushion)
   }
 
   private static func freeMoney(
     until: DateOnly?, ledger: Ledger, today: DateOnly, rubPerUnit: [CurrencyCode: Decimal],
     accounts: AccountsSnapshot, matches: ScheduledMatches, goals: [GoalStatus],
     debts: DebtsOverview, events: [EventPlan], expected: [ExpectedIncomeStatus],
-    dayRates: DayRates
+    dayRates: DayRates, cushion: CushionStatus
   ) -> FreeMoney {
     let book = ledger.dataset.planning
     let end = FreeMoney.window(today: today, until: until).end
@@ -360,7 +380,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
       statuses: expected, today: today, through: end, ledger: ledger)
     return FreeMoney(
       accounts: accounts, plan: plan, stillExpected: still.amount,
-      stillExpectedWithoutRate: still.withoutRate, today: today, until: end)
+      stillExpectedWithoutRate: still.withoutRate, today: today, until: end,
+      cushion: ledger.dataset.capitalSettings.outOfFreeMoney ? cushion.inSummaryRub : .zero)
   }
 
   // MARK: - Can save

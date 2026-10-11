@@ -58,6 +58,8 @@ public struct FreeMoney: Hashable, Sendable {
     public static let goalPlans = "planning.free.goalReserve"
     public static let events = "planning.free.events"
     public static let stillExpected = "planning.free.expected"
+    /// The money of the safety cushion kept out of the main figure.
+    public static let cushion = "planning.free.cushion"
   }
 
   /// A group left out of the summary, with its own total.
@@ -86,8 +88,18 @@ public struct FreeMoney: Hashable, Sendable {
   public var moneyNow: AmountE4?
   /// What is saved in the live goals, taken off the money now (zero with the switch off).
   public var goalSavings: AmountE4
-  /// «можно тратить сейчас»: the money now less `goalSavings`; `nil` with no count.
+  /// The money of the safety cushion on the accounts in the summary, taken off the money now
+  /// when the owner keeps the cushion out of the free sum (zero otherwise).
+  public var cushion: AmountE4
+  /// «можно тратить сейчас»: the money now less `goalSavings` and `cushion`; `nil` with no
+  /// count.
   public var main: AmountE4?
+
+  /// The grey line that says what the cushion took off the money now («Подушка −X»); `nil`
+  /// while it takes nothing.
+  public var cushionLine: FreeToSpendLine? {
+    cushion.isZero ? nil : FreeToSpendLine(key: Key.cushion, sign: .minus, amount: cushion)
+  }
   /// The main figure less `lines`; `nil` with no count.
   public var grey: AmountE4?
   /// max(0, grey) ÷ `days`; zero without a grey line.
@@ -112,7 +124,8 @@ public struct FreeMoney: Hashable, Sendable {
 
   public init(
     accounts: AccountsSnapshot, plan: CashPlan, stillExpected: AmountE4,
-    stillExpectedWithoutRate: [UUID] = [], today: DateOnly, until: DateOnly
+    stillExpectedWithoutRate: [UUID] = [], today: DateOnly, until: DateOnly,
+    cushion: AmountE4 = .zero
   ) {
     let window = Self.window(today: today, until: until)
     var lines = [
@@ -126,7 +139,7 @@ public struct FreeMoney: Hashable, Sendable {
 
     let moneyNow = accounts.inSummaryTotalRub
     let goalSavings = plan.subtractsGoalSavings ? plan.goalSavings : .zero
-    let main = moneyNow.map { $0 - goalSavings }
+    let main = moneyNow.map { $0 - goalSavings - cushion }
     let grey = main.map { $0 + AmountE4.sum(lines.map(\.signedAmount)) }
     let days = max(1, window.dayCount)
     self.today = today
@@ -134,6 +147,7 @@ public struct FreeMoney: Hashable, Sendable {
     self.days = days
     self.moneyNow = moneyNow
     self.goalSavings = goalSavings
+    self.cushion = cushion
     self.main = main
     self.grey = grey
     self.dailyGuide = grey.map { SavingsMath.divide(max(.zero, $0), by: days) } ?? .zero

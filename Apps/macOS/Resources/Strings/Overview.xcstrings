@@ -1276,6 +1276,23 @@
         }
       }
     },
+    "overview.tile.capital": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capital"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Капитал"
+          }
+        }
+      }
+    },
     "overview.tile.currencyChart": {
       "extractionState": "manual",
       "localizations": {
@@ -1289,6 +1306,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "График валюты"
+          }
+        }
+      }
+    },
+    "overview.tile.cushion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Safety cushion"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подушка безопасности"
           }
         }
       }

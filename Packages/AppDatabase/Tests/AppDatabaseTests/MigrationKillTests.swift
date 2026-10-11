@@ -70,7 +70,9 @@ struct MigrationKillTests {
     #expect(try DatabaseStack.check(fileAt: book.url, schema: TestSupport.schemaSource) == .sound)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"], "seed \(seed)")
+        == [
+          "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+        ], "seed \(seed)")
 
     let made = UUID()
     let context = MigrationContext(mainAccountName: "Основной счёт", makeId: { made })

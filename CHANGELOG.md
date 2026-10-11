@@ -7,6 +7,87 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.7.0] — 2026-10-11
+
+Capital — what you have minus what you owe, month by month — with property valued by hand, and a
+safety cushion that tells how many months you would last without income. The database schema
+moves to 8: the update only adds columns and two tables, and before it the app makes a checked
+copy of the database (`-before-migration`).
+
+### Added
+
+- **Capital** — a sidebar item (⌘6, after Calendar): the net worth in rubles, «↑ 85,000 ₽ since
+  the end of September» (an arrow and a sign, no colour of good or bad), then three blocks.
+  - **Net worth by month**: the net worth at the end of every full month and now, with «Have» and
+    «Owe» beside it, each series its own shape; the range is **12 months** or **All**, kept on
+    this Mac only. A month before the first count of any account is not a point.
+  - **What it is made of**: «What I have» — accounts in the summary, deposits and savings
+    accounts, accounts out of the summary by group, property by kind, money owed to me — and
+    «What I owe» — every debt by name, with «of which interest ≈» for a loan that accrues interest.
+    Each row shows its share; a click opens the account, the debt card or the property.
+  - Nothing is guessed: an account never counted is listed «Not reconciled, not counted», a
+    currency without a rate «No rate», property before its first valuation «No valuation».
+  - Accounts count at the CBR rate of each month end, archived accounts with their history,
+    negative balances as they are. Interest a deposit has accrued but not paid is not counted
+    (a grey «+ accrued ≈ …, not counted until paid» on its row). Debts count by their journals up to the day, with the
+    interest of a loan that accrues it; a closed or deleted debt counts nothing; parts paid for
+    somebody else are not «owed to me».
+  - When a credit card is kept both as an account below zero and as a credit-card debt, the
+    screen says its money may be taken off twice — a hint, nothing is changed.
+- **Property** — **Add property…** on the Capital screen: name, kind (vehicles, real estate,
+  equipment, investments, other), currency, value and its day, a note. The property and its first valuation
+  are one step of ⌘Z. The row menu: **New valuation…** (a valuation of the same day replaces it),
+  **Valuation history** (with delete), **Sold / written off…** (counted through the day before,
+  then listed under «Sold»), **Edit…** and **Delete…** — ⌘Z brings the property back with every
+  valuation.
+- **A safety cushion** — on the Capital screen and as a row above «Goals» in Planning: «Without
+  income you would last 3.5 months», the cushion money and the obligatory spending a month, a
+  bar to the goal, always with its label.
+  - **Accounts and categories…** marks the cushion accounts (every currency of them) and the
+    essential spending categories. On the first open the usual ones — groceries, utilities, the
+    phone, transport, health, rent — are ticked when you have them, and nothing is saved until
+    you save. One step of ⌘Z.
+  - The obligatory spending of a month is what was paid on scheduled payments and subscriptions,
+    the dues of debts with a schedule (an early repayment is not obligatory) and the spending in
+    essential categories; the figure is the median of the last 6 full months (3 to 12, in Settings
+    → Planning), never below the payments you are committed to today. With fewer than 3 full
+    months it says there is too little data.
+  - The account editor has **Money of the safety cushion**, the account screen a «Cushion» badge,
+    and Settings → Categories an **Essential spending** menu: as the parent, yes or no (not on
+    system categories or income).
+- **A cushion goal** — **Goal…**: a cushion of 1 to 24 months of obligatory spending (6 by
+  default), optionally by a month, and «put aside X a month until …» or «at the present pace —
+  by …». The goal is a setting, not a row of Goals: nothing in the goals, limits or the
+  «good» rating changes. One step of ⌘Z, **Remove the goal** included.
+- **Keep the cushion out of the free sum** — off by default; in the goal form, in the «Free sum»
+  block once an account is marked and in Settings → Planning. On, the free sum leaves out
+  today's money of the cushion accounts in the summary and says so in a grey line.
+- **Two Overview tiles**, **Capital** and **Safety cushion** (the 21st and 22nd), not among the
+  twelve shown by default; add them in Settings → Appearance.
+- **The sample and the demo** have a car valued three times, each time for less, a brokerage
+  account valued at the end of every month, the savings account kept as the cushion, essential
+  spending marked and a cushion goal of six months.
+- **What's New in 1.7** — four cards, once after the update.
+
+### Changed
+
+- The database schema is 8 (`Schema/0008_capital.sql`): new columns `payment_methods.cushion`
+  and `categories.essential`, new tables `assets` and `asset_valuations`; nothing is rewritten
+  and no row is added. The cushion settings live in the `settings` table under `cushion.*`, only
+  once set. The CSV export has 26 files: `assets.csv` and `asset_valuations.csv` at the end, the
+  new columns last (`essential` empty, `true` or `false`). The transfer archive carries schema 8
+  and still opens archives of schema 7 and older.
+- The debts you owe now show in one place outside Debts: Capital. The Overview, Analytics and
+  the free sum still leave debt balances out.
+
+### Upgrading
+
+The update of the database is one way: before it the app makes a checked copy with the suffix
+`-before-migration`, which rotation never removes, also in your backup folder. Going back to 1.6
+means restoring that copy. A row of `categories` edited by hand into something its checks forbid
+now stops the update (the database stays at 1.6 and nothing is changed); the copy and the backup
+folder keep your data.
+
 ## [1.6.0] — 2026-10-11
 
 Loans with a grace period and tranches — the state-backed education loan first of all —, the

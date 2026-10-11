@@ -317,7 +317,9 @@ public enum GuideCatalog {
 
   // MARK: What is new
 
-  public static let whatsNew: [GuideScenario] = [whatsNew14, whatsNew15, whatsNew16]
+  public static let whatsNew: [GuideScenario] = [
+    whatsNew14, whatsNew15, whatsNew16, whatsNew17,
+  ]
 
   public static let whatsNew14 = GuideScenario(
     kind: .whatsNew(version: GuideVersion(major: 1, minor: 4)),
@@ -472,5 +474,42 @@ public enum GuideCatalog {
           "The forecast for the end of the month adds a grey «Interest ≈» line. «Record…» makes them income."
         ),
         symbol: "chart.line.uptrend.xyaxis"),
+    ])
+
+  public static let whatsNew17 = GuideScenario(
+    kind: .whatsNew(version: GuideVersion(major: 1, minor: 7)),
+    cards: [
+      GuideCard(
+        id: "new17.capital",
+        title: GuideText("Капитал", "Capital"),
+        body: GuideText(
+          "Что есть минус что должен: счета, вклады, имущество и долги — и график по концам месяцев. ⌘6.",
+          "What you have minus what you owe: accounts, deposits, property and debts, with a chart of month ends. ⌘6."
+        ),
+        symbol: "building.columns"),
+      GuideCard(
+        id: "new17.assets",
+        title: GuideText("Имущество", "Property"),
+        body: GuideText(
+          "Машина, брокерский счёт, квартира: «Добавить имущество…», потом «Новая оценка…» — стоимость на дату входит в капитал.",
+          "A car, a brokerage account, a flat: «Add property…», then «New valuation…» — the value on a day goes into the capital."
+        ),
+        symbol: "car"),
+      GuideCard(
+        id: "new17.cushion",
+        title: GuideText("Подушка безопасности", "A safety cushion"),
+        body: GuideText(
+          "«Счета и категории…» — отметьте счета подушки и необходимые траты, и «Капитал» скажет: «Без дохода вы проживёте 3,5 месяца».",
+          "«Accounts and categories…»: mark the cushion accounts and the essential spending, and Capital says: «Without income you would last 3.5 months»."
+        ),
+        symbol: "lifepreserver"),
+      GuideCard(
+        id: "new17.cushionGoal",
+        title: GuideText("Цель подушки", "A cushion goal"),
+        body: GuideText(
+          "«Цель…» — подушка на N месяцев и сколько откладывать в месяц. «Не считать подушку в свободной сумме» — в «Свободной сумме» и «Настройки → Планирование».",
+          "«Goal…» sets a cushion of N months and what to put aside each month. «Keep the cushion out of the free sum» is in «Free sum» and Settings → Planning."
+        ),
+        symbol: "target"),
     ])
 }

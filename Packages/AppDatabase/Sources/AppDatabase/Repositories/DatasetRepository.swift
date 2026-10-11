@@ -36,6 +36,8 @@ public struct DatasetRepository: Sendable {
   ///   the journals of every debt and the planning settings (`PlanningRepository.book`).
   /// - So do the transfers between accounts, oldest first, the groups of the accounts in the
   ///   owner's order, and the settings of the accounts.
+  /// - And the assets in the owner's order, disposed ones included, with every valuation by
+  ///   asset and day, and the settings of the cushion.
   ///
   /// `version` is the caller's mark for the snapshot (the pipeline's count of writes taken
   /// before the read), so a result can be told apart from one built on older data.
@@ -89,6 +91,10 @@ public struct DatasetRepository: Sendable {
     let cards = try PaymentCard.order(Column("sort"), Column("name")).fetchAll(db)
     let cashbackRules = try CashbackRule.order(Column.rowID).fetchAll(db)
     let banks = try Bank.order(Column("sort"), Column("name")).fetchAll(db)
+    let assets = try Asset.order(Column("sort"), Column("name")).fetchAll(db)
+    let valuations = try AssetValuation.order(Column("asset_id"), Column("day")).fetchAll(db)
+    let capitalSettings = CapitalSettings(
+      storedValues: try SettingsRepository.values(of: CapitalSettings.storageKeys, db: db))
     try Task.checkCancellation()
     return Dataset(
       entries: entries,
@@ -113,6 +119,9 @@ public struct DatasetRepository: Sendable {
       cards: cards,
       cashbackRules: cashbackRules,
       deletedDebts: allDebts.filter(\.isDeleted),
-      banks: banks)
+      banks: banks,
+      assets: assets,
+      assetValuations: valuations,
+      capitalSettings: capitalSettings)
   }
 }

@@ -14,6 +14,10 @@ public struct Category: Identifiable, Hashable, Sendable, Codable {
   /// Empty on a subcategory: it inherits the quality of its parent.
   public var quality: Quality?
   public var systemRole: SystemRole?
+  /// Spending that cannot be stopped — food, rent, utilities — counted in the obligatory
+  /// spending of the safety cushion. `nil` on a subcategory inherits its parent, `nil` on a top
+  /// category means no (`CategoryTree.isEssential`); only an expense category says yes.
+  public var essential: Bool?
 
   public init(
     id: UUID = UUID(),
@@ -23,7 +27,8 @@ public struct Category: Identifiable, Hashable, Sendable, Codable {
     sort: Int = 0,
     archived: Bool = false,
     quality: Quality? = nil,
-    systemRole: SystemRole? = nil
+    systemRole: SystemRole? = nil,
+    essential: Bool? = nil
   ) {
     self.id = id
     self.parentId = parentId
@@ -33,6 +38,7 @@ public struct Category: Identifiable, Hashable, Sendable, Codable {
     self.archived = archived
     self.quality = quality
     self.systemRole = systemRole
+    self.essential = essential
   }
 
   public var isSystem: Bool { systemRole != nil }
@@ -108,6 +114,8 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
   public var cashbackPointsAccountId: UUID?
   /// The interest the account earns — a deposit or a savings account; `nil`: it earns none.
   public var interest: DepositTerms?
+  /// The money of the account is the owner's safety cushion, every currency of it.
+  public var cushion: Bool
 
   public init(
     id: UUID = UUID(), name: String, kind: PaymentMethodKind = .card,
@@ -115,7 +123,7 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     archived: Bool = false, groupId: UUID? = nil, sort: Int = 0,
     otherCurrencies: [CurrencyCode] = [], bankId: UUID? = nil,
     cashbackRounding: CashbackRounding = .standard, cashbackPayout: CashbackPayout? = nil,
-    cashbackPointsAccountId: UUID? = nil, interest: DepositTerms? = nil
+    cashbackPointsAccountId: UUID? = nil, interest: DepositTerms? = nil, cushion: Bool = false
   ) {
     self.id = id
     self.name = name
@@ -132,6 +140,7 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     self.cashbackPayout = cashbackPayout
     self.cashbackPointsAccountId = cashbackPointsAccountId
     self.interest = interest
+    self.cushion = cushion
   }
 
   /// The one account every operation without an account of its own belongs to.

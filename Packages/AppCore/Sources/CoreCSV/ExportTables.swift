@@ -22,7 +22,7 @@ public struct ExportTable: Hashable, Sendable {
   }
 }
 
-/// The 24 files of Export, always in the same order.
+/// The 26 files of Export, always in the same order.
 public enum ExportTables {
   /// `account_currency` and `account_amount` came with `Schema/0004_accounts.sql`: what the
   /// account moved when it does not hold the operation's currency. `card_id`,
@@ -64,6 +64,8 @@ public enum ExportTables {
   /// `Schema/0006_banks.sql`: the bank the account belongs to, empty for none. The interest
   /// columns came with `Schema/0007_debts_and_deposits.sql`: the yearly rate in percent, how
   /// often and on what day it is paid, the account it is paid to, and the term of a deposit.
+  /// `cushion` came with `Schema/0008_capital.sql`: the money of the account is the safety
+  /// cushion.
   public static let paymentMethods = ExportTable(
     fileName: "payment_methods.csv",
     columns: [
@@ -71,7 +73,7 @@ public enum ExportTables {
       "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
       "cashback_payout", "cashback_payout_day", "cashback_points_account_id", "interest_rate",
       "interest_period", "interest_day", "interest_account_id", "deposit_opened_on",
-      "deposit_ends_on",
+      "deposit_ends_on", "cushion",
     ])
 
   public static let places = ExportTable(
@@ -85,9 +87,14 @@ public enum ExportTables {
       "series_id", "archived",
     ])
 
+  /// `essential` came with `Schema/0008_capital.sql`: `true` or `false` as the owner marked
+  /// it, empty — a subcategory follows its parent, a category is not essential.
   public static let categories = ExportTable(
     fileName: "categories.csv",
-    columns: ["id", "parent_id", "kind", "name", "sort", "archived", "quality", "system_role"])
+    columns: [
+      "id", "parent_id", "kind", "name", "sort", "archived", "quality", "system_role",
+      "essential",
+    ])
 
   /// `archived` came with `Schema/0004_accounts.sql`.
   public static let templates = ExportTable(
@@ -226,13 +233,26 @@ public enum ExportTables {
     fileName: "banks.csv",
     columns: ["id", "name", "sort", "archived"])
 
-  /// All 24 tables, in the fixed order of the export: the 18 of the first schema, then the
-  /// three the accounts brought, then the two of the cards, then the banks.
+  /// Columns match `Schema/0008_capital.sql`: the things valued by hand. `disposed_on` is the
+  /// day it was sold or written off, empty while it is kept.
+  public static let assets = ExportTable(
+    fileName: "assets.csv",
+    columns: ["id", "name", "kind", "currency", "note", "disposed_on", "sort"])
+
+  /// Columns match `Schema/0008_capital.sql`: what an asset was worth on a day, in its
+  /// currency.
+  public static let assetValuations = ExportTable(
+    fileName: "asset_valuations.csv",
+    columns: ["id", "asset_id", "day", "value", "note"])
+
+  /// All 26 tables, in the fixed order of the export: the 18 of the first schema, then the
+  /// three the accounts brought, then the two of the cards, then the banks, then the assets
+  /// and their valuations.
   public static let all: [ExportTable] = [
     transactions, transactionParts, reimbursementLinks, people, paymentMethods, places,
     events, categories, templates, scheduledPayments, subscriptionPrices, expectedIncome,
     budgets, goals, debts, debtEntries, reconciliations, rates, accountGroups, transfers,
-    reconciliationBalances, cards, cashbackRules, banks,
+    reconciliationBalances, cards, cashbackRules, banks, assets, assetValuations,
   ]
 }
 
@@ -337,6 +357,7 @@ extension ExportTables {
       CSVValue.string(method.interest?.payoutAccountId),
       CSVValue.string(day: method.interest?.openedOn),
       CSVValue.string(day: method.interest?.endsOn),
+      CSVValue.string(bool: method.cushion),
     ]
   }
 
@@ -373,6 +394,7 @@ extension ExportTables {
       CSVValue.string(bool: category.archived),
       CSVValue.string(category.quality?.rawValue),
       CSVValue.string(category.systemRole?.rawValue),
+      CSVValue.string(bool: category.essential),
     ]
   }
 
@@ -614,6 +636,28 @@ extension ExportTables {
       bank.name,
       String(bank.sort),
       CSVValue.string(bool: bank.archived),
+    ]
+  }
+
+  public static func row(_ asset: Asset) -> [String] {
+    [
+      asset.id.uuidString,
+      asset.name,
+      asset.kind.rawValue,
+      asset.currency.code,
+      CSVValue.string(asset.note),
+      CSVValue.string(day: asset.disposedOn),
+      String(asset.sort),
+    ]
+  }
+
+  public static func row(_ valuation: AssetValuation) -> [String] {
+    [
+      valuation.id.uuidString,
+      valuation.assetId.uuidString,
+      CSVValue.string(day: valuation.day),
+      CSVValue.string(amount: valuation.valueE4),
+      CSVValue.string(valuation.note),
     ]
   }
 }

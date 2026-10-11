@@ -23,7 +23,8 @@ struct MigrationTests {
   @Test func schemaCreatesEveryTableTheSpecificationLists() throws {
     let stack = try TestSupport.makeStack()
     let expected = [
-      "account_groups", "anomaly_dismissals", "banks", "budgets", "cards", "cashback_rules",
+      "account_groups", "anomaly_dismissals", "asset_valuations", "assets", "banks", "budgets",
+      "cards", "cashback_rules",
       "categories", "category_feedback", "currencies", "debt_entries", "debts", "events",
       "expected_income",
       "expected_income_links", "goals", "import_batches", "import_mappings", "ml_models",
@@ -105,7 +106,7 @@ extension MigrationTests {
       let old = try DatabaseStack(url: url, schema: FirstMigrationOnly())
       #expect(try old.appliedMigrations() == ["0001_initial"])
       try old.writer.write { db in
-        try category.insert(db)
+        try LegacyWriter.insert(category, db: db)
         try db.execute(
           sql: """
             INSERT INTO budgets (id, scope, category_id, amount_e4, rollover)
@@ -268,8 +269,8 @@ extension MigrationTests {
     #expect(before["payment_methods"]?.columns.contains("other_currencies") == false)
 
     let stack = try DatabaseStack(url: url, schema: TestSupport.schemaSource)
-    #expect(try stack.appliedMigrations().last == "0007_debts_and_deposits")
-    #expect(stack.applied.applied == 4)
+    #expect(try stack.appliedMigrations().last == "0008_capital")
+    #expect(stack.applied.applied == 5)
 
     // The two values the update may change are the flag of the main account and the account
     // of an operation that had none; they are checked on their own below.

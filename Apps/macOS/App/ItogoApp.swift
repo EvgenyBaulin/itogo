@@ -231,6 +231,11 @@ struct AppCommands: Commands {
         NotificationCenter.default.post(name: .selectSection, object: 5)
       }
       .keyboardShortcut("5", modifiers: .command)
+
+      Button(environment.language("section.capital")) {
+        NotificationCenter.default.post(name: .selectSection, object: 6)
+      }
+      .keyboardShortcut("6", modifiers: .command)
     }
   }
 }
@@ -400,7 +405,7 @@ struct MainWindow: View {
   }
 
   enum Section: String, CaseIterable, Identifiable {
-    case overview, spending, planning, debts, calendar
+    case overview, spending, planning, debts, calendar, capital
 
     var id: String { rawValue }
 
@@ -411,6 +416,7 @@ struct MainWindow: View {
       case .planning: "section.planning"
       case .debts: "section.debts"
       case .calendar: "section.calendar"
+      case .capital: "section.capital"
       }
     }
 
@@ -421,11 +427,12 @@ struct MainWindow: View {
       case .planning: "calendar"
       case .debts: "creditcard"
       case .calendar: "calendar.circle"
+      case .capital: "building.columns"
       }
     }
 
     /// ⌘1 / ⌘2 / ⌘3, as the specification's table of shortcuts lists them; «Траты», added
-    /// after them, is ⌘4, and «Календарь» ⌘5.
+    /// after them, is ⌘4, «Календарь» ⌘5 and «Капитал» ⌘6.
     var shortcutIndex: Int {
       switch self {
       case .overview: 1
@@ -433,6 +440,7 @@ struct MainWindow: View {
       case .debts: 3
       case .spending: 4
       case .calendar: 5
+      case .capital: 6
       }
     }
   }
@@ -682,6 +690,7 @@ struct MainWindow: View {
       case .section(.planning): PlanningView()
       case .section(.debts): DebtsView()
       case .section(.calendar): CalendarView(actions: overviewActions)
+      case .section(.capital): CapitalView { selection = .account($0) }
       case .account(let id):
         AccountScreen(accountId: id, actions: overviewActions)
           .id(id)

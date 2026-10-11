@@ -77,7 +77,7 @@ struct OlderArchiveFixtureTests {
     #expect(try DatabaseStack.check(fileAt: url, schema: TestSupport.schemaSource) == .sound)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: url, schema: TestSupport.schemaSource) == [
-        "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits",
+        "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
       ])
 
     let stack = try DatabaseStack(

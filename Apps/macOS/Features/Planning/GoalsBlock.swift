@@ -24,6 +24,11 @@ struct GoalsBlock: View {
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       VStack(alignment: .leading, spacing: 12) {
+        // The safety cushion is not a goal — its money is moved by transfers, not put into
+        // «Цели» —, but it is saved for like one: its row stands first, with the way to
+        // «Капитал».
+        CushionPlanningRow(status: snapshot.planning.cushion)
+        Divider()
         let goals = snapshot.planning.goals
         if goals.isEmpty {
           Text(verbatim: t("goals.none")).foregroundStyle(.secondary)

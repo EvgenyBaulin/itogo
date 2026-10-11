@@ -44,6 +44,9 @@ public struct HistoryBatch: Sendable {
   public var cashbackRules: [CashbackRule]
   /// The banks the accounts among `paymentMethods` are filed under.
   public var banks: [Bank]
+  /// The things valued by hand, and their valuations.
+  public var assets: [Asset]
+  public var assetValuations: [AssetValuation]
 
   public init(
     categories: [CoreKit.Category] = [],
@@ -69,9 +72,13 @@ public struct HistoryBatch: Sendable {
     reconciledBalances: [ReconciledBalance] = [],
     cards: [PaymentCard] = [],
     cashbackRules: [CashbackRule] = [],
-    banks: [Bank] = []
+    banks: [Bank] = [],
+    assets: [Asset] = [],
+    assetValuations: [AssetValuation] = []
   ) {
     self.banks = banks
+    self.assets = assets
+    self.assetValuations = assetValuations
     self.cards = cards
     self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
@@ -100,7 +107,7 @@ public struct HistoryBatch: Sendable {
   /// A generated sample whole: the history, every row it points at, the planning built on it
   /// (`SampleDataSet.planning`), its cashback category, and what its accounts add — groups,
   /// transfers, counts and their settings, cards and cashback rules — when it has them
-  /// (`withAccounts`).
+  /// (`withAccounts`), and the things valued by hand with their valuations.
   ///
   /// A history without its accounts is written the way accounts keep it
   /// (`SampleDataSet.assigningAccounts`): every operation on an account, and a charge wherever
@@ -121,7 +128,8 @@ public struct HistoryBatch: Sendable {
       budgets: planning.budgets, settings: settings, accountGroups: set.accountGroups,
       transfers: set.transfers, reconciliations: set.reconciliations,
       reconciledBalances: set.reconciledBalances, cards: set.cards,
-      cashbackRules: set.cashbackRules, banks: set.banks)
+      cashbackRules: set.cashbackRules, banks: set.banks, assets: set.assets,
+      assetValuations: set.assetValuations)
   }
 }
 
@@ -161,10 +169,11 @@ extension TransactionRepository {
   /// Rows go in the order their foreign keys need: the groups of the accounts and the banks
   /// before the accounts, the cards after their accounts, the reference books (parents before their
   /// subcategories, since the table refers to itself), debts after the people and categories
-  /// they name, the planning after the categories, people, accounts and cards it names, the
-  /// cashback rules after the limits, operations after everything they point at, the journals
-  /// and links after the operations they point at, then the transfers, the reconciliations and
-  /// the balances they counted, and the settings last.
+  /// they name, the things valued by hand before their valuations, the planning after the
+  /// categories, people, accounts and cards it names, the cashback rules after the limits,
+  /// operations after everything they point at, the journals and links after the operations they
+  /// point at, then the transfers, the reconciliations and the balances they counted, and the
+  /// settings last.
   ///
   /// A limit is unique to its target (`idx_budgets_target`), and a cashback rule to its holder,
   /// month and category (`idx_cashback_rules_key`). Written over existing rows, a limit or a
@@ -196,6 +205,8 @@ extension TransactionRepository {
       for template in batch.templates { try put(template) }
       for goal in batch.goals { try put(goal) }
       for debt in batch.debts { try put(debt) }
+      for asset in batch.assets { try put(asset) }
+      for valuation in batch.assetValuations { try put(valuation) }
       for payment in batch.scheduled { try put(payment) }
       for price in batch.prices { try put(price) }
       for income in batch.expected { try put(income) }

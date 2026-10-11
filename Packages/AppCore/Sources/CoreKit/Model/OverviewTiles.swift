@@ -44,6 +44,10 @@ public enum OverviewTile: String, CaseIterable, Sendable, Hashable, Codable {
   case currencyChart
   /// «Календарь»: the days of this week with my spending of each, and what is planned ahead.
   case spendingCalendar
+  /// «Капитал»: what I have minus what I owe, and how it changed this month.
+  case capital
+  /// «Подушка безопасности»: how many months the cushion money lasts without income.
+  case cushion
 }
 
 /// Which tiles Overview shows and in what order, as the owner chose them, and the one rule that

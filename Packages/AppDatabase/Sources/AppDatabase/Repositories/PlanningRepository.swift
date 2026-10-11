@@ -7,7 +7,7 @@ import GRDB
 /// books are here because the planning makes rows of them too: the subcategory of a new goal,
 /// of a new debt. So are the accounts and their groups, the banks above them, the cards of the
 /// accounts and their cashback rules, the transfers between them and the balances counted on
-/// them.
+/// them, and the assets with their valuations.
 public struct PlanningRows: Sendable, Hashable {
   public var banks: [Bank]
   public var accountGroups: [AccountGroup]
@@ -27,6 +27,8 @@ public struct PlanningRows: Sendable, Hashable {
   public var reconciledBalances: [ReconciledBalance]
   public var cards: [PaymentCard]
   public var cashbackRules: [CashbackRule]
+  public var assets: [Asset]
+  public var assetValuations: [AssetValuation]
 
   public init(
     categories: [CoreKit.Category] = [], events: [Event] = [], goals: [Goal] = [],
@@ -35,9 +37,12 @@ public struct PlanningRows: Sendable, Hashable {
     budgets: [Budget] = [], debtEntries: [DebtEntry] = [], reconciliations: [Reconciliation] = [],
     accountGroups: [AccountGroup] = [], paymentMethods: [PaymentMethod] = [],
     transfers: [Transfer] = [], reconciledBalances: [ReconciledBalance] = [],
-    cards: [PaymentCard] = [], cashbackRules: [CashbackRule] = [], banks: [Bank] = []
+    cards: [PaymentCard] = [], cashbackRules: [CashbackRule] = [], banks: [Bank] = [],
+    assets: [Asset] = [], assetValuations: [AssetValuation] = []
   ) {
     self.banks = banks
+    self.assets = assets
+    self.assetValuations = assetValuations
     self.cards = cards
     self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
@@ -80,6 +85,8 @@ public struct PlanningRowIDs: Sendable, Hashable {
   public var reconciledBalances: [UUID]
   public var cards: [UUID]
   public var cashbackRules: [UUID]
+  public var assets: [UUID]
+  public var assetValuations: [UUID]
 
   public init(
     categories: [UUID] = [], events: [UUID] = [], goals: [UUID] = [], debts: [UUID] = [],
@@ -87,9 +94,12 @@ public struct PlanningRowIDs: Sendable, Hashable {
     expectedLinks: [UUID] = [], budgets: [UUID] = [], debtEntries: [UUID] = [],
     reconciliations: [UUID] = [], accountGroups: [UUID] = [], paymentMethods: [UUID] = [],
     transfers: [UUID] = [], reconciledBalances: [UUID] = [], cards: [UUID] = [],
-    cashbackRules: [UUID] = [], banks: [UUID] = []
+    cashbackRules: [UUID] = [], banks: [UUID] = [], assets: [UUID] = [],
+    assetValuations: [UUID] = []
   ) {
     self.banks = banks
+    self.assets = assets
+    self.assetValuations = assetValuations
     self.cards = cards
     self.cashbackRules = cashbackRules
     self.accountGroups = accountGroups
@@ -328,12 +338,15 @@ public struct PlanningRepository: Sendable {
   /// to `before`, a new one to `inserted`. A deletion also reads the rows of the planning the
   /// schema cascades it to or clears — the prices of a payment, the links of an expected
   /// income, the journal of a debt, the limits and definitions filed under a category, the
-  /// balances counted on an account or in a reconciliation — so undo gives them back as well.
+  /// balances counted on an account or in a reconciliation, the valuations of an asset — so undo
+  /// gives them back as well.
   ///
   /// Rows go in the order their foreign keys need: groups of accounts, banks, accounts, their
   /// cards, categories (parents first), events, goals, debts, scheduled payments, prices, expected
-  /// income, limits, cashback rules, then the new operations with their parts and the
-  /// operations rewritten, and after them the debt journal, the income links, the transfers,
+  /// income, limits, cashback rules, assets and their valuations (a valuation deleted goes right
+  /// before them, so one put in place of another of the same day never meets it), then the new
+  /// operations with their parts and the operations rewritten, and after them the debt journal,
+  /// the income links, the transfers,
   /// the reconciliations and the balances they counted, which may point at those operations.
   /// Deletions come after, in the reverse order — the parts put into a goal of
   /// `PlanningChange.unlinking` let go of it right before the goals go —; then the operations
@@ -455,6 +468,12 @@ public struct PlanningRepository: Sendable {
     try journal.upsert(rows.expected, db: db)
     try journal.upsert(rows.budgets, db: db)
     try journal.upsert(rows.cashbackRules, db: db)
+    // An asset before its valuations. A valuation deleted goes before the new ones are written,
+    // so a valuation put in place of another of the same day — which the schema keeps one of —
+    // never meets it.
+    try journal.upsert(rows.assets, db: db)
+    try journal.delete(AssetValuation.self, ids: change.delete.assetValuations, db: db)
+    try journal.upsert(rows.assetValuations, db: db)
     // New operations are written the way `TransactionRepository.insert` writes them: as new
     // rows, so an id or an `external_id` that is already there fails the change. Each is given
     // an account like any other (`TransactionRepository.assigningAccount`), and a refund is
@@ -488,6 +507,7 @@ public struct PlanningRepository: Sendable {
     try journal.delete(ExpectedIncomeLink.self, ids: gone.expectedLinks, db: db)
     try journal.delete(DebtEntry.self, ids: gone.debtEntries, db: db)
     try journal.delete(CashbackRule.self, ids: gone.cashbackRules, db: db)
+    try journal.delete(Asset.self, ids: gone.assets, db: db)
     try journal.delete(Budget.self, ids: gone.budgets, db: db)
     try journal.delete(ExpectedIncome.self, ids: gone.expected, db: db)
     try journal.delete(SubscriptionPrice.self, ids: gone.prices, db: db)
@@ -825,6 +845,8 @@ public struct PlanningRepository: Sendable {
     try Self.deleteAll(ExpectedIncomeLink.self, ids: added.expectedLinks, db: db)
     try Self.deleteAll(DebtEntry.self, ids: added.debtEntries, db: db)
     try Self.deleteAll(CashbackRule.self, ids: added.cashbackRules, db: db)
+    try Self.deleteAll(AssetValuation.self, ids: added.assetValuations, db: db)
+    try Self.deleteAll(Asset.self, ids: added.assets, db: db)
     try Self.deleteAll(Budget.self, ids: added.budgets, db: db)
     try Self.deleteAll(ExpectedIncome.self, ids: added.expected, db: db)
     try Self.deleteAll(SubscriptionPrice.self, ids: added.prices, db: db)
@@ -850,6 +872,8 @@ public struct PlanningRepository: Sendable {
     for row in before.expected { try row.save(db) }
     for row in before.budgets { try row.save(db) }
     for row in before.cashbackRules { try row.save(db) }
+    for row in before.assets { try row.save(db) }
+    for row in before.assetValuations { try row.save(db) }
     for row in before.debtEntries { try row.save(db) }
     for row in before.expectedLinks { try row.save(db) }
     for row in before.transfers { try row.save(db) }
@@ -891,6 +915,8 @@ public struct PlanningRepository: Sendable {
     try Self.restoreRowIDs(before.debts, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.budgets, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.cashbackRules, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.assets, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.assetValuations, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.debtEntries, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.expectedLinks, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.prices, undo.rowIDs, db: db)
@@ -1409,4 +1435,20 @@ extension CashbackRule: PlanningRow {
 extension Transfer: PlanningRow {
   static var rows: WritableKeyPath<PlanningRows, [Self]> { \.transfers }
   static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.transfers }
+}
+
+extension Asset: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.assets }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.assets }
+
+  /// Its valuations go with it (`ON DELETE CASCADE`), kept whole, so ⌘Z brings back its
+  /// history.
+  static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
+    try journal.keepRows(AssetValuation.self, where: "asset_id", is: id, db: db)
+  }
+}
+
+extension AssetValuation: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.assetValuations }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.assetValuations }
 }

@@ -1996,6 +1996,23 @@
         }
       }
     },
+    "section.capital": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capital"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Капитал"
+          }
+        }
+      }
+    },
     "section.debts": {
       "extractionState": "manual",
       "localizations": {

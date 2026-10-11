@@ -222,6 +222,40 @@
         }
       }
     },
+    "account.editor.cushion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Money of the safety cushion"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Деньги подушки безопасности"
+          }
+        }
+      }
+    },
+    "account.editor.cushionHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The balance of the account is the cushion: how many months it lasts is on «Capital»."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток счёта — подушка: на сколько месяцев её хватит, видно в «Капитале»."
+          }
+        }
+      }
+    },
     "account.editor.down": {
       "extractionState": "manual",
       "localizations": {
@@ -3195,6 +3229,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "банк «%@»"
+          }
+        }
+      }
+    },
+    "accounts.cushion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cushion"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подушка"
           }
         }
       }

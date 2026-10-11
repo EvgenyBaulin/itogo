@@ -125,7 +125,7 @@ final class SpendingSectionTests: XCTestCase {
   /// it floats no selection bar — and «Траты» does.
   func testSpendingStandsUnderOverviewAndOverviewKeepsTheCardsAlone() {
     XCTAssertEqual(
-      MainWindow.Section.allCases, [.overview, .spending, .planning, .debts, .calendar])
+      MainWindow.Section.allCases, [.overview, .spending, .planning, .debts, .calendar, .capital])
     XCTAssertEqual(Self.russian(MainWindow.Section.spending.titleKey), "Траты")
     XCTAssertEqual(MainWindow.Section.spending.shortcutIndex, 4)
     XCTAssertFalse(SidebarItem.section(.overview).listsOperations)

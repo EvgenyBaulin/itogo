@@ -47,6 +47,8 @@ struct OverviewCardView: View {
     case .freeMoney: FreeMoneyCard()
     case .currencyChart: CurrencyChartCard()
     case .spendingCalendar: CalendarTileCard()
+    case .capital: CapitalTileCard()
+    case .cushion: CushionTileCard()
     }
   }
 }

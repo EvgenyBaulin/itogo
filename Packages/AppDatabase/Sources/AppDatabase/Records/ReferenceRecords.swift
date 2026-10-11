@@ -14,7 +14,17 @@ extension CoreKit.Category: @retroactive FetchableRecord, @retroactive Persistab
       sort: try RowMapping.optionalInteger(row, "sort") ?? 0,
       archived: try RowMapping.flag(row, "archived", fallback: false),
       quality: (row["quality"] as String?).flatMap(Quality.init(rawValue:)),
-      systemRole: (row["system_role"] as String?).flatMap(SystemRole.init(rawValue:)))
+      systemRole: (row["system_role"] as String?).flatMap(SystemRole.init(rawValue:)),
+      essential: Self.essential(row))
+  }
+
+  /// The mark «Необходимая трата». A value that is not a number — only a hand edit leaves one —
+  /// reads as not said: one damaged cell must not stop the history from being read.
+  private static func essential(_ row: Row) -> Bool? {
+    guard let value = (try? RowMapping.optionalInteger(row, "essential")) ?? nil else {
+      return nil
+    }
+    return value != 0
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -26,6 +36,7 @@ extension CoreKit.Category: @retroactive FetchableRecord, @retroactive Persistab
     container["archived"] = archived
     container["quality"] = quality?.rawValue
     container["system_role"] = systemRole?.rawValue
+    container["essential"] = essential
   }
 }
 
@@ -92,7 +103,8 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
       cashbackRounding: Self.cashbackRounding(row),
       cashbackPayout: Self.cashbackPayout(row),
       cashbackPointsAccountId: RowMapping.optionalUUID(row, "cashback_points_account_id"),
-      interest: Self.interest(row))
+      interest: Self.interest(row),
+      cushion: try RowMapping.flag(row, "cushion", fallback: false))
   }
 
   /// The interest the account earns. A rate or a period that does not read reads as none, a day
@@ -154,6 +166,7 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
     container["interest_account_id"] = interest?.payoutAccountId?.uuidString
     container["deposit_opened_on"] = interest?.openedOn?.iso
     container["deposit_ends_on"] = interest?.endsOn?.iso
+    container["cushion"] = cushion
   }
 }
 

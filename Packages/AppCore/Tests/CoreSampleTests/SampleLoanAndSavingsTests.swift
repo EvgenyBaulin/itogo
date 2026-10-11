@@ -13,8 +13,13 @@ import Testing
 struct SampleLoanAndSavingsTests {
   static let seed = SampleFeatureLayersTests.seed
 
+  /// The set through this layer, without the ones written after it.
   static func layered(language: String = "en") -> SampleDataSet {
-    SampleFeatureLayersTests.layered(language: language)
+    let seed = SampleFeatureLayersTests.seed
+    return SampleFeatureLayersTests.history(language: language)
+      .withAccounts(seed: seed, calendar: .moscow, language: language)
+      .withLayersThroughTheLoanAndSavings(
+        seed: seed, calendar: .moscow, language: language, now: nil, demo: false)
   }
 
   static func earlier(language: String = "en") -> SampleDataSet {

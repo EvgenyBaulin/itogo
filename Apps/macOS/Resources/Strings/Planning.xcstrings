@@ -4862,6 +4862,23 @@
         }
       }
     },
+    "free.cushion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Safety cushion −%@: not counted as free"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подушка безопасности −%@: не считается свободной"
+          }
+        }
+      }
+    },
     "free.excludedTitle": {
       "extractionState": "manual",
       "localizations": {

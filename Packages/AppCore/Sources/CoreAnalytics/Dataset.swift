@@ -69,6 +69,12 @@ public struct Dataset: Sendable {
   public var deletedDebts: [Debt]
   /// The banks the accounts are filed under, archived ones included, in the owner's order.
   public var banks: [Bank]
+  /// The things valued by hand, disposed ones included, in the owner's order.
+  public var assets: [Asset]
+  /// Every valuation of every asset, by asset and then by day.
+  public var assetValuations: [AssetValuation]
+  /// The safety cushion's goal and how its obligatory spending is taken.
+  public var capitalSettings: CapitalSettings
 
   public init(
     entries: [TransactionEntry] = [],
@@ -91,7 +97,10 @@ public struct Dataset: Sendable {
     cards: [PaymentCard] = [],
     cashbackRules: [CashbackRule] = [],
     deletedDebts: [Debt] = [],
-    banks: [Bank] = []
+    banks: [Bank] = [],
+    assets: [Asset] = [],
+    assetValuations: [AssetValuation] = [],
+    capitalSettings: CapitalSettings = .standard
   ) {
     self.entries = entries
     self.links = links
@@ -114,6 +123,9 @@ public struct Dataset: Sendable {
     self.cashbackRules = cashbackRules
     self.deletedDebts = deletedDebts
     self.banks = banks
+    self.assets = assets
+    self.assetValuations = assetValuations
+    self.capitalSettings = capitalSettings
   }
 
   public static let empty = Dataset()

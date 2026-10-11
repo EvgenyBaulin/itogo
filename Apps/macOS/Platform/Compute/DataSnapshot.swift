@@ -62,6 +62,9 @@ struct SnapshotContext: Hashable, Sendable {
     var byDay = Set(extra)
     byDay.formUnion(dataset.goals.map(\.currency))
     byDay.formUnion(dataset.paymentMethods.flatMap(\.currencies))
+    // The capital counts the debts and the assets at the end of each past month, at its rate.
+    byDay.formUnion(dataset.debts.map(\.currency))
+    byDay.formUnion(dataset.assets.map(\.currency))
     byDay.remove(.rub)
     currencies.formUnion(byDay)
     for currency in currencies where currency != .rub {

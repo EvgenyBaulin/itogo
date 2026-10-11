@@ -61,6 +61,23 @@ final class SnapshotRatesTests: XCTestCase {
     XCTAssertEqual(enabled.dayRates.perUnit(CurrencyCode("CNY"), on: day(12)), 13)
   }
 
+  /// The capital counts a debt and an asset at the rate of each past month end: their
+  /// currencies are carried by day, not only today.
+  func testTheCurrenciesOfDebtsAndAssetsAreCarriedByDay() {
+    let yuan = CurrencyCode("CNY")
+    let dataset = Dataset(
+      debts: [Debt(direction: .iOwe, type: .loan, name: "Loan", currency: .usd)],
+      assets: [Asset(name: "Car", kind: .vehicle, currency: yuan)])
+    let context = SnapshotContext(dataset: dataset, rates: table, today: today)
+    XCTAssertEqual(context.dayRates.perUnit(.usd, on: day(12)), 95)
+    XCTAssertEqual(context.dayRates.perUnit(yuan, on: day(12)), 13)
+    XCTAssertEqual(context.rubPerUnit[yuan], 13)
+    XCTAssertNil(
+      SnapshotContext(dataset: Dataset(), rates: table, today: today).dayRates.perUnit(
+        .usd, on: day(12)),
+      "a currency nothing counts in is not carried by day")
+  }
+
   /// The default currency always has today's rate, even when nothing else counts in it and the
   /// enabled currencies could not be read: «≈ N» of another currency is written in it.
   func testTheDefaultCurrencyIsInTheRateSet() {

@@ -65,7 +65,35 @@ struct ExportPandasTests {
     rows[ExportTables.cards] = cards.map(ExportTables.row)
     rows[ExportTables.cashbackRules] = rules.map(ExportTables.row)
     rows[ExportTables.banks] = set.banks.map(ExportTables.row)
+    let (assets, valuations) = Self.assetsAndValuations()
+    rows[ExportTables.assets] = assets.map(ExportTables.row)
+    rows[ExportTables.assetValuations] = valuations.map(ExportTables.row)
     return rows
+  }
+
+  /// Two assets and their valuations, whatever the sample holds: a car in euros sold on a day,
+  /// with a valuation of kopecks and one without a note, and a flat kept, with no note at all.
+  static func assetsAndValuations() -> ([Asset], [AssetValuation]) {
+    let car = Asset(
+      id: UUID(uuidString: "0A0A0A0A-0000-4000-8000-000000000001")!, name: "Машина",
+      kind: .vehicle, currency: .eur, note: "куплена в кредит",
+      disposedOn: DateOnly(year: 2026, month: 9, day: 1), sort: 1)
+    let flat = Asset(
+      id: UUID(uuidString: "0A0A0A0A-0000-4000-8000-000000000002")!, name: "Квартира",
+      kind: .realty)
+    let valuations = [
+      AssetValuation(
+        id: UUID(uuidString: "0A0A0A0A-0000-4000-8000-000000000003")!, assetId: car.id,
+        day: DateOnly(year: 2026, month: 3, day: 31), valueE4: AmountE4(raw: 150_000_005_000),
+        note: "оценка дилера"),
+      AssetValuation(
+        id: UUID(uuidString: "0A0A0A0A-0000-4000-8000-000000000004")!, assetId: car.id,
+        day: DateOnly(year: 2026, month: 6, day: 30), valueE4: AmountE4(whole: 14_000)),
+      AssetValuation(
+        id: UUID(uuidString: "0A0A0A0A-0000-4000-8000-000000000005")!, assetId: flat.id,
+        day: DateOnly(year: 2026, month: 1, day: 15), valueE4: AmountE4(whole: 9_000_000)),
+    ]
+    return ([car, flat], valuations)
   }
 
   /// The sample's cards and cashback rules, and one card more whatever the sample holds, so
@@ -98,11 +126,12 @@ struct ExportPandasTests {
       months: 6, endingOn: Synthetic.endingOn, calendar: Synthetic.calendar, language: "ru"
     ).withAccounts(seed: 20_260_918, calendar: Synthetic.calendar, language: "ru")
     let rows = Self.rows(of: set)
-    #expect(ExportTables.all.count == 24)
+    #expect(ExportTables.all.count == 26)
     #expect(Set(rows.keys) == Set(ExportTables.all), "a file of Export has no rows here")
     for table in [
       ExportTables.accountGroups, ExportTables.transfers, ExportTables.reconciliationBalances,
-      ExportTables.cards, ExportTables.cashbackRules, ExportTables.banks,
+      ExportTables.cards, ExportTables.cashbackRules, ExportTables.banks, ExportTables.assets,
+      ExportTables.assetValuations,
     ] {
       #expect(!(rows[table] ?? []).isEmpty, "\(table.fileName) is empty")
     }
@@ -129,7 +158,7 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: Reading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 24)
+    #expect(readings.count == 26)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")
@@ -236,7 +265,7 @@ struct ExportPandasTests {
     let texts: [String: [String?]]
   }
 
-  /// The same 24 files with every name and note of every row replaced by an awkward string —
+  /// The same 26 files with every name and note of every row replaced by an awkward string —
   /// the accounts' groups, transfers and counts among them — read by pandas with no
   /// parameters: no row is lost or split, the columns stay, and every name and note reads
   /// back as written, except the words pandas takes for a missing value.
@@ -284,7 +313,7 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: TextReading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 24)
+    #expect(readings.count == 26)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")

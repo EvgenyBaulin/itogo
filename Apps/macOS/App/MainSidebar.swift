@@ -52,7 +52,7 @@ enum SidebarItem: Hashable, Sendable {
   }
 }
 
-/// The sidebar of the main window: its sections, chosen by a click or by ⌘1 … ⌘5,
+/// The sidebar of the main window: its sections, chosen by a click or by ⌘1 … ⌘6,
 /// whose menu items, and the limits card of Overview, post `.selectSection` with the number of
 /// the section; and under them the accounts and their groups (`AccountsSidebarSection`).
 struct MainSidebar: View {

@@ -4,26 +4,44 @@ import Testing
 
 @testable import CoreCSV
 
-/// The 24 file names of the export, in their one fixed order: the 18 of the first schema,
+/// The 26 file names of the export, in their one fixed order: the 18 of the first schema,
 /// then the three the accounts brought, then the cards and their cashback rules, then the banks,
-/// at the end.
+/// then the assets and their valuations, at the end.
 private let specifiedFileNames = [
   "transactions.csv", "transaction_parts.csv", "reimbursement_links.csv", "people.csv",
   "payment_methods.csv", "places.csv", "events.csv", "categories.csv", "templates.csv",
   "scheduled_payments.csv", "subscription_prices.csv", "expected_income.csv", "budgets.csv",
   "goals.csv", "debts.csv", "debt_entries.csv", "reconciliations.csv", "rates.csv",
   "account_groups.csv", "transfers.csv", "reconciliation_balances.csv", "cards.csv",
-  "cashback_rules.csv", "banks.csv",
+  "cashback_rules.csv", "banks.csv", "assets.csv", "asset_valuations.csv",
 ]
 
-@Suite("ExportTables describes the 24 files of the export")
+@Suite("ExportTables describes the 26 files of the export")
 struct ExportTablesDescriptionTests {
-  @Test func theTwentyFourFilesInTheirOrder() {
-    #expect(ExportTables.all.count == 24)
+  @Test func theTwentySixFilesInTheirOrder() {
+    #expect(ExportTables.all.count == 26)
     #expect(ExportTables.all.map(\.fileName) == specifiedFileNames)
     #expect(
-      ExportTables.all.suffix(3) == [
-        ExportTables.cards, ExportTables.cashbackRules, ExportTables.banks,
+      ExportTables.all.suffix(5) == [
+        ExportTables.cards, ExportTables.cashbackRules, ExportTables.banks, ExportTables.assets,
+        ExportTables.assetValuations,
+      ])
+  }
+
+  /// The capital brought two files at the end and one column at the end of the accounts and of
+  /// the categories.
+  @Test func theColumnsOfTheCapitalComeLast() {
+    #expect(
+      ExportTables.assets.columns == [
+        "id", "name", "kind", "currency", "note", "disposed_on", "sort",
+      ])
+    #expect(
+      ExportTables.assetValuations.columns == ["id", "asset_id", "day", "value", "note"])
+    #expect(ExportTables.paymentMethods.columns.last == "cushion")
+    #expect(
+      ExportTables.categories.columns == [
+        "id", "parent_id", "kind", "name", "sort", "archived", "quality", "system_role",
+        "essential",
       ])
   }
 
@@ -92,7 +110,7 @@ struct ExportTablesDescriptionTests {
         "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
         "cashback_payout", "cashback_payout_day", "cashback_points_account_id", "interest_rate",
         "interest_period", "interest_day", "interest_account_id", "deposit_opened_on",
-        "deposit_ends_on",
+        "deposit_ends_on", "cushion",
       ])
   }
 
@@ -122,7 +140,7 @@ struct ExportTablesDescriptionTests {
     }
     #expect(ExportTables.transactions.columns.count == 27)
     #expect(ExportTables.transactionParts.columns.count == 17)
-    #expect(ExportTables.paymentMethods.columns.count == 22)
+    #expect(ExportTables.paymentMethods.columns.count == 23)
     #expect(ExportTables.templates.columns.count == 8)
     #expect(ExportTables.goals.columns.count == 9)
     #expect(ExportTables.debtEntries.columns.count == 17)
@@ -418,6 +436,59 @@ struct ExportTablesRowTests {
     #expect(read["sort"] == "3")
     #expect(read["quality"] == "")
     #expect(read["system_role"] == "")
+    #expect(read["essential"] == "")
+  }
+
+  /// A category marked essential or not says so; one that follows its parent leaves it empty.
+  @Test func theEssentialMarkOfACategoryRoundTrips() throws {
+    let yes = CoreKit.Category(kind: .expense, name: "Продукты", essential: true)
+    let no = CoreKit.Category(kind: .expense, name: "Кафе", essential: false)
+    #expect(
+      try roundTrip(ExportTables.categories, row: ExportTables.row(yes))["essential"] == "true")
+    #expect(
+      try roundTrip(ExportTables.categories, row: ExportTables.row(no))["essential"] == "false")
+  }
+
+  @Test func theCushionMarkOfAnAccountRoundTrips() throws {
+    let cushion = PaymentMethod(name: "Накопительный", kind: .account, cushion: true)
+    #expect(
+      try roundTrip(ExportTables.paymentMethods, row: ExportTables.row(cushion))["cushion"]
+        == "true")
+    #expect(
+      try roundTrip(
+        ExportTables.paymentMethods, row: ExportTables.row(PaymentMethod(name: "Карта")))[
+          "cushion"] == "false")
+  }
+
+  @Test func assetRoundTrips() throws {
+    let asset = Asset(
+      name: "Машина, «Шкода»", kind: .vehicle, currency: .eur, note: "куплена\nв кредит",
+      disposedOn: DateOnly(year: 2027, month: 3, day: 1), sort: 2)
+    let read = try roundTrip(ExportTables.assets, row: ExportTables.row(asset))
+    #expect(read["id"] == asset.id.uuidString)
+    #expect(read["name"] == "Машина, «Шкода»")
+    #expect(read["kind"] == "vehicle")
+    #expect(read["currency"] == "EUR")
+    #expect(read["note"] == "куплена\nв кредит")
+    #expect(read["disposed_on"] == "2027-03-01")
+    #expect(read["sort"] == "2")
+    let kept = try roundTrip(ExportTables.assets, row: ExportTables.row(Asset(name: "Ноутбук")))
+    #expect(kept["kind"] == "other")
+    #expect(kept["currency"] == "RUB")
+    #expect(kept["note"] == "")
+    #expect(kept["disposed_on"] == "")
+  }
+
+  @Test func assetValuationRoundTrips() throws {
+    let valuation = AssetValuation(
+      assetId: UUID(), day: DateOnly(year: 2026, month: 10, day: 31),
+      valueE4: AmountE4(raw: 12_345_678_900), note: "оценка дилера")
+    let read = try roundTrip(ExportTables.assetValuations, row: ExportTables.row(valuation))
+    #expect(read["id"] == valuation.id.uuidString)
+    #expect(read["asset_id"] == valuation.assetId.uuidString)
+    #expect(read["day"] == "2026-10-31")
+    #expect(read["value"] == "1234567.89")
+    #expect(read["note"] == "оценка дилера")
   }
 
   @Test func systemCategoryRoundTrips() throws {

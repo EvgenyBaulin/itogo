@@ -22,6 +22,9 @@ struct AccountDraft: Equatable {
   var openings: [CurrencyCode: String] = [:]
   /// «Проценты»: the interest the balance earns, as typed.
   var interest = InterestDraft(nil)
+  /// «Деньги подушки безопасности»: the money of the account, every currency of it, is the
+  /// owner's safety cushion.
+  var cushion = false
 
   /// The fields of an account there is.
   init(_ account: PaymentMethod) {
@@ -34,6 +37,7 @@ struct AccountDraft: Equatable {
     isMain = account.isDefault
     aliases = account.aliases
     interest = InterestDraft(account.interest)
+    cushion = account.cushion
   }
 
   /// A new account: a bank account in the default currency, in no group, under a bank — `bank`
@@ -63,6 +67,7 @@ struct AccountDraft: Equatable {
     account.bankId = bankId
     account.isDefault = isMain
     account.aliases = aliases
+    account.cushion = cushion
     return account
   }
 
@@ -193,6 +198,15 @@ struct AccountEditor: View {
             .foregroundStyle(.secondary)
         }
         AccountInterestSection(draft: $draft.interest, payoutChoices: payoutChoices)
+        Section {
+          Toggle(isOn: $draft.cushion) {
+            Text(verbatim: t("account.editor.cushion"))
+          }
+          .accessibilityIdentifier("account.editor.cushion")
+        } footer: {
+          Text(verbatim: t("account.editor.cushionHint"))
+            .foregroundStyle(.secondary)
+        }
         Section {
           AccountOtherNames(names: $draft.aliases)
         } header: {
@@ -441,10 +455,21 @@ struct AccountEditor: View {
       account, previous: previous, openings: openings, books: books,
       newBankNamed: draft.bankId == nil ? draft.newBankName : nil)
     {
-    case .done: finish(account.id)
+    case .done:
+      Self.logCushion(of: account, previous: previous)
+      finish(account.id)
     case .refused(let reason): refusal = reason
     case .failed: failed = true
     }
+  }
+
+  /// A saved account that became or stopped being money of the cushion is said in the journal,
+  /// by count only.
+  static func logCushion(of account: PaymentMethod, previous: PaymentMethod?) {
+    guard account.cushion != (previous?.cushion ?? false) else { return }
+    AppLog.info(
+      "cushion.accounts.changed", .db, "an account of the safety cushion changed",
+      [LogPair("accounts", .count(1)), LogPair("cushion", .flag(account.cushion))])
   }
 
   /// A new account named like one in the archive: that one comes back instead of a second

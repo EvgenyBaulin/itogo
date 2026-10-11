@@ -250,7 +250,7 @@ public final class DatabaseStack: Sendable {
     "settings", "scheduled_payments", "subscription_prices", "expected_income",
     "expected_income_links", "budgets", "reconciliations", "anomaly_dismissals",
     "category_feedback", "account_groups", "transfers", "reconciliation_balances", "cards",
-    "cashback_rules", "banks",
+    "cashback_rules", "banks", "assets", "asset_valuations",
   ]
 
   /// One element after every committed transaction that changed one of `ledgerTables` —

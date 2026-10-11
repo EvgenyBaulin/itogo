@@ -52,6 +52,10 @@ public struct SampleDataSet: Sendable {
   /// Income expected on top of what the planning of the history expects
   /// (`SampleDataSet.planning`); none unless a layer adds it.
   public var addedExpectedIncome: [ExpectedIncome] = []
+  /// The things valued by hand and their valuations, oldest first for each; none unless a layer
+  /// adds them (`withCapitalLayer`).
+  public var assets: [Asset] = []
+  public var assetValuations: [AssetValuation] = []
 
   public init(
     categories: [CoreKit.Category],

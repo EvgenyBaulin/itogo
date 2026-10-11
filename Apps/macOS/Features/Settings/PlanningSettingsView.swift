@@ -15,6 +15,10 @@ struct PlanningSettingsView: View {
   /// One setting for all seven anomaly rules. It lives beside the cashback category, under an
   /// `AnalyticsSettings` key, because the rules read it with the rest of the data.
   @State private var sensitivity = AnomalySensitivity.standard
+  /// The settings of the safety cushion that live here: how many months its obligatory spending
+  /// is taken over, and whether its money stays out of the free sum. Its goal is set on
+  /// «Капитал» (`CushionGoalForm`).
+  @State private var cushion = CapitalSettings.standard
   /// A write the database refused; the alert says so (`AppEnvironment.attempt`).
   @State private var refused = false
 
@@ -93,6 +97,33 @@ struct PlanningSettingsView: View {
       }
 
       Section {
+        Stepper(
+          value: Binding(
+            get: { cushion.historyMonths }, set: { save(cushion: \.historyMonths, $0) }),
+          in: CapitalSettings.historyMonthsRange
+        ) {
+          Text(
+            verbatim: environment.format(
+              "settings.planning.cushionHistory", table: "Settings",
+              counts: cushion.historyMonths))
+        }
+        .accessibilityIdentifier("settings.planning.cushionHistory")
+        Toggle(
+          isOn: Binding(
+            get: { cushion.outOfFreeMoney }, set: { save(cushion: \.outOfFreeMoney, $0) })
+        ) {
+          Text(verbatim: t("settings.planning.cushionOut"))
+          Text(verbatim: t("settings.planning.cushionOutHint"))
+        }
+        .accessibilityIdentifier("settings.planning.cushionOut")
+      } header: {
+        Text(verbatim: t("settings.planning.cushion"))
+      } footer: {
+        Text(verbatim: t("settings.planning.cushionHint"))
+          .foregroundStyle(.secondary)
+      }
+
+      Section {
         Picker(
           selection: Binding(get: { values.limitsTopN }, set: { save(\.limitsTopN, $0) })
         ) {
@@ -148,6 +179,7 @@ struct PlanningSettingsView: View {
     }
     // The storage layer's own reading: one format for the app, the pipeline and the archive.
     values = PlanningSettings(storedValues: stored)
+    cushion = CushionGoalForm.read(environment)
     sensitivity =
       ((try? settings.string(AnalyticsSettings.anomalySensitivityKey)) ?? nil)
       .flatMap(AnomalySensitivity.init(rawValue:)) ?? .standard
@@ -174,6 +206,23 @@ struct PlanningSettingsView: View {
     // the numbers. Only the key that changed is written: the others may have been changed
     // elsewhere since this tab read them (the reserve switch, the dismissed reminders).
     let stored = values.storedValues
+    let written = environment.attempt("settings.planning", on: environment.settings) { settings in
+      for key in Self.changedKeys(before: before, after: stored) {
+        if let text = stored[key] ?? nil { try settings.set(key, to: text) }
+      }
+    }
+    if !written {
+      refused = true
+      load()
+    }
+  }
+
+  /// A setting of the cushion, as the others here: no step of ⌘Z, only the key that changed.
+  private func save<Value>(cushion keyPath: WritableKeyPath<CapitalSettings, Value>, _ value: Value)
+  {
+    let before = cushion.storedValues
+    cushion[keyPath: keyPath] = value
+    let stored = cushion.storedValues
     let written = environment.attempt("settings.planning", on: environment.settings) { settings in
       for key in Self.changedKeys(before: before, after: stored) {
         if let text = stored[key] ?? nil { try settings.set(key, to: text) }

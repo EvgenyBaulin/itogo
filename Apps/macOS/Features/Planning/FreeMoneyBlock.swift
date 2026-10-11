@@ -31,7 +31,10 @@ struct FreeMoneyBlock: View {
           today: snapshot.today, picked: until.map { environment.calendar.day(of: $0) }),
         ledger: snapshot.ledger)
       VStack(alignment: .leading, spacing: 8) {
-        ForEach(Self.parts(of: free), id: \.name) { part in
+        ForEach(
+          Self.parts(of: free, hasCushion: !snapshot.planning.cushion.accounts.isEmpty),
+          id: \.name
+        ) { part in
           view(of: part, free, snapshot)
         }
       }
@@ -59,6 +62,9 @@ struct FreeMoneyBlock: View {
     case unanchored([BalanceKey])
     /// The money on the accounts and the money of the goals the main figure leaves out.
     case moneyAndGoals(AmountE4, AmountE4)
+    /// The money of the safety cushion the main figure leaves out, when the owner keeps it
+    /// out of the free sum.
+    case cushion(AmountE4)
     /// «Учитывая запланированные События и траты» and what it takes away.
     case grey(AmountE4, lines: [FreeToSpendLine])
     /// The due dates passed and unpaid inside the grey line, with «Разобрать…».
@@ -72,6 +78,9 @@ struct FreeMoneyBlock: View {
     case stillExpectedWithoutRate
     /// The switch that keeps the goals' plans back.
     case reserveSwitch
+    /// The switch that keeps the safety cushion out of the free sum, once an account is marked
+    /// as the cushion.
+    case cushionSwitch
     /// The groups left out of the summary, each with its own total and no free sum.
     case excluded([FreeMoney.ExcludedGroup])
 
@@ -84,6 +93,7 @@ struct FreeMoneyBlock: View {
       case .mainWithoutRate: "mainWithoutRate"
       case .unanchored: "unanchored"
       case .moneyAndGoals: "moneyAndGoals"
+      case .cushion: "cushion"
       case .grey: "grey"
       case .overdue: "overdue"
       case .planWithoutRate: "planWithoutRate"
@@ -91,26 +101,29 @@ struct FreeMoneyBlock: View {
       case .stillExpected: "stillExpected"
       case .stillExpectedWithoutRate: "stillExpectedWithoutRate"
       case .reserveSwitch: "reserveSwitch"
+      case .cushionSwitch: "cushionSwitch"
       case .excluded: "excluded"
       }
     }
   }
 
   /// What the block shows of `free`: with no count only the way to the first one; the groups
-  /// left out of the summary apart, in either case.
-  static func parts(of free: FreeMoney) -> [Part] {
+  /// left out of the summary apart, in either case. `hasCushion`: an account is marked as the
+  /// safety cushion, so the switch that keeps it out of the free sum is offered.
+  static func parts(of free: FreeMoney, hasCushion: Bool = false) -> [Part] {
     var parts: [Part] = []
     switch free.state {
     case .noReconciliation:
       parts.append(.firstCount)
     case .ready:
-      let spendable = free.goalSavings > .zero
+      let spendable = free.goalSavings > .zero || free.cushion > .zero
       parts.append(.main(free.main ?? .zero, spendable: spendable))
       if !free.mainWithoutRate.isEmpty { parts.append(.mainWithoutRate(free.mainWithoutRate)) }
       if !free.unanchored.isEmpty { parts.append(.unanchored(free.unanchored)) }
-      if spendable {
+      if free.goalSavings > .zero {
         parts.append(.moneyAndGoals(free.moneyNow ?? .zero, free.goalSavings))
       }
+      if free.cushion > .zero { parts.append(.cushion(free.cushion)) }
       parts.append(.grey(free.grey ?? .zero, lines: free.lines))
       if free.overdue > .zero { parts.append(.overdue(free.overdue)) }
       if !free.planWithoutRate.isEmpty { parts.append(.planWithoutRate(free.planWithoutRate)) }
@@ -120,6 +133,7 @@ struct FreeMoneyBlock: View {
       }
       if !free.stillExpectedWithoutRate.isEmpty { parts.append(.stillExpectedWithoutRate) }
       parts.append(.reserveSwitch)
+      if hasCushion { parts.append(.cushionSwitch) }
     }
     if !free.excluded.isEmpty { parts.append(.excluded(free.excluded)) }
     return parts
@@ -152,6 +166,17 @@ struct FreeMoneyBlock: View {
         environment.format(
           "free.moneyAndGoals", table: "Planning", environment.money.rounded(money),
           environment.money.rounded(goals)))
+    case .cushion(let amount):
+      Label {
+        Text(
+          verbatim: environment.format(
+            "free.cushion", table: "Planning", environment.money.rounded(amount)))
+      } icon: {
+        Image(systemName: CushionText.symbol)
+      }
+      .font(.caption.monospacedDigit())
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
     case .grey(let grey, let lines):
       Divider()
       greyLine(grey)
@@ -192,6 +217,13 @@ struct FreeMoneyBlock: View {
       caption(t("free.stillExpectedWithoutRate"), tertiary: true)
     case .reserveSwitch:
       reserveSwitch(snapshot)
+    case .cushionSwitch:
+      settingSwitch(
+        CapitalSettings.outOfFreeMoneyKey,
+        isOn: snapshot.dataset.capitalSettings.outOfFreeMoney,
+        label: "settings.planning.cushionOut"
+      )
+      .accessibilityIdentifier("free.cushionOut")
     case .excluded(let groups):
       excluded(groups)
     }
