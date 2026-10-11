@@ -91,7 +91,23 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
       bankId: RowMapping.optionalUUID(row, "bank_id"),
       cashbackRounding: Self.cashbackRounding(row),
       cashbackPayout: Self.cashbackPayout(row),
-      cashbackPointsAccountId: RowMapping.optionalUUID(row, "cashback_points_account_id"))
+      cashbackPointsAccountId: RowMapping.optionalUUID(row, "cashback_points_account_id"),
+      interest: Self.interest(row))
+  }
+
+  /// The interest the account earns. A rate or a period that does not read reads as none, a day
+  /// or a date that does not as not said: one damaged cell must not stop the history from being
+  /// read.
+  private static func interest(_ row: Row) -> DepositTerms? {
+    guard let rate = RowMapping.decimal(row, "interest_rate"),
+      let period = (row["interest_period"] as String?).flatMap(InterestPeriod.init(rawValue:))
+    else { return nil }
+    let day = (try? RowMapping.optionalInteger(row, "interest_day")) ?? nil
+    return DepositTerms(
+      rate: rate, period: period, day: day.flatMap { (1...31).contains($0) ? $0 : nil },
+      payoutAccountId: RowMapping.optionalUUID(row, "interest_account_id"),
+      openedOn: RowMapping.day(row, "deposit_opened_on"),
+      endsOn: RowMapping.day(row, "deposit_ends_on"))
   }
 
   /// How the account's bank rounds. A word the app never writes — only a hand edit leaves one —
@@ -132,6 +148,12 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
     container["cashback_payout"] = cashbackPayout?.timing.rawValue
     container["cashback_payout_day"] = cashbackPayout?.day
     container["cashback_points_account_id"] = cashbackPointsAccountId?.uuidString
+    container["interest_rate"] = RowMapping.string(interest?.rate)
+    container["interest_period"] = interest?.period.rawValue
+    container["interest_day"] = interest?.day
+    container["interest_account_id"] = interest?.payoutAccountId?.uuidString
+    container["deposit_opened_on"] = interest?.openedOn?.iso
+    container["deposit_ends_on"] = interest?.endsOn?.iso
   }
 }
 

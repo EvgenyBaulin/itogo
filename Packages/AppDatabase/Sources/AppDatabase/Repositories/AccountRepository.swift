@@ -158,6 +158,16 @@ public struct AccountRepository: Sendable {
         "SELECT COUNT(*) FROM payment_methods WHERE cashback_points_account_id = :id"))
   }
 
+  /// An account cannot pay its interest to itself: if the one that stays paid it to the one
+  /// merged away, the interest stays on it from now on.
+  static func dropPayoutToItself(of source: UUID, into target: UUID, db: Database) throws {
+    try db.execute(
+      sql: """
+        UPDATE payment_methods SET interest_account_id = NULL
+        WHERE id = ? AND interest_account_id = ?
+        """, arguments: [target.uuidString, source.uuidString])
+  }
+
   // MARK: Deleting
 
   /// Deletes an account nothing points at, for good. The balances counted on it go with it,
@@ -286,11 +296,15 @@ public struct AccountRepository: Sendable {
           UPDATE payment_methods SET cashback_points_account_id = NULL
           WHERE id = ? AND cashback_points_account_id = ?
           """, arguments: [plan.target.id.uuidString, plan.sourceId.uuidString])
+      try Self.dropPayoutToItself(of: plan.sourceId, into: plan.target.id, db: db)
       try ReferenceRepository.repoint(
         "payment_methods", from: plan.sourceId, to: plan.target.id, db: db)
       var target = plan.target
       target.isDefault = target.isDefault || wasMain
       if target.cashbackPointsAccountId == plan.sourceId { target.cashbackPointsAccountId = nil }
+      if target.interest?.payoutAccountId == plan.sourceId {
+        target.interest?.payoutAccountId = nil
+      }
       try ReferenceRepository.save(target, db: db)
       try db.execute(
         sql: "UPDATE payment_methods SET archived = 1, is_default = 0 WHERE id = ?",

@@ -234,10 +234,10 @@ struct Migration0006OddBooksPropertyTests {
       }
     }
 
-    // Every other value of 1.2 is where it was; the accounts and the journal in the columns 1.2
-    // had.
+    // Every other value of 1.2 is where it was; the accounts, the debts and the journal in the
+    // columns 1.2 had (the later update adds columns to them).
     for (table, contents) in before
-    where !["banks", "cashback_rules", "payment_methods", "debt_entries"].contains(table) {
+    where !["banks", "cashback_rules", "payment_methods", "debt_entries", "debts"].contains(table) {
       #expect(afterUpdate[table] == contents, "seed \(seed): \(table) changed")
     }
     let oldColumns = try Self.read(drawn.url) { db in
@@ -246,9 +246,11 @@ struct Migration0006OddBooksPropertyTests {
         columns: [
           "payment_methods": before["payment_methods"]?.columns ?? [],
           "debt_entries": before["debt_entries"]?.columns ?? [],
+          "debts": before["debts"]?.columns ?? [],
         ])
     }
     #expect(oldColumns["payment_methods"] == before["payment_methods"], "seed \(seed)")
     #expect(oldColumns["debt_entries"] == before["debt_entries"], "seed \(seed)")
+    #expect(oldColumns["debts"] == before["debts"], "seed \(seed)")
   }
 }

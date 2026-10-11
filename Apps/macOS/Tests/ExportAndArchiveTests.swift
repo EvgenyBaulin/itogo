@@ -277,26 +277,26 @@ final class ExportAndArchiveTests: XCTestCase {
     }
   }
 
-  /// With the banks the schema has six migrations: an archive says 6, this build opens an
-  /// archive of schema 6 — and of the five before it — and a build that knows only 5 refuses
-  /// it.
-  func testAnArchiveOfSchemaSixOpensWhereSixIsSupported() throws {
-    XCTAssertEqual(stack.applied.onDisk, 6)
-    let service = ArchiveService(stack: stack, appVersion: "1.3.0")
-    let url = directory.appendingPathComponent("six.itogoarchive")
+  /// With the terms of loans and deposits the schema has seven migrations: an archive says 7,
+  /// this build opens an archive of schema 7 — and of the ones before it — and a build that knows
+  /// only 6 refuses it.
+  func testAnArchiveOfSchemaSevenOpensWhereSevenIsSupported() throws {
+    XCTAssertEqual(stack.applied.onDisk, 7)
+    let service = ArchiveService(stack: stack, appVersion: "1.6.0")
+    let url = directory.appendingPathComponent("seven.itogoarchive")
     _ = try service.exportArchive(to: url)
     let data = try Data(contentsOf: url)
 
-    let opened = try ArchiveOpener.open(data, supportedSchemaVersion: 6)
-    XCTAssertEqual(opened.manifest.schemaVersion, 6)
+    let opened = try ArchiveOpener.open(data, supportedSchemaVersion: 7)
+    XCTAssertEqual(opened.manifest.schemaVersion, 7)
     XCTAssertEqual(opened.csvTables.count, 24)
     XCTAssertTrue(opened.csvTables.contains("reconciliation_balances"))
     XCTAssertTrue(opened.csvTables.contains("cards"))
     XCTAssertTrue(opened.csvTables.contains("cashback_rules"))
     XCTAssertTrue(opened.csvTables.contains("banks"))
-    XCTAssertThrowsError(try ArchiveOpener.open(data, supportedSchemaVersion: 5))
+    XCTAssertThrowsError(try ArchiveOpener.open(data, supportedSchemaVersion: 6))
 
-    for (version, name) in [(5, "five"), (4, "four"), (3, "three")] {
+    for (version, name) in [(6, "six"), (5, "five"), (4, "four"), (3, "three")] {
       let older = ArchiveService(stack: stack, appVersion: "1.1.2", schemaVersion: version)
       let olderURL = directory.appendingPathComponent("\(name).itogoarchive")
       _ = try older.exportArchive(to: olderURL)

@@ -106,6 +106,8 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
   /// The account the cashback comes to as points, when the bank pays it so (points count as
   /// the currency of that account, one to one); `nil`: it comes as money to this account.
   public var cashbackPointsAccountId: UUID?
+  /// The interest the account earns — a deposit or a savings account; `nil`: it earns none.
+  public var interest: DepositTerms?
 
   public init(
     id: UUID = UUID(), name: String, kind: PaymentMethodKind = .card,
@@ -113,7 +115,7 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     archived: Bool = false, groupId: UUID? = nil, sort: Int = 0,
     otherCurrencies: [CurrencyCode] = [], bankId: UUID? = nil,
     cashbackRounding: CashbackRounding = .standard, cashbackPayout: CashbackPayout? = nil,
-    cashbackPointsAccountId: UUID? = nil
+    cashbackPointsAccountId: UUID? = nil, interest: DepositTerms? = nil
   ) {
     self.id = id
     self.name = name
@@ -129,6 +131,7 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     self.cashbackRounding = cashbackRounding
     self.cashbackPayout = cashbackPayout
     self.cashbackPointsAccountId = cashbackPointsAccountId
+    self.interest = interest
   }
 
   /// The one account every operation without an account of its own belongs to.
@@ -263,13 +266,23 @@ public struct Debt: Identifiable, Hashable, Sendable, Codable {
   /// of the debts, while the operations that point at it count as they did and the money of its
   /// journal stays on the accounts.
   public var deletedAt: Date?
+  /// The bank charges interest on what is owed, day by day, and a payment pays that interest
+  /// first. Only a debt with a rate (`interestRate`) says so.
+  public var accruesInterest: Bool
+  /// A grace period: until `mainFrom` the dues are the grace payment, from it on the main one;
+  /// `nil` — the debt has none. Only a debt I owe, paid on a day of the month, has one.
+  public var grace: DebtGrace?
+  /// The months the main payment is worked out over at the rate of the debt, when the owner
+  /// did not type it (`monthlyPaymentE4`); `nil` — not said.
+  public var repayMonths: Int?
 
   public init(
     id: UUID = UUID(), direction: DebtDirection, type: DebtType, name: String,
     personId: UUID? = nil, currency: CurrencyCode = .rub, interestRate: Decimal? = nil,
     monthlyPaymentE4: AmountE4? = nil, paymentDay: Int? = nil, remindDaysBefore: Int? = nil,
     paymentsAreExpenses: Bool = true, origin: DebtOrigin = .existing, note: String? = nil,
-    closed: Bool = false, loansSubcategoryId: UUID? = nil, deletedAt: Date? = nil
+    closed: Bool = false, loansSubcategoryId: UUID? = nil, deletedAt: Date? = nil,
+    accruesInterest: Bool = false, grace: DebtGrace? = nil, repayMonths: Int? = nil
   ) {
     self.id = id
     self.direction = direction
@@ -287,9 +300,21 @@ public struct Debt: Identifiable, Hashable, Sendable, Codable {
     self.closed = closed
     self.loansSubcategoryId = loansSubcategoryId
     self.deletedAt = deletedAt
+    self.accruesInterest = accruesInterest
+    self.grace = grace
+    self.repayMonths = repayMonths
   }
 
   public var isDeleted: Bool { deletedAt != nil }
+
+  /// Whether the debt has monthly dues at all: it is paid on a day of the month, and the day
+  /// asks for something — a monthly payment, a grace period, or a main payment worked out over
+  /// a number of months. Every rule of the dues asks this before anything else.
+  public var hasDues: Bool {
+    guard paymentDay != nil else { return false }
+    if let monthly = monthlyPaymentE4, monthly.raw > 0 { return true }
+    return grace != nil || repayMonths != nil
+  }
 }
 
 /// One line of a debt journal. `amountE4` is signed: plus grows the debt, minus reduces it.
@@ -316,13 +341,16 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
   /// although the payment is smaller than the monthly one. Only a `payment` carries it
   /// (`DebtRules.makeEntry`).
   public var closesTerm: Bool
+  /// A part of the loan drawn later — a term of tuition the bank paid. Only money that grows the
+  /// debt is one: a `borrowed` line or an `adjustment` with a positive amount.
+  public var tranche: Bool
 
   public init(
     id: UUID = UUID(), debtId: UUID, groupName: String? = nil, date: DateOnly? = nil,
     description: String? = nil, fullAmountE4: AmountE4? = nil, share: Decimal? = nil,
     amountE4: AmountE4, kind: DebtEntryKind, transactionId: UUID? = nil, note: String? = nil,
     paymentMethodId: UUID? = nil, occurredAt: Date? = nil, accountCurrency: CurrencyCode? = nil,
-    accountAmountE4: AmountE4? = nil, closesTerm: Bool = false
+    accountAmountE4: AmountE4? = nil, closesTerm: Bool = false, tranche: Bool = false
   ) {
     self.id = id
     self.debtId = debtId
@@ -340,6 +368,7 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
     self.accountCurrency = accountCurrency
     self.accountAmountE4 = accountAmountE4
     self.closesTerm = closesTerm
+    self.tranche = tranche
   }
 }
 

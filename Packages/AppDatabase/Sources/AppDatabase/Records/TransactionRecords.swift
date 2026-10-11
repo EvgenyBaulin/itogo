@@ -161,7 +161,22 @@ extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
       note: row["note"],
       closed: try RowMapping.flag(row, "closed", fallback: false),
       loansSubcategoryId: RowMapping.optionalUUID(row, "loans_subcategory_id"),
-      deletedAt: try RowMapping.optionalInstant(row, "deleted_at"))
+      deletedAt: try RowMapping.optionalInstant(row, "deleted_at"),
+      accruesInterest: try RowMapping.flag(row, "accrues_interest", fallback: false),
+      grace: Self.grace(row),
+      repayMonths: (try? RowMapping.optionalInteger(row, "repay_months")) ?? nil)
+  }
+
+  /// The grace period. A day or a word that does not read — only a hand edit leaves one — or a
+  /// fixed payment without a sum reads as no grace period: one damaged cell must not stop the
+  /// history from being read.
+  private static func grace(_ row: Row) -> DebtGrace? {
+    guard let mainFrom = RowMapping.day(row, "main_from"),
+      let payment = GracePayment(
+        storedKind: row["grace_kind"],
+        amount: (try? RowMapping.optionalAmount(row, "grace_payment_e4")) ?? nil)
+    else { return nil }
+    return DebtGrace(mainFrom: mainFrom, payment: payment)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -181,6 +196,11 @@ extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
     container["closed"] = closed
     container["loans_subcategory_id"] = loansSubcategoryId?.uuidString
     container["deleted_at"] = StoredInstant.databaseValue(deletedAt)
+    container["accrues_interest"] = accruesInterest
+    container["main_from"] = grace?.mainFrom.iso
+    container["grace_kind"] = grace?.payment.storedKind
+    container["grace_payment_e4"] = grace?.payment.fixedAmount?.raw
+    container["repay_months"] = repayMonths
   }
 }
 
@@ -204,7 +224,8 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
       occurredAt: try RowMapping.optionalInstant(row, "occurred_at"),
       accountCurrency: RowMapping.currency(row, "account_currency"),
       accountAmountE4: try RowMapping.optionalAmount(row, "account_amount_e4"),
-      closesTerm: row["closes_term"] ?? false)
+      closesTerm: row["closes_term"] ?? false,
+      tranche: row["tranche"] ?? false)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -224,5 +245,6 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
     container["account_currency"] = accountCurrency?.code
     container["account_amount_e4"] = accountAmountE4?.raw
     container["closes_term"] = closesTerm
+    container["tranche"] = tranche
   }
 }

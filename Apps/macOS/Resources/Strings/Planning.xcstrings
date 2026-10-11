@@ -2283,6 +2283,57 @@
         }
       }
     },
+    "deposits.missing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "did not come?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "не пришли?"
+          }
+        }
+      }
+    },
+    "deposits.record": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записать…"
+          }
+        }
+      }
+    },
+    "deposits.row": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interest · %1$@ %2$@ · %3$@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проценты · %1$@ %2$@ · %3$@"
+          }
+        }
+      }
+    },
     "events.add": {
       "extractionState": "manual",
       "localizations": {

@@ -4,7 +4,8 @@ import SwiftUI
 /// «Прогноз остатка на 30 сентября» under the balances of an account: for each currency of the
 /// account, about how much will be on it at the end of the month, the interval, and what the
 /// figure is made of — the balance now, what is already written for later days, the expected
-/// income, the payments and subscriptions, the debt payments, what counts keep finding missing,
+/// income, the interest a deposit is expected to pay (grey: an estimate, income only once
+/// recorded), the payments and subscriptions, the debt payments, what counts keep finding missing,
 /// what is paid for others less money back, and the day-to-day spending by the account's
 /// share. Whole units everywhere: it is an estimate, and the exact balance is
 /// the card above it.
@@ -111,6 +112,7 @@ private struct AccountForecastLines: View {
               .monospacedDigit()
           }
           .font(.callout)
+          .foregroundStyle(row.isEstimate ? .secondary : .primary)
           .accessibilityElement(children: .combine)
         }
         ForEach(Array(pair.notes.enumerated()), id: \.offset) { _, note in
@@ -144,6 +146,8 @@ enum AccountForecastText {
   struct Row: Hashable, Sendable {
     var label: String
     var value: String
+    /// Only expected, never money yet — the interest of a deposit: shown grey, with «≈».
+    var isEstimate = false
   }
 
   /// A remark under a figure, with the symbol that tells it apart.
@@ -232,14 +236,21 @@ enum AccountForecastText {
 
     if let now = flows.now {
       breakdown.append(Row(label: t("account.forecast.now"), value: whole(now)))
-      let parts: [(label: String, amount: AmountE4)] = [
-        (t("account.forecast.ahead"), flows.writtenAhead),
-        (t("account.forecast.income"), flows.income),
-        (t("account.forecast.scheduled"), -flows.scheduled),
-        (t("account.forecast.debts"), -flows.debts),
+      // The interest of a deposit right after the income: money expected in, an estimate —
+      // grey, with «≈» —, never income until it is recorded.
+      let parts: [(label: String, amount: AmountE4, isEstimate: Bool)] = [
+        (t("account.forecast.ahead"), flows.writtenAhead, false),
+        (t("account.forecast.income"), flows.income, false),
+        (t("account.forecast.interest"), flows.interest, true),
+        (t("account.forecast.scheduled"), -flows.scheduled, false),
+        (t("account.forecast.debts"), -flows.debts, false),
       ]
       for part in parts where !isWholeZero(part.amount) {
-        breakdown.append(Row(label: part.label, value: signed(part.amount)))
+        let value = signed(part.amount)
+        breakdown.append(
+          Row(
+            label: part.label, value: part.isEstimate ? "≈\u{00A0}\(value)" : value,
+            isEstimate: part.isEstimate))
       }
       // Money that leaves without being my spending goes on at the pace of the window: an
       // estimate, marked as the spending is.

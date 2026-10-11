@@ -51,6 +51,26 @@ struct GuideCatalogTests {
     #expect(GuideCatalog.whatsNew.allSatisfy { !$0.cards.isEmpty })
   }
 
+  /// «Что нового в 1.6»: the education loan with its grace period and tranches, deposits and
+  /// savings accounts with their interest, and the interest in the account forecast — three to
+  /// four cards, the latest version of the catalog.
+  @Test func whatsNewOfOnePointSixTellsOfLoansAndDeposits() throws {
+    let scenario = GuideCatalog.whatsNew16
+    #expect(scenario.kind == .whatsNew(version: GuideVersion(major: 1, minor: 6)))
+    #expect(scenario.id == "whatsNew.1.6")
+    #expect((3...4).contains(scenario.cards.count))
+    #expect(
+      scenario.cards.map(\.id)
+        == ["new16.educationLoan", "new16.tranche", "new16.deposits", "new16.forecast"])
+    #expect(scenario.cards.allSatisfy { !$0.symbol.isEmpty && $0.id.hasPrefix("new16.") })
+    let last = try #require(GuideCatalog.whatsNew.last)
+    #expect(last.id == scenario.id)
+    let progress = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.5.0")
+    #expect(
+      progress.whatsNewDue(current: "1.6.0", catalog: GuideCatalog.whatsNew).map(\.id)
+        == ["whatsNew.1.6"])
+  }
+
   @Test func theTutorialHasTheTasksOfTheRelease() {
     let ids = Set(GuideCatalog.tutorial.tasks.map(\.id))
     for id in [
@@ -133,11 +153,11 @@ struct GuideProgressTests {
 
   @Test func severalVersionsAreShownOldestFirst() {
     let later = GuideScenario(
-      kind: .whatsNew(version: GuideVersion(major: 1, minor: 6)),
+      kind: .whatsNew(version: GuideVersion(major: 1, minor: 7)),
       cards: [GuideCard(id: "x", title: .init("а", "a"), body: .init("б", "b"), symbol: "star")])
     let progress = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.3.2")
-    let due = progress.whatsNewDue(current: "1.6.0", catalog: [later] + GuideCatalog.whatsNew)
-    #expect(due.map(\.id) == ["whatsNew.1.4", "whatsNew.1.5", "whatsNew.1.6"])
+    let due = progress.whatsNewDue(current: "1.7.0", catalog: [later] + GuideCatalog.whatsNew)
+    #expect(due.map(\.id) == ["whatsNew.1.4", "whatsNew.1.5", "whatsNew.1.6", "whatsNew.1.7"])
     #expect(
       progress.whatsNewDue(current: "1.4.1", catalog: [later] + GuideCatalog.whatsNew).count == 1)
   }

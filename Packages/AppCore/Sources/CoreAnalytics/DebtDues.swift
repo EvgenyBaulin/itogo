@@ -39,12 +39,17 @@ public struct DebtDueState: Hashable, Sendable {
   /// The monthly payment of the debt, which tells how many dues the balance is enough for;
   /// `nil` when it has none, or the state was not worked out from the debt.
   public var monthlyE4: AmountE4?
+  /// What each due asks for, by its index. Without a schedule of its own, the monthly payment
+  /// (`monthlyE4`) for every due; none when there is no monthly payment either.
+  public var instalments: DebtInstalments
 
   public init(
     debtId: UUID, firstDue: DateOnly?, paidCount: Int, owes: Bool, paymentDay: Int,
-    partialE4: AmountE4 = .zero, balanceE4: AmountE4? = nil, monthlyE4: AmountE4? = nil
+    partialE4: AmountE4 = .zero, balanceE4: AmountE4? = nil, monthlyE4: AmountE4? = nil,
+    instalments: DebtInstalments? = nil
   ) {
     self.monthlyE4 = monthlyE4.flatMap { $0.raw > 0 ? $0 : nil }
+    self.instalments = instalments ?? .flat(monthlyE4)
     self.debtId = debtId
     self.firstDue = firstDue
     self.paidCount = max(0, paidCount)
@@ -81,35 +86,84 @@ public struct DebtDueState: Hashable, Sendable {
   }
 
   /// The earliest due nothing paid yet, while something is owed; it may lie in an earlier
-  /// month — overdue.
+  /// month — overdue. A due that asks for nothing is no due and is passed over.
   public var firstUnpaid: DateOnly? {
+    guard let index = firstUnpaidIndex else { return nil }
+    return due(index)
+  }
+
+  /// The index of `firstUnpaid`: the first due from `paidCount` on that asks for something;
+  /// `nil` while nothing is owed, and when no due asks for anything any more.
+  public var firstUnpaidIndex: Int? {
     guard owes, firstDue != nil else { return nil }
-    return due(paidCount)
+    return nextAsking(from: paidCount)
+  }
+
+  /// The first index from `index` on whose due asks for something — any due when the dues have
+  /// no sums (each payment one due); `nil` when none does.
+  func nextAsking(from index: Int) -> Int? {
+    guard !instalments.isEmpty else { return index }
+    if instalments.amount(at: index).raw > 0 { return index }
+    return instalments.steps.first { $0.fromIndex > index && $0.amountE4.raw > 0 }?.fromIndex
+  }
+
+  /// Whether the due of index `index` asks for nothing: no due at all.
+  func asksNothing(_ index: Int) -> Bool {
+    !instalments.isEmpty && instalments.amount(at: index).isZero
   }
 
   /// The earliest unpaid due and every one after it, through `through` — up to the one that
-  /// pays off what is left of the debt (`balanceE4`): none after it is owed.
+  /// pays off what is left of the debt (`balanceE4`): none after it is owed. Dues that ask for
+  /// nothing are not listed.
   public func unpaid(through: DateOnly) -> [DateOnly] {
-    guard owes, firstDue != nil else { return [] }
-    var result: [DateOnly] = []
-    var index = paidCount
-    while result.count < Self.limit {
+    unpaidIndices(through: through).map(due)
+  }
+
+  /// The indices of `unpaid(through:)`.
+  func unpaidIndices(through: DateOnly) -> [Int] {
+    guard owes, firstDue != nil, var index = nextAsking(from: paidCount) else { return [] }
+    var result: [Int] = []
+    while result.count < Self.limit, index < Self.limit {
       let day = due(index)
       guard day <= through, !paysOff(beforeIndex: index) else { break }
-      result.append(day)
-      index += 1
+      result.append(index)
+      guard let next = nextAsking(from: index + 1) else { break }
+      index = next
     }
     return result
   }
 
+  /// The state with the dues of `debt` when it was built without any — by hand, from the debt
+  /// alone —: its monthly payment for every due. A state that knows its dues keeps them.
+  public func knowing(_ debt: Debt) -> DebtDueState {
+    guard instalments.isEmpty, let monthly = debt.monthlyPaymentE4, monthly.raw > 0 else {
+      return self
+    }
+    var copy = self
+    copy.instalments = .flat(monthly)
+    return copy
+  }
+
+  /// What the due of index `index` (0 the first) asks for, whatever was paid toward it.
+  public func amount(ofDue index: Int) -> AmountE4 {
+    instalments.amount(at: index)
+  }
+
   /// Whether the unpaid dues before the due of index `index` already ask for everything left
-  /// on the debt (`balanceE4`, at the monthly payment `monthlyE4`): the first unpaid due is
-  /// always owed while the debt owes.
+  /// on the debt (`balanceE4`, at the sums of `instalments`): the first unpaid due is always
+  /// owed while the debt owes.
   private func paysOff(beforeIndex index: Int) -> Bool {
-    guard let balance = balanceE4, let monthly = monthlyE4, index > paidCount else {
+    guard let balance = balanceE4, !instalments.isEmpty, index > paidCount else {
       return false
     }
-    return owedBefore(index, monthly: monthly) >= balance
+    return owedBefore(index) >= balance
+  }
+
+  /// What the unpaid dues before the due of index `index` ask for: each its own sum, the first
+  /// of them less what was paid toward it.
+  private func owedBefore(_ index: Int) -> AmountE4 {
+    guard index > paidCount else { return .zero }
+    return max(instalments.total(from: paidCount, to: index) - partialE4, .zero)
   }
 
   /// What the unpaid dues before the due of index `index` ask for: the monthly payment each,
@@ -131,10 +185,34 @@ public struct DebtDueState: Hashable, Sendable {
     unpaid(through: today.adding(days: -1))
   }
 
-  /// What is still owed on the due of `due` when the monthly payment is `monthly`: the whole
-  /// payment, less what was paid toward it when it is the first unpaid due — the one the money
-  /// paid so far was laid against —, and never more than is left on the debt once the unpaid
-  /// dues before it are paid (`balanceE4`).
+  /// What is still owed on the due of `due`: what the due asks for (`amount(ofDue:)`), less
+  /// what was paid toward it when it is the first unpaid due — the one the money paid so far was
+  /// laid against —, and never more than is left on the debt once the unpaid dues before it are
+  /// paid (`balanceE4`). A due that asks for nothing owes nothing.
+  public func owed(_ due: DateOnly) -> AmountE4 {
+    let index = max(0, index(of: due) ?? 0)
+    let amount = instalments.amount(at: index)
+    let plain = due == firstUnpaid ? max(amount - partialE4, .zero) : amount
+    guard let balance = balanceE4, let first = firstUnpaid, due >= first else { return plain }
+    return min(plain, max(balance - owedBefore(index), .zero))
+  }
+
+  /// What the unpaid dues through `through` add up to: each its own sum, less what was paid
+  /// toward the first of them — never more than is left on the debt.
+  public func owed(through: DateOnly) -> AmountE4 {
+    let indices = unpaidIndices(through: through)
+    guard let last = indices.last else { return .zero }
+    let owed: AmountE4
+    if instalments.isEmpty {
+      owed = .zero
+    } else {
+      owed = max(instalments.total(from: paidCount, to: last + 1) - partialE4, .zero)
+    }
+    return balanceE4.map { min(owed, $0) } ?? owed
+  }
+
+  /// `owed(_:)` when every due is `monthly`: the form the callers had before the dues knew their
+  /// own sums. Kept for the screens that still pass the monthly payment of the debt.
   public func owed(_ due: DateOnly, monthly: AmountE4) -> AmountE4 {
     let plain = due == firstUnpaid ? max(monthly - partialE4, .zero) : monthly
     guard let balance = balanceE4, let first = firstUnpaid, due >= first,
@@ -143,8 +221,8 @@ public struct DebtDueState: Hashable, Sendable {
     return min(plain, max(balance - owedBefore(index, monthly: monthly), .zero))
   }
 
-  /// What the unpaid dues through `through` add up to: the monthly payment for each, less what
-  /// was paid toward the first of them — never more than is left on the debt.
+  /// `owed(through:)` when every due is `monthly`: the form the callers had before the dues knew
+  /// their own sums. Kept for the screens that still pass the monthly payment of the debt.
   public func owed(through: DateOnly, monthly: AmountE4) -> AmountE4 {
     let count = unpaid(through: through).count
     guard count > 0 else { return .zero }
@@ -158,7 +236,7 @@ public struct DebtDueState: Hashable, Sendable {
   public func isUnpaid(_ day: DateOnly) -> Bool {
     guard let first = firstUnpaid, day >= first else { return false }
     guard let index = index(of: day) else { return true }
-    return !paysOff(beforeIndex: index)
+    return !asksNothing(index) && !paysOff(beforeIndex: index)
   }
 
   /// Whether the due of `day` — one of the debt's dues — is paid: it is one the debt owes
@@ -166,7 +244,8 @@ public struct DebtDueState: Hashable, Sendable {
   public func isPaid(_ day: DateOnly) -> Bool {
     guard let firstDue, day >= firstDue else { return false }
     guard owes else { return true }
-    return day < due(paidCount)
+    guard let first = firstUnpaidIndex else { return true }
+    return day < due(first)
   }
 }
 
@@ -225,6 +304,60 @@ public enum DebtDues {
     return (paid, kept)
   }
 
+  /// How many dues the money of `payments` pays when the dues ask for `instalments`, and what
+  /// is left over toward the next one: `laid(_:monthly:)` with a sum of its own for each due.
+  ///
+  /// The payments go in the same order. Each adds its money to what was left over; then, due
+  /// after due, a due that asks for nothing is passed over, and a due is paid while what is kept
+  /// reaches it — a percent of that due short of it too (`tolerance`) —, its sum taken from what
+  /// is kept. A payment that closes its term and paid no due pays the due it was made for — the
+  /// earliest one asking for something — anyway, and nothing is kept. With the same sum for every
+  /// due this is `laid(_:monthly:)` exactly.
+  static func laid(
+    _ payments: [Payment], instalments: DebtInstalments
+  ) -> (paid: Int, partial: AmountE4) {
+    var paid = 0
+    var kept = AmountE4.zero
+    func skipNothing() {
+      while paid < DebtDueState.limit, instalments.amount(at: paid).isZero {
+        guard
+          let next = instalments.steps.first(where: {
+            $0.fromIndex > paid && $0.amountE4.raw > 0
+          })
+        else { return }
+        paid = min(next.fromIndex, DebtDueState.limit)
+      }
+    }
+    for payment in ordered(payments) {
+      skipNothing()
+      let target = paid
+      kept += payment.amountE4
+      while paid < DebtDueState.limit {
+        let amount = instalments.amount(at: paid)
+        guard amount.raw > 0, kept + tolerance(of: amount) >= amount else { break }
+        kept = max(kept - amount, .zero)
+        paid += 1
+        skipNothing()
+      }
+      if payment.closesTerm, paid == target, instalments.amount(at: paid).raw > 0 {
+        paid += 1
+        kept = .zero
+      }
+      paid = min(paid, DebtDueState.limit)
+    }
+    return (paid, kept)
+  }
+
+  /// The payments in the order they were made — by day and moment; two that are not told apart
+  /// by that, the ones that say nothing go before the ones that close their term.
+  static func ordered(_ payments: [Payment]) -> [Payment] {
+    payments.sorted { left, right in
+      if left.at != right.at { return left.at < right.at }
+      if left.closesTerm != right.closesTerm { return !left.closesTerm }
+      return left.amountE4 < right.amountE4
+    }
+  }
+
   /// Every debt's state as of `today`.
   ///
   /// * The schedule starts on `allocationStart` of the debt's journal; the first due is the
@@ -280,14 +413,22 @@ public enum DebtDues {
         return day <= through
       }
       let opened = byThen.contains { $0.amountE4.raw > 0 }
-      let left = DebtRules.balance(entries: byThen)
+      // A loan that accrues interest owes its principal — the journal with the interest its
+      // payments paid given back — and the interest accrued on it since.
+      let interest = DebtInterest.walk(
+        debt: debt, journal: lines, through: through, calendar: calendar)
+      let effective = interest.map { lines + $0.lines } ?? lines
+      var left = DebtRules.balance(entries: byThen)
+      if let interest {
+        left += DebtRules.balance(entries: interest.lines) + interest.accruedE4
+      }
       let owes = !debt.closed && (!opened || left.raw > 0)
       guard let paymentDay = debt.paymentDay, paymentDay >= 1 else {
         result[debt.id] = DebtDueState(
           debtId: debt.id, firstDue: nil, paidCount: 0, owes: owes, paymentDay: 0)
         continue
       }
-      let start = allocationStart(of: lines, calendar: calendar)
+      let start = allocationStart(of: effective, calendar: calendar)
       let firstDue: DateOnly
       let countsFrom: DateOnly
       if let start, let month = DebtStart.firstMonth(of: debt, startsOn: start, calendar: calendar)
@@ -328,10 +469,13 @@ public enum DebtDues {
             amountE4: line.amountE4.magnitude, closesTerm: line.closesTerm))
       }
 
+      let instalments = DebtSchedulePlan.instalments(
+        debt: debt, journal: lines, firstDue: firstDue, paymentDay: paymentDay, today: today,
+        calendar: calendar)
       let paid: Int
       var partial = AmountE4.zero
-      if let monthly = debt.monthlyPaymentE4, monthly.raw > 0 {
-        (paid, partial) = laid(payments, monthly: monthly)
+      if !instalments.isEmpty {
+        (paid, partial) = laid(payments, instalments: instalments)
       } else {
         paid = payments.count
       }
@@ -339,7 +483,7 @@ public enum DebtDues {
         debtId: debt.id, firstDue: firstDue, paidCount: paid, owes: owes,
         paymentDay: paymentDay, partialE4: partial,
         balanceE4: opened ? left : nil,
-        monthlyE4: debt.monthlyPaymentE4)
+        monthlyE4: debt.monthlyPaymentE4, instalments: instalments)
     }
     return result
   }

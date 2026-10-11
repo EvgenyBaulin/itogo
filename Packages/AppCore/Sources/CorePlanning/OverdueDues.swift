@@ -245,8 +245,7 @@ public enum OverdueDues {
     }
     for line in debts.iOwe {
       let left = line.dues.balance(or: line.balance)
-      guard let monthly = line.debt.monthlyPaymentE4, monthly.raw > 0, left.raw > 0
-      else { continue }
+      guard line.debt.hasDues, left.raw > 0 else { continue }
       let late = line.dues.overdue(today: today)
       guard let first = late.first else { continue }
       let key = DueKeys.key(
@@ -255,7 +254,7 @@ public enum OverdueDues {
       result.append(
         OverdueDue(
           subject: .debt(line.debt.id), name: line.debt.name, due: first,
-          amount: min(line.dues.owed(first, monthly: monthly), left),
+          amount: min(line.dues.knowing(line.debt).owed(first), left),
           currency: line.debt.currency,
           moreOverdue: late.count - 1, countAfter: countAfter(key, due: first), key: key,
           lastDue: late.last))

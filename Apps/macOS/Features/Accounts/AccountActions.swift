@@ -62,6 +62,8 @@ enum AccountRefusal: Error, Hashable, Sendable {
   /// The money on the key is not what the question showed any more — something was written
   /// meanwhile —: nothing was written, and the amounts are shown again.
   case balanceChanged(BalanceKey)
+  /// «Проценты» do not read, or name where the interest cannot go.
+  case interest(InterestIssue)
 
   /// The account a refusal of `inUse` is about: it can still be merged or archived.
   var accountInUse: UUID? {
@@ -215,6 +217,11 @@ struct AccountActions {
   /// The account goes under a bank: `account.bankId` when it names one, else the live bank
   /// called `newBankNamed` — the account's own name when that is not given — or a new bank of
   /// that name, written in the same step (`BankRules.bank(forNewAccountNamed:)`).
+  ///
+  /// An account that earns interest brings the income category of interest along in the same
+  /// step, when there is no live one yet — remembered under `accounts.interestCategory`
+  /// (`addInterestCategory(to:books:)`): ⌘Z takes back the interest, the category and the
+  /// setting together.
   func save(
     _ account: PaymentMethod, previous: PaymentMethod?, openings: [CurrencyCode: AmountE4] = [:],
     books: AccountBooks, newBankNamed: String? = nil
@@ -271,7 +278,11 @@ struct AccountActions {
           reconciliationId: count.id, accountId: account.id, currency: $0.key, actualE4: $0.value)
       }
     }
-    return apply(PlanningChange(upsert: rows, at: at))
+    var change = PlanningChange(upsert: rows, at: at)
+    if account.interest != nil, !account.archived {
+      addInterestCategory(to: &change, books: books)
+    }
+    return apply(change)
   }
 
   /// Makes a live account the main one; the flag leaves every other in the same write.
@@ -851,6 +862,15 @@ struct AccountActions {
         return .otherNameTaken(alias)
       }
     }
+    // The interest goes to another live account; one it already goes to may stay in the
+    // archive — the payouts then go to the main account, as for any account gone.
+    if let target = account.interest?.payoutAccountId {
+      let kept = target == previous?.interest?.payoutAccountId
+      if target == account.id || !all.contains(where: { $0.id == target && (kept || !$0.archived) })
+      {
+        return .interest(.payoutAccount)
+      }
+    }
     return nil
   }
 
@@ -1008,6 +1028,7 @@ enum AccountText {
     case .bankMerge(.archived): return t("bank.merge.refusal.archived")
     case .bankMerge(.notFound), .bankMerge(.sameBank): return t("account.refusal.notFound")
     case .notFound: return t("account.refusal.notFound")
+    case .interest(let issue): return t(InterestText.issueKey(issue))
     case .balanceChanged(let key):
       let name =
         (try? environment.accounts?.accounts(includeArchived: true))?

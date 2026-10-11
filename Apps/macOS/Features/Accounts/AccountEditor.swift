@@ -20,6 +20,8 @@ struct AccountDraft: Equatable {
   var aliases: [String]
   /// «Остаток сейчас», as typed, by currency; an empty field counts nothing.
   var openings: [CurrencyCode: String] = [:]
+  /// «Проценты»: the interest the balance earns, as typed.
+  var interest = InterestDraft(nil)
 
   /// The fields of an account there is.
   init(_ account: PaymentMethod) {
@@ -31,6 +33,7 @@ struct AccountDraft: Equatable {
     bankId = account.bankId
     isMain = account.isDefault
     aliases = account.aliases
+    interest = InterestDraft(account.interest)
   }
 
   /// A new account: a bank account in the default currency, in no group, under a bank — `bank`
@@ -47,7 +50,8 @@ struct AccountDraft: Equatable {
   }
 
   /// The account the draft saves, over `previous` so what the editor does not show — the
-  /// place in the list, the archive — stays as it was.
+  /// place in the list, the archive — stays as it was. The interest is laid on it apart, once
+  /// it reads (`InterestDraft.terms(accountId:)`).
   func account(over previous: PaymentMethod?) -> PaymentMethod {
     var account =
       previous ?? PaymentMethod(id: id, name: name)
@@ -133,6 +137,8 @@ struct AccountEditor: View {
   @State private var books: AccountBooks?
   @State private var groups: [AccountGroup] = []
   @State private var banks: [Bank] = []
+  /// Every account, for «Куда» of the interest.
+  @State private var accounts: [PaymentMethod] = []
   @State private var enabled: [CurrencyCode] = []
   @State private var refusal: AccountRefusal?
   @State private var failed = false
@@ -186,6 +192,7 @@ struct AccountEditor: View {
           Text(verbatim: t(wasMain ? "account.editor.mainStays" : "account.editor.mainHint"))
             .foregroundStyle(.secondary)
         }
+        AccountInterestSection(draft: $draft.interest, payoutChoices: payoutChoices)
         Section {
           AccountOtherNames(names: $draft.aliases)
         } header: {
@@ -219,6 +226,7 @@ struct AccountEditor: View {
     .task {
       groups = actions.groups
       banks = actions.banks
+      accounts = actions.all
       enabled = actions.enabledCurrencies
       books = await actions.books()
       // Without the books nothing can be checked or saved: said, not a greyed button alone.
@@ -372,6 +380,18 @@ struct AccountEditor: View {
     enabled.filter { !draft.currencies.contains($0) }
   }
 
+  /// Where the interest may go besides this account: the other live accounts, and the one it
+  /// goes to now even from the archive, named as every list names them.
+  private var payoutChoices: [AccountCardChoices.Item] {
+    let offered = AccountRules.ordered(
+      accounts.filter {
+        $0.id != draft.id && (!$0.archived || $0.id == draft.interest.payoutAccountId)
+      }, locale: environment.language.locale, includeArchived: true)
+    return AccountCardChoices.accountItems(
+      accounts: offered, banks: banks, among: accounts.filter { !$0.archived },
+      locale: environment.language.locale)
+  }
+
   /// The groups to file it under: the live ones, and the one it is in even when archived.
   private var groupChoices: [AccountGroup] {
     groups.filter { !$0.archived || $0.id == draft.groupId }
@@ -410,7 +430,13 @@ struct AccountEditor: View {
       refusal = reason
       return
     }
-    let account = draft.account(over: previous)
+    var account = draft.account(over: previous)
+    switch draft.interest.terms(accountId: draft.id) {
+    case .success(let terms): account.interest = terms
+    case .failure(let issue):
+      refusal = .interest(issue)
+      return
+    }
     switch actions.save(
       account, previous: previous, openings: openings, books: books,
       newBankNamed: draft.bankId == nil ? draft.newBankName : nil)

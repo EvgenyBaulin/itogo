@@ -158,9 +158,8 @@ public struct CashPlan: Hashable, Sendable {
     }
     for line in debts.iOwe {
       let left = line.dues.balance(or: line.balance)
-      guard let monthly = line.debt.monthlyPaymentE4, monthly.raw > 0, left.raw > 0
-      else { continue }
-      let late = line.dues.owed(through: today.adding(days: -1), monthly: monthly)
+      guard line.debt.hasDues, left.raw > 0 else { continue }
+      let late = line.dues.knowing(line.debt).owed(through: today.adding(days: -1))
       guard late.raw > 0 else { continue }
       let payer =
         payers[line.debt.id]
@@ -434,9 +433,7 @@ extension CashPlan {
   ) -> [DebtDue] {
     var owing: [(line: DebtLine, amount: AmountE4)] = []
     let candidates = debts.iOwe.filter { line in
-      guard let payment = line.debt.monthlyPaymentE4, payment.raw > 0,
-        line.debt.paymentDay != nil
-      else { return false }
+      guard line.debt.hasDues else { return false }
       return line.dues.balance(or: line.balance).raw > 0
     }
     guard !candidates.isEmpty else { return [] }
@@ -450,10 +447,8 @@ extension CashPlan {
         candidates.map { ($0.debt.id, $0.dues) }, uniquingKeysWith: { first, _ in first })
     }
     for line in candidates {
-      guard let payment = line.debt.monthlyPaymentE4, let state = states[line.debt.id] else {
-        continue
-      }
-      let owed = state.owed(through: d, monthly: payment)
+      guard let state = states[line.debt.id]?.knowing(line.debt) else { continue }
+      let owed = state.owed(through: d)
       guard owed.raw > 0 else { continue }
       let left = state.balance(or: line.balance)
       guard left.raw > 0 else { continue }

@@ -17,6 +17,10 @@ enum DebtSheet: Identifiable {
   case transfer(Debt, balance: AmountE4, others: [Debt])
   case adjust(Debt, balance: AmountE4)
   case close(Debt, balance: AmountE4)
+  /// «График…»: the grace period, the main payment and how the bank counts a payment of a loan.
+  case schedule(Debt)
+  /// «Добавить транш…» (`TrancheSheet`).
+  case tranche(Debt)
 
   var id: String {
     switch self {
@@ -29,6 +33,8 @@ enum DebtSheet: Identifiable {
     case .transfer(let debt, _, _): "transfer-\(debt.id)"
     case .adjust(let debt, _): "adjust-\(debt.id)"
     case .close(let debt, _): "close-\(debt.id)"
+    case .schedule(let debt): "schedule-\(debt.id)"
+    case .tranche(let debt): "tranche-\(debt.id)"
     }
   }
 }
@@ -77,6 +83,8 @@ struct DebtSheetView: View {
   /// The bank's rates, read once when the form opens.
   @State private var rates = RateTable()
   @State private var question: BeforeTheCountQuestion?
+  /// «График» of a new loan or of the loan `.schedule` edits.
+  @State private var schedule = DebtSchedule(mainFrom: DateOnly(year: 2000, month: 1, day: 1))
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -142,7 +150,7 @@ struct DebtSheetView: View {
       return (debt, debt.direction == .iOwe)
     case .entry(let debt):
       return moneyMoved ? (debt, debt.direction == .owedToMe) : nil
-    case .transfer, .adjust, .close:
+    case .transfer, .adjust, .close, .schedule, .tranche:
       return nil
     }
   }
@@ -221,7 +229,7 @@ struct DebtSheetView: View {
       return FormAccounts.countAsk(
         about: line, of: moves.debt, savedAt: Date(), snapshot: compute.snapshot,
         calendar: environment.calendar, remembered: remembered)
-    case .transfer, .adjust, .close:
+    case .transfer, .adjust, .close, .schedule, .tranche:
       return .none
     }
   }
@@ -232,6 +240,8 @@ struct DebtSheetView: View {
   private var fields: some View {
     switch sheet {
     case .create:
+      Button(t("schedule.preset.educationLoan")) { applyEducationLoanPreset() }
+        .accessibilityIdentifier("debt.create.educationLoan")
       TextField(t("form.name"), text: $debt.name)
       // A credit card is an account with a minus, not a debt: a debt called like an account
       // would take the same money off the free sum twice.
@@ -272,26 +282,11 @@ struct DebtSheetView: View {
       }
       Toggle(t("form.moneyMovedToday"), isOn: $moneyMoved)
       accountRows
-      TextField(t("form.rate"), text: $rateText)
-      LabeledContent(t("form.monthlyPayment")) {
-        amountField(
-          Binding(
-            get: { debt.monthlyPaymentE4 ?? .zero },
-            set: { debt.monthlyPaymentE4 = $0.isZero ? nil : $0 }))
-      }
-      // A day of payment only with a payment: a loan from a friend with no schedule is not
-      // reminded of on the 1st (third review, 19.09).
-      if debt.monthlyPaymentE4 != nil {
-        Stepper(
-          value: Binding(get: { debt.paymentDay ?? 1 }, set: { debt.paymentDay = $0 }), in: 1...31
-        ) {
-          Text(
-            verbatim: Self.paymentDayText(debt.paymentDay ?? 1, language: environment.language))
-        }
-      }
+      paymentFields
       if debt.direction == .iOwe {
         Toggle(t("debts.paymentsAreExpenses"), isOn: $debt.paymentsAreExpenses)
       }
+      scheduleSection(principal: amount)
       // Written on the day its payment falls due: the balance is the one before or after the
       // payment, and only the owner knows which. No answer is assumed.
       if asksAboutThisMonth {
@@ -411,7 +406,91 @@ struct DebtSheetView: View {
       if !shown(carried).isZero {
         Toggle(t("form.close.writeOff"), isOn: $writeOff)
       }
+    case .schedule:
+      paymentFields
+      scheduleSection(principal: balance ?? .zero)
+    case .tranche:
+      // Written by `TrancheSheet`, which the Debts section shows in place of this form.
+      EmptyView()
     }
+  }
+
+  /// The rate, the main payment and its day — of a new loan and of the schedule of one. The
+  /// payment is not typed when it is worked out over a term; the day is asked whenever there are
+  /// monthly dues.
+  @ViewBuilder
+  private var paymentFields: some View {
+    TextField(t("form.rate"), text: $rateText)
+    if !schedule.byTerm {
+      LabeledContent(t(schedule.hasGrace ? "schedule.mainPayment" : "form.monthlyPayment")) {
+        amountField(
+          Binding(
+            get: { debt.monthlyPaymentE4 ?? .zero },
+            set: { debt.monthlyPaymentE4 = $0.isZero ? nil : $0 }))
+      }
+      if schedule.issues(
+        rate: DebtPayoff.parseRate(rateText), monthly: debt.monthlyPaymentE4,
+        direction: debt.direction
+      ).contains(.mainPaymentMissing) {
+        Text(verbatim: t("schedule.issue.mainPayment"))
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    // A day of payment only with a payment: a loan from a friend with no schedule is not
+    // reminded of on the 1st (third review, 19.09).
+    if debt.monthlyPaymentE4 != nil || schedule.needsPaymentDay {
+      Stepper(
+        value: Binding(get: { debt.paymentDay ?? 1 }, set: { debt.paymentDay = $0 }), in: 1...31
+      ) {
+        Text(
+          verbatim: Self.paymentDayText(debt.paymentDay ?? 1, language: environment.language))
+      }
+    }
+  }
+
+  private func scheduleSection(principal: AmountE4) -> some View {
+    DebtScheduleSection(
+      schedule: $schedule, direction: debt.direction, rate: DebtPayoff.parseRate(rateText),
+      principal: principal, currency: debt.currency)
+  }
+
+  /// «Образовательный кредит (госпрограмма)»: a loan I owe at 3 %, the grace payments of the
+  /// state programme, the main debt over 180 months; the tranches are the expense, so its
+  /// payments are not. How the bank counts a payment is still asked.
+  private func applyEducationLoanPreset() {
+    let preset = Self.educationLoan(debt, today: environment.today, language: environment.language)
+    debt = preset.debt
+    rateText = preset.rateText
+    schedule = preset.schedule
+  }
+
+  /// What the preset of the education loan makes of the debt being created.
+  static func educationLoan(
+    _ debt: Debt, today: DateOnly, language: AppLanguage
+  ) -> (debt: Debt, rateText: String, schedule: DebtSchedule) {
+    var made = debt
+    made.direction = .iOwe
+    made.type = .loan
+    made.paymentsAreExpenses = false
+    made.monthlyPaymentE4 = nil
+    if made.paymentDay == nil { made.paymentDay = 1 }
+    if made.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      made.name = language("schedule.preset.educationLoan.name", table: "Debts")
+    }
+    return (made, DebtSchedule.educationLoanRate, DebtSchedule.educationLoan(today: today))
+  }
+
+  /// The debt the create form saves: its rate, schedule and day of payment.
+  static func made(
+    _ debt: Debt, rateText: String, schedule: DebtSchedule
+  ) -> Debt {
+    let rate = DebtPayoff.parseRate(rateText)
+    var made = schedule.applied(to: debt, rate: rate)
+    made.paymentDay = savedPaymentDay(
+      monthly: made.monthlyPaymentE4, day: made.paymentDay, scheduled: schedule.needsPaymentDay)
+    if made.direction == .owedToMe { made.paymentsAreExpenses = false }
+    return made
   }
 
   private func amountField(_ value: Binding<AmountE4>, currency: CurrencyCode? = nil) -> some View {
@@ -441,12 +520,12 @@ struct DebtSheetView: View {
     let actions = DebtActions(dependencies)
     switch sheet {
     case .create:
+      let made = Self.made(debt, rateText: rateText, schedule: schedule)
       let valid =
         !debt.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !amount.isNegative
-      var made = debt
-      made.interestRate = DebtPayoff.parseRate(rateText)
-      made.paymentDay = Self.savedPaymentDay(monthly: made.monthlyPaymentE4, day: made.paymentDay)
-      if made.direction == .owedToMe { made.paymentsAreExpenses = false }
+        && schedule.issues(
+          rate: made.interestRate, monthly: debt.monthlyPaymentE4, direction: debt.direction
+        ).isEmpty
       let answered = Self.monthIsAnswered(asks: asksAboutThisMonth, monthPaid: monthPaid)
       let termPaid = asksAboutThisMonth && monthPaid == true
       return (
@@ -515,6 +594,14 @@ struct DebtSheetView: View {
         t("debts.close"), true,
         { _ in actions.close(debt, balance: shown(carried), writeOff: writeOff, on: day) }
       )
+    case .schedule:
+      let made = Self.made(debt, rateText: rateText, schedule: schedule)
+      let valid = schedule.issues(
+        rate: made.interestRate, monthly: debt.monthlyPaymentE4, direction: debt.direction
+      ).isEmpty
+      return (t("form.save"), valid, { _ in actions.save(made) })
+    case .tranche:
+      return (t("form.save"), false, { _ in false })
     }
   }
 
@@ -532,7 +619,7 @@ struct DebtSheetView: View {
       return environment.format(
         PlanningActions(dependencies).failureKey(currency: debt.currency, on: date, at: .debt),
         table: "Planning", debt.currency.code)
-    case .create, .entry, .transfer, .adjust, .close:
+    case .create, .entry, .transfer, .adjust, .close, .schedule, .tranche:
       return generic
     }
   }
@@ -602,8 +689,7 @@ struct DebtSheetView: View {
   /// made already (`DebtTerms.asksAboutThisMonth`).
   private var asksAboutThisMonth: Bool {
     guard case .create = sheet else { return false }
-    var made = debt
-    made.paymentDay = Self.savedPaymentDay(monthly: made.monthlyPaymentE4, day: made.paymentDay)
+    let made = Self.made(debt, rateText: rateText, schedule: schedule)
     return DebtTerms.asksAboutThisMonth(made, balance: amount, today: environment.today)
   }
 
@@ -631,8 +717,8 @@ struct DebtSheetView: View {
 
   /// The day of payment a new debt is saved with: the one shown — the 1st until changed —
   /// when it has a monthly payment, none without one.
-  static func savedPaymentDay(monthly: AmountE4?, day: Int?) -> Int? {
-    monthly == nil ? nil : (day ?? 1)
+  static func savedPaymentDay(monthly: AmountE4?, day: Int?, scheduled: Bool = false) -> Int? {
+    monthly == nil && !scheduled ? nil : (day ?? 1)
   }
 
   /// The caption of the day stepper: «День платежа: 5», and at 31 «последний день» — a debt due
@@ -660,6 +746,12 @@ struct DebtSheetView: View {
     switch sheet {
     case .create:
       debt = Self.newDebt(defaultCurrency: environment.defaultCurrency)
+      schedule = DebtSchedule(mainFrom: DebtSchedule.defaultMainFrom(today: environment.today))
+    case .schedule(let edited):
+      debt = edited
+      rateText = edited.interestRate.map { environment.money.number($0) } ?? ""
+      schedule = DebtSchedule(debt: edited, today: environment.today)
+      balance = dependencies.flatMap { DebtActions($0).balance(of: edited) }
     case .repay(let debt, let given, let account):
       amount = given ?? debt.monthlyPaymentE4 ?? .zero
       method = FormAccounts.account(account, among: methods)?.id
@@ -687,7 +779,8 @@ struct DebtSheetView: View {
         date = moment
       }
       method = start.method
-      balance = dependencies.flatMap { DebtActions($0).balance(of: start.debt) }
+      // What pays the debt off: on a loan that accrues interest, the interest accrued too.
+      balance = dependencies.flatMap { DebtActions($0).payoff(of: start.debt) }
       closesDebt = Self.closesWhenPaidOff(start.debt)
     }
     refreshCharge()
@@ -711,6 +804,9 @@ struct DebtSheetView: View {
       environment.format("form.transfer.title", table: "Debts", debt.name)
     case .adjust(let debt, _): environment.format("form.adjust.title", table: "Debts", debt.name)
     case .close(let debt, _): environment.format("form.close.title", table: "Debts", debt.name)
+    case .schedule(let debt):
+      environment.format("schedule.form.title", table: "Debts", debt.name)
+    case .tranche(let debt): environment.format("tranche.title", table: "Debts", debt.name)
     }
   }
 

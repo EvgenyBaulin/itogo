@@ -61,11 +61,15 @@ public struct DebtLoad: Hashable, Sendable {
   /// that is more — so the load and «can save» never divide by two different incomes. A
   /// month with only what came so far is no estimate: a half-month's income would inflate
   /// the load. No positive income — no load, «not enough data».
+  ///
+  /// A debt whose dues have sums of their own — a grace period, a main payment worked out over
+  /// months — weighs what its next unpaid due asks for (`dues`, the states of the debts'
+  /// dues); without its state, its monthly payment.
   public static func load(
     debts: [Debt], ledger: Ledger, today: DateOnly, income: AmountE4?,
-    rubPerUnit: [CurrencyCode: Decimal]
+    rubPerUnit: [CurrencyCode: Decimal], dues: [UUID: DebtDueState] = [:]
   ) -> DebtLoad {
-    let payments = monthlyPayments(of: debts, rubPerUnit: rubPerUnit)
+    let payments = monthlyPayments(of: debts, rubPerUnit: rubPerUnit, dues: dues)
     let incomeRub: AmountE4?
     let source: IncomeSource
     if let income {
@@ -93,15 +97,16 @@ public struct DebtLoad: Hashable, Sendable {
   }
 
   /// Σ monthly payments of the open debts I owe, in rubles — the figure on top of the Debts
-  /// section too — with the debts it could not convert and the ones without a payment.
+  /// section too — with the debts it could not convert and the ones without a payment. A debt
+  /// whose dues have sums of their own counts its next unpaid due (`payment(of:dues:)`).
   static func monthlyPayments(
-    of debts: [Debt], rubPerUnit: [CurrencyCode: Decimal]
+    of debts: [Debt], rubPerUnit: [CurrencyCode: Decimal], dues: [UUID: DebtDueState] = [:]
   ) -> (total: AmountE4, withoutRate: [UUID], withoutPayment: [UUID]) {
     var total = AmountE4.zero
     var withoutRate: [UUID] = []
     var withoutPayment: [UUID] = []
     for debt in debts where !debt.closed && debt.direction == .iOwe {
-      guard let payment = debt.monthlyPaymentE4, !payment.isZero else {
+      guard let payment = payment(of: debt, dues: dues[debt.id]), !payment.isZero else {
         withoutPayment.append(debt.id)
         continue
       }
@@ -113,6 +118,17 @@ public struct DebtLoad: Hashable, Sendable {
       total += rubles
     }
     return (total, DebtRubles.sorted(withoutRate), DebtRubles.sorted(withoutPayment))
+  }
+
+  /// What a month of `debt` takes: the monthly payment — or, for a debt whose dues have sums of
+  /// their own (a grace period, a main payment over `repayMonths`), what its next unpaid due asks
+  /// for, as `dues` know it; the monthly payment when they know none.
+  public static func payment(of debt: Debt, dues: DebtDueState?) -> AmountE4? {
+    guard debt.grace != nil || debt.repayMonths != nil, let dues,
+      let index = dues.firstUnpaidIndex
+    else { return debt.monthlyPaymentE4 }
+    let amount = dues.amount(ofDue: index)
+    return amount.raw > 0 ? amount : debt.monthlyPaymentE4
   }
 
   /// The income estimate of the month from the history alone, without expectations; `nil`

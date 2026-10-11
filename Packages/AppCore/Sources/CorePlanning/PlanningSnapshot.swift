@@ -125,6 +125,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
   /// The scheduled payments and debts with a due date passed and unpaid, one row each
   /// (`OverdueDues.build`): what the launch asks about.
   public var overdue: [OverdueDue]
+  /// The payouts of the interest of deposits and savings accounts (`DepositPayouts`).
+  public var deposits: [DepositPayout]
 
   public init(
     today: DateOnly, now: Date, rubPerUnit: [CurrencyCode: Decimal], book: PlanningBook,
@@ -137,7 +139,7 @@ public struct PlanningSnapshot: Hashable, Sendable {
     subscriptionsYearly: AmountE4, forOthersThisMonth: AmountE4,
     accounts: AccountsSnapshot = .empty, dayRates: DayRates = .empty,
     matches: ScheduledMatches = .empty, budgetedEvents: [EventPlan] = [],
-    freeMoney: FreeMoney? = nil, overdue: [OverdueDue] = []
+    freeMoney: FreeMoney? = nil, overdue: [OverdueDue] = [], deposits: [DepositPayout] = []
   ) {
     self.today = today
     self.now = now
@@ -174,6 +176,7 @@ public struct PlanningSnapshot: Hashable, Sendable {
         accounts: accounts, plan: CashPlan(), stillExpected: .zero, today: today,
         until: today.monthKey.lastDay)
     self.overdue = overdue
+    self.deposits = deposits
   }
 
   /// Nothing known yet: empty lists, zeros and no reminder — what a screen holds before the
@@ -296,7 +299,11 @@ public struct PlanningSnapshot: Hashable, Sendable {
         expected: expected, dayRates: dayRates),
       overdue: OverdueDues.build(
         ledger: ledger, book: book, matches: matches, debts: debts, accounts: accounts,
-        today: today))
+        today: today),
+      deposits: DepositPayouts.build(
+        ledger: ledger, balances: accounts.balances,
+        interestCategoryId: ledger.dataset.accountSettings.interestCategoryId, today: today,
+        through: month.lastDay))
   }
 
   /// What the goals' monthly plans still ask this month, in rubles at today's rate: each
@@ -469,13 +476,11 @@ public struct PlanningSnapshot: Hashable, Sendable {
     }
 
     for line in debts.iOwe {
-      guard let due = line.nextPayment, due <= horizon,
-        let amount = line.debt.monthlyPaymentE4, amount.raw > 0
-      else { continue }
+      guard let due = line.nextPayment, due <= horizon, line.debt.hasDues else { continue }
       result.append(
         UpcomingPayment(
           kind: .debt, id: line.debt.id, name: line.debt.name, due: due,
-          currency: line.debt.currency, amount: line.dues.owed(due, monthly: amount),
+          currency: line.debt.currency, amount: line.dues.knowing(line.debt).owed(due),
           isOverdue: due < today))
     }
 

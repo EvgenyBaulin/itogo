@@ -1354,7 +1354,8 @@ extension PaymentMethod: PlanningRow {
 
   /// An account anything has moved money on, or will, is archived, never deleted: operations,
   /// deleted ones included, transfers, scheduled payments and lines of a debt journal — and the
-  /// points account of another account's cashback.
+  /// points account of another account's cashback, or the account another one pays its
+  /// interest to.
   static func refuseDeletion(of id: UUID, db: Database) throws {
     try refuseIfOperations(
       """
@@ -1364,6 +1365,7 @@ extension PaymentMethod: PlanningRow {
       UNION ALL SELECT 1 FROM scheduled_payments WHERE payment_method_id = :id
       UNION ALL SELECT 1 FROM debt_entries WHERE payment_method_id = :id
       UNION ALL SELECT 1 FROM payment_methods WHERE cashback_points_account_id = :id
+      UNION ALL SELECT 1 FROM payment_methods WHERE interest_account_id = :id
       """, point: id, db: db)
   }
 

@@ -6,8 +6,10 @@ extension SampleDataSet {
   /// The history with its accounts (`withAccounts`) and every layer that comes after them: the
   /// cards of the accounts and their cashback (`withCards`), the planning of an event, a goal's
   /// plan and an expected salary (`withPlanningLayer`), an archived place and a one-day event
-  /// (`withReferencesLayer`), and a credit card below zero with a later count whose difference
-  /// follows the books (`withCountsLayer`) — what `make sample` and `make demo` open on.
+  /// (`withReferencesLayer`), a credit card below zero with a later count whose difference
+  /// follows the books (`withCountsLayer`), and an education loan with its tranches and grace
+  /// payments beside a savings account that earns interest (`withLoanAndSavingsLayer`) — what
+  /// `make sample` and `make demo` open on.
   ///
   /// Each layer draws from random streams of its own (`seed` mixed with the layer's tag, then
   /// with what the row is and its day), so the history and the accounts under them keep every
@@ -29,6 +31,18 @@ extension SampleDataSet {
     guard accounts.cards.isEmpty else { return accounts }
     return
       accounts
+      .withLayersThroughTheCounts(
+        seed: seed, calendar: calendar, language: language, now: now, demo: demo
+      )
+      .withLoanAndSavingsLayer(seed: seed, calendar: calendar, language: language, now: now)
+  }
+
+  /// The layers from the cards through the later count, on a set that has its accounts: what
+  /// every layer after them is written on.
+  func withLayersThroughTheCounts(
+    seed: UInt64, calendar: CalendarContext, language: String, now: Date?, demo: Bool
+  ) -> SampleDataSet {
+    self
       .withCards(seed: seed, calendar: calendar, language: language, now: now)
       .withPlanningLayer(seed: seed, calendar: calendar, language: language, now: now, demo: demo)
       .withReferencesLayer(seed: seed, calendar: calendar, language: language, now: now)

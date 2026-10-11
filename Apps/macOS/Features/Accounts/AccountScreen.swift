@@ -442,7 +442,7 @@ struct AccountBalancesCard: View {
 }
 
 /// The screen of one account: its balance per currency and its forecast, its cards, the
-/// cashback of the month and the payments paid from it, its operations and transfers by day,
+/// cashback of the month, the interest it earns and the payments paid from it, its operations and transfers by day,
 /// and «Перевод…», «Сверить…», «Изменить…». While it is open, an operation typed in the entry
 /// line goes to this account unless the line or the panel names another.
 struct AccountScreen: View {
@@ -536,10 +536,12 @@ struct AccountScreen: View {
         ) { _ in EmptyView() }
       }
       // What pays from the account and what it earns: its cards, the cashback of the month,
-      // and the payments and subscriptions paid from it.
+      // the interest of a deposit or a savings account, and the payments and subscriptions
+      // paid from it.
       if account != nil {
         AccountCardsBlock(accountId: accountId)
         AccountCashbackBlock(accountId: accountId)
+        AccountInterestBlock(accountId: accountId)
         AccountPaymentsBlock(accountId: accountId)
       }
       Label {

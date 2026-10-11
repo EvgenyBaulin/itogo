@@ -6,7 +6,8 @@ import SwiftUI
 
 /// One-off and recurring income I expect: received of all, parts, what is left and when. An
 /// income that came in whole offers «Закрыть полностью»; a closed one waits in «Архив» below the
-/// list, collapsed, with «Вернуть»; «Удалить…» asks first. Each is one step of ⌘Z.
+/// list, collapsed, with «Вернуть»; «Удалить…» asks first. Each is one step of ⌘Z. Below them,
+/// grey and read only, the interest deposits are expected to pay (`DepositPayoutRows`).
 struct ExpectedIncomeBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -23,7 +24,9 @@ struct ExpectedIncomeBlock: View {
     ) { snapshot in
       VStack(alignment: .leading, spacing: 8) {
         let statuses = snapshot.planning.expected
-        if statuses.isEmpty {
+        let deposits = DepositPayoutRows.shown(
+          snapshot.planning.deposits, today: environment.today)
+        if statuses.isEmpty, deposits.isEmpty {
           Text(verbatim: t("expected.none")).foregroundStyle(.secondary)
         }
         ForEach(statuses) { status in
@@ -70,6 +73,8 @@ struct ExpectedIncomeBlock: View {
             Button(t("expected.delete")) { deleting = status.income }
           }
         }
+        DepositPayoutRows(
+          payouts: snapshot.planning.deposits, accounts: snapshot.dataset.paymentMethods)
         Button(t("expected.add")) { sheet = .expected(nil) }
           .buttonStyle(.bordered)
           .controlSize(.small)

@@ -185,7 +185,7 @@ final class GuideFlowTests: XCTestCase {
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whatsNew")))
-    XCTAssertEqual(guide.cards?.id, "whatsNew.1.5")
+    XCTAssertEqual(guide.cards?.id, "whatsNew.1.6")
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whereToClick")))

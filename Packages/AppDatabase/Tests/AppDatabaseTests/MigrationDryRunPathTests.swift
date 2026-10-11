@@ -141,7 +141,7 @@ struct MigrationDryRunPathTests {
     #expect(try DatabaseStack.sameData(fileAt: before, as: book.url))
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards", "0006_banks"])
+        == ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"])
   }
 
   /// A database of 1.1 tried on a copy: one migration applied, a card for every live card
@@ -158,7 +158,7 @@ struct MigrationDryRunPathTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 5 -> 6 (applied 1)"), "\(output)")
+    #expect(output.contains("schema: 5 -> 7 (applied 2)"), "\(output)")
     #expect(output.contains(" cashbackRulesMoved=4"), "\(output)")
     #expect(output.contains(" cashbackRulesDropped=3"), "\(output)")
     #expect(output.contains(" cashbackRulesVoided=1"), "\(output)")
@@ -182,7 +182,7 @@ struct MigrationDryRunPathTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 4 -> 6 (applied 2)"), "\(output)")
+    #expect(output.contains("schema: 4 -> 7 (applied 3)"), "\(output)")
     let name = "cards".padding(toLength: 26, withPad: " ", startingAt: 0)
     let lines = output.split(separator: "\n").map(String.init)
     #expect(lines.contains("  \(name) - -> \(cards)"), "\(output)")

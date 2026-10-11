@@ -240,8 +240,8 @@ final class LegacyArchiveImportTests: XCTestCase {
     let environment = await start()
     XCTAssertEqual(environment.state, .ready)
     let stack = try XCTUnwrap(environment.stack)
-    XCTAssertEqual(try stack.appliedMigrations().count, 6)
-    XCTAssertEqual(stack.applied.applied, 3)
+    XCTAssertEqual(try stack.appliedMigrations().count, 7)
+    XCTAssertEqual(stack.applied.applied, 4)
     XCTAssertEqual(
       UpgradeFromFirstVersionTests.accountsStep(stack.applied.dataSteps),
       ["mainKept": 1, "mainChosen": 0, "mainCreated": 0, "defaultsCleared": 2, "assigned": 3])
@@ -252,7 +252,7 @@ final class LegacyArchiveImportTests: XCTestCase {
     let copy = try XCTUnwrap(copies.first)
     XCTAssertEqual(
       try DatabaseStack.pendingMigrations(fileAt: copy, schema: BundleSchemaSource()),
-      ["0004_accounts", "0005_cards", "0006_banks"],
+      ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"],
       "the copy is not the database as the older version left it")
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: copy), counts)
 
@@ -331,13 +331,13 @@ final class MigrationAtStartTests: XCTestCase {
     let environment = await start()
 
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 6)
+    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 7)
     let copy = try XCTUnwrap(copies().first { $0.hasSuffix("-before-migration.sqlite") })
     let url = AppPaths.backupsDirectory.appendingPathComponent(copy)
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: url), counts)
     XCTAssertEqual(
       try DatabaseStack.pendingMigrations(fileAt: url, schema: BundleSchemaSource()),
-      ["0004_accounts", "0005_cards", "0006_banks"])
+      ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"])
     // The copy, then what the update did — counts, never a value.
     var lines: [String] = []
     for _ in 0..<50 {
@@ -373,7 +373,7 @@ final class MigrationAtStartTests: XCTestCase {
     let pending = try DatabaseStack.pendingMigrations(
       fileAt: AppPaths.databaseURL, schema: BundleSchemaSource())
     XCTAssertEqual(
-      pending, ["0004_accounts", "0005_cards", "0006_banks"],
+      pending, ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"],
       "the database was updated without a copy")
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: AppPaths.databaseURL), counts)
     XCTAssertEqual(copies(), [])
@@ -389,7 +389,7 @@ final class MigrationAtStartTests: XCTestCase {
     XCTAssertTrue(environment.forgetFailedStart())
     await environment.start()
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 6)
+    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 7)
     XCTAssertEqual(copies().filter { $0.hasSuffix("-before-migration.sqlite") }.count, 1)
   }
 
@@ -410,7 +410,8 @@ final class MigrationAtStartTests: XCTestCase {
     XCTAssertEqual(
       try DatabaseStack.pendingMigrations(
         fileAt: AppPaths.databaseURL, schema: BundleSchemaSource()),
-      ["0004_accounts", "0005_cards", "0006_banks"], "a damaged database was updated")
+      ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"],
+      "a damaged database was updated")
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: AppPaths.databaseURL), counts)
     XCTAssertEqual(copies(), [], "a copy that failed its check was left")
   }

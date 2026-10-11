@@ -10,7 +10,7 @@ import Foundation
 @MainActor
 struct DebtActions {
   let planning: PlanningActions
-  private var snapshot: DataSnapshot? { planning.snapshot }
+  var snapshot: DataSnapshot? { planning.snapshot }
 
   init(_ deps: AppDependencies) {
     planning = PlanningActions(deps)
@@ -18,7 +18,7 @@ struct DebtActions {
 
   /// Through the planning's own write, so a debt made, renamed or closed here is known to
   /// the entry line at once.
-  private func apply(_ change: PlanningChange) -> Bool { planning.apply(change) }
+  func apply(_ change: PlanningChange) -> Bool { planning.apply(change) }
 
   /// A new debt, with its Loans subcategory when its payments are expenses («подкатегория
   /// долга создаётся автоматически») and a first line for what is owed now. Owing less than
@@ -125,11 +125,45 @@ struct DebtActions {
   /// What is left on a debt now: the sum of its journal as the database has it at the moment
   /// of asking, not the figure the card was drawn with — the entry line or another window may
   /// have written since. `nil` when there is no database to read.
+  ///
+  /// A loan that accrues interest owes its principal: the journal with the interest its payments
+  /// paid first given back (`DebtInterest`) — what a payment must cover to pay it off is that and
+  /// the interest accrued since (`payoff(of:)`).
   func balance(of debt: Debt) -> AmountE4? {
-    guard let references = planning.environment.references,
-      let journal = try? references.debtEntries(debtId: debt.id)
-    else { return nil }
-    return DebtRules.balance(entries: journal)
+    guard let journal = journal(of: debt) else { return nil }
+    return Self.principal(
+      of: debt, journal: journal, today: planning.environment.today,
+      calendar: planning.environment.calendar)
+  }
+
+  /// What a payment made today must cover to pay `debt` off: what is left of it and, on a loan
+  /// that accrues interest, the interest accrued and not paid yet. `nil` without a database.
+  func payoff(of debt: Debt) -> AmountE4? {
+    guard let journal = journal(of: debt) else { return nil }
+    let environment = planning.environment
+    let principal = Self.principal(
+      of: debt, journal: journal, today: environment.today, calendar: environment.calendar)
+    return principal
+      + DebtInterest.accruedE4(
+        debt: debt, journal: journal, through: environment.today, calendar: environment.calendar)
+  }
+
+  /// The lines of `debt` as the database has them at the moment of asking; `nil` without one.
+  func journal(of debt: Debt) -> [DebtEntry]? {
+    guard let references = planning.environment.references else { return nil }
+    return try? references.debtEntries(debtId: debt.id)
+  }
+
+  /// What is left of `debt` by `journal`: its sum, or, for a loan that accrues interest, its
+  /// principal — the lines through `today` with the interest of their payments given back, and the
+  /// lines still to come as they are.
+  static func principal(
+    of debt: Debt, journal: [DebtEntry], today: DateOnly, calendar: CalendarContext
+  ) -> AmountE4 {
+    guard debt.accruesInterest else { return DebtRules.balance(entries: journal) }
+    return DebtRules.balance(
+      entries: DebtInterest.effectiveJournal(
+        debt: debt, journal: journal, through: today, calendar: calendar))
   }
 
   /// Whether a payment of `amount` pays off what is left, and «Pay» offers to close the debt.
@@ -206,13 +240,26 @@ struct DebtActions {
         on: debt, amountE4: amount, date: date, transactionId: entry.id, closesTerm: closesTerm)
     else { return false }
     rows.debtEntries = [outcome.entry]
-    if closing, let left = balance(of: debt), Self.paysOff(amount, balance: left) {
+    // On a loan that accrues interest the payment pays the interest accrued first: that part is
+    // an operation of its own in «Кредиты» (`DebtInterestPayment`), and only the rest lowers the
+    // principal.
+    let change = DebtInterestPayment.parting(
+      PlanningChange(created: [entry], upsert: rows), paying: debt,
+      environment: planning.environment, snapshot: snapshot)
+    let interest = AmountE4.sum(change.created.dropFirst().map(\.transaction.amountE4))
+    rows = change.upsert
+    if closing, let left = balance(of: debt), let owed = payoff(of: debt),
+      Self.paysOff(amount, balance: owed)
+    {
       let closed = DebtRules.closing(
-        debt, balance: left + outcome.entry.amountE4, writeOffRemainder: true, date: date)
+        debt, balance: left + outcome.entry.amountE4 + interest, writeOffRemainder: true,
+        date: date)
       rows.debts = [closed.debt]
       if let writeOff = closed.entry { rows.debtEntries.append(writeOff) }
     }
-    return apply(PlanningChange(created: [entry], upsert: rows))
+    var written = change
+    written.upsert = rows
+    return apply(written)
   }
 
   /// A repayment `entry` of `debt` owed to me, against what is left of it: the journal line,

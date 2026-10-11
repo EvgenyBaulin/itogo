@@ -6,7 +6,9 @@ import Foundation
 /// One debt of the Debts section, with its journal worked out.
 public struct DebtLine: Identifiable, Hashable, Sendable {
   public var debt: Debt
-  /// Σ of the journal, in the currency of the debt: plus is still owed.
+  /// Σ of the journal, in the currency of the debt: plus is still owed. For a loan that accrues
+  /// interest, the principal: the journal with the interest its payments paid given back
+  /// (`DebtInterest`) — the interest accrued since is `accruedInterestE4`.
   public var balance: AmountE4
   /// The balance in rubles; `nil` for a foreign debt without a known rate.
   public var balanceRub: AmountE4?
@@ -22,11 +24,20 @@ public struct DebtLine: Identifiable, Hashable, Sendable {
   public var entries: [DebtEntry]
   /// Which monthly dues are paid: each payment closes the earliest one still unpaid.
   public var dues: DebtDueState
+  /// The grace period and the main schedule of a loan that has one; `nil` for any other debt.
+  public var schedule: DebtScheduleSummary?
+  /// The interest accrued since the last payment and not paid yet, for a debt that accrues it;
+  /// zero for any other.
+  public var accruedInterestE4: AmountE4
+  /// For a loan that accrues interest, the interest each payment of the journal paid first, by
+  /// the id of the payment's line («из них проценты ≈»); payments that paid none are not in it.
+  public var interestByPayment: [UUID: AmountE4]
 
   public init(
     debt: Debt, balance: AmountE4, balanceRub: AmountE4?, groups: [DebtGroupTotal],
     nextPayment: DateOnly?, paidThisMonth: Bool, entries: [DebtEntry],
-    dues: DebtDueState? = nil
+    dues: DebtDueState? = nil, schedule: DebtScheduleSummary? = nil,
+    accruedInterestE4: AmountE4 = .zero, interestByPayment: [UUID: AmountE4] = [:]
   ) {
     self.debt = debt
     self.balance = balance
@@ -36,9 +47,45 @@ public struct DebtLine: Identifiable, Hashable, Sendable {
     self.paidThisMonth = paidThisMonth
     self.entries = entries
     self.dues = dues ?? .none(of: debt.id)
+    self.schedule = schedule
+    self.accruedInterestE4 = accruedInterestE4
+    self.interestByPayment = interestByPayment
   }
 
   public var id: UUID { debt.id }
+}
+
+/// The schedule of a loan with a grace period, as its card tells it: «Льготный период до …
+/// · платёж ≈ …», «С … — … в месяц», the tranches drawn and the interest accrued.
+public struct DebtScheduleSummary: Hashable, Sendable {
+  public enum Phase: Hashable, Sendable {
+    case grace
+    case main
+  }
+
+  public var phase: Phase
+  /// What the next due asks for.
+  public var current: AmountE4
+  /// The first day of the main schedule.
+  public var mainFrom: DateOnly
+  /// The main payment, once it is known; `nil` while it is worked out from a balance still to
+  /// come.
+  public var mainAmount: AmountE4?
+  /// The money drawn so far — every tranche through today, the first loan included.
+  public var drawnE4: AmountE4
+  public var accruedInterestE4: AmountE4
+
+  public init(
+    phase: Phase, current: AmountE4, mainFrom: DateOnly, mainAmount: AmountE4?,
+    drawnE4: AmountE4, accruedInterestE4: AmountE4
+  ) {
+    self.phase = phase
+    self.current = current
+    self.mainFrom = mainFrom
+    self.mainAmount = mainAmount
+    self.drawnE4 = drawnE4
+    self.accruedInterestE4 = accruedInterestE4
+  }
 }
 
 /// A part I paid for somebody else that is still expected back, as the «Owed to me» list
@@ -138,8 +185,10 @@ public struct DebtsOverview: Hashable, Sendable {
   /// The section for `today`.
   ///
   /// * Debts come from the dataset of the ledger, the closed ones included; their journals
-  ///   from `book.debtEntries`. A balance is `DebtRules.balance` of the journal, the groups
-  ///   are `DebtRules.groupTotals`.
+  ///   from `book.debtEntries`. A balance is `DebtRules.balance` of the journal — for a loan
+  ///   that accrues interest, of the journal as the interest makes it through today
+  ///   (`DebtInterest`) —, the groups are `DebtRules.groupTotals`. A loan with a grace period
+  ///   tells its schedule (`DebtScheduleSummary`).
   /// * A foreign balance or payment is converted at the last rate the caller knows
   ///   (`rubPerUnit`); without one the debt stays in its list with no rubles and is named in
   ///   `withoutRate` instead of being guessed into a total.
@@ -159,7 +208,11 @@ public struct DebtsOverview: Hashable, Sendable {
     func line(_ debt: Debt) -> DebtLine {
       let journal = journals[debt.id] ?? []
       let dues = states[debt.id] ?? .none(of: debt.id)
-      let balance = DebtRules.balance(entries: journal)
+      let interest = DebtInterest.read(
+        debt: debt, journal: journal, through: today, calendar: ledger.calendar)
+      var balance = DebtRules.balance(entries: journal)
+      if let interest { balance += DebtRules.balance(entries: interest.lines) }
+      let accrued = interest?.accruedE4 ?? .zero
       let thisMonth = debt.paymentDay.map { DebtDueState.payday($0, in: today.monthKey) }
       return DebtLine(
         debt: debt, balance: balance,
@@ -167,7 +220,11 @@ public struct DebtsOverview: Hashable, Sendable {
         groups: DebtRules.groupTotals(entries: journal),
         nextPayment: debt.closed ? nil : dues.firstUnpaid,
         paidThisMonth: thisMonth.map(dues.isPaid) ?? false, entries: newestFirst(journal),
-        dues: dues)
+        dues: dues,
+        schedule: schedule(
+          of: debt, journal: journal, dues: dues, accrued: accrued, today: today,
+          calendar: ledger.calendar),
+        accruedInterestE4: accrued, interestByPayment: interest?.interestByPayment ?? [:])
     }
 
     let open = debts.filter { !$0.closed }.map(line)
@@ -200,7 +257,7 @@ public struct DebtsOverview: Hashable, Sendable {
         parts: groupParts[person] ?? [])
     }.sorted(by: largestFirst)
 
-    let payments = DebtLoad.monthlyPayments(of: debts, rubPerUnit: rubPerUnit)
+    let payments = DebtLoad.monthlyPayments(of: debts, rubPerUnit: rubPerUnit, dues: states)
     let unconverted = open.filter { $0.balanceRub == nil }.map(\.debt.id)
     return DebtsOverview(
       iOwe: iOwe, owedToMe: owedToMe, closed: closed,
@@ -211,6 +268,31 @@ public struct DebtsOverview: Hashable, Sendable {
   }
 
   // MARK: - Pieces
+
+  /// The schedule of a loan with a grace period, as its card tells it; `nil` for any other debt,
+  /// and for one whose dues have no first day.
+  static func schedule(
+    of debt: Debt, journal: [DebtEntry], dues: DebtDueState, accrued: AmountE4, today: DateOnly,
+    calendar: CalendarContext
+  ) -> DebtScheduleSummary? {
+    guard let grace = debt.grace, let firstDue = dues.firstDue, dues.paymentDay >= 1 else {
+      return nil
+    }
+    let plan = DebtSchedulePlan.plan(
+      debt: debt, journal: journal, firstDue: firstDue, paymentDay: dues.paymentDay,
+      today: today, calendar: calendar)
+    let current: AmountE4
+    if let index = dues.firstUnpaidIndex {
+      current = dues.amount(ofDue: index)
+    } else {
+      current = today < grace.mainFrom ? .zero : (plan.mainAmount ?? .zero)
+    }
+    return DebtScheduleSummary(
+      phase: today < grace.mainFrom ? .grace : .main, current: current,
+      mainFrom: grace.mainFrom, mainAmount: plan.mainAmount,
+      drawnE4: DebtSchedulePlan.drawnE4(journal: journal, through: today, calendar: calendar),
+      accruedInterestE4: accrued)
+  }
 
   /// Parts come in the order of the ledger — by day — which is oldest first.
   static func group(

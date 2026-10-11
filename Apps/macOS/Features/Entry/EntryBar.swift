@@ -1256,7 +1256,10 @@ enum EntrySave {
       paidDebtBalance: repayment?.balance, surplus: repayment?.surplus,
       closesTerm: model.closesDebtTerm)
     {
-      saved = store.apply(change)
+      // A payment of a loan that accrues interest writes the interest it pays as an operation of
+      // its own in «Кредиты», in the same change.
+      saved = store.apply(
+        DebtInterestPayment.parting(change, paying: paidDebt, environment: environment))
     } else {
       saved = store.save(entry)
     }

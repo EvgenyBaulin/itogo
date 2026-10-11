@@ -448,6 +448,10 @@ public final class TransactionsStore {
   ) -> EditOutcome {
     guard !refuses("saveEdit", file) else { return .refused }
     guard let repository else { return .failed }
+    // A payment of a loan whose interest is an operation of its own takes it along: one change.
+    if settling.isEmpty, let change = interestEdit(of: edited, calendar: calendar) {
+      return apply(change, file: file) ? .saved : .failed
+    }
     do {
       // `edit` passes over a deleted row and stamps what it writes with this instant, so the
       // operation reported below is the very row in the database.
@@ -747,24 +751,27 @@ public final class TransactionsStore {
   /// kept as it is.
   @discardableResult
   public func delete(
-    ids: [UUID], settling: [Transfer] = [], planned: Set<UUID>? = nil,
+    ids asked: [UUID], settling: [Transfer] = [], planned: Set<UUID>? = nil,
     reopening: Set<UUID> = [], file: String = #fileID
   ) -> Bool {
     guard !refuses("delete(ids:)", file), let repository, !isWritingInBackground else {
       return false
     }
+    // The interest a payment of a loan paid, an operation of its own, goes with the payment.
+    let withInterest = DebtInterestPayment.goingWithTheirPayments(
+      asked, among: listing?.dataset.entries ?? [])
     // Money left on an archived account is moved in the same write, never left there: a
     // deletion that would leave some and brings no transfer for it is not written (the
     // question before it — `BulkConfirmationDialog` — always brings them).
-    if settling.isEmpty, !archivedLeftovers(ofDeleting: ids).leftovers.isEmpty {
+    if settling.isEmpty, !archivedLeftovers(ofDeleting: withInterest).leftovers.isEmpty {
       AppLog.info(
         "store.deleteUnsettled", .db,
         "a deletion that would leave money on an archived account was not written",
-        [LogPair("count", .count(ids.count))])
+        [LogPair("count", .count(withInterest.count))])
       return false
     }
-    let (transfers, kept) = transferDeletions(among: ids)
-    let ids = kept.isEmpty ? ids : ids.filter { kept[$0] == nil }
+    let (transfers, kept) = transferDeletions(among: withInterest)
+    let ids = kept.isEmpty ? withInterest : withInterest.filter { kept[$0] == nil }
     let opened = debtsClosedBy(deleting: ids).filter { reopening.contains($0.id) }
     if !transfers.isEmpty || !settling.isEmpty || !opened.isEmpty {
       return delete(
@@ -1005,9 +1012,10 @@ public final class TransactionsStore {
   private nonisolated static func deletable(
     _ entries: [TransactionEntry], refunds: RefundIndex = .empty, debts: DeletionDebts = .none
   ) -> [UUID] {
-    BulkEditRule.deletion(
+    let going = BulkEditRule.deletion(
       of: entries, refunds: refunds, deletedDebts: debts.deleted, paidDebts: debts.paid
     ).changed.filter { !$0.transaction.isDeleted }.map(\.id)
+    return DebtInterestPayment.goingWithTheirPayments(going, among: entries)
   }
 
   /// The step and the report of a deletion that happened.

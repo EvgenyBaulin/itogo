@@ -7,6 +7,81 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.6.0] — 2026-10-11
+
+Loans with a grace period and tranches — the state-backed education loan first of all —, the
+interest a loan charges inside each payment, and deposits and savings accounts that earn interest.
+The database schema moves to 7: the update only adds columns, and before it the app makes a
+checked copy of the database (`-before-migration`).
+
+### Added
+
+- **An education loan** in Debts → **+ Debt** → **Education loan (state programme)**: a loan you
+  owe at 3 %, a grace period with the payments of the state programme — 40 % of the accrued
+  interest in the first year of the loan, 60 % in the second, all of it from the third, counted
+  from the first tranche —, the main schedule from a day you set (the form starts with the 1st of the month a year on)
+  and the main debt worked out over 180 months. The share of the interest the grace
+  payments do not ask for is not forgiven: it joins the debt when the main schedule starts.
+- **A schedule for any loan** — the **Schedule** section of a new debt and **Schedule…** on its
+  card: a grace period until a day, the grace payment («Interest only», «State programme» or
+  «Fixed» with its sum), the main payment typed as the bank says or **Work out over a term** (an
+  annuity at the loan's rate). Every change of a schedule is one step of ⌘Z.
+- **«How does the bank count a payment?»** is asked when a loan with a rate is created, and the
+  loan is not saved without an answer: **Interest first** — the bank charges interest day by day
+  on what is owed, and a payment first pays the interest accrued since the payment before — or
+  **All to the debt**. Debts made before keep reading as they did.
+- **Tranches**: **Add Tranche…** on the card of a loan with a grace period. A tranche is money the
+  bank paid for tuition: an expense in «Education» on its day (made at the top when there is
+  none), on the loan the way a purchase on credit is — spending once, no money moved on your
+  accounts — and the debt grows by it. A day still ahead is a planned tranche: the schedule
+  counts it, the debt grows on that day. One write, one step of ⌘Z.
+- **The interest inside a payment.** On a loan whose tranches were the expense, a payment is not
+  spending except for the interest it pays: beside the payment the app writes that interest as an
+  expense in the loan's subcategory of «Loans», moving no money of its own. It follows the payment
+  when the payment is edited and goes with it when it is deleted, in the same step of ⌘Z.
+- **The loan card** tells the grace period and its payment («Grace period until … · payment ≈ …
+  (state programme interest, 40 %)»), the main schedule («From … — … a month»), the tranches
+  («Tranches: 2, … in all»), the interest accrued and not paid yet, and in the journal of each
+  payment «of it interest ≈ …». «Paid X of Y» measures each due by its own sum.
+- **Every planning screen knows the dues of a schedule**: the 7-day payments, the overdue
+  payments at launch, the free sum, the plan of the month, the forecast of an account's balance,
+  the form of a payment and the debt load — each due at its own sum, a grace due included.
+- **Deposits and savings accounts.** In the account editor, **The balance earns interest**: the
+  rate in percent a year, the payout — monthly, quarterly or at the end of the term —, its day,
+  where it goes (onto the account itself, capitalisation, or to another account), the day it was
+  opened and, for a deposit, the day it closes. The first such account brings the income category
+  «Interest» (or uses the one you already have) in the same step of ⌘Z.
+- **Interest on the account screen**: the rate and the next payout, what was earned since the
+  period began, what is due on the pay date and where it goes, for a deposit what is left to the
+  end of the term — all estimates, with «≈», worked out on the balance of each day (a day earns
+  on the balance it starts with, actual/365 or 366). A payout that does not come five days after
+  its pay date asks «Interest … for … did not come?». **Record…** writes the income the bank paid,
+  prefilled with the estimate, into the category of interest — interest is income only once you
+  record it.
+- **Interest in the account forecast**: the forecast of the balance at the end of the month has a
+  grey line «Interest ≈ +…» for the payouts still due this month. The free sum does not count
+  interest that has not come.
+- **Planning → Expected income** shows the interest payouts of the month that have not come, grey and
+  read-only, with **Record…**.
+- **The sample and the demo** have an education loan with two tranches and paid grace payments,
+  and a savings account at 16 % with its first month's interest recorded.
+- **What's New in 1.6** — four cards, once after the update.
+
+### Changed
+
+- The database schema is 7 (`Schema/0007_debts_and_deposits.sql`): new columns on `debts`
+  (`accrues_interest`, `main_from`, `grace_kind`, `grace_payment_e4`, `repay_months`),
+  `debt_entries` (`tranche`) and `payment_methods` (`interest_rate`, `interest_period`,
+  `interest_day`, `interest_account_id`, `deposit_opened_on`, `deposit_ends_on`); nothing is
+  rewritten. The CSV export keeps 24 files with the new columns last; the transfer archive
+  carries schema 7 and still opens archives of schema 6.
+
+### Upgrading
+
+The update of the database is one way: before it the app makes a checked copy with the suffix
+`-before-migration`, which rotation never removes, also in your backup folder. Going back to 1.5
+means restoring that copy.
+
 ## [1.5.0] — 2026-10-11
 
 A spending calendar, hidden amounts and a Touch ID lock, suggested limits, the time and the

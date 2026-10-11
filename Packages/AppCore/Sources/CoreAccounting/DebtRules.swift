@@ -403,17 +403,26 @@ public enum DebtRules {
   /// min(monthly payment, balance) dated the due date, with no operation and no account: it
   /// lowers the balance and closes the earliest unpaid due like any payment, and moves no money
   /// on any account — only `borrowed` lines without an operation do. `nil` when nothing is left
-  /// on the debt or it has no monthly payment.
+  /// on the debt or it has no monthly payment — or, for a debt whose dues have sums of their own
+  /// (a grace period, a main payment worked out over months), no `owed` was given.
   ///
   /// A due paid in part is taken for what is left of it: `owed` is that rest, never more than
   /// the monthly payment, and the line pays it. The line says the due is closed either way.
   public static func settledByCount(
     debt: Debt, due: DateOnly, balance: AmountE4, owed: AmountE4? = nil, entryId: UUID = UUID()
   ) -> DebtEntry? {
-    guard let monthly = debt.monthlyPaymentE4, monthly.raw > 0, balance.raw > 0 else {
+    guard balance.raw > 0 else { return nil }
+    let rest: AmountE4
+    if let monthly = debt.monthlyPaymentE4, monthly.raw > 0,
+      debt.grace == nil, debt.repayMonths == nil
+    {
+      rest = min(monthly, owed ?? monthly)
+    } else if debt.hasDues, let owed {
+      // A due of its own sum — of a grace period, of a worked out main payment —: the rest of it.
+      rest = owed
+    } else {
       return nil
     }
-    let rest = min(monthly, owed ?? monthly)
     guard rest.raw > 0 else { return nil }
     return makeEntry(
       id: entryId, debtId: debt.id, kind: .payment, amountE4: min(rest, balance), date: due,

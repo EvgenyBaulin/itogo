@@ -49,7 +49,11 @@ struct DebtsView: View {
       if let first = compute.snapshot?.planning.debts.iOwe.first { selection = .debt(first.id) }
     }
     .sheet(item: $sheet) { sheet in
-      DebtSheetView(sheet: sheet).handingOver(dependencies)
+      if case .tranche(let debt) = sheet {
+        TrancheSheet(debt: debt).handingOver(dependencies)
+      } else {
+        DebtSheetView(sheet: sheet).handingOver(dependencies)
+      }
     }
     .sheet(isPresented: $recordingReimbursement) {
       ReimbursementSheet().handingOver(dependencies)
@@ -185,12 +189,17 @@ enum OwedToMeRow: Identifiable, Hashable {
 /// The actions the card of a debt offers. A closed debt offers «Reopen» and «Delete…» only: a
 /// payment or a line on it would move a balance no list, total or reminder shows any more.
 /// «Delete…» comes last, open or closed.
+///
+/// A loan I owe offers «График…» — its grace period, main payment and how the bank counts a
+/// payment —, and one with a grace period «Добавить транш…».
 enum DebtCardAction: Hashable {
-  case pay, addEntry, offset, transfer, adjust, close, reopen, delete
+  case pay, addEntry, tranche, offset, schedule, transfer, adjust, close, reopen, delete
 
   static func offered(for debt: Debt) -> [DebtCardAction] {
     guard !debt.closed else { return [.reopen, .delete] }
-    return [.pay, .addEntry] + (debt.direction == .iOwe ? [.offset] : [])
+    let loan = debt.direction == .iOwe && debt.type == .loan
+    return [.pay, .addEntry] + (debt.grace != nil && debt.direction == .iOwe ? [.tranche] : [])
+      + (debt.direction == .iOwe ? [.offset] : []) + (loan ? [.schedule] : [])
       + [.transfer, .adjust, .close, .delete]
   }
 }
@@ -204,11 +213,98 @@ extension DebtLine {
 
   /// «Оплачено X из Y — осталось Z» on the card: money paid toward the earliest owed due, less
   /// than the due, of a debt I owe with a monthly payment. The due stays owed until it is covered.
+  ///
+  /// The due is what that due asks for — a grace payment, the main payment worked out over a
+  /// term —, the monthly payment when the dues say nothing of their own.
   var partialDue: (paid: AmountE4, due: AmountE4, left: AmountE4)? {
-    guard debt.direction == .iOwe, dues.owes, dues.partialE4.raw > 0,
-      let monthly = debt.monthlyPaymentE4
-    else { return nil }
-    return (dues.partialE4, monthly, max(monthly - dues.partialE4, .zero))
+    guard debt.direction == .iOwe, dues.owes, dues.partialE4.raw > 0 else { return nil }
+    let due = dues.firstUnpaidIndex.map(dues.amount(ofDue:)) ?? debt.monthlyPaymentE4
+    guard let due, due.raw > 0 else { return nil }
+    return (dues.partialE4, due, max(due - dues.partialE4, .zero))
+  }
+
+  /// The tranches of the journal: how many, and the money drawn by them.
+  var tranches: (count: Int, total: AmountE4)? {
+    let drawn = entries.filter(\.tranche)
+    guard !drawn.isEmpty else { return nil }
+    return (drawn.count, AmountE4.sum(drawn.map(\.amountE4)))
+  }
+
+  /// The year of the loan `day` falls in, counted from its first money drawn — the first line
+  /// that grew it, a tranche or the loan itself: 1 the first year. The state programme asks a
+  /// share of the interest by it.
+  func loanYear(on day: DateOnly) -> Int {
+    let drawn = entries.filter { $0.amountE4.raw > 0 && $0.kind != .payment }.compactMap(\.date)
+    guard let first = drawn.min(), day >= first else { return 1 }
+    var years = day.year - first.year
+    if (day.month, day.day) < (first.month, first.day) { years -= 1 }
+    return max(years, 0) + 1
+  }
+}
+
+/// The schedule lines of a loan's card: «Льготный период до 1 марта 2029 · платёж ≈ 1,234.56 ₽
+/// (проценты по госпрограмме, 40 %)», «С 1 марта 2029 — 12,345 ₽ в месяц», «Транши: 3 на
+/// 450,000 ₽», «Начислено процентов ≈ 312 ₽». Words only; the figures come from the planning.
+@MainActor
+enum DebtScheduleText {
+  static func lines(
+    _ line: DebtLine, today: DateOnly, language: AppLanguage, money: MoneyFormatter,
+    dates: DateFormatting
+  ) -> [String] {
+    let debt = line.debt
+    let currency = debt.currency
+    var lines: [String] = []
+    if let schedule = line.schedule, let grace = debt.grace {
+      if schedule.phase == .grace {
+        let kind: String
+        switch grace.payment {
+        case .interest:
+          kind = language("schedule.card.kind.interest", table: "Debts")
+        case .programme:
+          let share = grace.payment.interestShare(inLoanYear: line.loanYear(on: today)) ?? 1
+          kind = language.format(
+            "schedule.card.kind.programme", table: "Debts",
+            money.number(share * 100, fractionDigits: 0...0))
+        case .fixed:
+          kind = language("schedule.card.kind.fixed", table: "Debts")
+        }
+        lines.append(
+          language.format(
+            "schedule.card.grace", table: "Debts", dates.longDay(grace.mainFrom),
+            money.exact(schedule.current, currency: currency), kind))
+      }
+      if let main = schedule.mainAmount {
+        lines.append(
+          language.format(
+            "schedule.card.main", table: "Debts", dates.longDay(schedule.mainFrom),
+            money.rounded(main, currency: currency)))
+      } else {
+        lines.append(
+          language.format(
+            "schedule.card.mainLater", table: "Debts", dates.longDay(schedule.mainFrom)))
+      }
+    } else if debt.monthlyPaymentE4 == nil, debt.repayMonths != nil,
+      let index = line.dues.firstUnpaidIndex
+    {
+      // A main payment worked out over a term: the card says what it came to.
+      lines.append(
+        language.format(
+          "schedule.card.term", table: "Debts",
+          money.rounded(line.dues.amount(ofDue: index), currency: currency)))
+    }
+    if let tranches = line.tranches {
+      lines.append(
+        language.format(
+          "schedule.card.tranches", table: "Debts", money.count(Int64(tranches.count)),
+          money.rounded(tranches.total, currency: currency)))
+    }
+    if line.accruedInterestE4.raw > 0 {
+      lines.append(
+        language.format(
+          "schedule.card.accrued", table: "Debts",
+          money.exact(line.accruedInterestE4, currency: currency)))
+    }
+    return lines
   }
 }
 
@@ -415,6 +511,9 @@ private struct DebtDetail: View {
           .font(.caption).foregroundStyle(.secondary)
           .accessibilityIdentifier("debts.partialDue")
         }
+        ForEach(scheduleLines, id: \.self) { text in
+          Text(verbatim: text).font(.callout).foregroundStyle(.secondary)
+        }
         if debt.direction == .iOwe {
           Toggle(
             isOn: Binding(
@@ -461,6 +560,12 @@ private struct DebtDetail: View {
           language: environment.language))
     }
     return pieces.joined(separator: " · ")
+  }
+
+  private var scheduleLines: [String] {
+    DebtScheduleText.lines(
+      line, today: environment.today, language: environment.language, money: environment.money,
+      dates: environment.dates)
   }
 
   /// «Досрочно +2,000 ₽ в месяц — закроется на 7 мес. раньше».
@@ -511,6 +616,10 @@ private struct DebtDetail: View {
       return Button(t("debts.pay")) { sheet = .pay(debt) }
     case .addEntry:
       return Button(t("debts.addEntry")) { sheet = .entry(debt) }
+    case .tranche:
+      return Button(t("tranche.action")) { sheet = .tranche(debt) }
+    case .schedule:
+      return Button(t("schedule.action")) { sheet = .schedule(debt) }
     case .offset:
       return Button(t("debts.offset")) { sheet = .offset(debt) }
     case .transfer:
@@ -555,44 +664,72 @@ private struct DebtDetail: View {
             .font(.subheadline.monospacedDigit())
           }
           ForEach(byGroup[group.groupName] ?? [], id: \.id) { entry in
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-              Text(verbatim: entry.date.map(day) ?? "—")
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(width: 110, alignment: .leading)
-              Text(verbatim: entry.description ?? t("debts.kind.\(entry.kind.rawValue)"))
-                .lineLimit(1)
-              // «В этом месяце больше платежей не будет»: said, so the due is shown as closed.
-              if entry.closesTerm {
-                Label {
-                  Text(verbatim: t("debts.journal.closesTerm"))
-                } icon: {
-                  Image(systemName: "checkmark.circle")
+            VStack(alignment: .trailing, spacing: 1) {
+              HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(verbatim: entry.date.map(day) ?? "—")
+                  .monospacedDigit()
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+                  .frame(width: 110, alignment: .leading)
+                Text(verbatim: entry.description ?? t("debts.kind.\(entry.kind.rawValue)"))
+                  .lineLimit(1)
+                // «В этом месяце больше платежей не будет»: said, so the due is shown as closed.
+                if entry.closesTerm {
+                  Label {
+                    Text(verbatim: t("debts.journal.closesTerm"))
+                  } icon: {
+                    Image(systemName: "checkmark.circle")
+                  }
+                  .font(.caption).foregroundStyle(.secondary)
+                  .help(t("debts.journal.closesTermHelp"))
                 }
-                .font(.caption).foregroundStyle(.secondary)
-                .help(t("debts.journal.closesTermHelp"))
-              }
-              if let full = entry.fullAmountE4, let share = entry.share {
+                // A tranche: a part of the loan drawn, a planned one while its day is ahead.
+                if entry.tranche {
+                  Label {
+                    Text(verbatim: t(trancheMark(entry)))
+                  } icon: {
+                    Image(systemName: "graduationcap")
+                  }
+                  .font(.caption).foregroundStyle(.secondary)
+                }
+                if let full = entry.fullAmountE4, let share = entry.share {
+                  Text(
+                    verbatim: environment.money.rounded(full, currency: line.debt.currency) + " × "
+                      + environment.money.number(share)
+                  )
+                  .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
                 Text(
-                  verbatim: environment.money.rounded(full, currency: line.debt.currency) + " × "
-                    + environment.money.number(share)
+                  // Exact, like the group totals and the balance it adds up to.
+                  verbatim: (entry.amountE4.isZero ? "" : entry.amountE4.isNegative ? "−" : "+")
+                    + environment.money.exact(
+                      entry.amountE4.magnitude, currency: line.debt.currency)
                 )
-                .font(.caption).foregroundStyle(.secondary)
+                .monospacedDigit()
               }
-              Spacer()
-              Text(
-                // Exact, like the group totals and the balance it adds up to.
-                verbatim: (entry.amountE4.isZero ? "" : entry.amountE4.isNegative ? "−" : "+")
-                  + environment.money.exact(entry.amountE4.magnitude, currency: line.debt.currency)
-              )
-              .monospacedDigit()
+              // What of a payment the bank took as interest first.
+              if let interest = line.interestByPayment[entry.id], interest.raw > 0 {
+                Text(
+                  verbatim: environment.format(
+                    "debts.journal.interest", table: "Debts",
+                    environment.money.exact(interest, currency: line.debt.currency))
+                )
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+              }
             }
             .font(.callout)
           }
         }
       }
     }
+  }
+
+  private func trancheMark(_ entry: DebtEntry) -> String {
+    guard let day = entry.date, TrancheSheet.isPlanned(day, today: environment.today) else {
+      return "debts.journal.tranche"
+    }
+    return "debts.journal.tranchePlanned"
   }
 
   /// «25 августа», with the year when it is not this one: a journal runs over years.

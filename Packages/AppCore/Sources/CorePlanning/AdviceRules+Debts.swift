@@ -21,9 +21,11 @@ extension AdviceRules {
     rubPerUnit: [CurrencyCode: Decimal]
   ) -> [Advice] {
     guard !debts.iOwe.isEmpty else { return [] }
+    var dues: [UUID: DebtDueState] = [:]
+    for line in debts.iOwe + debts.closed { dues[line.id] = line.dues }
     let load = DebtLoad.load(
       debts: context.ledger.dataset.debts, ledger: context.ledger, today: context.today,
-      income: income, rubPerUnit: rubPerUnit)
+      income: income, rubPerUnit: rubPerUnit, dues: dues)
     guard case .ready = load.status, let loadBp = load.loadBp, let incomeRub = load.incomeRub
     else {
       return [.notEnoughData(.debtLoad, reason: Reason.noIncome)]
@@ -53,10 +55,15 @@ extension AdviceRules {
   /// balance, a rate and a monthly payment: `DebtPayoff.scenario` with an extra of 10 % of
   /// the payment, rounded to 100 ₽ and never below it; a debt in another currency rounds to
   /// whole units of its own and never below one — 100 dollars would be no «little extra».
+  /// A loan in its grace period gets none: its dues are interest, and paying more there is not
+  /// what closes it sooner. A loan whose main payment is worked out over months takes that
+  /// payment (`DebtLoad.payment`).
   static func debtPayoffs(_ debts: DebtsOverview) -> [Advice] {
     debts.iOwe.compactMap { line in
       let debt = line.debt
-      guard let rate = debt.interestRate, rate > 0, let payment = debt.monthlyPaymentE4,
+      guard line.schedule?.phase != .grace else { return nil }
+      let monthly = line.schedule?.mainAmount ?? DebtLoad.payment(of: debt, dues: line.dues)
+      guard let rate = debt.interestRate, rate > 0, let payment = debt.monthlyPaymentE4 ?? monthly,
         payment.raw > 0, line.balance.raw > 0
       else { return nil }
       let extra = payoffExtra(payment, currency: debt.currency)

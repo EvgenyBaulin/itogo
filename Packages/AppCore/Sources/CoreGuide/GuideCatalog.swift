@@ -317,7 +317,7 @@ public enum GuideCatalog {
 
   // MARK: What is new
 
-  public static let whatsNew: [GuideScenario] = [whatsNew14, whatsNew15]
+  public static let whatsNew: [GuideScenario] = [whatsNew14, whatsNew15, whatsNew16]
 
   public static let whatsNew14 = GuideScenario(
     kind: .whatsNew(version: GuideVersion(major: 1, minor: 4)),
@@ -435,5 +435,42 @@ public enum GuideCatalog {
           "The kind comes first; an operation chosen in a list opens in the form; a transfer is written right there."
         ),
         symbol: "sidebar.right"),
+    ])
+
+  public static let whatsNew16 = GuideScenario(
+    kind: .whatsNew(version: GuideVersion(major: 1, minor: 6)),
+    cards: [
+      GuideCard(
+        id: "new16.educationLoan",
+        title: GuideText("Образовательный кредит", "An education loan"),
+        body: GuideText(
+          "Новый долг → «Образовательный кредит (госпрограмма)»: 3 %, льготный период с 40 % → 60 % → 100 % процентов, затем 15 лет основного долга.",
+          "New debt → «Education loan (state programme)»: 3 %, a grace period paying 40 % → 60 % → 100 % of the interest, then 15 years of main debt."
+        ),
+        symbol: "graduationcap"),
+      GuideCard(
+        id: "new16.tranche",
+        title: GuideText("Транши и проценты в платежах", "Tranches and the interest in payments"),
+        body: GuideText(
+          "«Добавить транш…» — расход в «Образовании», долг растёт. Платёж сначала гасит проценты: расходом считаются только они.",
+          "«Add Tranche…» is an expense in «Education» and grows the debt. A payment pays the interest first, and only the interest is spending."
+        ),
+        symbol: "banknote"),
+      GuideCard(
+        id: "new16.deposits",
+        title: GuideText("Вклады и накопительные счета", "Deposits and savings accounts"),
+        body: GuideText(
+          "В редакторе счёта — «На остаток начисляются проценты»: ставка, выплата, капитализация. Экран счёта покажет начисленное и спросит, если выплата не пришла.",
+          "In the account editor, «The balance earns interest»: the rate, the payout, capitalisation. The account screen shows what was earned and asks when a payout does not come."
+        ),
+        symbol: "percent"),
+      GuideCard(
+        id: "new16.forecast",
+        title: GuideText("Проценты в прогнозе счёта", "Interest in the account forecast"),
+        body: GuideText(
+          "Прогноз на конец месяца добавляет серую строку «Проценты ≈». «Записать…» — и они становятся доходом.",
+          "The forecast for the end of the month adds a grey «Interest ≈» line. «Record…» makes them income."
+        ),
+        symbol: "chart.line.uptrend.xyaxis"),
     ])
 }

@@ -24,6 +24,13 @@ struct SampleFeatureLayersTests {
       seed: seed, calendar: .moscow, language: language, now: now, demo: demo)
   }
 
+  /// The layers from the cards through the later count, without the ones written after them.
+  static func throughTheCounts(language: String = "en", demo: Bool = false) -> SampleDataSet {
+    history(language: language).withAccounts(seed: seed, calendar: .moscow, language: language)
+      .withLayersThroughTheCounts(
+        seed: seed, calendar: .moscow, language: language, now: nil, demo: demo)
+  }
+
   /// What the layers' draws decide: the cards and rules, which operations name a card and what
   /// cashback was typed, the operations, transfers and counts they add, the planning, places and
   /// events they add, and the money they expect at the end.
@@ -83,9 +90,11 @@ struct SampleFeatureLayersTests {
     return SHA256.hexDigest(Data(text.utf8))
   }
 
+  /// The layers through the later count; the ones after it pin their own draws
+  /// (`SampleLoanAndSavingsTests`).
   @Test func theLayersDrawTheSameSequence() {
     let accounts = Self.history().withAccounts(seed: Self.seed, calendar: .moscow, language: "en")
-    let set = Self.layered()
+    let set = Self.throughTheCounts()
 
     #expect(set.entries.count - accounts.entries.count == 9, "the number of added operations")
     #expect(

@@ -62,7 +62,8 @@ struct ExportTablesDescriptionTests {
       ExportTables.debts.columns == [
         "id", "direction", "type", "name", "person_id", "currency", "interest_rate",
         "monthly_payment", "payment_day", "remind_days_before", "payments_are_expenses",
-        "origin", "note", "closed", "loans_subcategory_id", "deleted_at",
+        "origin", "note", "closed", "loans_subcategory_id", "deleted_at", "accrues_interest",
+        "main_from", "grace_kind", "grace_payment", "repay_months",
       ])
     #expect(
       ExportTables.reconciliations.columns == [
@@ -89,7 +90,9 @@ struct ExportTablesDescriptionTests {
       ExportTables.paymentMethods.columns == [
         "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
         "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
-        "cashback_payout", "cashback_payout_day", "cashback_points_account_id",
+        "cashback_payout", "cashback_payout_day", "cashback_points_account_id", "interest_rate",
+        "interest_period", "interest_day", "interest_account_id", "deposit_opened_on",
+        "deposit_ends_on",
       ])
   }
 
@@ -119,10 +122,10 @@ struct ExportTablesDescriptionTests {
     }
     #expect(ExportTables.transactions.columns.count == 27)
     #expect(ExportTables.transactionParts.columns.count == 17)
-    #expect(ExportTables.paymentMethods.columns.count == 16)
+    #expect(ExportTables.paymentMethods.columns.count == 22)
     #expect(ExportTables.templates.columns.count == 8)
     #expect(ExportTables.goals.columns.count == 9)
-    #expect(ExportTables.debtEntries.columns.count == 16)
+    #expect(ExportTables.debtEntries.columns.count == 17)
     #expect(ExportTables.reconciliations.columns.count == 10)
     #expect(
       ExportTables.accountGroups.columns == ["id", "name", "in_summary", "sort", "archived"])
@@ -497,10 +500,10 @@ struct ExportTablesRowTests {
     }
   }
 
-  /// «В этом месяце больше платежей не будет» is the last column of the file: an older reader
-  /// still finds the others where they were.
+  /// «В этом месяце больше платежей не будет» comes after every column older than it, and only
+  /// the tranche after it: an older reader still finds the others where they were.
   @Test func aPaymentThatClosesItsTermSaysSoInTheLastColumn() throws {
-    #expect(ExportTables.debtEntries.columns.last == "closes_term")
+    #expect(Array(ExportTables.debtEntries.columns.suffix(2)) == ["closes_term", "tranche"])
     let closing = DebtEntry(
       debtId: UUID(), amountE4: AmountE4(whole: -4_000), kind: .payment, closesTerm: true)
     let plain = DebtEntry(debtId: UUID(), amountE4: AmountE4(whole: 1_000), kind: .borrowed)
@@ -527,6 +530,83 @@ struct ExportTablesRowTests {
     #expect(read["occurred_at"] == "2026-09-01T09:15:00Z")
     #expect(read["account_currency"] == "KZT")
     #expect(read["account_amount"] == "520000")
+  }
+
+  /// A tranche of a loan says so in the last column of the journal.
+  @Test func aTrancheSaysSoInTheLastColumn() throws {
+    let tranche = DebtEntry(
+      debtId: UUID(), date: DateOnly(year: 2027, month: 2, day: 1),
+      amountE4: AmountE4(whole: 150_000), kind: .adjustment, tranche: true)
+    let read = try roundTrip(ExportTables.debtEntries, row: ExportTables.row(tranche))
+    #expect(read["tranche"] == "true")
+    #expect(read["closes_term"] == "false")
+    let plain = DebtEntry(debtId: UUID(), amountE4: AmountE4(whole: 1_000), kind: .borrowed)
+    #expect(
+      try roundTrip(ExportTables.debtEntries, row: ExportTables.row(plain))["tranche"] == "false")
+  }
+
+  /// The terms of an education loan: interest day by day, the grace period, the months of the
+  /// main schedule; a plain debt leaves them empty and says it charges no interest.
+  @Test func theTermsOfALoanRoundTrip() throws {
+    let loan = Debt(
+      direction: .iOwe, type: .loan, name: "Образовательный", interestRate: 3,
+      paymentDay: 5, accruesInterest: true,
+      grace: DebtGrace(
+        mainFrom: DateOnly(year: 2029, month: 3, day: 1), payment: .fixed(AmountE4(raw: 12_345_678))
+      ),
+      repayMonths: 120)
+    let read = try roundTrip(ExportTables.debts, row: ExportTables.row(loan))
+    #expect(read["accrues_interest"] == "true")
+    #expect(read["main_from"] == "2029-03-01")
+    #expect(read["grace_kind"] == "fixed")
+    #expect(read["grace_payment"] == "1234.5678")
+    #expect(read["repay_months"] == "120")
+    var onInterest = loan
+    onInterest.grace = DebtGrace(
+      mainFrom: DateOnly(year: 2029, month: 3, day: 1), payment: .interest)
+    let interest = try roundTrip(ExportTables.debts, row: ExportTables.row(onInterest))
+    #expect(interest["grace_kind"] == "interest")
+    #expect(interest["grace_payment"] == "")
+    let plain = try roundTrip(
+      ExportTables.debts,
+      row: ExportTables.row(Debt(direction: .iOwe, type: .personal, name: "Аня")))
+    #expect(plain["accrues_interest"] == "false")
+    for column in ["main_from", "grace_kind", "grace_payment", "repay_months"] {
+      #expect(plain[column] == "", "\(column) is not empty")
+    }
+  }
+
+  /// The interest of a deposit: the rate as a decimal with a dot, the period, the day, the
+  /// account it is paid to and the term; an account without interest leaves them empty.
+  @Test func theInterestOfAnAccountRoundTrips() throws {
+    let payout = UUID()
+    let deposit = PaymentMethod(
+      name: "Вклад", kind: .account,
+      interest: DepositTerms(
+        rate: Decimal(string: "16.5")!, period: .monthly, day: 31, payoutAccountId: payout,
+        openedOn: DateOnly(year: 2026, month: 10, day: 1),
+        endsOn: DateOnly(year: 2027, month: 4, day: 1)))
+    let read = try roundTrip(ExportTables.paymentMethods, row: ExportTables.row(deposit))
+    #expect(read["interest_rate"] == "16.5")
+    #expect(read["interest_period"] == "monthly")
+    #expect(read["interest_day"] == "31")
+    #expect(read["interest_account_id"] == payout.uuidString)
+    #expect(read["deposit_opened_on"] == "2026-10-01")
+    #expect(read["deposit_ends_on"] == "2027-04-01")
+    var atEnd = deposit
+    atEnd.interest = DepositTerms(
+      rate: 18, period: .atEnd, endsOn: DateOnly(year: 2027, month: 4, day: 1))
+    #expect(
+      try roundTrip(ExportTables.paymentMethods, row: ExportTables.row(atEnd))["interest_period"]
+        == "end")
+    let plain = try roundTrip(
+      ExportTables.paymentMethods, row: ExportTables.row(PaymentMethod(name: "Карта")))
+    for column in [
+      "interest_rate", "interest_period", "interest_day", "interest_account_id",
+      "deposit_opened_on", "deposit_ends_on",
+    ] {
+      #expect(plain[column] == "", "\(column) is not empty")
+    }
   }
 
   @Test func rateRoundTripsWithoutAnIdColumn() throws {

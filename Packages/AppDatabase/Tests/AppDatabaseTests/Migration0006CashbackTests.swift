@@ -199,9 +199,11 @@ struct Migration0006CashbackTests {
         #expect(account.cashbackPayout == nil, "\(account.name)")
         #expect(account.cashbackPointsAccountId == nil, "\(account.name)")
       }
+      // The settings of the cashback come after the bank, ahead of what later updates add.
       let columns = try db.columns(in: "payment_methods").map(\.name)
+      let bank = try #require(columns.firstIndex(of: "bank_id"))
       #expect(
-        Array(columns.suffix(5)) == [
+        Array(columns[(bank + 1)...].prefix(5)) == [
           "cashback_precision", "cashback_direction", "cashback_payout", "cashback_payout_day",
           "cashback_points_account_id",
         ])

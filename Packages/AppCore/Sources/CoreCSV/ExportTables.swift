@@ -61,13 +61,17 @@ public enum ExportTables {
   /// The accounts. `group_id`, `sort` and `other_currencies` came with
   /// `Schema/0004_accounts.sql`; `other_currencies` holds the codes after the main one,
   /// joined by commas as the database keeps them (`USD,RUB,KZT`). `bank_id` came with
-  /// `Schema/0006_banks.sql`: the bank the account belongs to, empty for none.
+  /// `Schema/0006_banks.sql`: the bank the account belongs to, empty for none. The interest
+  /// columns came with `Schema/0007_debts_and_deposits.sql`: the yearly rate in percent, how
+  /// often and on what day it is paid, the account it is paid to, and the term of a deposit.
   public static let paymentMethods = ExportTable(
     fileName: "payment_methods.csv",
     columns: [
       "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
       "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
-      "cashback_payout", "cashback_payout_day", "cashback_points_account_id",
+      "cashback_payout", "cashback_payout_day", "cashback_points_account_id", "interest_rate",
+      "interest_period", "interest_day", "interest_account_id", "deposit_opened_on",
+      "deposit_ends_on",
     ])
 
   public static let places = ExportTable(
@@ -136,25 +140,30 @@ public enum ExportTables {
       "archived", "currency", "plan_start_month",
     ])
 
-  /// `deleted_at` came with `Schema/0005_cards.sql`: the instant the debt was deleted.
+  /// `deleted_at` came with `Schema/0005_cards.sql`: the instant the debt was deleted. The
+  /// terms of a loan came with `Schema/0007_debts_and_deposits.sql`: whether the bank charges
+  /// interest day by day, the grace period (the first day of the main schedule, `interest` or
+  /// `fixed`, and the fixed sum) and the months the main payment is worked out over.
   public static let debts = ExportTable(
     fileName: "debts.csv",
     columns: [
       "id", "direction", "type", "name", "person_id", "currency", "interest_rate",
       "monthly_payment", "payment_day", "remind_days_before", "payments_are_expenses",
-      "origin", "note", "closed", "loans_subcategory_id", "deleted_at",
+      "origin", "note", "closed", "loans_subcategory_id", "deleted_at", "accrues_interest",
+      "main_from", "grace_kind", "grace_payment", "repay_months",
     ])
 
   /// `payment_method_id`, `occurred_at`, `account_currency` and `account_amount` came with
   /// `Schema/0004_accounts.sql`: the account money borrowed or lent through the journal alone
   /// went into or out of, when, and what moved on it. `closes_term` came with
   /// `Schema/0006_banks.sql`: the payment that says no more money comes toward its due.
+  /// `tranche` came with `Schema/0007_debts_and_deposits.sql`: a part of the loan drawn later.
   public static let debtEntries = ExportTable(
     fileName: "debt_entries.csv",
     columns: [
       "id", "debt_id", "group_name", "date", "description", "full_amount", "share",
       "amount", "kind", "transaction_id", "note", "payment_method_id", "occurred_at",
-      "account_currency", "account_amount", "closes_term",
+      "account_currency", "account_amount", "closes_term", "tranche",
     ])
 
   /// Columns match `Schema/0001_initial.sql`; `reconciled_at` and `breakdown` came with
@@ -322,6 +331,12 @@ extension ExportTables {
       method.cashbackPayout?.timing.rawValue ?? "",
       method.cashbackPayout?.day.map(String.init) ?? "",
       CSVValue.string(method.cashbackPointsAccountId),
+      CSVValue.string(decimal: method.interest?.rate),
+      CSVValue.string(method.interest?.period.rawValue),
+      CSVValue.string(method.interest?.day),
+      CSVValue.string(method.interest?.payoutAccountId),
+      CSVValue.string(day: method.interest?.openedOn),
+      CSVValue.string(day: method.interest?.endsOn),
     ]
   }
 
@@ -406,6 +421,11 @@ extension ExportTables {
       CSVValue.string(bool: debt.closed),
       CSVValue.string(debt.loansSubcategoryId),
       CSVValue.string(instant: debt.deletedAt),
+      CSVValue.string(bool: debt.accruesInterest),
+      CSVValue.string(day: debt.grace?.mainFrom),
+      CSVValue.string(debt.grace?.payment.storedKind),
+      CSVValue.string(amount: debt.grace?.payment.fixedAmount),
+      CSVValue.string(debt.repayMonths),
     ]
   }
 
@@ -427,6 +447,7 @@ extension ExportTables {
       CSVValue.string(entry.accountCurrency?.code),
       CSVValue.string(amount: entry.accountAmountE4),
       CSVValue.string(bool: entry.closesTerm),
+      CSVValue.string(bool: entry.tranche),
     ]
   }
 

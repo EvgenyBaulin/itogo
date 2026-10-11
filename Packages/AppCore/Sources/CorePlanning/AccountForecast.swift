@@ -19,6 +19,7 @@ import Foundation
 /// − count losses       the net the pair's counts lost in the window, at its pace for the days left
 /// − for others         paid from the pair for others less money back onto it, at the same pace
 /// − spending           the forecast's variable spending of the days left × this pair's share
+/// + interest           what deposits are expected to pay onto the pair through the month's end
 /// ```
 ///
 /// * Count losses and spending for others are money that really leaves an account without
@@ -47,6 +48,11 @@ import Foundation
 ///   currency listed, never guessed.
 /// * Out of the summary is out of the summary: a group left out keeps its pairs in a section of
 ///   their own, and its money never reaches «Всего».
+/// * Interest of a deposit is the payouts dated today through the month's end and not received
+///   yet (`DepositPayouts`), on the pair they are paid to — the deposit itself, the account the
+///   terms name, or the main account when that one is archived or gone. One received is in the
+///   balance already; one overdue brings nothing. It is the forecast's own grey line and never
+///   part of the free sum or of the income expected.
 public struct AccountMonthPlan: Hashable, Sendable {
   /// An expectation of this month whose due date has passed with nothing in: no money is
   /// counted for it, and the line asks about it.
@@ -101,13 +107,17 @@ public struct AccountMonthPlan: Hashable, Sendable {
     public var withoutRate: [CurrencyCode]
     /// Expectations of this month overdue with nothing in, by due date.
     public var overdueIncome: [OverdueIncome]
+    /// Interest of deposits expected on the pair through the end of the month and not received
+    /// yet, never below zero (`DepositPayouts`).
+    public var interest: AmountE4
 
     public init(
       key: BalanceKey, account: PaymentMethod, isHeld: Bool = true, now: AmountE4?,
       writtenAhead: AmountE4 = .zero, income: AmountE4 = .zero, scheduled: AmountE4 = .zero,
       debts: AmountE4 = .zero, reconcileLoss: AmountE4 = .zero,
       othersSpending: AmountE4 = .zero, spendingWeight: AmountE4 = .zero,
-      withoutRate: [CurrencyCode] = [], overdueIncome: [OverdueIncome] = []
+      withoutRate: [CurrencyCode] = [], overdueIncome: [OverdueIncome] = [],
+      interest: AmountE4 = .zero
     ) {
       self.key = key
       self.account = account
@@ -122,12 +132,15 @@ public struct AccountMonthPlan: Hashable, Sendable {
       self.spendingWeight = spendingWeight
       self.withoutRate = withoutRate
       self.overdueIncome = overdueIncome
+      self.interest = interest
     }
 
     /// The balance at the end of the month before any variable spending; `nil` while never
     /// counted.
     public var base: AmountE4? {
-      now.map { $0 + writtenAhead + income - scheduled - debts - reconcileLoss - othersSpending }
+      now.map {
+        $0 + writtenAhead + income + interest - scheduled - debts - reconcileLoss - othersSpending
+      }
     }
   }
 
@@ -196,17 +209,18 @@ public struct AccountMonthPlan: Hashable, Sendable {
     build(
       ledger: ledger, accounts: planning.accounts, today: planning.today,
       rubPerUnit: planning.rubPerUnit, dayRates: planning.dayRates, debts: planning.debts,
-      expected: planning.expected)
+      expected: planning.expected, deposits: planning.deposits)
   }
 
   /// The plan for `today`. `accounts` are the balances as of now (`AccountsSnapshot`),
   /// `debts` the Debts section, `expected` the expectations that are not closed — each as the
   /// planning snapshot builds it. `dayRates` are what an operation in another currency is
-  /// compared at when it may pay a due date.
+  /// compared at when it may pay a due date. `deposits` are the payouts of interest
+  /// (`DepositPayouts.build`).
   public static func build(
     ledger: Ledger, accounts: AccountsSnapshot, today: DateOnly,
     rubPerUnit: [CurrencyCode: Decimal], dayRates: DayRates = .empty, debts: DebtsOverview,
-    expected: [ExpectedIncomeStatus]
+    expected: [ExpectedIncomeStatus], deposits: [DepositPayout] = []
   ) -> AccountMonthPlan {
     let dataset = ledger.dataset
     let book = dataset.planning
@@ -271,6 +285,13 @@ public struct AccountMonthPlan: Hashable, Sendable {
       }
     }
 
+    // Interest of deposits: the payouts still to come this month, on the pair they go to.
+    for payout in deposits where payout.payDate >= today && payout.payDate <= through {
+      if case .received = payout.state { continue }
+      let accountId = DueAccounts.effective(payout.target.accountId, accounts: list) ?? mainId
+      router.add(\.interest, payout.expectedE4, in: payout.target.currency, to: accountId)
+    }
+
     let live = Set(list.filter { !$0.archived }.map(\.id))
     let spending = VariableSpending.byBalance(
       ledger: ledger, today: today, through: through,
@@ -299,7 +320,8 @@ public struct AccountMonthPlan: Hashable, Sendable {
               othersSpending: outflows.othersSpending[key] ?? .zero,
               spendingWeight: spending.weights[key] ?? .zero,
               withoutRate: routed.withoutRate.sorted { $0.code < $1.code },
-              overdueIncome: routed.overdueIncome.sorted { $0.due < $1.due })
+              overdueIncome: routed.overdueIncome.sorted { $0.due < $1.due },
+              interest: routed.interest)
           }
         })
     }
@@ -347,6 +369,7 @@ public struct AccountMonthPlan: Hashable, Sendable {
       var income = AmountE4.zero
       var scheduled = AmountE4.zero
       var debts = AmountE4.zero
+      var interest = AmountE4.zero
       var withoutRate: Set<CurrencyCode> = []
       var overdueIncome: [OverdueIncome] = []
     }

@@ -44,22 +44,18 @@ public struct PlannedPayments: Hashable, Sendable {
     let month = today.monthKey
     let journal = ledger.dataset.planning.debtEntries
     let planned = ledger.dataset.debts.filter { debt in
-      guard !debt.closed, DebtRules.paymentIsExpense(on: debt), debt.monthlyPaymentE4 != nil,
-        debt.paymentDay != nil
-      else { return false }
+      guard !debt.closed, DebtRules.paymentIsExpense(on: debt), debt.hasDues else { return false }
       return true
     }
     let states = DebtDues.states(debts: planned, ledger: ledger, journal: journal, today: today)
     var debts = AmountE4.zero
     var missing: [UUID] = []
     for debt in planned {
-      guard let payment = debt.monthlyPaymentE4, let day = debt.paymentDay,
-        let state = states[debt.id]
-      else { continue }
+      guard let day = debt.paymentDay, let state = states[debt.id]?.knowing(debt) else { continue }
       let due = DebtDueState.payday(day, in: month)
       guard due > today, state.isUnpaid(due) else { continue }
       // What is left of the due when part of it was paid.
-      let owed = state.owed(due, monthly: payment)
+      let owed = state.owed(due)
       if debt.currency == .rub {
         debts += owed
       } else if let rate = rubPerUnit[debt.currency] {

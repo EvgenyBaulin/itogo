@@ -103,14 +103,17 @@ struct AccountSettingsTests {
 
   @Test func storedValuesAreRead() {
     let category = UUID()
+    let interest = UUID()
     let settings = AccountSettings(storedValues: [
       AccountSettings.defaultCurrencyKey: "kzt",
       AccountSettings.setupKey: "done",
       AccountSettings.transferFeeCategoryKey: category.uuidString,
+      AccountSettings.interestCategoryKey: " \(interest.uuidString) ",
     ])
     #expect(settings.defaultCurrency == CurrencyCode("KZT"))
     #expect(settings.setup == .done)
     #expect(settings.transferFeeCategoryId == category)
+    #expect(settings.interestCategoryId == interest)
     #expect(AccountSettings(storedValues: [AccountSettings.setupKey: "later"]).setup == .later)
   }
 
@@ -120,6 +123,7 @@ struct AccountSettingsTests {
       AccountSettings.defaultCurrencyKey: "rubles",
       AccountSettings.setupKey: "maybe",
       AccountSettings.transferFeeCategoryKey: "fees",
+      AccountSettings.interestCategoryKey: "interest",
     ])
     #expect(settings == AccountSettings())
     #expect(
@@ -131,6 +135,7 @@ struct AccountSettingsTests {
     #expect(
       AccountSettings.storageKeys == [
         "currencies.default", "accounts.setup", "transfers.feeCategory",
+        "accounts.interestCategory",
       ])
   }
 }

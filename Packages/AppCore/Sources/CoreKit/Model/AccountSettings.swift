@@ -9,9 +9,14 @@ public struct AccountSettings: Hashable, Sendable, Codable {
   public static let setupKey = "accounts.setup"
   /// The category the fees of transfers go to, by id; made at the first fee.
   public static let transferFeeCategoryKey = "transfers.feeCategory"
+  /// The category the interest of deposits and savings accounts goes to, by id; made at the
+  /// first account that earns interest.
+  public static let interestCategoryKey = "accounts.interestCategory"
 
   /// Every key these settings live under.
-  public static let storageKeys = [defaultCurrencyKey, setupKey, transferFeeCategoryKey]
+  public static let storageKeys = [
+    defaultCurrencyKey, setupKey, transferFeeCategoryKey, interestCategoryKey,
+  ]
 
   public enum Setup: String, Hashable, Sendable, Codable {
     /// The owner put the setup off; a main account exists anyway.
@@ -23,13 +28,16 @@ public struct AccountSettings: Hashable, Sendable, Codable {
   /// `nil`: the setup of the accounts is still due.
   public var setup: Setup?
   public var transferFeeCategoryId: UUID?
+  public var interestCategoryId: UUID?
 
   public init(
-    defaultCurrency: CurrencyCode = .rub, setup: Setup? = nil, transferFeeCategoryId: UUID? = nil
+    defaultCurrency: CurrencyCode = .rub, setup: Setup? = nil, transferFeeCategoryId: UUID? = nil,
+    interestCategoryId: UUID? = nil
   ) {
     self.defaultCurrency = defaultCurrency
     self.setup = setup
     self.transferFeeCategoryId = transferFeeCategoryId
+    self.interestCategoryId = interestCategoryId
   }
 
   /// The settings the rows give. A value that does not read — a currency that is not three
@@ -42,6 +50,9 @@ public struct AccountSettings: Hashable, Sendable, Codable {
         Setup(rawValue: $0.trimmingCharacters(in: .whitespaces))
       },
       transferFeeCategoryId: values[Self.transferFeeCategoryKey].flatMap {
+        UUID(uuidString: $0.trimmingCharacters(in: .whitespaces))
+      },
+      interestCategoryId: values[Self.interestCategoryKey].flatMap {
         UUID(uuidString: $0.trimmingCharacters(in: .whitespaces))
       })
   }

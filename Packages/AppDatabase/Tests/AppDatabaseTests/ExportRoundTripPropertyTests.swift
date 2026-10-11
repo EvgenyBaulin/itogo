@@ -22,7 +22,7 @@ struct ExportRoundTripPropertyTests {
   private static let booleans: Set<String> = [
     "archived", "is_default", "reimbursable", "rate_provisional", "pinned", "recurring_yearly",
     "payments_are_expenses", "closed", "rollover", "active", "in_summary", "records_difference",
-    "closes_term",
+    "closes_term", "accrues_interest", "tranche",
   ]
   /// Columns holding an instant, written in UTC to the second.
   private static let instants: Set<String> = [
@@ -237,17 +237,17 @@ struct ExportRoundTripPropertyTests {
     try builder.add(path: ArchivePaths.settings, data: settings)
     files[ArchivePaths.settings] = settings
 
-    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 6)
+    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 7)
     #expect(plain.files == files)
     #expect(plain.csvTables.count == 24)
-    #expect(plain.manifest.schemaVersion == 6)
+    #expect(plain.manifest.schemaVersion == 7)
 
     var random = SeededRandom(seed: 7)
     let sealed = try builder.build(
       password: "пароль 🔑", cipher: RoundTripCipher(), random: &random, iterations: 1_000)
     #expect(ArchiveOpener.isEncrypted(sealed))
     let opened = try ArchiveOpener.open(
-      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 6)
+      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 7)
     #expect(opened.files == files)
 
     let inside = folder.appendingPathComponent("inside.sqlite")
@@ -274,6 +274,7 @@ struct ExportRoundTripPropertyTests {
           !Self.addedByTheAccounts.contains("\(table.fileName):\($0)")
             && !Self.addedByTheCards.contains("\(table.fileName):\($0)")
             && !Self.addedByTheBanks.contains("\(table.fileName):\($0)")
+            && !Self.addedByTheLoans.contains("\(table.fileName):\($0)")
         })
     }
     var counts: [String: Int] = [:]
@@ -309,7 +310,7 @@ struct ExportRoundTripPropertyTests {
     }
     try builder.add(path: ArchivePaths.settings, text: #"{"language":"ru"}"#)
 
-    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 6)
+    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 7)
     #expect(opened.manifest.schemaVersion == 3)
     #expect(opened.csvTables.count == 18)
 
@@ -319,7 +320,7 @@ struct ExportRoundTripPropertyTests {
     #expect(try DatabaseStack.check(fileAt: staged, schema: TestSupport.schemaSource) == .sound)
     #expect(
       try DatabaseStack.pendingMigrations(fileAt: staged, schema: TestSupport.schemaSource)
-        == ["0004_accounts", "0005_cards", "0006_banks"])
+        == ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits"])
     let stack = try DatabaseStack(url: staged, schema: TestSupport.schemaSource)
     defer { try? stack.close() }
     let after = try ExportRepository(writer: stack.writer).rowCounts()
@@ -431,6 +432,16 @@ struct ExportRoundTripPropertyTests {
     "payment_methods.csv:cashback_direction", "payment_methods.csv:cashback_payout",
     "payment_methods.csv:cashback_payout_day", "payment_methods.csv:cashback_points_account_id",
     "debt_entries.csv:closes_term",
+  ]
+
+  /// The columns the terms of loans and the interest of accounts brought
+  /// (`0007_debts_and_deposits`).
+  private static let addedByTheLoans: Set<String> = [
+    "debts.csv:accrues_interest", "debts.csv:main_from", "debts.csv:grace_kind",
+    "debts.csv:grace_payment", "debts.csv:repay_months", "debt_entries.csv:tranche",
+    "payment_methods.csv:interest_rate", "payment_methods.csv:interest_period",
+    "payment_methods.csv:interest_day", "payment_methods.csv:interest_account_id",
+    "payment_methods.csv:deposit_opened_on", "payment_methods.csv:deposit_ends_on",
   ]
 
   /// Cards on two accounts of the history, one with other names that break a CSV cell; the

@@ -142,15 +142,12 @@ public struct PlannedMonth: Hashable, Sendable {
     // Debts whose payments are expenses.
     var debtsDueByToday = AmountE4.zero
     let payable = ledger.dataset.debts.filter { debt in
-      !debt.closed && DebtRules.paymentIsExpense(on: debt) && debt.monthlyPaymentE4 != nil
-        && debt.paymentDay != nil
+      !debt.closed && DebtRules.paymentIsExpense(on: debt) && debt.hasDues
     }
     let states = DebtDues.states(
       debts: payable, ledger: ledger, journal: book.debtEntries, today: today)
     for debt in payable {
-      guard let payment = debt.monthlyPaymentE4, let day = debt.paymentDay,
-        let state = states[debt.id]
-      else { continue }
+      guard let day = debt.paymentDay, let state = states[debt.id]?.knowing(debt) else { continue }
       for current in MonthKey.range(month, through: last.monthKey) {
         // This month's payment due today or before: out of the forecast, but still owed while
         // unpaid. The due date is the clipped one: a debt paid «on the 31st» is due today on
@@ -159,7 +156,7 @@ public struct PlannedMonth: Hashable, Sendable {
         let byToday = current == month && due <= today
         guard due <= last, state.isUnpaid(due) else { continue }
         // What is left of the due when part of it was paid.
-        let owed = state.owed(due, monthly: payment)
+        let owed = state.owed(due)
         let rubles = SubscriptionMath.rubles(owed, in: debt.currency, rubPerUnit: rubPerUnit)
         if rubles == nil { missing.append(debt.id) }
         if byToday {
