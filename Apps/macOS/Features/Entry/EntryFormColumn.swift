@@ -10,9 +10,11 @@ struct EntryFormColumn<Caption: View>: View {
   @Binding var focusedInside: Bool
   let save: () -> Void
   let clear: () -> Void
-  let transfer: () -> Void
   /// The line of quick entry over the fields (`QuickEntryFlow`), in the focus of the panel.
   var quickLine: ((FocusState<PanelFocus?>.Binding) -> AnyView)? = nil
+  /// Whether the kind of the next operation has been chosen: until it is, the column holds the
+  /// quick line and the kinds alone, and no «Сохранить». `nil`: the fields are always there.
+  var kindChosen: Binding<Bool>? = nil
   @ViewBuilder let caption: () -> Caption
 
   var body: some View {
@@ -31,8 +33,8 @@ struct EntryFormColumn<Caption: View>: View {
       // The fields scroll; the title above and «Save» below stay where they are.
       ScrollView {
         DetailsPanel(
-          model: model, submit: save, onTransfer: transfer, focusedInside: $focusedInside,
-          arrangement: .column, quickLine: quickLine
+          model: model, submit: save, offersTransfer: true, focusedInside: $focusedInside,
+          arrangement: .column, quickLine: quickLine, kindChosen: kindChosen
         )
         .padding(Self.inset)
       }
@@ -41,16 +43,18 @@ struct EntryFormColumn<Caption: View>: View {
         caption()
           .fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
-        Button(action: save) {
-          Text(verbatim: environment.language("entry.save", table: "Entry"))
-            .frame(maxWidth: .infinity)
+        if kindChosen?.wrappedValue ?? true {
+          Button(action: save) {
+            Text(verbatim: environment.language("entry.save", table: "Entry"))
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.large)
+          // Return saves from any field of the form — a menu, the date, a checkbox — while the
+          // focus is in it; with the focus in the list beside it Return is the list's.
+          .keyboardShortcut(focusedInside ? .defaultAction : nil)
+          .accessibilityIdentifier("entry.form.save")
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        // Return saves from any field of the form — a menu, the date, a checkbox — while the
-        // focus is in it; with the focus in the list beside it Return is the list's.
-        .keyboardShortcut(focusedInside ? .defaultAction : nil)
-        .accessibilityIdentifier("entry.form.save")
       }
       .padding(Self.inset)
     }

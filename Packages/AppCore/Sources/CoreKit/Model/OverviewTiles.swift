@@ -42,6 +42,8 @@ public enum OverviewTile: String, CaseIterable, Sendable, Hashable, Codable {
   case freeMoney
   /// «График валюты»: a pair of currencies over a week, a month or a year.
   case currencyChart
+  /// «Календарь»: the days of this week with my spending of each, and what is planned ahead.
+  case spendingCalendar
 }
 
 /// Which tiles Overview shows and in what order, as the owner chose them, and the one rule that

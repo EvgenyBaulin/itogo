@@ -46,10 +46,18 @@ enum RowTitle: Hashable, Sendable {
 
   static func resolve(note: String?, category: CategoryPath?, kind: TransactionKind) -> RowTitle {
     if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
-      return .note(note)
+      return .note(oneLine(note))
     }
     if let category { return .category(category) }
     return .kind(kind)
+  }
+
+  /// A description of several lines reads as one in a row: the lines joined by spaces.
+  static func oneLine(_ note: String) -> String {
+    note.split(whereSeparator: \.isNewline)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
   }
 
   /// A split names itself by the category of its first part that has one: that is the part

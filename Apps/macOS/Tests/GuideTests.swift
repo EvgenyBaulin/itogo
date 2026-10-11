@@ -143,4 +143,56 @@ final class GuideTests: XCTestCase {
     XCTAssertTrue(
       GuideCatalog.tutorial.tasks.first { $0.id == "task.coffee" }!.done.isMet(by: facts))
   }
+
+  // MARK: The starter set and the tutorial
+
+  /// Every way of living the starter set asks about is one the tutorial knows: a new one must
+  /// be added to the guide too, or its tasks would never come.
+  func testEveryWayOfLivingOfTheStarterSetIsKnownToTheGuide() {
+    for lifestyle in Lifestyle.allCases {
+      XCTAssertNotNil(GuideLifestyle(rawValue: lifestyle.rawValue), lifestyle.rawValue)
+    }
+    XCTAssertEqual(GuideLifestyle.allCases.count, Lifestyle.allCases.count)
+  }
+
+  /// The set applied is remembered in the guide's memory on this Mac, survives a new store (a
+  /// relaunch into the tutorial) and «Начать заново», and chooses the tasks.
+  func testTheStarterSetChoosesTheTasksOfTheTutorial() {
+    let guide = GuideStore(defaults: defaults, tutorial: true)
+    XCTAssertEqual(guide.tutorial.tasks.count, 10, "without a set: the tasks for everyone")
+
+    guide.remember(
+      StarterChoice(lifestyles: [.kids, .working], hasLoans: true, hasSubscriptions: false))
+    let ids = guide.tutorial.tasks.map(\.id)
+    XCTAssertTrue(ids.contains("task.kids"))
+    XCTAssertTrue(ids.contains("task.lunch"))
+    XCTAssertTrue(ids.contains("task.loan"))
+    XCTAssertFalse(ids.contains("task.subscription"), "the set said: no subscriptions")
+    XCTAssertFalse(ids.contains("task.textbook"))
+
+    let relaunched = GuideStore(defaults: defaults, tutorial: true)
+    XCTAssertEqual(relaunched.tutorial.tasks.map(\.id), ids)
+    relaunched.restartTutorial()
+    XCTAssertEqual(relaunched.tutorial.tasks.map(\.id), ids)
+  }
+
+  /// A debt, a goal and a cashback rule added after the start are facts; the ones the set had,
+  /// and a baseline kept from before they were counted, are not.
+  func testTheDebtsGoalsAndCashbackRulesCountFromTheStart() throws {
+    var dataset = Dataset()
+    let baseline = GuideBaseline(of: dataset, at: Date())
+    dataset.debts = [Debt(direction: .iOwe, type: .loan, name: "Car")]
+    dataset.goals = [Goal(name: "Cushion", targetE4: AmountE4(whole: 100_000))]
+    let facts = GuideFactsReader.facts(of: dataset, since: baseline)
+    XCTAssertEqual(facts.debtsAdded, 1)
+    XCTAssertEqual(facts.goalsAdded, 1)
+    XCTAssertEqual(facts.cashbackRulesAdded, 0)
+
+    var older = baseline
+    older.debts = nil
+    older.goals = nil
+    let fromOlder = GuideFactsReader.facts(of: dataset, since: older)
+    XCTAssertEqual(fromOlder.debtsAdded, 0)
+    XCTAssertEqual(fromOlder.goalsAdded, 0)
+  }
 }

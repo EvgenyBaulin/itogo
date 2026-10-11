@@ -75,8 +75,15 @@ struct GuideCatalogTests {
       operations: [
         GuideOperation(text: "Кофе у дома", amountE4: 3_000_000),
         GuideOperation(text: "ужин", amountE4: 12_000_000, forSomebodyElse: true),
+        GuideOperation(text: "учебник", amountE4: 8_000_000),
+        GuideOperation(text: "обед", amountE4: 4_500_000),
+        GuideOperation(text: "заказчик", amountE4: 200_000_000, kind: .income),
+        GuideOperation(text: "помощь маме", amountE4: 30_000_000),
+        GuideOperation(text: "свидание", amountE4: 25_000_000),
+        GuideOperation(text: "игрушки", amountE4: 15_000_000),
       ],
-      scheduledPaymentsAdded: 1, countsMade: 1, transfersAdded: 1)
+      scheduledPaymentsAdded: 1, countsMade: 1, transfersAdded: 1, debtsAdded: 1, goalsAdded: 1,
+      cashbackRulesAdded: 1)
     for task in allTasks {
       #expect(task.done.isMet(by: facts), "\(task.id)")
     }
@@ -126,11 +133,11 @@ struct GuideProgressTests {
 
   @Test func severalVersionsAreShownOldestFirst() {
     let later = GuideScenario(
-      kind: .whatsNew(version: GuideVersion(major: 1, minor: 5)),
+      kind: .whatsNew(version: GuideVersion(major: 1, minor: 6)),
       cards: [GuideCard(id: "x", title: .init("а", "a"), body: .init("б", "b"), symbol: "star")])
     let progress = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.3.2")
-    let due = progress.whatsNewDue(current: "1.5.0", catalog: [later] + GuideCatalog.whatsNew)
-    #expect(due.map(\.id) == ["whatsNew.1.4", "whatsNew.1.5"])
+    let due = progress.whatsNewDue(current: "1.6.0", catalog: [later] + GuideCatalog.whatsNew)
+    #expect(due.map(\.id) == ["whatsNew.1.4", "whatsNew.1.5", "whatsNew.1.6"])
     #expect(
       progress.whatsNewDue(current: "1.4.1", catalog: [later] + GuideCatalog.whatsNew).count == 1)
   }

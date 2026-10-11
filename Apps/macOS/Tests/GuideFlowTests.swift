@@ -177,7 +177,7 @@ final class GuideFlowTests: XCTestCase {
       Self.russian("guide.menu.restart", table: "Guide"), "Начать учебный режим заново")
   }
 
-  /// Each item does what it says: the cards of the first launch, of «Что нового» of 1.4, the
+  /// Each item does what it says: the cards of the first launch, of the latest «Что нового», the
   /// labels of «Показать, куда нажимать».
   func testTheItemsOfTheHelpMenuShowTheGuide() throws {
     press(try XCTUnwrap(item("guide.menu.tour")))
@@ -185,7 +185,7 @@ final class GuideFlowTests: XCTestCase {
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whatsNew")))
-    XCTAssertEqual(guide.cards?.id, "whatsNew.1.4")
+    XCTAssertEqual(guide.cards?.id, "whatsNew.1.5")
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whereToClick")))
@@ -357,7 +357,9 @@ final class GuideFlowTests: XCTestCase {
     marked.formUnion(marks(of: PlanningView().appDependencies(deps), width: 980))
     // A toolbar item and the settings window have no place in the window to frame: their tasks
     // say where to press in words.
-    let elsewhere: Set<String> = ["toolbar.reconcile", "settings.overviewTiles"]
+    let elsewhere: Set<String> = [
+      "toolbar.reconcile", "settings.overviewTiles", "settings.accounts",
+    ]
     for task in GuideCatalog.tutorial.tasks {
       let target = try XCTUnwrap(task.hints.first?.target)
       guard !elsewhere.contains(target) else { continue }

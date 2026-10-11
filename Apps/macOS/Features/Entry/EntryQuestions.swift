@@ -34,13 +34,3 @@ struct AheadQuestion: Identifiable {
     plan == .payment ? "entry.ahead.planPayment" : "entry.ahead.planIncome"
   }
 }
-
-/// The sheet of a transfer that «Перевести…» of the panel opens: the form it starts with.
-struct TransferRequest: Identifiable {
-  let id = UUID()
-  let form: TransferForm
-  /// The sheet saves as soon as it opens: the line named everything a transfer needs.
-  var saveAtOnce = false
-  /// Started by «перевод …» typed in the line, not by «Перевести…».
-  var fromTheLine = false
-}

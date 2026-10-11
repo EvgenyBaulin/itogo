@@ -467,12 +467,14 @@ final class MainWindowLayoutTests: XCTestCase {
     environment.entryStyle = .form
     settle(window, passes: 20, "after choosing the form")
     XCTAssertNil(textFields().first { $0.placeholderString == prompt }, "the line is gone")
-    XCTAssertNotNil(textFields().first { $0.placeholderString == "0" }, "the form's amount")
+    // The form opens on its quick line and the kinds; the fields come with a kind.
+    let quick = environment.language("entry.quick.prompt", table: "Entry")
+    XCTAssertNotNil(textFields().first { $0.placeholderString == quick }, "the form's quick line")
 
     environment.entryStyle = .line
     settle(window, passes: 20, "after choosing the line again")
     XCTAssertNotNil(textFields().first { $0.placeholderString == prompt }, "the line is back")
-    XCTAssertNil(textFields().first { $0.placeholderString == "0" }, "the form is gone")
+    XCTAssertNil(textFields().first { $0.placeholderString == quick }, "the form is gone")
   }
 
   // MARK: - Where the room under the bar comes from
@@ -661,6 +663,7 @@ final class MainWindowLayoutTests: XCTestCase {
       environment.language("action.reconcile"), environment.language("window.transactions"),
       environment.language("window.analytics"), environment.language("window.reports"),
       environment.language("action.export"), UpdateService.title(environment),
+      PrivacyCommands.amountsTitle(environment),
     ]
     for title in expected {
       XCTAssertTrue(labels.contains(title), "the toolbar has no «\(title)»: \(labels.sorted())")

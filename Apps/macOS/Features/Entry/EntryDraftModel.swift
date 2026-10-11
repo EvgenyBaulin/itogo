@@ -553,6 +553,53 @@ public final class EntryDraftModel {
   /// reading fills from a word the next reading takes back once the line no longer names it —
   /// the word was only half typed (`TypedFills`).
   public func apply(
+    _ reading: InputLineReading, amount: AmountE4, today: DateOnly, text: String? = nil,
+    whileTyping: Bool = false
+  ) {
+    timeOfTheLine = reading.timeOfDay
+    defer { timeOfTheLine = nil }
+    apply(reading.parsed, amount: amount, today: today, text: text, whileTyping: whileTyping)
+    takeTheCashback(of: reading)
+  }
+
+  /// The time of day the line being applied names («в 18:09»): the moment is that time of the
+  /// day the line names, or of today.
+  private var timeOfTheLine: TimeOfDay?
+  /// What the line last wrote into «Кэшбэк». While the field still says it, the next line writes
+  /// its own — or empties the field when it names none —; a figure typed in the panel stays.
+  private var cashbackFromTheLine: String?
+
+  /// «кэшбек 9.76», «кэшбек 3%»: the figure goes into «Кэшбэк» as if typed there — a percent is
+  /// turned into money by the account's rounding when the operation is written. An operation
+  /// without a cashback gets the words back in its note.
+  private func takeTheCashback(of reading: InputLineReading) {
+    let typed: String? = reading.cashback.map { cashback in
+      switch cashback {
+      case .amount(let amount): NumberText.plain(amount)
+      case .percent(let percent): NumberText.plain(percent) + "%"
+      }
+    }
+    if typed != nil, !showsCashback {
+      if let phrase = reading.cashbackPhrase, !phrase.isEmpty, draft.note == noteFromTheLine,
+        !(draft.note ?? "").contains(phrase)
+      {
+        let note = [draft.note ?? "", phrase].filter { !$0.isEmpty }.joined(separator: " ")
+        draft.note = note
+        noteFromTheLine = note
+      }
+      return
+    }
+    guard cashbackField.text.isEmpty || cashbackField.text == cashbackFromTheLine else { return }
+    if let typed {
+      cashbackField.text = typed
+      cashbackFromTheLine = typed
+    } else if cashbackFromTheLine != nil {
+      cashbackField.text = ""
+      cashbackFromTheLine = nil
+    }
+  }
+
+  public func apply(
     _ parsed: ParsedInput, amount: AmountE4, today: DateOnly, text: String? = nil,
     whileTyping: Bool = false
   ) {
@@ -597,10 +644,10 @@ public final class EntryDraftModel {
         parsed.cardId ?? CardRules.cardAfterAccountChange(draft.cardId, to: named, cards: liveCards)
     }
     draft.debtId = parsed.debtId ?? draft.debtId
-    if parsed.date != nil || draft.occurredAt == dateFromTheLine {
-      draft.occurredAt = occurredAt(for: parsed.date, today: today)
+    if parsed.date != nil || timeOfTheLine != nil || draft.occurredAt == dateFromTheLine {
+      draft.occurredAt = occurredAt(for: parsed.date, at: timeOfTheLine, today: today)
       dateFromTheLine = draft.occurredAt
-      dateFollowsTheClock = parsed.date == nil || parsed.date == today
+      dateFollowsTheClock = timeOfTheLine == nil && (parsed.date == nil || parsed.date == today)
     }
     suggestedPersonName = parsed.unknownPersonName
     suggestedPlaceName = parsed.unknownPlaceName
@@ -1363,7 +1410,8 @@ public final class EntryDraftModel {
         ?? entry.transaction.note)
   }
 
-  private func occurredAt(for day: DateOnly?, today: DateOnly) -> Date {
+  private func occurredAt(for day: DateOnly?, at time: TimeOfDay? = nil, today: DateOnly) -> Date {
+    if let time { return calendar.moment(day ?? today, hour: time.hour, minute: time.minute) }
     guard let day, day != today else { return Date() }
     return calendar.startOfDay(day).addingTimeInterval(12 * 3600)
   }
@@ -1452,7 +1500,28 @@ public final class EntryDraftModel {
   public func setPlace(_ id: UUID?, today: DateOnly) {
     guard draft.placeId != id else { return }
     draft.placeId = id
+    if !assisted { fileByThePlace() }
     applyDefaults(today: today)
+  }
+
+  /// The form at the side takes nothing from history but this: a place chosen there brings the
+  /// category and subcategory of the last operation at it, unless the owner chose a category by
+  /// hand in this draft — that one stays. Another place chosen after it brings its own.
+  private func fileByThePlace() {
+    guard has(.category), let place = draft.placeId, !draft.parts.isEmpty else { return }
+    let first = draft.parts[0]
+    guard first.categoryId == nil || first.categorySource != .manual else { return }
+    let last = otherOperations().first { entry in
+      entry.transaction.placeId == place
+        && entry.transaction.kind.categoryKind
+          == draft.kind
+          .categoryKind
+    }
+    guard let categoryId = last?.parts.first?.categoryId, isOffered(categoryId) else { return }
+    setCategory(categoryId, forPartAt: 0, source: .history)
+    // Stored as the most specific category: the subcategory too, when the last one had it.
+    draft.parts[0].categoryId = categoryId
+    draft.parts[0].categorySource = .history
   }
 
   /// An account chosen by hand stays whatever place is chosen after it, and its main currency
@@ -2294,6 +2363,20 @@ public final class EntryDraftModel {
   /// What the panel is asked to put the keyboard focus on: the control a stop asks for.
   var focusRequest: PanelFocusRequest?
 
+  /// The transfer the panel writes instead of an operation while the kind «Перевод» is chosen;
+  /// `nil` while it holds an operation. The draft of the operation stays as it was beside it.
+  var transfer: TransferEntry?
+
+  /// «Перевод» chosen in the panel: the transfer starts with what the panel holds — the amount,
+  /// its currency, the account, the day and the note (`TransferForm(fromThePanel:)`).
+  func chooseTransfer(calendar: CalendarContext) {
+    guard transfer == nil else { return }
+    transfer = TransferEntry(
+      form: TransferForm(
+        fromThePanel: draft, account: selectedAccount, accounts: paymentMethods,
+        calendar: calendar))
+  }
+
   /// The field Enter asks for before a new operation is saved (`EntryCompleteness`): the
   /// category the line did not say, or the subcategory the model left open. A category is asked
   /// until one is chosen — the same line again, or Return in the panel, saves nothing without
@@ -2737,7 +2820,9 @@ public final class EntryDraftModel {
   }
 
   public func reset() {
-    // First: the figure typed for the operation just saved is not the next one's.
+    // A transfer written or thrown away: the next entry is an operation again.
+    transfer = nil
+    // The figure typed for the operation just saved is not the next one's.
     cashbackField = CashbackFieldState()
     // Nor is the month chosen or laid for it.
     periodMonthChosen = false
@@ -2759,6 +2844,7 @@ public final class EntryDraftModel {
     unmatchedPersonPhrase = nil
     unmatchedPlacePhrase = nil
     noteFromTheLine = nil
+    cashbackFromTheLine = nil
     dateFromTheLine = draft.occurredAt
     amountFromTheLine = nil
     dateFollowsTheClock = true

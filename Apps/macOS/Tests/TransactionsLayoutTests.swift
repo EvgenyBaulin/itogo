@@ -779,16 +779,79 @@ final class TransactionsLayoutTests: XCTestCase {
     var controls: [NSControl] = []
     Self.allSubviews(of: column, into: &controls)
     XCTAssertFalse(controls.isEmpty, "the inspector shows no controls, \(language)")
-    let outside = controls.compactMap { control -> String? in
+    XCTAssertEqual(
+      Self.controlsOutside(column), [],
+      "controls reach past the inspector column of \(Int(column.bounds.width)) pt, "
+        + "\(entry.transaction.note ?? "") \(language)")
+  }
+
+  /// The controls of a column that reach past either of its edges, with where they are.
+  private static func controlsOutside(_ column: NSView) -> [String] {
+    var controls: [NSControl] = []
+    allSubviews(of: column, into: &controls)
+    return controls.compactMap { control -> String? in
       let frame = control.convert(control.bounds, to: column)
       guard frame.width > 0, frame.minX < -0.5 || frame.maxX > column.bounds.width + 0.5
       else { return nil }
       return "\(type(of: control)) \(Int(frame.minX))…\(Int(frame.maxX))"
     }
-    XCTAssertEqual(
-      outside, [],
-      "controls reach past the inspector column of \(Int(column.bounds.width)) pt, "
-        + "\(entry.transaction.note ?? "") \(language)")
+  }
+
+  /// The editor must fit the narrowest column the inspector can be, whatever scroll bars the Mac
+  /// shows. On 11.10 it did not: with «Show scroll bars: Automatically» and a mouse connected,
+  /// macOS gives legacy scroll bars, which take 17 pt from the content; the editor, whose kinds
+  /// and «За кого» were segments wider than the column (390 and 356 pt in English, 524 and 370
+  /// in Russian), then asked for 354 pt in English — a drag could no longer narrow it, and the
+  /// segments stood past both edges of a 360 pt column — and in Russian, on some passes, for
+  /// 569 pt, the natural width of the kinds: the split could not give more than 440, gave 440,
+  /// was asked for 569 again, and the window looped until AppKit threw — the death of 1.2.0.
+  /// With overlay scroll bars the same pass asked for 552 and happened to settle, so the tests
+  /// that passed on 07.10 failed on the same code on 11.10. Both kinds of scroll bars are put in
+  /// place here by hand, so the answer does not depend on the Mac that runs it.
+  func testTheInspectorNeverAsksForMoreThanItsColumnCanGive() throws {
+    try TestEnvironment.requireScreen(width: 1_120)
+    for style in [NSScroller.Style.legacy, .overlay] {
+      for language in [AppLanguage.Choice.english, .russian] {
+        environment.language.choice = language
+        for entry in [plain!, split!] {
+          let what =
+            "\(style == .legacy ? "legacy" : "overlay") scroll bars, \(language.rawValue), "
+            + (entry.transaction.note ?? "")
+          try ScrollerStyleOverride.with(style) {
+            try assertTheInspectorFitsItsNarrowestColumn(entry, what)
+          }
+        }
+      }
+    }
+  }
+
+  private func assertTheInspectorFitsItsNarrowestColumn(
+    _ entry: TransactionEntry, _ what: String
+  ) throws {
+    // Opened with the inspector: the way that looped — inside the opening itself, so the loop
+    // shows as AppKit's exception, not in the log. The table says it was re-entered while it
+    // fills on every opening of the window, which is why the log is read only from here on.
+    let window = watched(30, "opening with the inspector, \(what)") {
+      makeWindow(editing: TransactionEditorModel(entry: entry, environment: environment))
+    }
+    defer { window.close() }
+    try waitForTable(window)
+    let probe = LogProbe()
+    let before = probe.counts(of: loopMessages)
+    let records = settle(window, passes: 40, "with the inspector, \(what)")
+    assertSettled(records, window, "with the inspector, \(what)")
+    XCTAssertTrue(inspectorIsOpen(window), "the inspector folded away, \(what)")
+    XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar gave way, \(what)")
+    XCTAssertEqual(window.frame.width, 1120, accuracy: 1, "the window grew, \(what)")
+    guard let column = inspectorColumn(window) else {
+      return XCTFail("no inspector column, \(what)")
+    }
+    // What the content asks of the split, settled: never more than the column's own minimum.
+    XCTAssertLessThanOrEqual(
+      column.fittingSize.width, TransactionInspector.minimumWidth + 0.5,
+      "the editor asks for more than the narrowest inspector, \(what)")
+    XCTAssertEqual(Self.controlsOutside(column), [], "controls past the column, \(what)")
+    probe.assertQuiet(about: loopMessages, comparedWith: before, what)
   }
 
   /// The view of the inspector column, asked of AppKit.
@@ -1557,5 +1620,33 @@ final class TransactionsLayoutTests: XCTestCase {
       }
     }
     return false
+  }
+}
+
+/// The scroll bars the Mac shows, chosen by a test. «Show scroll bars: Automatically», the
+/// default, gives legacy scroll bars — 17 pt taken from the content beside them — while a mouse
+/// is connected, and overlay ones otherwise: a layout that depends on it passes on one Mac and
+/// loops on another, or on the same Mac with the mouse switched off.
+@MainActor
+enum ScrollerStyleOverride {
+  static func with<T>(_ style: NSScroller.Style, _ body: () throws -> T) rethrows -> T {
+    guard
+      let method = class_getClassMethod(
+        NSScroller.self, #selector(getter: NSScroller.preferredScrollerStyle))
+    else { return try body() }
+    let original = method_getImplementation(method)
+    let raw = style.rawValue
+    let answer: @convention(block) (AnyObject) -> Int = { _ in raw }
+    let replacement = imp_implementationWithBlock(answer)
+    method_setImplementation(method, replacement)
+    NotificationCenter.default.post(
+      name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
+    defer {
+      method_setImplementation(method, original)
+      imp_removeBlock(replacement)
+      NotificationCenter.default.post(
+        name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
+    }
+    return try body()
   }
 }

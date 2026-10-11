@@ -2,7 +2,7 @@ import AppCore
 import AppDatabase
 import Foundation
 
-/// A transfer as the sheet holds it while the owner fills it in: where the money leaves, where
+/// A transfer as its fields hold it while the owner fills it in: where the money leaves, where
 /// it arrives, how much went and came, the fee, the day and the note. Nothing here is written.
 struct TransferForm: Hashable, Sendable {
   var fromAccountId: UUID?
@@ -95,7 +95,7 @@ struct TransferForm: Hashable, Sendable {
 
   /// «перевод 5000 сбер т-банк»: the accounts the line named, then what the draft holds — the
   /// amount, its currency, the day and the note — as «Перевести…» takes them. A side the line
-  /// did not name stays empty for the sheet to choose: the main account is never put there by
+  /// did not name stays empty for the owner to choose: the main account is never put there by
   /// itself.
   init(
     fromTheLine reading: TransferReading, draft: TransactionDraft, accounts: [PaymentMethod],
@@ -114,8 +114,26 @@ struct TransferForm: Hashable, Sendable {
     }
   }
 
-  /// Whether the sheet may write the transfer the line named without a word: both accounts
-  /// known and different, one currency, and an amount.
+  /// The entry line typed while the fields of a transfer are open: the accounts it names, the
+  /// amount, its currency and the day go over what the fields hold; what it does not name stays
+  /// as the owner chose it.
+  mutating func take(
+    line reading: TransferReading?, amount: AmountE4?, currency: CurrencyCode?, day: DateOnly?,
+    accounts: [PaymentMethod]
+  ) {
+    func account(_ id: UUID?) -> PaymentMethod? { accounts.first { $0.id == id } }
+    if let from = account(reading?.fromAccountId) { chooseFrom(from) }
+    if let currency, let from = account(fromAccountId), from.holds(currency) {
+      fromCurrency = currency
+      if reading?.toAccountId == nil, let to = account(toAccountId) { chooseTo(to) }
+    }
+    if let to = account(reading?.toAccountId) { chooseTo(to) }
+    if let amount, amount.raw > 0 { sent = amount }
+    if let day { self.day = day }
+  }
+
+  /// Whether the line may write the transfer it named without a word: both accounts known and
+  /// different, one currency, and an amount.
   func savesAtOnce(_ reading: TransferReading) -> Bool {
     reading.isComplete && fromAccountId != nil && toAccountId != nil && !isExchange
       && sent.raw > 0

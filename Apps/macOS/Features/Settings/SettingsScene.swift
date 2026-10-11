@@ -221,6 +221,9 @@ struct GeneralSettingsView: View {
         .accessibilityIdentifier("settings.tips.off")
       }
 
+      // Hiding the amounts and the lock: switches of this Mac, never in the archive.
+      PrivacySettingsSection()
+
       Section {
         Toggle(
           isOn: Binding(

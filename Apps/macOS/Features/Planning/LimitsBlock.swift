@@ -9,7 +9,8 @@ import SwiftUI
 /// then close to it, then by the share spent — as many as Settings → Планирование says. Each
 /// with a symbol and a word for the status, «spent / available», a thin bar, the pace and the
 /// forecast, and what is carried over. A click on the amount edits it in place; «Все лимиты»
-/// opens every one of them in a sheet of this block's own.
+/// opens every one of them in a sheet of this block's own, «Предложить лимиты…» the limits the
+/// last months suggest.
 struct LimitsBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -21,6 +22,7 @@ struct LimitsBlock: View {
   @State private var editing: UUID?
   @State private var refusal: String?
   @State private var showsAll = false
+  @State private var suggests = false
 
   var body: some View {
     ComputedBlock(
@@ -43,6 +45,12 @@ struct LimitsBlock: View {
         HStack(spacing: 8) {
           Button(t("limits.add")) { sheet = .budget(nil) }
             .buttonStyle(.bordered)
+          Button(t("limits.suggest.open")) {
+            editing = nil
+            suggests = true
+          }
+          .buttonStyle(.bordered)
+          .accessibilityIdentifier("limits.suggest.open")
           if ranked.total > ranked.shown.count {
             Button(environment.format("limits.all", table: "Planning", counts: ranked.total)) {
               editing = nil
@@ -68,6 +76,10 @@ struct LimitsBlock: View {
     // own sheet, which holds the forms.
     .sheet(isPresented: $showsAll) {
       AllLimitsSheet()
+        .handingOver(dependencies)
+    }
+    .sheet(isPresented: $suggests) {
+      LimitSuggestionsSheet()
         .handingOver(dependencies)
     }
   }

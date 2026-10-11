@@ -34,17 +34,24 @@ public struct GuideProgress: Hashable, Sendable, Codable {
   public var events: Set<String>
   /// «Больше не показывать подсказки».
   public var tipsOff: Bool
+  /// What the owner told the starter set last, for the tasks of the tutorial; nil before he
+  /// applied one. A memory written before the set was remembered reads as nil.
+  public var profile: GuideProfile?
 
   public init(
     firstLaunchShown: Bool = false, whatsNewSeen: String? = nil, tasksDone: Set<String> = [],
-    events: Set<String> = [], tipsOff: Bool = false
+    events: Set<String> = [], tipsOff: Bool = false, profile: GuideProfile? = nil
   ) {
     self.firstLaunchShown = firstLaunchShown
     self.whatsNewSeen = whatsNewSeen
     self.tasksDone = tasksDone
     self.events = events
     self.tipsOff = tipsOff
+    self.profile = profile
   }
+
+  /// The tasks of the tutorial for the starter set remembered.
+  public var tutorialTasks: [GuideTask] { GuideCatalog.tutorialTasks(for: profile) }
 
   /// The memory of a device that has none yet. A database already in use means the app was
   /// there before the guide (1.3 or older): its owner gets «Что нового» from 1.4 on, not the
@@ -78,7 +85,7 @@ public struct GuideProgress: Hashable, Sendable, Codable {
     (tasks.filter { tasksDone.contains($0.id) }.count, tasks.count)
   }
 
-  /// «Начать заново»: the tasks and their events go, the rest stays.
+  /// «Начать заново»: the tasks and their events go, the rest — the starter set too — stays.
   public mutating func restartTutorial() {
     tasksDone = []
     events = []

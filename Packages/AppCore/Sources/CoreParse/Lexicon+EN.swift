@@ -102,6 +102,13 @@ extension Lexicon {
   /// «от» / "from": the person money back came from, in both languages.
   static let fromMarkers: Set<String> = englishFromMarkers.union(russianFromMarkers)
   static let englishPlaceMarkers: Set<String> = ["at", "in"]
+  /// The cashback the bank gave for the purchase: "cashback 9.76", "cash back 3%".
+  static let englishCashbackWords: Set<String> = ["cashback", "cash-back"]
+  static let englishCashbackPhrases: [[String]] = [["cash", "back"]]
+  /// "cashback 5 percent".
+  static let englishPercentWords: Set<String> = ["%", "percent", "pct"]
+  /// "at 6:09pm": the word in front of a time goes with it.
+  static let englishTimeMarkers: Set<String> = ["at"]
   static let englishHalfWords: Set<String> = ["split", "halves"]
   static let englishWithWords: Set<String> = ["with"]
   static let englishGiftWords: Set<String> = ["treated"]

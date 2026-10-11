@@ -5,8 +5,8 @@ import XCTest
 
 @testable import Itogo
 
-/// The form at the side of the window (`EntryStyle.form`): every field always open, no line, its
-/// own «Save» and «Clear», Return from its fields, and nothing taken from history.
+/// The form at the side of the window (`EntryStyle.form`): no line, the fields open once a kind is
+/// chosen, its own «Save» and «Clear», Return from its fields, and nothing taken from history.
 @MainActor
 final class EntryFormTests: XCTestCase {
   private var host: EntryHost?
@@ -17,12 +17,14 @@ final class EntryFormTests: XCTestCase {
     host = nil
   }
 
+  /// The form with «Расход» chosen: its fields are open.
   private func openForm() async throws -> EntryHost {
     let cafe = cafe
     let host = try await EntryHost(opensDetails: false, style: .form) { environment in
       try environment.references!.save(cafe)
     }
     self.host = host
+    try press("entry.kind.expense", in: host)
     return host
   }
 
@@ -81,8 +83,8 @@ final class EntryFormTests: XCTestCase {
 
   // MARK: The tests
 
-  /// The form is there at once: its fields are on screen, and the line, the chips and the
-  /// chevron of the capsule are not.
+  /// The form is there at once — its fields once a kind is chosen —, and the line, the chips and
+  /// the chevron of the capsule are not.
   func testTheFormHasNoLineAndShowsItsFieldsAtOnce() async throws {
     try TestEnvironment.requireSwiftUIAccessibility()
     let host = try await openForm()
@@ -109,6 +111,9 @@ final class EntryFormTests: XCTestCase {
     let saved = try XCTUnwrap(try host.transactions.recentEntries(limit: 5).first)
     XCTAssertEqual(saved.transaction.amountE4, AmountE4(whole: 250))
     XCTAssertEqual(saved.parts.first?.categoryId, cafe.id)
+    XCTAssertNil(
+      host.textFields().first { $0.placeholderString == "0" }, "the form is back at the kinds")
+    try press("entry.kind.expense", in: host)
     XCTAssertEqual(try host.field(prompt: "0").stringValue, "", "the form is empty again")
     XCTAssertNotNil(element(identified: "entry.form.save", in: host.window), "and still there")
   }
@@ -134,6 +139,7 @@ final class EntryFormTests: XCTestCase {
     try host.type("250", into: try host.field(prompt: "0"))
     XCTAssertEqual(try host.field(prompt: "0").stringValue, "250")
     try press("entry.form.clear", in: host)
+    try press("entry.kind.expense", in: host)
     XCTAssertEqual(try host.field(prompt: "0").stringValue, "")
     XCTAssertEqual(try host.transactions.count(), 0)
   }
@@ -146,6 +152,7 @@ final class EntryFormTests: XCTestCase {
       try EntryHost.history("coffee", in: environment)
     }
     self.host = host
+    try press("entry.kind.expense", in: host)
     let noteTitle = host.environment.language("entry.note", table: "Entry")
     try host.type("coffee", into: try host.field(prompt: noteTitle))
     try host.type("250", into: try host.field(prompt: "0"))

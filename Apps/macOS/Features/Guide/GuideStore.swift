@@ -142,22 +142,35 @@ final class GuideStore {
     guard isTutorial else { return }
     let baseline = baseline(of: dataset)
     let fresh = progress.record(
-      GuideFactsReader.facts(of: dataset, since: baseline), tasks: GuideCatalog.tutorial.tasks)
+      GuideFactsReader.facts(of: dataset, since: baseline), tasks: progress.tutorialTasks)
     guard !fresh.isEmpty else { return }
     save()
     if framedTask.map(fresh.contains) == true { framedTask = nil }
     AppLog.info(
       "guide.tasksDone", .ui, "tasks of the tutorial were found done",
       [
-        LogPair("done", .count(progress.progress(of: GuideCatalog.tutorial.tasks).done)),
+        LogPair("done", .count(progress.progress(of: progress.tutorialTasks).done)),
         LogPair("fresh", .count(fresh.count)),
       ])
   }
 
-  /// The tasks and how many are done: «3 из 10».
+  /// The tasks and how many are done: «3 из 10». The tasks follow the starter set remembered.
   var tutorial: (tasks: [GuideTask], done: Int) {
-    let tasks = GuideCatalog.tutorial.tasks
+    let tasks = progress.tutorialTasks
     return (tasks, progress.progress(of: tasks).done)
+  }
+
+  /// The starter set the owner applied, remembered for the tutorial's tasks — on this Mac, with
+  /// the rest of the guide's memory. The last one applied is the one remembered.
+  func remember(_ choice: StarterChoice) {
+    progress.profile = GuideProfile(
+      lifestyleNames: choice.lifestyles.map(\.rawValue), hasLoans: choice.hasLoans,
+      hasSubscriptions: choice.hasSubscriptions, tracksCashback: choice.tracksCashback,
+      wantsACushion: choice.wantsACushion)
+    save()
+    AppLog.info(
+      "guide.starterRemembered", .ui, "the starter set was remembered for the tutorial",
+      [LogPair("tasks", .count(progress.tutorialTasks.count))])
   }
 
   func isDone(_ task: GuideTask) -> Bool { progress.tasksDone.contains(task.id) }
@@ -197,18 +210,25 @@ final class GuideStore {
   }
 }
 
-/// What the tutorial's set held when the tutorial began.
+/// What the tutorial's set held when the tutorial began. The debts, goals and cashback rules
+/// came later: a baseline kept from before them has none, and they count from when it is read.
 struct GuideBaseline: Codable, Hashable {
   var startedAt: Date
   var scheduled: Int
   var counts: Int
   var transfers: Int
+  var debts: Int?
+  var goals: Int?
+  var cashbackRules: Int?
 
   init(of dataset: Dataset, at moment: Date) {
     startedAt = moment
     scheduled = dataset.planning.scheduled.count
     counts = dataset.planning.reconciliations.count
     transfers = dataset.transfers.count
+    debts = dataset.debts.count
+    goals = dataset.goals.count
+    cashbackRules = dataset.cashbackRules.count
   }
 }
 
@@ -237,6 +257,10 @@ enum GuideFactsReader {
     facts.scheduledPaymentsAdded = max(0, dataset.planning.scheduled.count - baseline.scheduled)
     facts.countsMade = max(0, dataset.planning.reconciliations.count - baseline.counts)
     facts.transfersAdded = max(0, dataset.transfers.count - baseline.transfers)
+    facts.debtsAdded = max(0, dataset.debts.count - (baseline.debts ?? dataset.debts.count))
+    facts.goalsAdded = max(0, dataset.goals.count - (baseline.goals ?? dataset.goals.count))
+    facts.cashbackRulesAdded = max(
+      0, dataset.cashbackRules.count - (baseline.cashbackRules ?? dataset.cashbackRules.count))
     return facts
   }
 }

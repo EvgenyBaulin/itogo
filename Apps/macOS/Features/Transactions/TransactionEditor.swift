@@ -391,8 +391,10 @@ struct TransactionEditor: View {
       header
       ScrollView {
         // Return in a text field saves, as «Save» does when it is on.
-        DetailsPanel(model: editor.draft, submit: saveOnReturn)
-          .padding(.vertical, 2)
+        DetailsPanel(
+          model: editor.draft, submit: saveOnReturn, hasRoomForSegments: style == .sheet
+        )
+        .padding(.vertical, 2)
       }
       .frame(minWidth: style == .sheet ? 620 : nil, minHeight: style == .sheet ? 360 : nil)
 

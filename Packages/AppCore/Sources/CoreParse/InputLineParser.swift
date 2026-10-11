@@ -73,17 +73,40 @@ public struct InputLineParser: Sendable {
     var session = ParseSession(
       text: text, vocabulary: vocabulary, calendar: calendar, today: today)
     session.panelKind = kind
-    session.readKind()
-    session.readGoalAndDebt()
-    session.readPeople()
-    session.readMarkedPlace()
-    session.readTransfer()
-    session.readPayingFor()
-    session.readKnownNames()
-    session.readCurrency()
-    session.readDate()
-    session.readAmount()
+    session.run(readingTimeAndCashback: false)
     return session.finish()
+  }
+
+  /// Reads the line as `parse` does and, besides, the time of day and the cashback: «груша
+  /// вчера в 18:09 325 кэшбек 9.76» costs 325, yesterday at 18:09, with 9.76 of cashback, and
+  /// its note is «груша».
+  ///
+  /// The **time** — «18:09», «в 9:30», "at 6:09pm", "12am", "6:30 pm" — is read after the
+  /// known names and before the currency, the date and the amount; «в» or "at" in front of it
+  /// goes with it. A clock writes the minutes with two digits, so «2:1» and «18:09:30» are no
+  /// times. A word of that shape whose hour or minute no clock shows («25:00», «24:00»,
+  /// «18:61», "13pm", "0am") is `timeProblem`: the line is refused with the word, the way a
+  /// day the calendar has not is, so a slip of the finger is not saved as a note. A time is
+  /// never the amount, not even the only number of the line.
+  ///
+  /// The **cashback** is the number right behind its word («кэшбэк», «кэшбек», «кешбэк»,
+  /// "cashback", "cash back"): money read by the rules of amounts typed by hand, or a percent
+  /// («3%», «1,5 %», «7 процентов»). Money is read only when another number is left to be the
+  /// amount: «кэшбэк 250» is the cashback that came, an amount of 250. A number signed with
+  /// «+» or «−», zero, or a percent above a hundred is not read, and the words stay where
+  /// they were. Income and money back have no cashback, so in them the word is not read
+  /// either. The word without a number stays in the note.
+  public func read(
+    _ text: String, today: DateOnly, kind: TransactionKind? = nil
+  ) -> InputLineReading {
+    var session = ParseSession(
+      text: text, vocabulary: vocabulary, calendar: calendar, today: today)
+    session.panelKind = kind
+    session.run(readingTimeAndCashback: true)
+    return InputLineReading(
+      parsed: session.finish(), timeOfDay: session.timeOfDay, timeProblem: session.timeProblem,
+      timePhrase: session.timePhrase, cashback: session.cashback,
+      cashbackPhrase: session.cashbackPhrase)
   }
 }
 
@@ -104,12 +127,37 @@ private struct ParseSession {
   var claims: [Claim] = []
   /// The kind the operation already has, for a line that names none.
   var panelKind: TransactionKind?
+  var timeOfDay: TimeOfDay?
+  var timeProblem: String?
+  var timePhrase: String?
+  var cashback: CashbackReading?
+  var cashbackPhrase: String?
 
   init(text: String, vocabulary: ParserVocabulary, calendar: CalendarContext, today: DateOnly) {
     self.words = InputWord.split(text)
     self.vocabulary = vocabulary
     self.calendar = calendar
     self.today = today
+  }
+
+  /// Every pass in its order. The time and the cashback are read only for `read`, after the
+  /// known names — a name the dictionary knows keeps its words — and before the currency, the
+  /// date and the amount, which must not take their numbers.
+  mutating func run(readingTimeAndCashback: Bool) {
+    readKind()
+    readGoalAndDebt()
+    readPeople()
+    readMarkedPlace()
+    readTransfer()
+    readPayingFor()
+    readKnownNames()
+    if readingTimeAndCashback {
+      readTime()
+      readCashback()
+    }
+    readCurrency()
+    readDate()
+    readAmount()
   }
 
   // MARK: - Claims
@@ -743,6 +791,135 @@ private struct ParseSession {
       default: result.paymentMethodId = winner.entry.id
       }
       claim(winner.range, as: winner.role)
+    }
+  }
+
+  /// The first word written as a time on a clock, with «в» / "at" in front of it and "am" /
+  /// "pm" standing behind it (see `InputLineParser.read`).
+  mutating func readTime() {
+    for index in words.indices where !words[index].claimed {
+      let next = index + 1
+      let meridiemWord =
+        next < words.count && !words[next].claimed
+        ? Self.meridiem(of: words[next].normalized) : nil
+      guard let reading = clockReading(words[index].normalized, meridiem: meridiemWord) else {
+        continue
+      }
+      var start = index
+      if index > 0, !words[index - 1].claimed,
+        Lexicon.timeMarkers.contains(words[index - 1].normalized)
+      {
+        start = index - 1
+      }
+      let end = meridiemWord == nil ? next : next + 1
+      let phrase = marked(start..<end)
+      switch reading {
+      case .time(let time): timeOfDay = time
+      case .impossible:
+        timeProblem = (index..<end).map {
+          TextNormalizer.trimmingEdgePunctuation(words[$0].original)
+        }.joined(separator: " ")
+      }
+      timePhrase = phrase
+      claim(start..<end, as: .date, text: phrase)
+      return
+    }
+  }
+
+  enum ClockReading {
+    case time(TimeOfDay)
+    /// Shaped as a time, but no clock shows it.
+    case impossible
+  }
+
+  /// "am" or "pm" as a word of its own, or nil.
+  static func meridiem(of word: String) -> Bool? {
+    switch word {
+    case "am", "a.m": false
+    case "pm", "p.m": true
+    default: nil
+    }
+  }
+
+  /// A word written as a time: «18:09» and «9:30» on a 24-hour clock, «6:09pm», «9am», and
+  /// «6:30» or «6» followed by the word `meridiem` (true for "pm") on a 12-hour one. Nil for
+  /// a word of any other shape.
+  func clockReading(_ text: String, meridiem: Bool?) -> ClockReading? {
+    var body = Substring(text)
+    var afternoon = meridiem
+    if afternoon == nil, body.count > 2 {
+      if body.hasSuffix("am") { afternoon = false }
+      if body.hasSuffix("pm") { afternoon = true }
+      if afternoon != nil { body = body.dropLast(2) }
+    }
+    let parts = body.split(separator: ":", omittingEmptySubsequences: false)
+    guard allDigits(parts), (1...2).contains(parts[0].count), let hour = Int(parts[0]) else {
+      return nil
+    }
+    var minute = 0
+    switch parts.count {
+    case 1:
+      guard afternoon != nil else { return nil }
+    case 2:
+      guard parts[1].count == 2, let minutes = Int(parts[1]) else { return nil }
+      minute = minutes
+    default:
+      return nil
+    }
+    guard (0...59).contains(minute) else { return .impossible }
+    guard let afternoon else {
+      return (0...23).contains(hour) ? .time(TimeOfDay(hour: hour, minute: minute)) : .impossible
+    }
+    guard (1...12).contains(hour) else { return .impossible }
+    return .time(TimeOfDay(hour: hour % 12 + (afternoon ? 12 : 0), minute: minute))
+  }
+
+  /// The number right behind the cashback word (see `InputLineParser.read`).
+  mutating func readCashback() {
+    let namesKind = claims.contains { $0.role == .kind }
+    let kind = namesKind || panelKind == nil ? result.kind : panelKind
+    guard kind != .income, kind != .reimbursement, result.transfer == nil else { return }
+    for index in words.indices where !words[index].claimed {
+      var next = index + 1
+      if !Lexicon.cashbackWords.contains(words[index].normalized) {
+        guard
+          let phrase = Lexicon.cashbackPhrases.first(where: {
+            matches($0, at: index, loose: false)
+          })
+        else { continue }
+        next = index + phrase.count
+      }
+      guard next < words.count, !words[next].claimed else { continue }
+      let number = words[next]
+      // A percent: «3%», or «3» and «%» / «процентов» behind it.
+      var text = number.amountText
+      var end = next + 1
+      var percent = false
+      if text.hasSuffix("%") {
+        text.removeLast()
+        percent = true
+      } else if end < words.count, !words[end].claimed,
+        Lexicon.percentWords.contains(words[end].normalized)
+      {
+        end += 1
+        percent = true
+      }
+      guard let first = text.first, ExpressionLexer.isDigit(first),
+        let value = try? ExpressionEvaluator.evaluate(text), value > 0
+      else { continue }
+      if percent {
+        guard value <= 100 else { continue }
+        cashback = .percent(value)
+      } else {
+        // Money only while another number is left to be the amount.
+        guard isAmountish(number), amountCandidates().contains(where: { $0 != next }) else {
+          continue
+        }
+        cashback = .amount(value)
+      }
+      cashbackPhrase = marked(index..<end)
+      claim(index..<end, as: nil)
+      return
     }
   }
 

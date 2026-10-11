@@ -48,4 +48,33 @@ extension PlanningActions {
     ids.budgets = [budget.id]
     return apply(PlanningChange(delete: ids))
   }
+
+  // MARK: Suggested limits
+
+  /// «Предложить лимиты…»: the top-level categories spent on in the last full months that have
+  /// no limit, from the data on screen and the limits as the database has them now.
+  func suggestedLimits() -> [LimitSuggestion] {
+    guard let snapshot else { return [] }
+    return LimitSuggestions.suggestions(
+      ledger: snapshot.ledger, budgets: LimitWrites.budgets(environment, snapshot),
+      today: environment.today, limitless: LimitWrites.limitless(environment, snapshot))
+  }
+
+  /// The rows the owner kept, as new limits starting this month: one write and one step of ⌘Z
+  /// for all of them. A row whose limit can no longer be saved is left out. Returns how many
+  /// limits were written, nil when the write was refused.
+  func addSuggestedLimits(_ chosen: [(categoryId: UUID, amount: AmountE4)]) -> Int? {
+    guard let tree else { return nil }
+    let budgets = LimitSuggestions.budgets(
+      for: chosen, existing: LimitWrites.budgets(environment, snapshot), tree: tree,
+      in: environment.today.monthKey, limitless: LimitWrites.limitless(environment, snapshot))
+    guard !budgets.isEmpty else { return 0 }
+    var rows = PlanningRows.empty
+    rows.budgets = budgets
+    guard apply(PlanningChange(upsert: rows)) else { return nil }
+    AppLog.info(
+      "limits.suggestedAdded", .db, "suggested limits were added",
+      [LogPair("limits", .count(budgets.count)), LogPair("offered", .count(chosen.count))])
+    return budgets.count
+  }
 }

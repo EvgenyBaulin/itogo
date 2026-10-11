@@ -72,6 +72,9 @@ struct EntryBar<Accessory: View>: View {
   /// The ↓ panel is open from the start. A test opens it this way: a key press needs a key
   /// window, and a test host is not always given one.
   var opensDetails: Bool = false
+  /// The selection of the window's lists, for the form at the side: an operation selected there
+  /// opens in the form to be edited (`EntryFormEditor`). `nil`: the form only makes new ones.
+  var operations: OperationActions? = nil
   /// Glass of its own, or nothing. While it is shown it stands in the bar, so the safe area
   /// grows by its height and the last rows of the list can be scrolled out from under it. It
   /// morphs in and out of the capsule only inside an animated change; the screen that owns it
@@ -109,12 +112,15 @@ struct EntryBar<Accessory: View>: View {
   @State private var repeatQuestion: RepeatQuestion?
   /// «Запись или план?» for an operation dated after today, waiting for the owner's answer.
   @State private var aheadQuestion: AheadQuestion?
-  /// The transfer sheet «Перевести…» of the panel opened, while it is open.
-  @State private var transfer: TransferRequest?
   /// The chips under the line.
   @State private var templates = TemplatesModel()
   /// The quick line of the form: whether «Будет записано» is up.
   @State private var quick = QuickEntryFlow()
+  /// The form at the side: the kind of the next operation has been chosen, and its fields are
+  /// shown. After a save the form starts again from the kinds.
+  @State private var kindChosen = false
+  /// The form at the side: the saved operation selected in a list, edited in the form.
+  @State private var editing: TransactionEditorModel?
   @Namespace private var glass
 
   private var interpreter: any LineInterpreter {
@@ -156,7 +162,15 @@ struct EntryBar<Accessory: View>: View {
       if case .planned = message { message = nil }
       readTheLineIntoThePanel()
     }
+    // The form at the side follows the selection of the window's lists: one operation selected
+    // is edited in it, anything else brings the new operation back.
+    .onChange(of: operations?.selection, initial: true) { _, selection in
+      followTheSelection(selection ?? [])
+    }
+    .onAppear { offerTheFormForEditing() }
+    .onDisappear { if style == .form { operations?.opensEditor = nil } }
     .onChange(of: compute.generation) { _, _ in
+      followTheEditedOperation()
       if showsDetails { model?.reload() }
       // The chips too: a restore or an archive brought in replaces them.
       templates.reload()
@@ -210,15 +224,13 @@ struct EntryBar<Accessory: View>: View {
       model.stampCount(moment)
       commit(model)
     }
-    // «Перевести…» of the panel: the sheet of a transfer started with what the panel holds. Once
-    // a transfer is written the line and the panel start over; cancelled, they stay as they were.
-    .sheet(item: $transfer) { request in
-      TransferSheet(form: request.form, saveAtOnce: request.saveAtOnce) { written in
-        transfer = nil
-        if written, request.fromTheLine { GuideStore.shared.report(GuideEvent.transferFromLine) }
-        if written, let model { finishSaving(model) }
-      }
-      .handingOver(dependencies)
+    // A transfer is written from the panel, as an operation is: its questions — the counts of
+    // its day, money left on an archived account — are asked over the bar, open panel or not.
+    .transferQuestions(model?.transfer)
+    // A transfer the line wrote at once and was refused: the panel opens on the reason.
+    .onChange(of: model?.transfer?.refusal) { _, refusal in
+      guard refusal != nil, style == .line, !showsDetails else { return }
+      withAnimation(.snappy) { showsDetails = true }
     }
     // Two questions before a new operation is written, each on a view of its own: a record or a
     // plan, for a date after today; and «такая же уже записана», for a repeat of the last minutes.
@@ -258,32 +270,130 @@ struct EntryBar<Accessory: View>: View {
     model.reload()
     model.prepareForPanel(today: environment.today)
     message = nil
-    model.focusRequest = .first
+    kindChosen = false
+    quick.dismiss()
+    model.focusRequest = .control(.quick)
   }
 
-  /// «Перевести…»: the transfer sheet with what the panel holds — the amount, its currency, the
-  /// account, the day and the note (`TransferForm.init(fromThePanel:…)`).
-  private func startTransfer() {
-    guard let model else { return }
-    transfer = TransferRequest(
-      form: TransferForm(
-        fromThePanel: model.draft, account: model.selectedAccount,
-        accounts: model.paymentMethods, calendar: environment.calendar))
+  /// Double click and «Изменить» of a list open the operation in the form, not in a sheet.
+  private func offerTheFormForEditing() {
+    guard style == .form, let operations else { return }
+    operations.opensEditor = { entry in operations.selection = [entry.id] }
   }
 
-  /// The transfer the line named: the sheet with its accounts, amount, day and note — saving at
-  /// once when there is nothing left to ask (`TransferForm.fromTheLine`).
+  /// One operation selected in a list of the window is edited in the form; nothing, several rows
+  /// or a transfer bring the new operation back. An edit not saved goes with the selection, as
+  /// it goes when the edit sheet is closed.
+  private func followTheSelection(_ selection: Set<UUID>) {
+    guard style == .form else { return }
+    guard let entry = EntryFormSelection.operation(selection, find: findOperation) else {
+      if editing != nil { editing = nil }
+      return
+    }
+    guard editing?.id != entry.id else { return }
+    editing = TransactionEditorModel(
+      entry: entry, environment: environment, tree: compute.snapshot?.ledger.tree ?? CategoryTree())
+    AppLog.info("entry.formEdits", .ui, "an operation selected in a list opened in the form")
+  }
+
+  private func findOperation(_ id: UUID) -> TransactionEntry? {
+    store.entry(id: id) ?? compute.snapshot?.ledger.entry(id)
+  }
+
+  /// The data changed under the operation being edited: as the inspector follows it.
+  private func followTheEditedOperation() {
+    guard let current = editing else { return }
+    switch current.follow(findOperation(current.id)) {
+    case .stay: break
+    case .close: stopEditing()
+    case .reopen(let fresh):
+      editing = TransactionEditorModel(
+        entry: fresh, environment: environment,
+        tree: compute.snapshot?.ledger.tree ?? CategoryTree())
+    }
+  }
+
+  /// «Отмена», Esc or a save in the form's editing: the selection goes, and with it the editing;
+  /// the form stands ready for a new operation.
+  private func stopEditing() {
+    editing = nil
+    operations?.selection = []
+    model?.focusRequest = .control(.quick)
+  }
+
+  /// The transfer the line named: its accounts, amount, day and note in the fields of a transfer
+  /// (`TransferForm.fromTheLine`) — written at once when nothing is left to choose, else the
+  /// panel opens on them, nothing written.
   private func startTransfer(fromTheLine reading: TransferReading, model: EntryDraftModel) {
-    let accounts = model.paymentMethods
     let form = TransferForm(
-      fromTheLine: reading, draft: model.draft, accounts: accounts,
+      fromTheLine: reading, draft: model.draft, accounts: model.paymentMethods,
       calendar: environment.calendar)
     let atOnce = form.savesAtOnce(reading)
     AppLog.info(
       "entry.transferFromLine", .ui, "the line named a transfer",
       [LogPair("complete", .flag(reading.isComplete)), LogPair("atOnce", .flag(atOnce))])
     message = nil
-    transfer = TransferRequest(form: form, saveAtOnce: atOnce, fromTheLine: true)
+    let transfer = TransferEntry(form: form, fromTheLine: true)
+    model.transfer = transfer
+    if atOnce {
+      saveTheTransfer(transfer, model)
+      return
+    }
+    // Something is left to choose: the fields of the transfer, with what the line said.
+    kindChosen = true
+    if !showsDetails { withAnimation(.snappy) { showsDetails = true } }
+  }
+
+  /// The transfer of the panel written — the questions of its save asked on the way —; the line,
+  /// the panel and the draft start over as after an operation. Refused, the reason stands under
+  /// its fields and nothing is cleared.
+  private func saveTheTransfer(_ transfer: TransferEntry, _ model: EntryDraftModel) {
+    message = nil
+    transfer.save(TransferActions(environment: environment, store: store)) {
+      if transfer.fromTheLine { GuideStore.shared.report(GuideEvent.transferFromLine) }
+      finishSaving(model)
+    }
+  }
+
+  /// What the line says goes into the fields of the open transfer (`TransferForm.take`); false
+  /// when its number is no amount.
+  @discardableResult
+  private func take(
+    _ reading: InputLineReading, into transfer: TransferEntry, model: EntryDraftModel
+  ) -> Bool {
+    let parsed = reading.parsed
+    var amount: AmountE4?
+    if let typed = parsed.amount {
+      guard let read = try? AmountE4(decimal: typed) else { return false }
+      amount = read
+    }
+    transfer.form.take(
+      line: parsed.transfer, amount: amount, currency: parsed.currency, day: parsed.date,
+      accounts: model.paymentMethods)
+    return true
+  }
+
+  /// Return with a transfer in the panel: the line, when it says something, goes into its fields
+  /// first; then the transfer is saved.
+  private func saveTheTransfer(
+    _ transfer: TransferEntry, line trimmed: String, model: EntryDraftModel
+  ) {
+    if !trimmed.isEmpty {
+      let reading = interpreter.read(trimmed, today: environment.today, kind: model.draft.kind)
+      if let problem = reading.parsed.dateProblem {
+        message = .date(problem)
+        return
+      }
+      if let problem = reading.timeProblem {
+        message = .time(problem)
+        return
+      }
+      guard take(reading, into: transfer, model: model) else {
+        message = .error("entry.error.amountTooLarge")
+        return
+      }
+    }
+    saveTheTransfer(transfer, model)
   }
 
   /// «Записать как есть»: the operation dated ahead is written on its date; the question is not
@@ -454,10 +564,15 @@ struct EntryBar<Accessory: View>: View {
   /// open, with a button of its own to save and one to clear. No line, no chips, no suggestions.
   @ViewBuilder
   private var formBody: some View {
-    if let model {
+    if let editing {
+      EntryFormEditor(editor: editing, close: stopEditing)
+        // Another operation selected: a form of its own, not the last one's fields.
+        .id(ObjectIdentifier(editing))
+    } else if let model {
       EntryFormColumn(
         model: model, focusedInside: $formFocused, save: save, clear: clearTheForm,
-        transfer: startTransfer, quickLine: { focus in AnyView(quickEntry(model, focus: focus)) }
+        quickLine: { focus in AnyView(quickEntry(model, focus: focus)) },
+        kindChosen: $kindChosen
       ) {
         caption
       }
@@ -551,13 +666,33 @@ struct EntryBar<Accessory: View>: View {
   /// Return in the quick line, or «Записать»: the card first, the save on the second.
   private func submitQuick() {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    let parsed = interpreter.interpret(trimmed, today: environment.today, kind: model?.draft.kind)
-    let readable = !trimmed.isEmpty && parsed.dateProblem == nil && parsed.amount != nil
+    let reading = interpreter.read(trimmed, today: environment.today, kind: model?.draft.kind)
+    let parsed = reading.parsed
+    let readable =
+      !trimmed.isEmpty && parsed.dateProblem == nil && reading.timeProblem == nil
+      && parsed.amount != nil
     switch quick.submit(lineIsReadable: readable) {
     case .refuse:
-      if !trimmed.isEmpty { message = .error(parsed.missingAmountErrorKey) }
+      if let problem = parsed.dateProblem {
+        message = .date(problem)
+      } else if let problem = reading.timeProblem {
+        message = .time(problem)
+      } else if !trimmed.isEmpty {
+        message = .error(parsed.missingAmountErrorKey)
+      }
     case .confirm:
       message = nil
+      // What the line says stands in the fields below: the kind counts as chosen.
+      kindChosen = true
+      // A transfer the line names stands in the fields of a transfer, written by «Записать».
+      if let named = parsed.transfer, let model, model.transfer == nil {
+        let amount = parsed.amount.flatMap { try? AmountE4(decimal: $0) } ?? model.draft.amount
+        model.apply(reading, amount: amount, today: environment.today, text: trimmed)
+        model.transfer = TransferEntry(
+          form: TransferForm(
+            fromTheLine: named, draft: model.draft, accounts: model.paymentMethods,
+            calendar: environment.calendar), fromTheLine: true)
+      }
       readTheLineIntoThePanel()
     case .save:
       save()
@@ -619,7 +754,7 @@ struct EntryBar<Accessory: View>: View {
         }
         ScrollView {
           // Return in a field of the panel saves, as Return in the line does.
-          DetailsPanel(model: model, submit: save, onTransfer: startTransfer)
+          DetailsPanel(model: model, submit: save, offersTransfer: true)
             .padding(.trailing, 4)
         }
         .frame(maxHeight: 420)
@@ -701,6 +836,8 @@ struct EntryBar<Accessory: View>: View {
     prepareModel()
     // The form is always open: a new operation puts the keyboard on its first field.
     if style == .form {
+      // An operation being edited in the form gives way to the new one.
+      if editing != nil { stopEditing() }
       // The quick line over the fields, asked through the panel's own focus.
       model?.focusRequest = .control(.quick)
       return
@@ -820,8 +957,14 @@ struct EntryBar<Accessory: View>: View {
     guard showsDetails, let model else { return }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
-    let parsed = interpreter.interpret(trimmed, today: environment.today, kind: model.draft.kind)
-    guard parsed.dateProblem == nil else { return }
+    let reading = interpreter.read(trimmed, today: environment.today, kind: model.draft.kind)
+    let parsed = reading.parsed
+    guard parsed.dateProblem == nil, reading.timeProblem == nil else { return }
+    // The panel holds a transfer: the line fills its fields.
+    if let transfer = model.transfer {
+      take(reading, into: transfer, model: model)
+      return
+    }
     var amount = model.draft.amount
     if let typed = parsed.amount {
       guard let read = try? AmountE4(decimal: typed) else { return }
@@ -833,7 +976,7 @@ struct EntryBar<Accessory: View>: View {
     if style == .form { model.assisted = true }
     defer { model.assisted = assisted }
     model.apply(
-      parsed, amount: amount, today: environment.today, text: trimmed, whileTyping: true)
+      reading, amount: amount, today: environment.today, text: trimmed, whileTyping: true)
   }
 
   private func prepareModel() {
@@ -856,6 +999,17 @@ struct EntryBar<Accessory: View>: View {
     prepareModel()
     guard let model else { return }
 
+    // A transfer left behind the closed panel of the line — Esc, a question not answered — goes:
+    // the line is read afresh, «кофе 300» as an expense, «перевод …» as a transfer of its own.
+    if model.transfer != nil, style == .line, !showsDetails {
+      model.transfer = nil
+    }
+    // The panel holds a transfer: Return saves it, as it saves an operation.
+    if let transfer = model.transfer {
+      saveTheTransfer(transfer, line: trimmed, model: model)
+      return
+    }
+
     // An empty line with the panel open saves whatever the panel holds, or says why not.
     if trimmed.isEmpty {
       guard showsDetails else { return }
@@ -867,10 +1021,16 @@ struct EntryBar<Accessory: View>: View {
       return
     }
 
-    let parsed = interpreter.interpret(trimmed, today: environment.today, kind: model.draft.kind)
-    // A day the calendar does not have is what was typed wrong: said before anything else.
+    let reading = interpreter.read(trimmed, today: environment.today, kind: model.draft.kind)
+    let parsed = reading.parsed
+    // A day the calendar does not have, or a time no clock shows, is what was typed wrong: said
+    // before anything else.
     if let problem = parsed.dateProblem {
       message = .date(problem)
+      return
+    }
+    if let problem = reading.timeProblem {
+      message = .time(problem)
       return
     }
     // A line of words alone, with the panel open over an amount, saves that amount: Return saves
@@ -885,9 +1045,9 @@ struct EntryBar<Accessory: View>: View {
 
     do {
       let amount = try parsed.amount.map { try AmountE4(decimal: $0) } ?? model.draft.amount
-      model.apply(parsed, amount: amount, today: environment.today, text: trimmed)
-      // «перевод 5000 сбер т-банк» is a transfer, not an operation: written by the transfer
-      // sheet at once when both accounts are known in one currency, else left to it to finish.
+      model.apply(reading, amount: amount, today: environment.today, text: trimmed)
+      // «перевод 5000 сбер т-банк» is a transfer, not an operation: written at once when both
+      // accounts are known in one currency, else left in the fields of a transfer to finish.
       if let transfer = parsed.transfer {
         startTransfer(fromTheLine: transfer, model: model)
         return
@@ -947,6 +1107,7 @@ struct EntryBar<Accessory: View>: View {
       message = .gap(gap)
       model.focusRequest = .control(gap == .category ? .category : .subcategory)
       if !showsDetails { withAnimation(.snappy) { showsDetails = true } }
+      kindChosen = true
       AppLog.info(
         "entry.gapAsked", .ui, "Enter asked for a field before saving",
         [LogPair("field", .token(gap.rawValue))])
@@ -1016,6 +1177,12 @@ struct EntryBar<Accessory: View>: View {
   /// The operation went in — here, or in the reimbursement sheet: the line, the panel and the
   /// draft start over.
   private func finishSaving(_ model: EntryDraftModel, then notice: EntryLineMessage? = nil) {
+    // A date picker of the form that kept the keyboard gives it up before the draft starts over:
+    // still editing, it would hand the last operation's moment back to the fresh draft as it
+    // lets go.
+    if style == .form, let window = NSApp.keyWindow, window.firstResponder is NSDatePicker {
+      window.makeFirstResponder(nil)
+    }
     model.reset()
     // A rating just given by hand is history now (rule 2 of the qualities): the next
     // operation described the same way should find it.
@@ -1026,6 +1193,10 @@ struct EntryBar<Accessory: View>: View {
     // opens; the line's panel closes.
     if style == .form {
       model.prepareForPanel(today: environment.today)
+      // The next operation starts from the kinds, the keyboard in the quick line.
+      kindChosen = false
+      quick.dismiss()
+      model.focusRequest = .control(.quick)
     } else {
       withAnimation(.snappy) { showsDetails = false }
     }

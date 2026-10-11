@@ -5579,6 +5579,210 @@
         }
       }
     },
+    "settings.privacy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Privacy"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Конфиденциальность"
+          }
+        }
+      }
+    },
+    "settings.privacy.hideAmounts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide amounts (⌃⌘H)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скрывать суммы (⌃⌘H)"
+          }
+        }
+      }
+    },
+    "settings.privacy.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hidden amounts read «•••» on every screen and chart; what you type and the exported files stay as they are. The lock asks for Touch ID or the password of this Mac when Itogo opens, after the idle time and when the Mac sleeps or locks its screen; calculations and backups go on behind it. Both are kept on this Mac only."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скрытые суммы видны как «•••» на всех экранах и графиках; то, что вы вводите, и выгруженные файлы не меняются. Блокировка просит Touch ID или пароль этого Mac при открытии Итого, после простоя и когда Mac засыпает или блокирует экран; расчёты и копии за ней идут как обычно. Обе настройки хранятся только на этом Mac."
+          }
+        }
+      }
+    },
+    "settings.privacy.idle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After idle"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "После простоя"
+          }
+        }
+      }
+    },
+    "settings.privacy.idle.1": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 minute"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 минута"
+          }
+        }
+      }
+    },
+    "settings.privacy.idle.15": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15 minutes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15 минут"
+          }
+        }
+      }
+    },
+    "settings.privacy.idle.5": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5 minutes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5 минут"
+          }
+        }
+      }
+    },
+    "settings.privacy.idle.60": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 hour"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 час"
+          }
+        }
+      }
+    },
+    "settings.privacy.lock": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lock Itogo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Блокировать Итого"
+          }
+        }
+      }
+    },
+    "settings.privacy.lockRefused": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not confirmed — the lock stays off."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не подтверждено — блокировка не включена."
+          }
+        }
+      }
+    },
+    "settings.privacy.lockUnavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Mac has neither Touch ID nor a login password — the lock cannot be turned on."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На этом Mac нет ни Touch ID, ни пароля для входа — блокировку не включить."
+          }
+        }
+      }
+    },
+    "settings.privacy.notInDataSet": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The lock is off in a data set and in the tutorial: their books are made up."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В наборе данных и в учебном режиме блокировки нет: там учёт выдуманный."
+          }
+        }
+      }
+    },
     "settings.starter": {
       "extractionState": "manual",
       "localizations": {

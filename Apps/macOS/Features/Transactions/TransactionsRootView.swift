@@ -103,7 +103,9 @@ struct TransactionsRootView: View {
                 .id(editor.id)
             }
           }
-          .inspectorColumnWidth(min: 300, ideal: TransactionInspector.idealWidth, max: 440)
+          .inspectorColumnWidth(
+            min: TransactionInspector.minimumWidth, ideal: TransactionInspector.idealWidth,
+            max: 440)
         }
     }
     .searchable(
@@ -206,11 +208,13 @@ struct TransactionsRootView: View {
 
   private var detail: some View {
     content
-      // The last rows stay clear of the bar by a fixed margin inside the table's scrolling,
-      // never by its measured height: with the inspector open, a measured height fed back
-      // into the padding never settled — the window kept asking for another Update
-      // Constraints pass until AppKit gave up and threw.
-      .contentMargins(.bottom, showsBar ? Self.barClearance : 0, for: .scrollContent)
+      // The last rows stay clear of the bar by a fixed margin, never by its measured height:
+      // with the inspector open, a measured height fed back into the padding never settled —
+      // the window kept asking for another Update Constraints pass until AppKit gave up and
+      // threw. The margin goes into the safe area, which the table's scroll view turns into a
+      // bottom inset of its scrolling; `contentMargins` would be the natural tool, but a
+      // `Table` on macOS ignores it, and the last rows stayed under the bar.
+      .safeAreaPadding(.bottom, showsBar ? Self.barClearance : 0)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       // The bar floats over the last rows, laid over the table and not inset into it. As a
       // safe-area inset it did two things to the layout of the window, and either one could
@@ -292,8 +296,6 @@ struct TransactionsRootView: View {
       .font(.callout)
       .padding(.horizontal, 12)
       .padding(.vertical, 6)
-      // Clear of the bar laid over the bottom of the table, as the last rows are.
-      .padding(.bottom, showsBar ? Self.barClearance : 0)
     }
   }
 
@@ -744,11 +746,14 @@ struct TransactionInspector: View {
       // Russian — and the column grows to its maximum, leaving the table too little for the
       // selection bar in a window of the default width; the split then never settles (23.09,
       // `testADoubleClickThatAlsoSelectsTheRowSettlesInRussian`). The editor lays itself out
-      // in 360 pt without loss: its rows wrap and its pickers shrink.
+      // in 360 pt without loss: its rows wrap, its pickers shrink, and its kinds and «За кого»
+      // are menus, not segments wider than the column (`hasRoomForSegments`). Its minimum stays
+      // under the column's, whatever scroll bars the Mac shows.
       .frame(idealWidth: TransactionInspector.idealWidth)
       .appDependencies(deps)
   }
 
-  /// The same number `inspectorColumnWidth(ideal:)` is given in `TransactionsRootView`.
+  /// The same numbers `inspectorColumnWidth` is given in `TransactionsRootView`.
   static let idealWidth: CGFloat = 360
+  static let minimumWidth: CGFloat = 300
 }

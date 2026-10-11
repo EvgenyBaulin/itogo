@@ -141,6 +141,16 @@ extension Lexicon {
   /// other line «от» stays in the note («торт от Ани» is a cake, not a person's money).
   static let russianFromMarkers: Set<String> = ["от"]
   static let russianPlaceMarkers: Set<String> = ["в", "во"]
+  /// The cashback the bank gave for the purchase, in every spelling people type: «кэшбэк»,
+  /// «кэшбек», «кешбэк», «кешбек» (and «ё» folds into «е»).
+  static let russianCashbackWords: Set<String> = [
+    "кэшбэк", "кэшбек", "кешбэк", "кешбек", "кэшбэка", "кэшбека", "кешбэка", "кешбека",
+    "кэшбэком", "кэшбеком", "кешбэком", "кешбеком",
+  ]
+  /// «кэшбек 7 процентов».
+  static let russianPercentWords: Set<String> = ["процент", "процента", "процентов", "проц"]
+  /// «в 18:09»: the word in front of a time goes with it.
+  static let russianTimeMarkers: Set<String> = ["в", "во"]
   /// A transfer between accounts: «перевод 5000 сбер т-банк», «перевёл со сбера на т-банк».
   static let russianTransferWords: Set<String> = [
     "перевод", "перевел", "перевела", "перевели", "перевести", "перевожу", "перекинул",

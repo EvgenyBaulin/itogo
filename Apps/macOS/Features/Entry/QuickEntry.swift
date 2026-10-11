@@ -37,6 +37,9 @@ struct QuickEntryFlow: Hashable, Sendable {
 @MainActor
 enum QuickEntrySummary {
   static func text(of model: EntryDraftModel, environment: AppEnvironment) -> String {
+    if let transfer = model.transfer {
+      return text(of: transfer.form, accounts: model.paymentMethods, environment: environment)
+    }
     let draft = model.draft
     var words: [String] = []
     if let note = draft.note?.trimmingCharacters(in: .whitespaces), !note.isEmpty {
@@ -55,6 +58,29 @@ enum QuickEntrySummary {
     words.append(
       environment.dates.dayTitle(
         environment.calendar.day(of: draft.occurredAt), today: environment.today,
+        language: AppLanguageStrings(
+          today: environment.language("common.today"),
+          yesterday: environment.language("common.yesterday"))))
+    return words.joined(separator: ", ")
+  }
+}
+
+extension QuickEntrySummary {
+  /// «Перевод: Наличные → Сбер, 5,000 ₽, сегодня» — a side not chosen yet is «?».
+  static func text(
+    of form: TransferForm, accounts: [PaymentMethod], environment: AppEnvironment
+  ) -> String {
+    func name(_ id: UUID?) -> String { accounts.first { $0.id == id }?.name ?? "?" }
+    var words = [
+      environment.language("entry.transfer.preview", table: "Entry") + " "
+        + "\(name(form.fromAccountId)) → \(name(form.toAccountId))"
+    ]
+    if let currency = form.fromCurrency {
+      words.append(environment.money.exact(form.sent, currency: currency))
+    }
+    words.append(
+      environment.dates.dayTitle(
+        form.day, today: environment.today,
         language: AppLanguageStrings(
           today: environment.language("common.today"),
           yesterday: environment.language("common.yesterday"))))

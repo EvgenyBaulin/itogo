@@ -73,16 +73,23 @@ public struct GuideFacts: Hashable, Sendable {
   public var scheduledPaymentsAdded: Int
   public var countsMade: Int
   public var transfersAdded: Int
+  public var debtsAdded: Int
+  public var goalsAdded: Int
+  public var cashbackRulesAdded: Int
 
   public init(
     events: Set<String> = [], operations: [GuideOperation] = [], scheduledPaymentsAdded: Int = 0,
-    countsMade: Int = 0, transfersAdded: Int = 0
+    countsMade: Int = 0, transfersAdded: Int = 0, debtsAdded: Int = 0, goalsAdded: Int = 0,
+    cashbackRulesAdded: Int = 0
   ) {
     self.events = events
     self.operations = operations
     self.scheduledPaymentsAdded = scheduledPaymentsAdded
     self.countsMade = countsMade
     self.transfersAdded = transfersAdded
+    self.debtsAdded = debtsAdded
+    self.goalsAdded = goalsAdded
+    self.cashbackRulesAdded = cashbackRulesAdded
   }
 }
 
@@ -114,10 +121,15 @@ public indirect enum GuideCondition: Hashable, Sendable {
   /// An expense whose words contain `words` (case and «ё» aside) and, when given, of this
   /// amount in rubles.
   case operation(words: String, amountE4: Int64?)
+  /// An income whose words contain `words` (case and «ё» aside).
+  case income(words: String)
   case operationForSomebodyElse
   case scheduledPaymentAdded
   case countMade
   case transferAdded
+  case debtAdded
+  case goalAdded
+  case cashbackRuleAdded
   case any([GuideCondition])
 
   public func isMet(by facts: GuideFacts) -> Bool {
@@ -129,11 +141,19 @@ public indirect enum GuideCondition: Hashable, Sendable {
         operation.kind == .expense && Self.fold(operation.text).contains(wanted)
           && (amount.map { operation.amountE4 == $0 && operation.currency == .rub } ?? true)
       }
+    case .income(let words):
+      let wanted = Self.fold(words)
+      return facts.operations.contains { operation in
+        operation.kind == .income && Self.fold(operation.text).contains(wanted)
+      }
     case .operationForSomebodyElse:
       return facts.operations.contains { $0.forSomebodyElse }
     case .scheduledPaymentAdded: return facts.scheduledPaymentsAdded > 0
     case .countMade: return facts.countsMade > 0
     case .transferAdded: return facts.transfersAdded > 0
+    case .debtAdded: return facts.debtsAdded > 0
+    case .goalAdded: return facts.goalsAdded > 0
+    case .cashbackRuleAdded: return facts.cashbackRulesAdded > 0
     case .any(let conditions): return conditions.contains { $0.isMet(by: facts) }
     }
   }
@@ -149,12 +169,18 @@ public struct GuideTask: Hashable, Sendable, Identifiable {
   public var title: GuideText
   public var hints: [GuideHint]
   public var done: GuideCondition
+  /// Whose tutorial has the task: everyone's, or only the one the starter set speaks of.
+  public var audience: GuideAudience
 
-  public init(id: String, title: GuideText, hints: [GuideHint], done: GuideCondition) {
+  public init(
+    id: String, title: GuideText, hints: [GuideHint], done: GuideCondition,
+    audience: GuideAudience = .everyone
+  ) {
     self.id = id
     self.title = title
     self.hints = hints
     self.done = done
+    self.audience = audience
   }
 }
 

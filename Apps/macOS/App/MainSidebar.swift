@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// What the sidebar of the main window has chosen: one of its three sections, an account or a
-/// group of accounts.
+/// What the sidebar of the main window has chosen: one of its sections, an account or a group
+/// of accounts.
 enum SidebarItem: Hashable, Sendable {
   case section(MainWindow.Section)
   case account(UUID)
@@ -52,7 +52,7 @@ enum SidebarItem: Hashable, Sendable {
   }
 }
 
-/// The sidebar of the main window: its three sections, chosen by a click or by ⌘1 / ⌘2 / ⌘3,
+/// The sidebar of the main window: its sections, chosen by a click or by ⌘1 … ⌘5,
 /// whose menu items, and the limits card of Overview, post `.selectSection` with the number of
 /// the section; and under them the accounts and their groups (`AccountsSidebarSection`).
 struct MainSidebar: View {

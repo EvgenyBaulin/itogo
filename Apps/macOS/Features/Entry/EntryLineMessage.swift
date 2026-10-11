@@ -8,6 +8,8 @@ enum EntryLineMessage: Equatable {
   case error(String)
   /// A day the calendar does not have: «31.09 — такой даты нет».
   case date(ParsedInput.DateProblem)
+  /// A time no clock shows, as typed: «Такого времени нет: 25:00».
+  case time(String)
   /// The line did not say the category, or the subcategory: the panel asks for it.
   case gap(EntryGap)
   /// An operation dated ahead became a plan instead of a record: what it became, and its day.
@@ -23,6 +25,8 @@ enum EntryLineMessage: Equatable {
     case .date(.notInYear(_, _, let year)):
       // The year as digits, never grouped: «2026», not «2,026».
       return environment.language.format("entry.error.noLeapDay", table: "Entry", String(year))
+    case .time(let written):
+      return environment.language.format("entry.error.noSuchTime", table: "Entry", written)
     case .gap(.category):
       return environment.language("entry.gap.category", table: "Entry")
     case .gap(.subcategory):
@@ -53,7 +57,7 @@ enum EntryLineMessage: Equatable {
   var isError: Bool {
     switch self {
     case .gap, .planned: false
-    case .error, .date: true
+    case .error, .date, .time: true
     }
   }
 }

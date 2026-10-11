@@ -7,6 +7,81 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.5.0] — 2026-10-11
+
+A spending calendar, hidden amounts and a Touch ID lock, suggested limits, the time and the
+cashback in the entry line, and a form at the side that edits what you select. The database
+schema stays at 6: nothing is migrated.
+
+### Added
+
+- **A spending calendar** in the sidebar (⌘5) and as an Overview tile, **Calendar**: a month or
+  a week, what each day cost — your own expenses, in the default currency at today's rate,
+  rounded to the ruble, without reconciliation differences. A day well above a usual one is
+  marked «More than usual» (from 1.5 times) or «Much more than usual» (from 3 times), always with
+  a symbol and the words; a usual day is the median of the days with spending in the 90 days
+  before, and with fewer than 14 such days the calendar says there is too little data. From
+  today on, the days show the payments still to pay and the income still expected. A click on a
+  day lists its operations. Weeks start on Monday in Russian, on the Mac's first day otherwise.
+  The tile is not among the twelve shown by default; add it in Settings → Appearance.
+- **Hide Amounts** (⌃⌘H, the eye button in the toolbar, or View → Hide Amounts): every amount of
+  money on screens, charts and tiles reads «•••». Counts, percentages and rates stay; the fields
+  you type into and the exported files do not change. The choice is kept on this Mac only and is
+  not carried by the transfer archive.
+- **A Touch ID lock**, off by default: Settings → General → **Lock Itogo**, turned on only after
+  Touch ID or the Mac's password confirms it. Itogo then locks when it opens, after 1, 5, 15 or
+  60 minutes without a key or a click in it (5 by default), when the Mac sleeps or locks its
+  screen, and from View → **Lock Itogo**. A locked window shows no figure and no word of your
+  books, only **Unlock**; calculations and backups go on behind it. There is no lock in a data
+  set or in the tutorial.
+- **Suggest Limits…** in Planning → Limits: the top-level categories without a limit that you
+  spent on in at least two of the last three full months, each with a usual month of them (the
+  median of the three) or 10 % less, rounded up — to 500 ₽ under 10,000 ₽, to 1,000 ₽ from
+  there. A sum you change stays yours; the limits ticked are written at once and one ⌘Z takes
+  them all back.
+- **The time and the cashback in the entry line.** «pear yesterday at 18:09 325 cashback 9.76»
+  or «груша вчера в 18:09 325 кэшбек 9.76» writes an expense of 325 ₽ yesterday at 18:09 with
+  9.76 ₽ of cashback; «at 6:09pm», «18:09» and «cashback 3%» are read too (a percentage becomes
+  an amount, rounded the way the account rounds its cashback). A time is never the amount. A
+  time no clock shows is refused with its reason: «There is no such time: 25:00». Income and
+  money back have no cashback: there the words stay in the note.
+- **Editing in the form at the side.** With Settings → Input → «Detailed form at the right», one
+  operation selected in a list of the main window opens in the form: «Edit operation», with
+  **Cancel** and **Save**; one ⌘Z takes the edit back. Several rows, or a transfer, leave the
+  form for a new operation.
+- In that form a place you choose brings the category and the subcategory of your last
+  operation of the same kind there, unless you chose a category yourself.
+- The comment of an operation can hold several lines: ⌥Return starts a new one. Lists show it
+  on one line, and the CSV export keeps the lines.
+- **A transfer right in the ↓ panel and in the form at the side**: choose **Transfer**, and its
+  fields — from, to, the amount, the date and time — stand where the fields of an expense stood;
+  no separate window opens.
+- The tutorial follows your starter set: someone with children is asked to write down something
+  for them, someone working — a lunch, a set with loans — to add a loan; a set without
+  subscriptions does not ask for one. Without a set the tutorial keeps its ten tasks for
+  everyone.
+- What's New in 1.5: six cards, once after the update.
+
+### Changed
+
+- The form at the side starts with the kinds of operation alone: the fields come once a kind is
+  chosen, and after a save or **Clear** the form goes back to the kinds with the cursor in the
+  quick line.
+- After a save, the date and time of the form start over at now instead of keeping the last
+  ones.
+- ↑ and ↓ in Spending move the selection from row to row, also from a row the window selected
+  itself (↓ from the entry line).
+
+### Fixed
+
+- The editor at the side of the Operations window no longer sends the window into a layout loop
+  on a Mac with a mouse (scroll bars always shown): there the kind of operation and «For whom» are
+  menus, so the editor fits its column. The loop was already possible in 1.4.0 in Russian.
+
+- ⌘N in the form at the side puts the cursor in the quick line.
+- In the Transactions window, the last rows no longer hide under the selection bar: scrolled to
+  the end, the last row stands above it, with the earlier months hidden or shown.
+
 ## [1.4.0] — 2026-10-07
 
 A guide and a tutorial, starter sets, Spending in the sidebar, paying for somebody else,

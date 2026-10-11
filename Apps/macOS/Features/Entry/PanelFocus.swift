@@ -9,12 +9,18 @@ enum PanelFocus: Hashable, Sendable {
     charge, cashback, goal, debt, note, date, incomeMonth, expected, currency, rate
   /// The line of quick entry over the fields of the form at the side; no field of the order.
   case quick
+  /// The fields of a transfer, shown in place of the fields of an operation while the kind
+  /// «Перевод» is chosen, top to bottom; no field of the order.
+  case transferFrom, transferSent, transferTo, transferReceived, transferFee, transferDate,
+    transferNote
 
   /// A text field — or the date's own field — takes the focus whatever «Навигация с
   /// клавиатуры» says; a menu, only with it on.
   var isText: Bool {
     switch self {
-    case .amount, .charge, .cashback, .note, .date, .rate, .quick: true
+    case .amount, .charge, .cashback, .note, .date, .rate, .quick, .transferSent,
+      .transferReceived, .transferFee, .transferDate, .transferNote:
+      true
     default: false
     }
   }
@@ -86,6 +92,26 @@ enum PanelTabOrder {
       shown.contains(control) && (fullKeyboardAccess || control.isText) ? control : nil
     }
   }
+
+  /// The control a request comes to while the panel shows a transfer: its fields top to
+  /// bottom, the first being the amount sent, the last the comment.
+  static func resolveTransfer(
+    _ request: PanelFocusRequest, shown: Set<PanelFocus>, fullKeyboardAccess: Bool
+  ) -> PanelFocus? {
+    let stops = transferControls.filter { shown.contains($0) && (fullKeyboardAccess || $0.isText) }
+    switch request {
+    case .first: return stops.first { $0 != .transferFrom } ?? stops.first
+    case .last: return stops.last
+    case .control(let control):
+      return shown.contains(control) && (fullKeyboardAccess || control.isText) ? control : nil
+    }
+  }
+
+  /// The controls of a transfer, top to bottom.
+  static let transferControls: [PanelFocus] = [
+    .transferFrom, .transferSent, .transferTo, .transferReceived, .transferFee, .transferDate,
+    .transferNote,
+  ]
 
   /// Shift-Tab, as the key of a key press reads it.
   static let backTab = KeyEquivalent("\u{19}")

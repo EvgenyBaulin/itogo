@@ -8,11 +8,23 @@ import Foundation
 /// a point before the fraction, «1,234.50 ₽» (`NumberText`) — so a figure read in one
 /// language is the figure typed in the other. Only the words around a number follow the
 /// language: «млн» or «M», and the space before «%» that Russian writes.
+///
+/// With `hidesAmounts` («Скрыть суммы», `AmountPrivacy`) every figure of money — exact, rounded,
+/// signed, on an axis — is written as `mask`; counts, percents, rates and plain numbers are not
+/// money and stay as they are: a share or a change in percent does not tell how much there is,
+/// and a plain number is what the entry line is given back to edit.
 public struct MoneyFormatter: Sendable {
   private let locale: Locale
+  /// The figures of money are hidden behind `mask`.
+  public let hidesAmounts: Bool
 
-  public init(locale: Locale) {
+  /// What stands in place of a hidden amount, its sign and its currency included: one width
+  /// everywhere, so neither the length of a figure nor its sign is left to read.
+  public static let mask = "•••"
+
+  public init(locale: Locale, hidesAmounts: Bool = false) {
     self.locale = locale
+    self.hidesAmounts = hidesAmounts
   }
 
   private var isRussian: Bool { locale.language.languageCode?.identifier == "ru" }
@@ -21,24 +33,28 @@ public struct MoneyFormatter: Sendable {
   /// with at least the two digits of kopecks and up to the four of E4 — «250 ₽», «1,234.50 ₽»,
   /// «4.625 ₽».
   public func exact(_ amount: AmountE4, currency: CurrencyCode = .rub) -> String {
-    "\(NumberText.amount(amount))\u{00A0}\(symbol(for: currency))"
+    if hidesAmounts { return Self.mask }
+    return "\(NumberText.amount(amount))\u{00A0}\(symbol(for: currency))"
   }
 
   /// Rounded to whole units, half away from zero — the form used by totals and charts.
   public func rounded(_ amount: AmountE4, currency: CurrencyCode = .rub) -> String {
-    wholeText(DecimalMath.round(amount.decimal, scale: 0), currency)
+    if hidesAmounts { return Self.mask }
+    return wholeText(DecimalMath.round(amount.decimal, scale: 0), currency)
   }
 
   /// Whole rubles a chart plots, as the same words as `rounded`: «12,400 ₽». The value is
   /// rounded already (`AmountE4.wholeRubles`), so nothing here rounds again, and it is written
   /// from the number itself: the largest whole rubles have no E4 to go back to.
   public func rubles(_ whole: Int64) -> String {
-    "\(NumberText.integer(whole))\u{00A0}₽"
+    if hidesAmounts { return Self.mask }
+    return "\(NumberText.integer(whole))\u{00A0}₽"
   }
 
   /// Whole rubles of a chart with their sign, as `signedRounded` writes a difference:
   /// «+3,400 ₽», «−1,200 ₽», «0 ₽».
   public func signedRubles(_ whole: Int64) -> String {
+    if hidesAmounts { return Self.mask }
     let value = Decimal(whole)
     return Self.sign(of: value) + wholeText(value < 0 ? -value : value, .rub)
   }
@@ -53,6 +69,7 @@ public struct MoneyFormatter: Sendable {
   /// rounded half away from zero like every other amount, and the unit is chosen by the rounded
   /// figure: 999 950 000 is «1 млрд ₽», not «1,000 млн ₽».
   public func axis(_ whole: Int64) -> String {
+    if hidesAmounts { return Self.mask }
     guard whole.magnitude >= 1_000_000 else { return rubles(whole) }
     let inMillions = DecimalMath.round(Decimal(whole) / 1_000_000, scale: 1)
     let billions = inMillions >= 1_000 || inMillions <= -1_000
@@ -84,6 +101,7 @@ public struct MoneyFormatter: Sendable {
   /// that of the rounded amount, so −0.40 ₽ reads «0 ₽» rather than «−0 ₽». The minus is the
   /// typographic one (U+2212), as in the rest of the interface.
   public func signedRounded(_ amount: AmountE4, currency: CurrencyCode = .rub) -> String {
+    if hidesAmounts { return Self.mask }
     let whole = DecimalMath.round(amount.decimal, scale: 0)
     return Self.sign(of: whole) + rounded(amount.magnitude, currency: currency)
   }

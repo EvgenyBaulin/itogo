@@ -31,6 +31,7 @@ struct ItogoApp: App {
     WindowGroup(id: "main") {
       AppScenes.root(deps, window: .main) { MainWindow(deps: $0) }
         .measuresWindowWidth()
+        .privacyCurtain(environment)
         .onOpenURL { url in
           // A double click on an archive in Finder lands here.
           guard url.pathExtension == ArchiveService.fileExtension else { return }
@@ -57,6 +58,7 @@ struct ItogoApp: App {
           TransactionsRootView(deps: deps)
         }
       }
+      .privacyCurtain(environment)
     }
     .defaultSize(width: 1120, height: 720)
     // The item of the Window menu is `AppCommands`' own: a `Window` scene given
@@ -71,6 +73,7 @@ struct ItogoApp: App {
           AnalyticsWindow(deps: deps)
         }
       }
+      .privacyCurtain(environment)
     }
     .defaultSize(width: 1100, height: 760)
     // The item of the Window menu is `AppCommands`' own: a `Window` scene given
@@ -85,6 +88,7 @@ struct ItogoApp: App {
           ReportsWindow(deps: deps)
         }
       }
+      .privacyCurtain(environment)
     }
     .defaultSize(width: 960, height: 680)
     // The item of the Window menu is `AppCommands`' own: a `Window` scene given
@@ -95,6 +99,7 @@ struct ItogoApp: App {
       // The store and the pipeline too: a new quality of a category is carried over to the
       // past through the store, one step of ⌘Z, after counting over the pipeline's ledger.
       AppScenes.root(deps, window: .settings) { SettingsView(deps: $0) }
+        .privacyCurtain(environment)
     }
     // Never smaller than its tabs are laid out for (`SettingsView.minimumSize`). The corner to
     // drag it larger is given from inside the window: the scene itself gives it none
@@ -157,6 +162,19 @@ struct AppCommands: Commands {
       if UpdateService.kind == .restartAndStorePage {
         Button(environment.language("action.openStorePage")) { UpdateService.openStorePage() }
       }
+
+      // «Скрыть суммы»: ⌃⌘H, since ⌘H hides the app and ⌥⌘H the others; ⇧⌘H is free in the
+      // system but is Finder's Home, and a habit of the hand is better left to mean one thing.
+      Divider()
+      Button(PrivacyCommands.amountsTitle(environment)) { environment.amounts.toggle() }
+        .keyboardShortcut("h", modifiers: [.command, .control])
+      // No shortcut: ⌃⌘Q locks the whole Mac, and that is the stronger habit to keep.
+      if PrivacyCommands.offersLockNow(environment.lock) {
+        Button(environment.language("privacy.lockNow")) {
+          environment.lock.lock(because: .menu)
+        }
+        .disabled(environment.lock.isLocked)
+      }
     }
 
     CommandGroup(after: .textEditing) {
@@ -208,6 +226,11 @@ struct AppCommands: Commands {
         NotificationCenter.default.post(name: .selectSection, object: 4)
       }
       .keyboardShortcut("4", modifiers: .command)
+
+      Button(environment.language("section.calendar")) {
+        NotificationCenter.default.post(name: .selectSection, object: 5)
+      }
+      .keyboardShortcut("5", modifiers: .command)
     }
   }
 }
@@ -377,7 +400,7 @@ struct MainWindow: View {
   }
 
   enum Section: String, CaseIterable, Identifiable {
-    case overview, spending, planning, debts
+    case overview, spending, planning, debts, calendar
 
     var id: String { rawValue }
 
@@ -387,6 +410,7 @@ struct MainWindow: View {
       case .spending: "section.spending"
       case .planning: "section.planning"
       case .debts: "section.debts"
+      case .calendar: "section.calendar"
       }
     }
 
@@ -396,17 +420,19 @@ struct MainWindow: View {
       case .spending: "list.bullet.rectangle"
       case .planning: "calendar"
       case .debts: "creditcard"
+      case .calendar: "calendar.circle"
       }
     }
 
     /// ⌘1 / ⌘2 / ⌘3, as the specification's table of shortcuts lists them; «Траты», added
-    /// after them, is ⌘4.
+    /// after them, is ⌘4, and «Календарь» ⌘5.
     var shortcutIndex: Int {
       switch self {
       case .overview: 1
       case .planning: 2
       case .debts: 3
       case .spending: 4
+      case .calendar: 5
       }
     }
   }
@@ -449,9 +475,11 @@ struct MainWindow: View {
         // of its own at the right, always there, in place of the line (`EntryStyle.form`).
         if environment.entryStyle == .form, environment.state == .ready {
           Divider()
-          EntryBar(windowWidth: windowWidth, detailWidth: 0, style: .form) { EmptyView() }
-            .frame(width: Self.entryFormWidth)
-            .background(.background)
+          EntryBar(
+            windowWidth: windowWidth, detailWidth: 0, style: .form, operations: overviewActions
+          ) { EmptyView() }
+          .frame(width: Self.entryFormWidth)
+          .background(.background)
         }
       }
       // The other column of the same split, for the same reason.
@@ -653,6 +681,7 @@ struct MainWindow: View {
       case .section(.spending): SpendingView(actions: overviewActions)
       case .section(.planning): PlanningView()
       case .section(.debts): DebtsView()
+      case .section(.calendar): CalendarView(actions: overviewActions)
       case .account(let id):
         AccountScreen(accountId: id, actions: overviewActions)
           .id(id)
@@ -712,6 +741,19 @@ struct MainWindow: View {
     }
 
     ToolbarItemGroup {
+      // «Скрыть суммы» — the eye says what a click will do, the label says it in words.
+      Button {
+        environment.amounts.toggle()
+      } label: {
+        Label {
+          Text(verbatim: PrivacyCommands.amountsTitle(environment))
+        } icon: {
+          Image(systemName: environment.amounts.hidesAmounts ? "eye" : "eye.slash")
+        }
+      }
+      .help(PrivacyCommands.amountsTitle(environment))
+      .accessibilityIdentifier("toolbar.hideAmounts")
+
       if compute.isRunning {
         ProgressView()
           .controlSize(.small)

@@ -52,9 +52,10 @@ struct StarterSetSheet: View {
         Button(t("starter.later")) { close(applied: false) }
           .keyboardShortcut(.cancelAction)
         Spacer()
+        // On even when there is nothing new to add: the set chosen is still remembered for the
+        // tutorial's tasks.
         Button(t("starter.apply")) { apply(plan) }
           .keyboardShortcut(.defaultAction)
-          .disabled(plan.isEmpty)
           .accessibilityIdentifier("starter.apply")
       }
     }
@@ -115,6 +116,8 @@ struct StarterSetSheet: View {
       failed = true
       return
     }
+    // The tutorial's tasks follow the set: remembered on this Mac, not in the database.
+    GuideStore.shared.remember(choice)
     close(applied: true)
   }
 

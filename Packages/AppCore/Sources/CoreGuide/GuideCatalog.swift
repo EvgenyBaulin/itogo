@@ -5,6 +5,13 @@ import Foundation
 public enum GuideCatalog {
   public static var scenarios: [GuideScenario] { [firstLaunch, tutorial] + whatsNew }
 
+  /// The tasks of the tutorial for an owner who told the starter set `profile` (nil — no set):
+  /// the tasks for everyone, the ones of his ways of living and answers, and none about a life
+  /// the set says is not his.
+  public static func tutorialTasks(for profile: GuideProfile?) -> [GuideTask] {
+    tutorial.tasks.filter { $0.audience.includes(profile) }
+  }
+
   // MARK: First launch
 
   public static let firstLaunch = GuideScenario(
@@ -88,6 +95,90 @@ public enum GuideCatalog {
           .operation(words: "кофе", amountE4: 3_000_000),
           .operation(words: "coffee", amountE4: 3_000_000),
         ])),
+      // The tasks of a starter set: each writes into a category the set adds, so the owner sees
+      // where his own spending goes.
+      GuideTask(
+        id: "task.textbook",
+        title: GuideText("Запишите покупку учебника", "Write down a textbook"),
+        hints: [
+          GuideHint(
+            target: "entry.line",
+            text: GuideText(
+              "Наберите «учебник 800» — для таких трат набор добавил «Учебники»",
+              "Type «textbook 800»: the set added «Textbooks» for it"))
+        ],
+        done: .any([
+          .operation(words: "учебник", amountE4: nil), .operation(words: "textbook", amountE4: nil),
+        ]),
+        audience: .only(.lifestyle(.student))),
+      GuideTask(
+        id: "task.lunch",
+        title: GuideText("Запишите обед", "Write down a lunch"),
+        hints: [
+          GuideHint(
+            target: "entry.line",
+            text: GuideText(
+              "Наберите «обед 450» — для этого набор добавил «Обеды»",
+              "Type «lunch 450»: the set added «Lunches» for it"))
+        ],
+        done: .any([
+          .operation(words: "обед", amountE4: nil), .operation(words: "lunch", amountE4: nil),
+        ]),
+        audience: .only(.lifestyle(.working))),
+      GuideTask(
+        id: "task.client",
+        title: GuideText("Запишите оплату от заказчика", "Write down a payment from a client"),
+        hints: [
+          GuideHint(
+            target: "entry.line",
+            text: GuideText(
+              "Наберите «+20000 заказчик» — доход ляжет в «Заказчики» из набора",
+              "Type «+20000 client»: the income goes to «Clients» of the set"))
+        ],
+        done: .any([.income(words: "заказ"), .income(words: "client")]),
+        audience: .only(.lifestyle(.freelance))),
+      GuideTask(
+        id: "task.familyHelp",
+        title: GuideText("Запишите помощь родным", "Write down help to your family"),
+        hints: [
+          GuideHint(
+            target: "entry.line",
+            text: GuideText(
+              "Наберите «помощь маме 3000» — для этого набор добавил «Помощь родным»",
+              "Type «help mum 3000»: the set added «Family help» for it"))
+        ],
+        done: .any([
+          .operation(words: "помощ", amountE4: nil), .operation(words: "help", amountE4: nil),
+        ]),
+        audience: .only(.lifestyle(.family))),
+      GuideTask(
+        id: "task.date",
+        title: GuideText("Запишите свидание", "Write down a date"),
+        hints: [
+          GuideHint(
+            target: "entry.line",
+            text: GuideText(
+              "Наберите «свидание 2500» — для этого набор добавил «Свидания»",
+              "Type «date 2500»: the set added «Dates» for it"))
+        ],
+        done: .any([
+          .operation(words: "свидан", amountE4: nil), .operation(words: "date", amountE4: nil),
+        ]),
+        audience: .only(.lifestyle(.partner))),
+      GuideTask(
+        id: "task.kids",
+        title: GuideText("Запишите покупку для детей", "Write down something for the children"),
+        hints: [
+          GuideHint(
+            target: "entry.line",
+            text: GuideText(
+              "Наберите «игрушки 1500» — набор добавил категорию «Дети»",
+              "Type «toys 1500»: the set added the category «Kids»"))
+        ],
+        done: .any([
+          .operation(words: "игрушк", amountE4: nil), .operation(words: "toy", amountE4: nil),
+        ]),
+        audience: .only(.lifestyle(.kids))),
       GuideTask(
         id: "task.category",
         title: GuideText("Поменяйте категорию операции", "Change the category of an operation"),
@@ -119,7 +210,8 @@ public enum GuideCatalog {
             target: "planning.addPayment",
             text: GuideText("«Планирование» → «+ Платёж»", "Planning → «+ Payment»"), keys: "⌘2")
         ],
-        done: .scheduledPaymentAdded),
+        done: .scheduledPaymentAdded,
+        audience: .unlessNot(.subscriptions)),
       GuideTask(
         id: "task.count",
         title: GuideText("Сверьте остаток счёта", "Count the balance of an account"),
@@ -165,6 +257,39 @@ public enum GuideCatalog {
         ],
         done: .operationForSomebodyElse),
       GuideTask(
+        id: "task.loan",
+        title: GuideText("Заведите кредит или долг", "Add a loan or a debt"),
+        hints: [
+          GuideHint(
+            target: "sidebar.debts",
+            text: GuideText("«Долги» → «+ Долг»", "Debts → «+ Debt»"), keys: "⌘3")
+        ],
+        done: .debtAdded,
+        audience: .only(.loans)),
+      GuideTask(
+        id: "task.cushion",
+        title: GuideText("Заведите цель «Подушка»", "Add a goal «Cushion»"),
+        hints: [
+          GuideHint(
+            target: "sidebar.planning",
+            text: GuideText("«Планирование» → «+ Цель»", "Planning → «+ Goal»"), keys: "⌘2")
+        ],
+        done: .goalAdded,
+        audience: .only(.cushion)),
+      GuideTask(
+        id: "task.cashback",
+        title: GuideText("Задайте кэшбэк счёта", "Set the cashback of an account"),
+        hints: [
+          GuideHint(
+            target: "settings.accounts",
+            text: GuideText(
+              "«Настройки → Счета» → счёт → «Кэшбэк…»",
+              "Settings → Accounts → an account → «Cashback…»"),
+            keys: "⌘,")
+        ],
+        done: .cashbackRuleAdded,
+        audience: .only(.cashback)),
+      GuideTask(
         id: "task.spending",
         title: GuideText("Откройте список «Траты»", "Open the Spending list"),
         hints: [
@@ -192,7 +317,7 @@ public enum GuideCatalog {
 
   // MARK: What is new
 
-  public static let whatsNew: [GuideScenario] = [whatsNew14]
+  public static let whatsNew: [GuideScenario] = [whatsNew14, whatsNew15]
 
   public static let whatsNew14 = GuideScenario(
     kind: .whatsNew(version: GuideVersion(major: 1, minor: 4)),
@@ -261,6 +386,54 @@ public enum GuideCatalog {
         body: GuideText(
           "В подробной форме справа — строка, которая сначала показывает, что будет записано.",
           "The form at the side has a line that shows what will be written before it is."),
+        symbol: "sidebar.right"),
+    ])
+
+  public static let whatsNew15 = GuideScenario(
+    kind: .whatsNew(version: GuideVersion(major: 1, minor: 5)),
+    cards: [
+      GuideCard(
+        id: "new15.calendar",
+        title: GuideText("Календарь трат", "A spending calendar"),
+        body: GuideText(
+          "Месяц или неделя: сколько потрачено в каждый день, дорогие дни отмечены, впереди — платежи. ⌘5.",
+          "A month or a week: what each day cost, costly days marked, payments ahead. ⌘5."),
+        symbol: "calendar"),
+      GuideCard(
+        id: "new15.hide",
+        title: GuideText("Скрыть суммы", "Hide amounts"),
+        body: GuideText(
+          "Кнопка с глазом или ⌃⌘H — все суммы становятся «•••».",
+          "The eye button or ⌃⌘H turns every amount into «•••»."),
+        symbol: "eye.slash"),
+      GuideCard(
+        id: "new15.lock",
+        title: GuideText("Блокировка Touch ID", "A Touch ID lock"),
+        body: GuideText(
+          "«Настройки → Основные»: «Итого» закрывается после простоя и при блокировке Mac.",
+          "Settings → General: Itogo locks after idle time and when the Mac locks."),
+        symbol: "touchid"),
+      GuideCard(
+        id: "new15.limits",
+        title: GuideText("Предложить лимиты", "Suggested limits"),
+        body: GuideText(
+          "«Планирование → Лимиты → Предложить лимиты…»: суммы по вашим обычным тратам.",
+          "Planning → Limits → Suggest Limits…: amounts from what you usually spend."),
+        symbol: "gauge.with.dots.needle.50percent"),
+      GuideCard(
+        id: "new15.line",
+        title: GuideText("Время и кэшбэк в строке", "Time and cashback in the line"),
+        body: GuideText(
+          "«груша вчера в 18:09 325 кэшбек 9.76» — со временем и кэшбэком.",
+          "«pear yesterday at 18:09 325 cashback 9.76» — with the time and the cashback."),
+        symbol: "text.cursor"),
+      GuideCard(
+        id: "new15.form",
+        title: GuideText("Форма справа", "The form at the side"),
+        body: GuideText(
+          "Сначала вид операции; выбранная в списке операция открывается в форме на правку; перевод — прямо в форме.",
+          "The kind comes first; an operation chosen in a list opens in the form; a transfer is written right there."
+        ),
         symbol: "sidebar.right"),
     ])
 }

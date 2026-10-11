@@ -1395,6 +1395,23 @@
         }
       }
     },
+    "entry.error.noSuchTime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There is no such time: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Такого времени нет: %@"
+          }
+        }
+      }
+    },
     "entry.error.notBalanced": {
       "extractionState": "manual",
       "localizations": {
@@ -1667,6 +1684,23 @@
         }
       }
     },
+    "entry.form.chooseKind": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose what to record — the fields will appear."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите, что записать, — появятся поля."
+          }
+        }
+      }
+    },
     "entry.form.clear": {
       "extractionState": "manual",
       "localizations": {
@@ -1680,6 +1714,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Очистить"
+          }
+        }
+      }
+    },
+    "entry.form.editTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit operation"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Правка операции"
           }
         }
       }
@@ -1935,6 +1986,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Комментарий"
+          }
+        }
+      }
+    },
+    "entry.note.lines": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥Return starts a new line"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥Return — новая строка"
           }
         }
       }
@@ -2710,13 +2778,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "A transfer from account to account, started with the amount, the account and the date of this form"
+            "value": "A transfer from account to account, written right here: the amount, the account and the date of this form carry over to it"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Перевод со счёта на счёт: сумма, счёт и дата отсюда попадут в форму перевода"
+            "value": "Перевод со счёта на счёт — здесь же: сумма, счёт и дата этой формы переходят в него"
           }
         }
       }

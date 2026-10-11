@@ -33,6 +33,18 @@ struct SpendingView: View {
       primaryAction: { ids in actions.edit(ids, store: store) },
       deleteAction: { ids in actions.requestDeletion(of: ids, store: store) }
     )
+    // ↓ and ↑ move the selection a row, from the row the window says is selected. The list kept
+    // its own idea of it: a row selected by the window — ↓ from the entry line, the form at the
+    // side — was not the one its arrows went on from, and they seemed not to move at all.
+    .onKeyPress(keys: [.downArrow, .upArrow]) { press in
+      guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]),
+        let next = SpendingArrows.next(
+          from: actions.selection, rows: groups.flatMap { $0.items.map(\.selectableId) },
+          down: press.key == .downArrow)
+      else { return .ignored }
+      actions.selection = [next]
+      return .handled
+    }
     .onAppear {
       followData()
       GuideStore.shared.report(GuideEvent.spendingOpened)
@@ -131,5 +143,18 @@ enum SpendingSearch {
     if let place = entry.transaction.placeId.flatMap({ names.places[$0] }) { texts.append(place) }
     let haystack = NameKey.fold(texts.joined(separator: " "))
     return query.split(separator: " ").allSatisfy { haystack.contains(NameKey.fold(String($0))) }
+  }
+}
+
+/// The row ↓ or ↑ selects in «Траты»: the next or the one before the row selected, in the order of
+/// the list. Nothing selected, ↓ is the first row; several rows, the arrows are the list's own.
+enum SpendingArrows {
+  static func next(from selection: Set<UUID>, rows: [UUID], down: Bool) -> UUID? {
+    guard !rows.isEmpty else { return nil }
+    guard let selected = selection.first else { return down ? rows.first : nil }
+    guard selection.count == 1, let index = rows.firstIndex(of: selected) else { return nil }
+    let target = down ? index + 1 : index - 1
+    // At either end the selection stays where it is.
+    return rows.indices.contains(target) ? rows[target] : selected
   }
 }

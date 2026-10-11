@@ -3,20 +3,20 @@ import Testing
 
 @testable import CoreKit
 
-/// The tiles of Overview as the settings keep them: eighteen kinds to choose from, at most
+/// The tiles of Overview as the settings keep them: twenty kinds to choose from, at most
 /// twelve at once, the twelve of 1.2 in their order by default, and a stored line from anywhere —
 /// another build, an archive of another Mac, a hand edit — that always reads as a choice the grid
 /// can show.
 @Suite("The tiles of Overview")
 struct OverviewTilesTests {
-  /// Nineteen kinds, in the order of the settings; the raw values are what is stored.
-  @Test func nineteenKindsInTheOrderOfTheSettings() {
+  /// Twenty kinds, in the order of the settings; the raw values are what is stored.
+  @Test func twentyKindsInTheOrderOfTheSettings() {
     #expect(
       OverviewTile.allCases.map(\.rawValue) == [
         "monthToDate", "topCategories", "qualities", "canSave", "spendingForecast",
         "incomeForecast", "balanceForecast", "limits", "upcoming", "expectedIncome", "owedToMe",
         "iOwe", "event", "lastCount", "lastRecord", "lastCountAndRecord", "worthALook",
-        "freeMoney", "currencyChart",
+        "freeMoney", "currencyChart", "spendingCalendar",
       ])
   }
 

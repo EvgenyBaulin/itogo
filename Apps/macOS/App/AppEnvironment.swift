@@ -205,7 +205,15 @@ public final class AppEnvironment {
   /// opened, or answered in words when it did not (`ArchiveImportFlow.resumeDeferred`).
   public var pendingArchiveImport: URL?
 
-  public var money: MoneyFormatter { MoneyFormatter(locale: language.locale) }
+  /// «Скрыть суммы» of this Mac (`AmountPrivacy`): read by `money`, so every money text of
+  /// the interface follows it.
+  public let amounts: AmountPrivacy
+  /// «Блокировать Итого» of this Mac (`PrivacyLock`): the cover of every window.
+  let lock: PrivacyLock
+
+  public var money: MoneyFormatter {
+    MoneyFormatter(locale: language.locale, hidesAmounts: amounts.hidesAmounts)
+  }
   public var dates: DateFormatting { DateFormatting(locale: language.locale, calendar: calendar) }
 
   /// Where the moment `today` is taken from: the wall clock in the app, a fixed day in a test,
@@ -218,6 +226,11 @@ public final class AppEnvironment {
   public init() {
     language = AppLanguage()
     theme = AppTheme()
+    // The test host keeps neither switch: a test that hides the amounts or locks never does so
+    // for the owner, whose `UserDefaults` the host shares. A data set is never locked.
+    let defaults: UserDefaults? = Self.isTestHost ? nil : .standard
+    amounts = AmountPrivacy(defaults: defaults)
+    lock = PrivacyLock(applies: !Self.isTestHost && AppPaths.dataSet == nil, defaults: defaults)
   }
 
   /// The stand-in of a view shown without the app's dependencies: never started, so it opens no
@@ -225,6 +238,8 @@ public final class AppEnvironment {
   init(missingDependency reader: String) {
     language = AppLanguage(missingDependency: reader)
     theme = AppTheme()
+    amounts = AmountPrivacy(defaults: nil)
+    lock = PrivacyLock(applies: false, defaults: nil)
   }
 
   /// Whether this is the stand-in of `AppDependencies.missing(in:)`.

@@ -59,19 +59,20 @@ final class QuickEntryFormTests: XCTestCase {
   /// ⌘N in the form puts the keyboard in the quick line.
   func testANewOperationPutsTheKeyboardInTheQuickLine() async throws {
     let host = try await openForm()
-    // A known fault, kept in sight: a focus asked in the column of the form does not land — not
-    // the quick line, not a field of the order asked the same way — on this Mac and on the CI
-    // runner alike. Until it is found, the failure is expected and the test says when it passes.
-    XCTExpectFailure(
-      "a focus asked in the column of the form does not land yet", strict: false)
     let line = try quickLine(of: host)
+    // A line read into the fields, and the keyboard in one of them.
+    try host.type("кофе 300", into: line)
+    try returnInTheQuickLine(of: host)
     XCTAssertTrue(host.window.makeFirstResponder(try host.field(prompt: "0")))
     NotificationCenter.default.post(name: .focusEntryLine, object: nil)
-    // SwiftUI moves the keyboard on a later turn of its own: waited for, up to two seconds.
+    // SwiftUI moves the keyboard from a task of the main actor (`DetailsPanel`'s focus request):
+    // waited for by suspending, up to two seconds. A run loop spun inside this test alone never
+    // lets that task run — the test holds the main actor — and the focus seemed not to land.
     var focused: NSTextField?
     let deadline = Date().addingTimeInterval(2)
     repeat {
-      host.settle(0.1)
+      try await Task.sleep(for: .milliseconds(50))
+      host.settle(0.05)
       focused = (host.window.firstResponder as? NSTextView)?.delegate as? NSTextField
     } while focused !== line && Date() < deadline
     XCTAssertTrue(focused === line, "⌘N went to «\(focused?.placeholderString ?? "?")»")
@@ -181,6 +182,10 @@ final class QuickEntryFormTests: XCTestCase {
   func testWriteOnTheCardWrites() async throws {
     try TestEnvironment.requireSwiftUIAccessibility()
     let host = try await openForm()
+    // The fields open with a kind chosen.
+    WindowAccessibility.press(
+      try XCTUnwrap(WindowAccessibility.element(identified: "entry.kind.expense", in: host.window)))
+    host.settle()
     try WindowAccessibility.choose("Cafe", inMenu: "entry.category", of: host.window)
     try host.type("кофе 300", into: try quickLine(of: host))
     try returnInTheQuickLine(of: host)
@@ -212,6 +217,11 @@ final class QuickEntryFormTests: XCTestCase {
     let clear = try XCTUnwrap(
       WindowAccessibility.element(identified: "entry.form.clear", in: host.window))
     WindowAccessibility.press(clear)
+    host.settle()
+    XCTAssertNil(
+      host.textFields().first { $0.placeholderString == "0" }, "back at the kinds, fields empty")
+    WindowAccessibility.press(
+      try XCTUnwrap(WindowAccessibility.element(identified: "entry.kind.expense", in: host.window)))
     host.settle()
     XCTAssertEqual(try host.field(prompt: "0").stringValue, "")
   }

@@ -23,19 +23,33 @@ struct DetailsPanel: View {
   /// Return in a text field of the panel («Сохранение — Enter»). The ↓ panel
   /// of the entry line saves with it; the editor of a saved operation has «Save» of its own.
   var submit: (() -> Void)? = nil
-  /// «Перевести…»: the panel of a new operation offers the transfer sheet, started with what the
-  /// panel holds. The editor of a saved operation has none.
-  var onTransfer: (() -> Void)? = nil
+  /// The panel of a new operation offers «Перевод» among the kinds: the fields of a transfer
+  /// stand in place of the fields of an operation, started with what the panel holds, and the
+  /// panel saves the transfer (`EntryDraftModel.transfer`). The editor of a saved operation
+  /// does not.
+  var offersTransfer = false
   /// Told whether a field of the panel has the keyboard: the form at the side of the window
   /// answers Return with «Save» only while one does.
   var focusedInside: Binding<Bool>? = nil
   /// How the fields stand: beside their labels in a grid — the ↓ panel, 560–720 pt wide, and the
   /// editor — or under them in one column, for the form at the side of the window.
   var arrangement: Arrangement = .wide
+  /// Whether the grid is wide enough for the kinds and «За кого» as segments side by side: the
+  /// ↓ panel, 560–720 pt, is. The inspector of the Transactions window, a column of 300–440 pt,
+  /// is not — there both are menus. Four kinds side by side want 390 pt in English and 524 in
+  /// Russian, wider than the column can ever be, and SwiftUI does not always measure such a
+  /// control squeezed: on some passes the content reported that natural width as its minimum,
+  /// the split could not give a column more than its maximum, and the window looped until AppKit
+  /// threw (`testTheInspectorNeverAsksForMoreThanItsColumnCanGive`).
+  var hasRoomForSegments = true
   /// The line of quick entry the form at the side puts over its fields. It shares the panel's
   /// focus, so ⌘N asks for it the way Tab asks for a field (`PanelFocus.quick`) — one focus, never
   /// two that pull against each other.
   var quickLine: ((FocusState<PanelFocus?>.Binding) -> AnyView)? = nil
+  /// Whether the kind of the operation has been chosen, in the form at the side: until it is, the
+  /// form shows the quick line and the kinds alone, and a tile — or the quick line read into the
+  /// fields — brings the fields. `nil`: the fields are always there (the ↓ panel, the editor).
+  var kindChosen: Binding<Bool>? = nil
   /// The control of the panel that has the keyboard focus, when it is one of the fields.
   @FocusState private var focus: PanelFocus?
 
@@ -56,43 +70,18 @@ struct DetailsPanel: View {
         Divider()
       }
       typeRow
-      Divider()
-      mainFields
-      // The difference of a count: why its money cannot be changed here.
-      if model.isReconcileDifference {
-        Label {
-          Text(
-            verbatim: environment.language(
-              "editor.reconcileDifference.locked", table: "Transactions"))
-        } icon: {
-          Image(systemName: "lock")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityIdentifier("entry.reconcileDifference.locked")
-      }
-      // Money back is never split: a split held before the kind changed stays out of sight,
-      // and out of what is written.
-      if model.isSplit && model.has(.split) {
+      if showsFields, let transfer = model.transfer {
         Divider()
-        splitEditor
-      }
-      Divider()
-      footer
-      // «Save» is inactive for these, and nothing else in the panel says why. Wraps in the
-      // width it is given: the panel is also the inspector, a column of a split view.
-      if let refusal = model.shownRefusalKey {
-        Text(verbatim: t(refusal))
+        TransferFields(entry: transfer, layout: inColumn ? .column : .wide, focus: $focus)
+      } else if showsFields {
+        Divider()
+        fieldsAndActions
+      } else {
+        Text(verbatim: t("entry.form.chooseKind"))
           .font(.caption)
-          .foregroundStyle(.red)
-          .accessibilityIdentifier("entry.refusal")
-      }
-      // A record «Add…» asked for that the database refused: nothing was chosen.
-      if let failure = model.creationFailureKey {
-        Text(verbatim: t(failure))
-          .font(.caption)
-          .foregroundStyle(.red)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("entry.form.chooseKind")
       }
     }
     .frame(maxWidth: 720, alignment: .leading)
@@ -106,9 +95,13 @@ struct DetailsPanel: View {
     .task(id: model.focusRequest) {
       guard let request = model.focusRequest else { return }
       try? await Task.sleep(for: .milliseconds(30))
-      focus = PanelTabOrder.resolve(
-        request, order: environment.entryFieldOrder, shown: shownControls,
-        fullKeyboardAccess: PanelTabOrder.fullKeyboardAccess)
+      focus =
+        model.transfer == nil
+        ? PanelTabOrder.resolve(
+          request, order: environment.entryFieldOrder, shown: shownControls,
+          fullKeyboardAccess: PanelTabOrder.fullKeyboardAccess)
+        : PanelTabOrder.resolveTransfer(
+          request, shown: shownControls, fullKeyboardAccess: PanelTabOrder.fullKeyboardAccess)
       model.focusRequest = nil
     }
     // The data was computed again — the bank's rates among it: «Списано со счёта» reads them
@@ -127,6 +120,51 @@ struct DetailsPanel: View {
     }
   }
 
+  /// The fields are on screen: always, but in the form at the side before a kind is chosen.
+  private var showsFields: Bool { kindChosen?.wrappedValue ?? true }
+
+  /// Everything under the kinds: the fields, the parts, the actions and what stops the save.
+  @ViewBuilder
+  private var fieldsAndActions: some View {
+    mainFields
+    // The difference of a count: why its money cannot be changed here.
+    if model.isReconcileDifference {
+      Label {
+        Text(
+          verbatim: environment.language(
+            "editor.reconcileDifference.locked", table: "Transactions"))
+      } icon: {
+        Image(systemName: "lock")
+      }
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      .accessibilityIdentifier("entry.reconcileDifference.locked")
+    }
+    // Money back is never split: a split held before the kind changed stays out of sight,
+    // and out of what is written.
+    if model.isSplit && model.has(.split) {
+      Divider()
+      splitEditor
+    }
+    Divider()
+    footer
+    // «Save» is inactive for these, and nothing else in the panel says why. Wraps in the
+    // width it is given: the panel is also the inspector, a column of a split view.
+    if let refusal = model.shownRefusalKey {
+      Text(verbatim: t(refusal))
+        .font(.caption)
+        .foregroundStyle(.red)
+        .accessibilityIdentifier("entry.refusal")
+    }
+    // A record «Add…» asked for that the database refused: nothing was chosen.
+    if let failure = model.creationFailureKey {
+      Text(verbatim: t(failure))
+        .font(.caption)
+        .foregroundStyle(.red)
+    }
+  }
+
   // MARK: Type
 
   /// Four kinds side by side want about 450 pt, more than the column has: there every choice is
@@ -135,14 +173,19 @@ struct DetailsPanel: View {
   @ViewBuilder
   private var typeRow: some View {
     switch arrangement {
-    case .wide: kindPicker.pickerStyle(.segmented)
+    case .wide:
+      if hasRoomForSegments {
+        kindPicker.pickerStyle(.segmented)
+      } else {
+        kindPicker.pickerStyle(.menu)
+      }
     case .column: kindTiles
     }
   }
 
   /// The tiles of the column: the kinds, and the transfer where the panel offers one.
   private var kindTiles: some View {
-    let tiles = EntryKindTiles.all.filter { $0 != .transfer || onTransfer != nil }
+    let tiles = EntryKindTiles.all.filter { $0 != .transfer || offersTransfer }
     let rows = EntryKindTiles.rows(of: tiles, mostUsed: model.mostUsedKindTile)
     let locked = model.hasClosedPart || model.isReconcileDifference
     return VStack(spacing: 6) {
@@ -163,11 +206,14 @@ struct DetailsPanel: View {
   private func kindTile(_ tile: EntryKindTile, locked: Bool) -> some View {
     switch tile {
     case .kind(let kind):
-      let chosen = model.draft.kind == kind
+      // Before a kind is chosen in the form, none of the tiles is lit.
+      let chosen = showsFields && model.transfer == nil && model.draft.kind == kind
       Button {
-        guard model.draft.kind != kind else { return }
-        model.draft.kind = kind
-        model.applyDefaults(today: environment.today)
+        let fieldsWereHidden = !showsFields
+        kindChosen?.wrappedValue = true
+        chooseKind(.kind(kind))
+        // The fields have just come: the keyboard goes to the first of them.
+        if fieldsWereHidden { model.focusRequest = .first }
       } label: {
         Label {
           Text(verbatim: environment.language("kind.\(kind.rawValue)"))
@@ -183,8 +229,12 @@ struct DetailsPanel: View {
       .accessibilityAddTraits(chosen ? .isSelected : [])
       .accessibilityIdentifier("entry.kind.\(kind.rawValue)")
     case .transfer:
+      let chosen = showsFields && model.transfer != nil
       Button {
-        onTransfer?()
+        let fieldsWereHidden = !showsFields
+        kindChosen?.wrappedValue = true
+        chooseKind(.transfer)
+        if fieldsWereHidden { model.focusRequest = .first }
       } label: {
         Label {
           Text(verbatim: t("entry.kind.transfer"))
@@ -194,8 +244,27 @@ struct DetailsPanel: View {
         .frame(maxWidth: .infinity)
       }
       .buttonStyle(.bordered)
+      .tint(chosen ? Color.accentColor : nil)
+      .fontWeight(chosen ? .semibold : .regular)
       .disabled(locked)
+      .accessibilityAddTraits(chosen ? .isSelected : [])
       .accessibilityIdentifier("entry.kind.transfer")
+    }
+  }
+
+  /// A kind chosen — a tile, a segment, «Перевести…»: an operation of that kind, its defaults
+  /// laid, or the transfer, started with what the panel holds. The draft of the operation stays
+  /// beside a transfer, and comes back as it was.
+  private func chooseKind(_ tile: EntryKindTile) {
+    switch tile {
+    case .kind(let kind):
+      model.transfer = nil
+      guard model.draft.kind != kind else { return }
+      model.draft.kind = kind
+      // The segments lay the defaults when the kind changes (`kindPicker`); the tiles here.
+      if inColumn { model.applyDefaults(today: environment.today) }
+    case .transfer:
+      model.chooseTransfer(calendar: environment.calendar)
     }
   }
 
@@ -208,10 +277,19 @@ struct DetailsPanel: View {
     }
   }
 
+  /// The kinds, and «Перевод» last where the panel offers a transfer.
   private var kindPicker: some View {
-    Picker(selection: $model.draft.kind) {
+    Picker(
+      selection: Binding<EntryKindTile>(
+        get: { model.transfer == nil ? .kind(model.draft.kind) : .transfer },
+        set: { chooseKind($0) })
+    ) {
       ForEach(TransactionKind.allCases, id: \.self) { kind in
-        Text(verbatim: environment.language("kind.\(kind.rawValue)")).tag(kind)
+        Text(verbatim: environment.language("kind.\(kind.rawValue)"))
+          .tag(EntryKindTile.kind(kind))
+      }
+      if offersTransfer {
+        Text(verbatim: t("entry.kind.transfer")).tag(EntryKindTile.transfer)
       }
     } label: {
       Text(verbatim: t("entry.category"))
@@ -262,7 +340,9 @@ struct DetailsPanel: View {
         Text(verbatim: t("entry.payingFor"))
       }
       .labelsHidden()
-      .modifier(PayingForStyle(arrangement: arrangement))
+      .modifier(
+        PayingForStyle(arrangement: arrangement, hasRoomForSegments: hasRoomForSegments)
+      )
       .accessibilityIdentifier("entry.payingFor")
       .guideTarget("entry.forWhom")
     }
@@ -320,13 +400,15 @@ struct DetailsPanel: View {
   }
 
   /// Four ways side by side want about 340 pt in Russian, more than the column has: there they
-  /// are a menu as wide as the column.
+  /// are a menu as wide as the column, and in the inspector a menu.
   private struct PayingForStyle: ViewModifier {
     let arrangement: Arrangement
+    let hasRoomForSegments: Bool
 
     func body(content: Content) -> some View {
       switch arrangement {
-      case .wide: content.pickerStyle(.segmented)
+      case .wide where hasRoomForSegments: content.pickerStyle(.segmented)
+      case .wide: content.pickerStyle(.menu)
       case .column:
         content.pickerStyle(.menu).buttonSizing(.flexible)
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -417,6 +499,14 @@ struct DetailsPanel: View {
 
   /// Which controls are on screen, for Tab: by the same conditions the rows are laid by.
   private var shownControls: Set<PanelFocus> {
+    // Before a kind is chosen only the quick line is there.
+    guard showsFields else { return quickLine == nil ? [] : [.quick] }
+    if model.transfer != nil {
+      var shown = Set(PanelTabOrder.transferControls)
+      if model.transfer?.form.isExchange != true { shown.remove(.transferReceived) }
+      if quickLine != nil { shown.insert(.quick) }
+      return shown
+    }
     var shown: Set<PanelFocus> = [.amount, .account, .note, .date, .currency]
     if quickLine != nil { shown.insert(.quick) }
     if model.has(.category) { shown.formUnion([.category, .subcategory]) }
@@ -730,11 +820,14 @@ struct DetailsPanel: View {
 
   private var noteRow: some View {
     fieldRow("entry.note") {
-      TextField(text: Binding($model.draft.note, replacingNilWith: "")) {
+      // Several lines: ⌥Return starts a new one, Return saves as in every field.
+      TextField(text: Binding($model.draft.note, replacingNilWith: ""), axis: .vertical) {
         Text(verbatim: t("entry.note"))
       }
+      .lineLimit(1...6)
       .labelsHidden()
       .focused($focus, equals: .note)
+      .help(t("entry.note.lines"))
     }
   }
 
@@ -996,8 +1089,8 @@ struct DetailsPanel: View {
           .disabled(!model.canChangeCredit)
         }
 
-        if let onTransfer {
-          Button(t("entry.transfer"), action: onTransfer)
+        if offersTransfer {
+          Button(t("entry.transfer")) { chooseKind(.transfer) }
             .buttonStyle(.bordered)
             .help(t("entry.transfer.help"))
             .accessibilityIdentifier("entry.transfer")

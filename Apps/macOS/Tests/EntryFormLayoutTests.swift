@@ -7,7 +7,8 @@ import XCTest
 
 /// The form at the side of the window lays the fields of the ↓ panel in one column of about
 /// 380 pt: no control runs past either edge of the column and no menu cuts its title — in both
-/// languages, for a plain expense, income, a split, another currency and a purchase on credit.
+/// languages, for a plain expense, income, a split, another currency, a purchase on credit, a
+/// transfer and an exchange.
 /// Laid as the panel's grid, the fields wanted some 450 pt and were centred in the column, cut
 /// off on both sides.
 @MainActor
@@ -75,6 +76,12 @@ final class EntryFormLayoutTests: XCTestCase {
       model.setCurrency(.usd)
     case "credit":
       model.startCreditPlan()
+    case "transfer", "exchange":
+      model.chooseTransfer(calendar: environment.calendar)
+      let name = variant == "exchange" ? "Abroad" : "Savings"
+      let other = model.paymentMethods.first { $0.name == name }
+      if let other { model.transfer?.form.chooseTo(other) }
+      model.transfer?.form.fee = AmountE4(whole: 15)
     default:
       break
     }
@@ -85,6 +92,8 @@ final class EntryFormLayoutTests: XCTestCase {
   func testEveryControlOfTheFormStaysInsideTheColumn() async throws {
     let host = try await EntryHost(opensDetails: false, width: 380, style: .line) { environment in
       try EntryHost.history("coffee", in: environment)
+      try environment.references!.save(PaymentMethod(name: "Savings", currency: .rub))
+      try environment.references!.save(PaymentMethod(name: "Abroad", currency: .usd))
     }
     self.host = host
     // On a CI runner SwiftUI builds no accessibility tree: there only the views of AppKit — the
@@ -95,7 +104,9 @@ final class EntryFormLayoutTests: XCTestCase {
     for language in [AppLanguage.Choice.russian, .english] {
       host.environment.language.choice = language
       for width in [CGFloat(340), MainWindow.entryFormWidth, 420] {
-        for variant in ["expense", "income", "split", "currency", "credit"] {
+        for variant in [
+          "expense", "income", "split", "currency", "credit", "transfer", "exchange",
+        ] {
           let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: width, height: 1500), styleMask: [.titled],
             backing: .buffered, defer: false)
@@ -103,7 +114,7 @@ final class EntryFormLayoutTests: XCTestCase {
           windows.append(window)
           let column = EntryFormColumn(
             model: model(variant, in: host.environment), focusedInside: .constant(false),
-            save: {}, clear: {}, transfer: {},
+            save: {}, clear: {},
             quickLine: { focus in
               // The quick line stands over the fields as wide as the column.
               AnyView(

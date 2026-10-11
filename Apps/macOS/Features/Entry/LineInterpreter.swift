@@ -5,13 +5,15 @@ import Foundation
 /// and understands English and Russian, amounts as expressions, dates, places, people and
 /// the rest; this protocol keeps the view independent of it.
 protocol LineInterpreter: Sendable {
-  /// `kind` is the kind the ↓ panel already chose, for a line that names none.
-  func interpret(_ text: String, today: DateOnly, kind: TransactionKind?) -> ParsedInput
+  /// `kind` is the kind the ↓ panel already chose, for a line that names none. Besides what
+  /// `ParsedInput` holds: the time of day («в 18:09») and the cashback («кэшбек 9.76»).
+  func read(_ text: String, today: DateOnly, kind: TransactionKind?) -> InputLineReading
 }
 
 extension LineInterpreter {
-  func interpret(_ text: String, today: DateOnly) -> ParsedInput {
-    interpret(text, today: today, kind: nil)
+  /// The line without its time and cashback: their words are not in the note either.
+  func interpret(_ text: String, today: DateOnly, kind: TransactionKind? = nil) -> ParsedInput {
+    read(text, today: today, kind: kind).parsed
   }
 }
 
@@ -22,8 +24,8 @@ struct CoreLineInterpreter: LineInterpreter {
   let vocabulary: ParserVocabulary
   let calendar: CalendarContext
 
-  func interpret(_ text: String, today: DateOnly, kind: TransactionKind?) -> ParsedInput {
-    InputLineParser(vocabulary: vocabulary, calendar: calendar).parse(
+  func read(_ text: String, today: DateOnly, kind: TransactionKind?) -> InputLineReading {
+    InputLineParser(vocabulary: vocabulary, calendar: calendar).read(
       text, today: today, kind: kind)
   }
 }
