@@ -33,6 +33,7 @@ struct SpendingView: View {
       primaryAction: { ids in actions.edit(ids, store: store) },
       deleteAction: { ids in actions.requestDeletion(of: ids, store: store) }
     )
+    .guideTarget(GuideTarget.spendingList)
     // ↓ and ↑ move the selection a row, from the row the window says is selected. The list kept
     // its own idea of it: a row selected by the window — ↓ from the entry line, the form at the
     // side — was not the one its arrows went on from, and they seemed not to move at all.

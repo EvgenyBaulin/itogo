@@ -11,24 +11,29 @@ struct EventsBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
+  @Environment(\.planningCardHosted) private var hosted
   @State private var form: EventFormItem?
 
   var body: some View {
     ComputedBlock(
-      title: t("events.title"), state: compute.states.data,
-      retry: { compute.retry(ComputeStep.data) }
+      title: hosted ? nil : t("events.title"), state: compute.states.data,
+      style: hosted ? .plain : .card, retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let shown = Self.shown(
         snapshot.planning.events, budgeted: snapshot.planning.budgetedEvents)
       VStack(alignment: .leading, spacing: 10) {
-        HStack {
-          if shown.isEmpty {
-            Text(verbatim: t("events.none")).foregroundStyle(.secondary)
+        if shown.isEmpty, hosted {
+          PlanningEmptyHint(block: .events) { form = EventFormItem(event: nil) }
+        } else {
+          HStack {
+            if shown.isEmpty {
+              Text(verbatim: t("events.none")).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(t("events.add")) { form = EventFormItem(event: nil) }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
           }
-          Spacer()
-          Button(t("events.add")) { form = EventFormItem(event: nil) }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
         ForEach(shown, id: \.event.id) { plan in
           VStack(alignment: .leading, spacing: 2) {

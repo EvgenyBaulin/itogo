@@ -1,9 +1,11 @@
 import AppCore
+import AppKit
 import SwiftUI
 
 /// The places the guide points at: a view marks itself `.guideTarget("entry.line")`, and the
-/// root of the window learns where it is. The tutorial frames the place of its current task;
-/// «Показать, куда нажимать» darkens the window and names every place with its keys.
+/// root of the window learns where it is. While the guide points at a place — a step of a task
+/// of the tutorial, «Показать, куда нажимать», «Показать, где» of a card — the root darkens
+/// around it (`GuideSpotlight`).
 struct GuideTargetKey: PreferenceKey {
   static let defaultValue: [String: Anchor<CGRect>] = [:]
   static func reduce(
@@ -14,137 +16,97 @@ struct GuideTargetKey: PreferenceKey {
 }
 
 extension View {
-  /// Marks the place the guide may point at, by the id its tasks and labels use.
+  /// Marks the place the guide may point at, by the id its steps use (`GuideTarget`).
   func guideTarget(_ id: String) -> some View {
-    anchorPreference(key: GuideTargetKey.self, value: .bounds) { [id: $0] }
+    modifier(GuideTargetMark(id: id))
   }
 
-  /// The root of a window: the frame around the place of the current task, and the labels of
-  /// «Показать, куда нажимать». `toolbar`: this root lies under the toolbar, and names its
-  /// buttons in a strip along its top edge.
+  /// The root of a window, or of a column of it: darkened around the place of the current step,
+  /// with the words beside it. `toolbar`: the main root of the window, under the toolbar — the
+  /// one that speaks of a place no root shows (a button of the toolbar, another window) and
+  /// tells VoiceOver each step.
   func guideOverlay(_ guide: GuideStore, toolbar: Bool = false) -> some View {
     overlayPreferenceValue(GuideTargetKey.self) { anchors in
       GeometryReader { proxy in
-        GuideOverlay(guide: guide, anchors: anchors, proxy: proxy, namesToolbar: toolbar)
+        GuideRoot(guide: guide, anchors: anchors, proxy: proxy, primary: toolbar)
       }
     }
   }
 }
 
-/// What «Показать, куда нажимать» names on the main window, with its keys on a Mac: the places
-/// of the window by the frames of the views that mark them, and the buttons of the toolbar in a
-/// strip under it — an item of the toolbar is drawn by AppKit and lends the window no place to
-/// point at.
-enum GuideLabels {
-  struct Label {
-    let target: String
-    let key: String
-    let keys: String?
+/// A marked place: its frame for the root, and — while the guide points at it — a way to bring
+/// it into view when a scroll view holds it out of sight.
+private struct GuideTargetMark: ViewModifier {
+  let id: String
+
+  func body(content: Content) -> some View {
+    content
+      // Added to what the views inside report, never in place of it: a marked list holds a
+      // marked search field.
+      .transformAnchorPreference(key: GuideTargetKey.self, value: .bounds) { places, anchor in
+        places[id] = anchor
+      }
+      .background {
+        if GuideStore.shared.walk?.current.target == id { GuideScrollIntoView() }
+      }
   }
-
-  static let main: [Label] = [
-    Label(target: "entry.line", key: "guide.label.entry", keys: "⌘N"),
-    Label(target: "entry.details.toggle", key: "guide.label.details", keys: "Tab"),
-    Label(target: "sidebar.overview", key: "guide.label.overview", keys: "⌘1"),
-    Label(target: "sidebar.planning", key: "guide.label.planning", keys: "⌘2"),
-    Label(target: "sidebar.debts", key: "guide.label.debts", keys: "⌘3"),
-    Label(target: "sidebar.spending", key: "guide.label.spending", keys: "↓"),
-  ]
-
-  static let toolbar: [Label] = [
-    Label(target: "toolbar.transactions", key: "guide.label.transactions", keys: "⌘⇧T"),
-    Label(target: "toolbar.reconcile", key: "guide.label.reconcile", keys: nil),
-    Label(target: "toolbar.settings", key: "guide.label.settings", keys: "⌘,"),
-  ]
 }
 
-private struct GuideOverlay: View {
-  @Dependency(\.environment) private var environment
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// Scrolls the scroll view that holds it until its place is in sight; nothing when it is.
+private struct GuideScrollIntoView: NSViewRepresentable {
+  final class Marker: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      guard window != nil else { return }
+      // After the layout that placed it: before it the frame is still zero.
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.window != nil, self.enclosingScrollView != nil else { return }
+        self.scrollToVisible(self.bounds)
+      }
+    }
+  }
+
+  func makeNSView(context: Context) -> Marker { Marker() }
+  func updateNSView(_ nsView: Marker, context: Context) {}
+}
+
+/// One root of the window: it tells the store which places it shows, and darkens itself while
+/// the guide points at something.
+private struct GuideRoot: View {
   let guide: GuideStore
   let anchors: [String: Anchor<CGRect>]
   let proxy: GeometryProxy
-  let namesToolbar: Bool
+  let primary: Bool
 
-  private func t(_ key: String) -> String { environment.language(key, table: "Guide") }
+  private var root: String { primary ? "main" : "side" }
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      if guide.showsWhereToClick {
-        Color.black.opacity(0.45)
-          .ignoresSafeArea()
-          .contentShape(Rectangle())
-          .onTapGesture { guide.showsWhereToClick = false }
-          .accessibilityHidden(true)
-        ForEach(GuideLabels.main, id: \.target) { label in
-          if let anchor = anchors[label.target] {
-            let frame = proxy[anchor]
-            RoundedRectangle(cornerRadius: 8)
-              .stroke(Color.white, lineWidth: 2)
-              .frame(width: frame.width + 6, height: frame.height + 6)
-              .position(x: frame.midX, y: frame.midY)
-            labelView(label)
-              .fixedSize()
-              .position(
-                x: min(max(frame.midX, 90), proxy.size.width - 90), y: max(frame.minY - 18, 14))
-          }
+      Color.clear
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onChange(of: Set(anchors.keys), initial: true) { _, ids in
+          guide.placesShown(ids, in: root)
         }
-        if namesToolbar {
-          HStack(spacing: 8) {
-            Image(systemName: "arrow.up")
-              .foregroundStyle(.white)
-              .accessibilityHidden(true)
-            ForEach(GuideLabels.toolbar, id: \.target) { label in labelView(label) }
-          }
-          .fixedSize()
-          .padding(.top, 8)
-          .padding(.trailing, 12)
-          .frame(maxWidth: .infinity, alignment: .topTrailing)
-        }
-      } else if let task = guide.framedTask,
-        let target = GuideCatalog.tutorial.tasks.first(where: { $0.id == task })?.hints.first?
-          .target,
-        let anchor = anchors[target]
-      {
-        let frame = proxy[anchor]
-        RoundedRectangle(cornerRadius: 10)
-          .stroke(Color.accentColor, lineWidth: 3)
-          .frame(width: frame.width + 10, height: frame.height + 10)
-          .position(x: frame.midX, y: frame.midY)
-          .allowsHitTesting(false)
-          .accessibilityHidden(true)
+        // A root that goes shows nothing: its places must not hold the window of another.
+        .onDisappear { guide.placesShown([], in: root) }
+      if let walk = guide.walk {
+        GuideSpotlight(guide: guide, walk: walk, anchors: anchors, proxy: proxy, primary: primary)
       }
     }
-    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: guide.showsWhereToClick)
-  }
-
-  private func labelView(_ label: GuideLabels.Label) -> some View {
-    HStack(spacing: 6) {
-      Text(verbatim: t(label.key))
-      if let keys = label.keys {
-        Text(verbatim: keys)
-          .font(.caption.monospaced())
-          .padding(.horizontal, 5)
-          .padding(.vertical, 1)
-          .background(RoundedRectangle(cornerRadius: 4).fill(.background.secondary))
-      }
-    }
-    .font(.callout)
-    .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(RoundedRectangle(cornerRadius: 6).fill(.background))
-    .accessibilityElement(children: .combine)
   }
 }
 
-/// Esc or a click anywhere closes «Показать, куда нажимать».
+/// Esc leaves the place the guide points at.
 struct GuideWhereToClickKeys: ViewModifier {
   let guide: GuideStore
 
   func body(content: Content) -> some View {
     content.background {
-      if guide.showsWhereToClick {
-        Button("") { guide.showsWhereToClick = false }
+      if guide.walk != nil {
+        Button("") { guide.endWalk() }
           .keyboardShortcut(.cancelAction)
           .opacity(0)
           .accessibilityHidden(true)

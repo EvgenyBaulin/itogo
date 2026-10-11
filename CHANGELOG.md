@@ -7,6 +7,95 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.8.0] — 2026-10-12
+
+Every Overview tile, laid out in groups and able to explain its own figure; a shorter and friendlier
+Planning screen; a password of its own for the lock; windows without tabs, and closing the main
+window quits the app; a tutorial that lights up where to click. The database schema stays at 8 and
+nothing in the database changes.
+
+### Added
+
+- **Why so** — click any of the 22 Overview tiles and a sheet takes its figure apart: rows that add
+  («+») or take away («−») and the total («=»), which is exactly the figure on the tile, then the
+  rule in one sentence. Tiles that have no single figure (limits, payments in 7 days, the last count
+  and record, «Worth a look») list their rows. A button opens the place the figure lives —
+  the right section of Analytics for the current month, Planning, Debts, Spending, Calendar, Net
+  Worth, All Accounts or the reconciliation sheet. The sheet uses the same calculations as the
+  tile, and **Hide amounts** masks its money too. VoiceOver offers «Why so» as an action of the tile.
+- **Overview groups** — tiles sit in three groups, **Money**, **Plan** and **Analysis**; a click on
+  a group's name folds it away (remembered on this Mac only).
+- **Edit on the Overview** — the tiles get a dashed outline and stop reacting to clicks; drag a tile
+  within its group or into another one, drag a group by its name, hide a tile with «−» (never the
+  last one shown), bring a hidden one back from **Add Tile**, then **Done**. A hidden tile keeps its
+  place and comes back to it. VoiceOver moves tiles up and down, into another group, and groups up
+  and down, with actions.
+- **The Planning screen** —
+  - a sentence on top, from the same figures as the free sum: «Until 31 October you can spend
+    another 42,000 ₽», with the dues of payments and of debts by then, or «the plans ask X more than
+    there is»; no sentence before the first count;
+  - **Next 14 days** — a ribbon of the coming days, income on the upper lane, payments on the lower,
+    a symbol and a count on each day; a click opens the payment or the income (a debt opens Debts,
+    several items on a day give a menu);
+  - every block is a card with a symbol, a total in its header and a fold; two columns on a wide
+    window, one on a narrow one; «Payments and subscriptions» are now two blocks, **Payments** and
+    **Subscriptions**;
+  - an empty block says what it is for and has a button to add the first one;
+  - a **+** button adds a payment, a subscription, an income, a limit, an event or a goal;
+  - long blocks (payments, subscriptions, expected income, goals) show the nearest few by date and
+    **Show all (N)**; how many is set in Settings → Planning (3, 5, 10 or all; 5 by default), and each
+    block can choose its own number in its header;
+  - **Edit** on the screen and Settings → Planning → **Planning screen** reorder the blocks by drag
+    (and by VoiceOver actions), **Standard order** puts them back.
+- **A password for the lock** — turning on **Lock Itogo** asks for Touch ID or the Mac password
+  first, then for a password of Itogo typed twice (at least 4 characters). The cover has a password
+  field (Return unlocks) and **Touch ID or Mac password** beside it. Five wrong passwords in a row
+  pause the field for 30 seconds, and a relaunch neither shortens the pause nor resets the count. **Forgot password?**
+  asks for Touch ID or the Mac password and then a new password; «Later — open without a password»
+  removes it and leaves Touch ID. Settings → General → Privacy: **Set Password…**, **Change…**,
+  **Remove**. Only a PBKDF2 hash of the password is kept, in the login keychain of this Mac — never in
+  the database, the archive, the journal or a problem report. A lock turned on in 1.7 without a
+  password keeps opening by Touch ID until you set one.
+- **A tutorial that shows where to click** — every task of the tutorial is one or two steps; the
+  window darkens with a cut-out exactly around the control to press and a caption saying what to do
+  and why. A click on the control works as usual and moves to the next step, a click elsewhere is
+  held, steps typed into the line move on by **Next** or when the task is done, Esc leaves. **Help →
+  Show Where to Click** walks through the line, the fields, the sidebar sections (⌘1–⌘6) and the
+  toolbar; cards of the tour and of What's New that name a place have **Show Me Where**. A control
+  the window cannot outline (the toolbar, the Settings window) gets a caption in the middle and
+  stays clickable. VoiceOver reads each step, Reduce Motion turns off the animation, Increase
+  Contrast outlines the cut-out; the form column on the right has the overlay too.
+- **What's New in 1.8** — five cards, once after the update.
+
+### Changed
+
+- The Overview shows **every tile** — no more limit of 12. Your order is kept; the tiles you did not
+  have are added at the end of their groups. Settings → Appearance → **Overview tiles** shows the
+  groups with their tiles: tick to show, drag a tile (also into another group), drag a group by its
+  name, **Reset** for the standard layout.
+- **No tabs.** Analytics, Transactions and Reports (⌘⇧A, ⌘⇧T, ⌘⇧R) open as windows of their own;
+  a second press brings the same window forward. The menus have no tab items. Over a main window in
+  full screen they open floating in the same Space and never larger than the screen; they no longer
+  go full screen on their own.
+- **Closing the main window quits Itogo** — the same way as ⌘Q: the calculation stops, a pending
+  backup is written, then the database closes. Closing another window only closes it, unless it is
+  the last one. The tutorial and the data sets behave the same.
+- The transfer archive's `settings.json` carries two more keys: `overview.layout` (groups and tiles
+  in order, hidden ones marked) and `planning.blockOrder`. `overview.tiles` is still written, so an
+  older build shows the same tiles; an archive with only `overview.tiles` replaces this Mac's
+  layout. Older readers skip the new keys; `formatVersion` stays 1.
+
+### Fixed
+
+- **Show Where to Click** could miss a control marked inside another marked place; nested places are
+  outlined each on its own.
+
+### Upgrading
+
+Nothing to do: the database is not updated (schema 8 as in 1.7) and nothing is rewritten. If a build
+is signed ad hoc, macOS may ask once whether Itogo may use the keychain when you set the lock
+password — allow it.
+
 ## [1.7.0] — 2026-10-11
 
 Capital — what you have minus what you owe, month by month — with property valued by hand, and a

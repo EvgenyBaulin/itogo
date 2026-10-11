@@ -4,7 +4,7 @@ import Observation
 
 /// The guide's memory on this Mac (`GuideProgress`, `UserDefaults` — never the database, never
 /// the archive) and what it is showing now: the cards of the first launch or of «Что нового», the
-/// tutorial's tasks, «Показать, куда нажимать». Nothing leaves the device; the journal gets ids
+/// tutorial's tasks, the place it points at step by step. Nothing leaves the device; the journal gets ids
 /// and counts.
 @MainActor @Observable
 final class GuideStore {
@@ -25,10 +25,46 @@ final class GuideStore {
   private(set) var progress: GuideProgress
   /// The cards on screen: the first launch's, a version's «Что нового», or none.
   var cards: GuideScenario?
-  /// «Показать, куда нажимать» is on.
-  var showsWhereToClick = false
-  /// The task whose place is framed on the screen.
-  var framedTask: String?
+  /// The place the guide points at now, one step at a time: the window darkened around it, the
+  /// words beside it. Nil when it points at nothing.
+  private(set) var walk: GuideWalkthrough?
+  /// The places each root of the main window shows now, by the root: a step whose place is in
+  /// none of them gets its words in the middle, and the window is not closed to clicks.
+  private(set) var placesShown: [String: Set<String>] = [:]
+  /// The cards «Показать, где» put aside, and the card it was on: they come back when the walk
+  /// ends.
+  @ObservationIgnored private var cardsAside: (scenario: GuideScenario, index: Int)?
+  /// The card the next cards open on.
+  @ObservationIgnored private var cardToOpen: (scenario: String, index: Int)?
+
+  /// «Показать, куда нажимать» is on: the places of the window, one after another.
+  var showsWhereToClick: Bool {
+    get { walk?.source == .whereToClick }
+    set {
+      if newValue {
+        start(.whereToClick())
+      } else if showsWhereToClick {
+        endWalk()
+      }
+    }
+  }
+
+  /// The task whose places the guide points at.
+  var framedTask: String? {
+    get {
+      if case .task(let id) = walk?.source { return id }
+      return nil
+    }
+    set {
+      if let newValue {
+        start(
+          GuideCatalog.tutorial.tasks.first { $0.id == newValue }.flatMap(
+            GuideWalkthrough.init(task:)))
+      } else if framedTask != nil {
+        endWalk()
+      }
+    }
+  }
 
   init(
     defaults: UserDefaults = AppEnvironment.isTestHost ? GuideStore.testDefaults : .standard,
@@ -114,6 +150,98 @@ final class GuideStore {
     cards = scenario
   }
 
+  /// «Показать, где» of a card: the cards step aside, the window darkens around the card's
+  /// place, and when the walk ends the cards come back on the same card.
+  func showOnScreen(card index: Int, of scenario: GuideScenario) {
+    guard scenario.cards.indices.contains(index),
+      let walk = GuideWalkthrough(card: scenario.cards[index])
+    else { return }
+    cardsAside = (scenario, index)
+    cards = nil
+    start(walk)
+  }
+
+  /// The card the cards of `scenario` open on: the one «Показать, где» left, once; else the
+  /// first.
+  func takeCardIndex(for scenario: GuideScenario) -> Int {
+    defer { cardToOpen = nil }
+    guard let open = cardToOpen, open.scenario == scenario.id,
+      scenario.cards.indices.contains(open.index)
+    else { return 0 }
+    return open.index
+  }
+
+  // MARK: Pointing at places
+
+  /// Points at the first step of `walk`; nil points at nothing.
+  func start(_ walk: GuideWalkthrough?) {
+    self.walk = walk
+    guard let walk else { return }
+    AppLog.info(
+      "guide.walkStarted", .ui, "the guide points at the places of a walk",
+      [
+        LogPair("source", .token(Self.token(walk.source))),
+        LogPair("steps", .count(walk.steps.count)),
+      ])
+  }
+
+  /// «Далее»: the next step, or the end after the last.
+  func next() {
+    guard var walk else { return }
+    switch walk.next() {
+    case .moved: self.walk = walk
+    case .finished, .ignored: endWalk()
+    }
+  }
+
+  /// A click on the place `target` while the guide points at it: the control under it did its
+  /// work, and the walk moves on when the step is a click.
+  func clicked(_ target: String) {
+    guard var walk else { return }
+    switch walk.clicked(target) {
+    case .moved: self.walk = walk
+    case .finished: endWalk()
+    case .ignored: break
+    }
+  }
+
+  /// Esc, «Готово» or the last click: the window lit again, and the cards a card's «Показать,
+  /// где» put aside come back.
+  func endWalk() {
+    guard let ended = walk else { return }
+    walk = nil
+    AppLog.info(
+      "guide.walkEnded", .ui, "the guide points at nothing",
+      [
+        LogPair("source", .token(Self.token(ended.source))),
+        LogPair("step", .count(ended.position.number)),
+      ])
+    if let aside = cardsAside {
+      cardsAside = nil
+      cardToOpen = (aside.scenario.id, aside.index)
+      cards = aside.scenario
+    }
+  }
+
+  /// The places a root of the main window shows now.
+  func placesShown(_ ids: Set<String>, in root: String) {
+    guard placesShown[root] != ids else { return }
+    placesShown[root] = ids
+  }
+
+  /// Whether some root of the window shows the place.
+  func isShown(_ target: String) -> Bool {
+    placesShown.values.contains { $0.contains(target) }
+  }
+
+  private static func token(_ source: GuideWalkthrough.Source) -> String {
+    switch source {
+    case .task: "task"
+    case .whereToClick: "whereToClick"
+    case .card: "card"
+    }
+  }
+
   // MARK: Tips
 
   var tipsOff: Bool {
@@ -145,7 +273,7 @@ final class GuideStore {
       GuideFactsReader.facts(of: dataset, since: baseline), tasks: progress.tutorialTasks)
     guard !fresh.isEmpty else { return }
     save()
-    if framedTask.map(fresh.contains) == true { framedTask = nil }
+    if framedTask.map(fresh.contains) == true { endWalk() }
     AppLog.info(
       "guide.tasksDone", .ui, "tasks of the tutorial were found done",
       [

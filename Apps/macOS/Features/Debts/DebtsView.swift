@@ -127,6 +127,7 @@ struct DebtsView: View {
       Spacer()
       Button(t("debts.add")) { sheet = .create }
         .buttonStyle(.bordered)
+        .guideTarget(GuideTarget.debtsAdd)
     }
   }
 

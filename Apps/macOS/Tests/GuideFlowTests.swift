@@ -185,7 +185,7 @@ final class GuideFlowTests: XCTestCase {
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whatsNew")))
-    XCTAssertEqual(guide.cards?.id, "whatsNew.1.7")
+    XCTAssertEqual(guide.cards?.id, "whatsNew.1.8")
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whereToClick")))
@@ -291,28 +291,27 @@ final class GuideFlowTests: XCTestCase {
 
   // MARK: «Показать, куда нажимать»
 
-  /// The labels and their keys, as the owner reads them: «Запись операции ⌘N», «Обзор ⌘1»,
-  /// «Планирование ⌘2», «Долги ⌘3», «Траты ↓»; the toolbar's — «Таблица операций ⌘⇧T», «Сверка
-  /// остатка», «Настройки ⌘,» — in a strip of their own, since a toolbar item lends the window
-  /// no place to point at.
+  /// The places «Показать, куда нажимать» walks through, one at a time, with their keys:
+  /// «Запись операции ⌘N», «Все поля Tab», the six sections of the sidebar «Обзор ⌘1» to
+  /// «Капитал ⌘6», and the three buttons of the toolbar — named in words, since a toolbar item
+  /// lends the window no place to cut out.
   func testWhereToClickNamesEveryPlaceWithItsKeys() {
-    func named(_ labels: [GuideLabels.Label]) -> [String] {
-      labels.map { label in
-        [Self.russian(label.key, table: "Guide"), label.keys].compactMap { $0 }
-          .joined(separator: " ")
-      }
-    }
     XCTAssertEqual(
-      named(GuideLabels.main),
+      GuideCatalog.whereToClick.map { step in
+        [step.text.russian, step.keys].compactMap { $0 }.joined(separator: " ")
+      },
       [
         "Запись операции ⌘N", "Все поля Tab", "Обзор ⌘1", "Планирование ⌘2", "Долги ⌘3",
-        "Траты ↓",
+        "Траты ⌘4", "Календарь ⌘5", "Капитал ⌘6", "Таблица операций — на панели вверху ⌘⇧T",
+        "Сверка остатка — на панели вверху", "Настройки — на панели вверху ⌘,",
       ])
-    XCTAssertEqual(
-      named(GuideLabels.toolbar), ["Таблица операций ⌘⇧T", "Сверка остатка", "Настройки ⌘,"])
+    guide.showsWhereToClick = true
+    XCTAssertEqual(guide.walk?.current.target, GuideTarget.entryLine)
+    guide.showsWhereToClick = false
+    XCTAssertNil(guide.walk)
   }
 
-  /// Esc closes the labels.
+  /// Esc leaves «Показать, куда нажимать».
   func testEscClosesTheLabels() {
     guide.showsWhereToClick = true
     let window = show(
@@ -320,11 +319,11 @@ final class GuideFlowTests: XCTestCase {
       width: 300, height: 200)
     XCTAssertTrue(window.performKeyEquivalent(with: Self.key("\u{1b}", code: 53)))
     settle(0.2)
-    XCTAssertFalse(guide.showsWhereToClick, "Esc left the labels on")
+    XCTAssertFalse(guide.showsWhereToClick, "Esc left the walk on")
   }
 
-  /// Every place a label of the window names is marked by the view it lives in: the line and its
-  /// toggle by the entry bar, the sections by the sidebar. Esc and a click close the labels.
+  /// Every place «Показать, куда нажимать» cuts out is marked by the view it lives in: the line
+  /// and its toggle by the entry bar, the sections by the sidebar.
   func testEveryLabelOfTheWindowHasItsPlace() async throws {
     let deps = try await startedDependencies()
     var marked = marks(
@@ -335,14 +334,15 @@ final class GuideFlowTests: XCTestCase {
           EmptyView()
         }
         .appDependencies(deps)))
-    for label in GuideLabels.main {
-      XCTAssertTrue(marked.contains(label.target), "nothing marks «\(label.target)»: \(marked)")
+    for step in GuideCatalog.whereToClick
+    where !GuideTarget.outsideTheContent.contains(step.target) {
+      XCTAssertTrue(marked.contains(step.target), "nothing marks «\(step.target)»: \(marked)")
     }
   }
 
-  /// The tasks framed in the main window have their places: the line for «кофе 300» and the
-  /// transfer, «За кого» of the panel, «Траты» of the sidebar, the search of «Траты», and the
-  /// blocks of Planning.
+  /// Every step of every task that points into the main window has its place: the line, its
+  /// toggle and «За кого» of the panel, the sections of the sidebar, the list and the search of
+  /// «Траты», the blocks of Planning, «+ Долг» of Debts.
   func testThePlacesOfTheTasksAreMarked() async throws {
     let deps = try await startedDependencies()
     var marked = marks(
@@ -355,15 +355,16 @@ final class GuideFlowTests: XCTestCase {
         .appDependencies(deps)))
     marked.formUnion(marks(of: SpendingView(actions: OperationActions()).appDependencies(deps)))
     marked.formUnion(marks(of: PlanningView().appDependencies(deps), width: 980))
-    // A toolbar item and the settings window have no place in the window to frame: their tasks
-    // say where to press in words.
-    let elsewhere: Set<String> = [
-      "toolbar.reconcile", "settings.overviewTiles", "settings.accounts",
-    ]
+    marked.formUnion(marks(of: DebtsView().appDependencies(deps), width: 980))
+    // A toolbar item and the settings window have no place in the window to cut out: those
+    // steps say where to press in words, in the middle of the window, and leave it open to
+    // clicks.
+    let elsewhere = GuideTarget.outsideTheContent
     for task in GuideCatalog.tutorial.tasks {
-      let target = try XCTUnwrap(task.hints.first?.target)
-      guard !elsewhere.contains(target) else { continue }
-      XCTAssertTrue(marked.contains(target), "«\(task.id)» points at «\(target)», unmarked")
+      for step in task.hints where !elsewhere.contains(step.target) {
+        XCTAssertTrue(
+          marked.contains(step.target), "«\(task.id)» points at «\(step.target)», unmarked")
+      }
     }
   }
 

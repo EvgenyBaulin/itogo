@@ -15,6 +15,9 @@ struct ItogoApp: App {
     // open. Opened as one, it makes the launch windowless — and the database is opened from
     // a window, so nothing would start (`--measure --data-set bench`, LaunchOptions).
     UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+    // Every window is a window of its own: no tabs, and no tab items in the menus, which AppKit
+    // adds only while automatic tabbing is allowed when the menus are made (`AppWindows`).
+    AppWindows.disallowTabs()
     // Before any window is made: the frames the secondary windows kept from their early
     // placeholders go once, so their present sizes apply (`WindowFrames`).
     if !AppEnvironment.isTestHost { WindowFrames.resetOnce(in: .standard) }
@@ -99,6 +102,7 @@ struct ItogoApp: App {
       // The store and the pipeline too: a new quality of a category is carried over to the
       // past through the store, one step of ⌘Z, after counting over the pipeline's ledger.
       AppScenes.root(deps, window: .settings) { SettingsView(deps: $0) }
+        .appWindow(.settings)
         .privacyCurtain(environment)
     }
     // Never smaller than its tabs are laid out for (`SettingsView.minimumSize`). The corner to
@@ -183,7 +187,7 @@ struct AppCommands: Commands {
         // flag waits for the window: a notification posted now would reach nobody while the
         // window is still being made, and the first ⌘F would be lost.
         environment.pendingSearchFocus = true
-        WindowTabs.open("transactions", with: openWindow)
+        AppWindows.open("transactions", with: openWindow)
       }
       .keyboardShortcut("f", modifiers: .command)
     }
@@ -191,15 +195,15 @@ struct AppCommands: Commands {
     // The secondary windows, each with its shortcut: ⌘⇧T, ⌘⇧A, ⌘⇧R.
     CommandGroup(before: .windowList) {
       Button(environment.language("window.transactions")) {
-        WindowTabs.open("transactions", with: openWindow)
+        AppWindows.open("transactions", with: openWindow)
       }
       .keyboardShortcut("t", modifiers: [.command, .shift])
       Button(environment.language("window.analytics")) {
-        WindowTabs.open("analytics", with: openWindow)
+        AppWindows.open("analytics", with: openWindow)
       }
       .keyboardShortcut("a", modifiers: [.command, .shift])
       Button(environment.language("window.reports")) {
-        WindowTabs.open("reports", with: openWindow)
+        AppWindows.open("reports", with: openWindow)
       }
       .keyboardShortcut("r", modifiers: [.command, .shift])
       Divider()
@@ -488,6 +492,8 @@ struct MainWindow: View {
           ) { EmptyView() }
           .frame(width: Self.entryFormWidth)
           .background(.background)
+          // A root of the guide of its own: the quick line of the form is cut out of its shade.
+          .guideOverlay(guide)
         }
       }
       // The other column of the same split, for the same reason.
@@ -495,8 +501,9 @@ struct MainWindow: View {
       .toolbar { toolbarContent }
     }
     .navigationTitle(windowTitle)
-    // The window Transactions, Analytics and Reports open as tabs of (`WindowTabs`).
-    .windowTab(.main)
+    // Closing it quits the app; the secondary windows stand over it in full screen
+    // (`AppWindows`).
+    .appWindow(.main)
     .navigationSubtitle(RecomputeText.subtitle(compute: compute, environment: environment))
     .journalsSection(selection.journalToken, in: .main)
     // The cards of the first launch, of «Что нового» or of the Help menu.
@@ -790,7 +797,7 @@ struct MainWindow: View {
       .help(environment.language("reconcile.help", table: "Planning"))
 
       Button {
-        WindowTabs.open("transactions", with: openWindow)
+        AppWindows.open("transactions", with: openWindow)
       } label: {
         Label {
           Text(verbatim: environment.language("window.transactions"))
@@ -800,7 +807,7 @@ struct MainWindow: View {
       }
 
       Button {
-        WindowTabs.open("analytics", with: openWindow)
+        AppWindows.open("analytics", with: openWindow)
       } label: {
         Label {
           Text(verbatim: environment.language("window.analytics"))
@@ -810,7 +817,7 @@ struct MainWindow: View {
       }
 
       Button {
-        WindowTabs.open("reports", with: openWindow)
+        AppWindows.open("reports", with: openWindow)
       } label: {
         Label {
           Text(verbatim: environment.language("window.reports"))
@@ -902,8 +909,8 @@ extension View {
 struct SecondaryWindow<Content: View>: View {
   @Dependency(\.environment) private var environment
   let titleKey: String
-  /// The id of the scene; with one, the window opens as a tab of the main window
-  /// (`WindowTabs`). A test hosting the content in a window of its own gives none.
+  /// The id of the scene; with one, the window is marked as a secondary window of the app
+  /// (`AppWindows`). A test hosting the content in a window of its own gives none.
   var scene: String?
   /// The narrowest the window may be (`contentMinSize`). It is never below what the content
   /// asks for: a window narrower than its content lays the content out wider than itself and
@@ -928,7 +935,7 @@ struct SecondaryWindow<Content: View>: View {
       .frame(minWidth: minWidth, minHeight: 480)
       .navigationTitle(environment.language(titleKey))
       .background {
-        if let scene { Color.clear.windowTab(.secondary(scene: scene)) }
+        if let scene { Color.clear.appWindow(.secondary(scene: scene)) }
       }
   }
 }

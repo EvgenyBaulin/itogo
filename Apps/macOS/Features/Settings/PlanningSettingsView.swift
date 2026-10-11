@@ -21,9 +21,13 @@ struct PlanningSettingsView: View {
   @State private var cushion = CapitalSettings.standard
   /// A write the database refused; the alert says so (`AppEnvironment.attempt`).
   @State private var refused = false
+  /// The layout of the Planning screen on this Mac, kept in `UserDefaults`, not in the database.
+  var layout: PlanningLayoutStore = .shared
 
   var body: some View {
     Form {
+      screenSection
+
       Section {
         Stepper(
           value: Binding(
@@ -170,6 +174,35 @@ struct PlanningSettingsView: View {
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Settings") }
+
+  /// «Экран «Планирование»»: how many of the nearest items the long blocks show, and the order
+  /// of the blocks. Habits of this Mac (`PlanningLayoutStore`), written at once, no step of ⌘Z.
+  private var screenSection: some View {
+    Section {
+      Picker(selection: Binding(get: { layout.length }, set: { layout.setLength($0) })) {
+        ForEach(PlanningListLength.choices, id: \.self) { length in
+          Text(verbatim: PlanningBlockText.lengthTitle(length, environment)).tag(length)
+        }
+      } label: {
+        Text(verbatim: t("settings.planning.listLength"))
+        Text(verbatim: t("settings.planning.listLengthHint"))
+      }
+      .pickerStyle(.menu)
+      .accessibilityIdentifier("settings.planning.listLength")
+      PlanningBlockOrderRows(layout: layout)
+    } header: {
+      Text(verbatim: t("settings.planning.screen"))
+        .accessibilityIdentifier("settings.planning.screen")
+    } footer: {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(verbatim: t("settings.planning.blockOrderHint"))
+          .fixedSize(horizontal: false, vertical: true)
+        Button(t("settings.planning.blockOrderReset")) { layout.resetOrder() }
+          .disabled(PlanningBlocks.isStandard(layout.order))
+      }
+      .foregroundStyle(.secondary)
+    }
+  }
 
   private func load() {
     guard let settings = environment.settings else { return }

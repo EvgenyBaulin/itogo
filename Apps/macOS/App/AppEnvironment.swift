@@ -146,29 +146,61 @@ public final class AppEnvironment {
     EntryStyle(stored: defaults.string(forKey: entryStyleKey))
   }
 
-  /// Which tiles Overview shows and in what order, chosen in Settings → «Оформление»
-  /// (`OverviewTiles`): at most twelve, the twelve cards of 1.2 until the owner chooses. A habit
-  /// of the owner, kept in `UserDefaults` beside the order of the fields, carried by the archive
-  /// (`portableSettings`), never a step of ⌘Z. Written as a choice the grid can show, whatever is
-  /// set (`OverviewTiles.sanitized`).
-  public var overviewTiles: [OverviewTile] = AppEnvironment.storedOverviewTiles() {
+  /// How Overview lays out its tiles — the groups in their order, the tiles in them, the hidden
+  /// ones (`OverviewLayout`) —, edited in Settings → «Оформление» and on Overview itself
+  /// («Изменить»). A habit of the owner, kept in `UserDefaults`, carried by the archive
+  /// (`portableSettings`), never a step of ⌘Z. Beside the layout the flat list of the tiles shown
+  /// is written under the key of the builds before groups (`overviewTilesKey`), so a build that
+  /// knows only the list still shows what this one shows.
+  public var overviewLayout: OverviewLayout = AppEnvironment.storedOverviewLayout() {
     didSet {
-      guard overviewTiles != oldValue else { return }
+      guard overviewLayout != oldValue else { return }
+      UserDefaults.standard.set(overviewLayout.encode(), forKey: Self.overviewLayoutKey)
       UserDefaults.standard.set(
-        OverviewTiles.encode(OverviewTiles.sanitized(overviewTiles)),
-        forKey: Self.overviewTilesKey)
+        OverviewTiles.encode(overviewLayout.shown), forKey: Self.overviewTilesKey)
     }
   }
 
-  /// The key of `overviewTiles` in `UserDefaults` and in the archive's `settings.json`.
-  nonisolated static let overviewTilesKey = "overview.tiles"
+  /// The tiles Overview shows, group after group. Set to a flat list, it shows exactly those
+  /// tiles, each in its group (`OverviewLayout.showingOnly`) — how the starter sets and the tests
+  /// ask for tiles.
+  public var overviewTiles: [OverviewTile] {
+    get { overviewLayout.shown }
+    set { overviewLayout = overviewLayout.showingOnly(newValue) }
+  }
 
-  /// The choice `UserDefaults` keeps, read as a choice the grid can show; the standard one when
-  /// there is none.
-  nonisolated static func storedOverviewTiles(
+  /// The groups of Overview the owner collapsed: a habit of this Mac, kept in `UserDefaults` and
+  /// not carried by the archive.
+  public var overviewCollapsed: Set<OverviewTileGroup> = AppEnvironment.storedOverviewCollapsed() {
+    didSet {
+      guard overviewCollapsed != oldValue else { return }
+      UserDefaults.standard.set(
+        OverviewLayout.encodeCollapsed(overviewCollapsed), forKey: Self.overviewCollapsedKey)
+    }
+  }
+
+  /// The key of the flat list of the builds before groups in `UserDefaults` and in the archive's
+  /// `settings.json`: read where no layout is kept yet, written beside the layout.
+  nonisolated static let overviewTilesKey = "overview.tiles"
+  /// The key of `overviewLayout` in `UserDefaults` and in the archive's `settings.json`.
+  nonisolated static let overviewLayoutKey = "overview.layout"
+  /// The key of `overviewCollapsed` in `UserDefaults`.
+  nonisolated static let overviewCollapsedKey = "overview.collapsed"
+
+  /// The layout `UserDefaults` keeps; without one, the flat list of the builds before groups with
+  /// every tile it lacks added at the end; without that either, the standard layout.
+  nonisolated static func storedOverviewLayout(
     in defaults: UserDefaults = .standard
-  ) -> [OverviewTile] {
-    OverviewTiles.decode(defaults.string(forKey: overviewTilesKey))
+  ) -> OverviewLayout {
+    OverviewLayout.decode(defaults.string(forKey: overviewLayoutKey))
+      ?? OverviewLayout(tiles: OverviewTiles.decode(defaults.string(forKey: overviewTilesKey)))
+  }
+
+  /// The collapsed groups `UserDefaults` keeps.
+  nonisolated static func storedOverviewCollapsed(
+    in defaults: UserDefaults = .standard
+  ) -> Set<OverviewTileGroup> {
+    OverviewLayout.decodeCollapsed(defaults.string(forKey: overviewCollapsedKey))
   }
 
   /// «Найти пропущенные…» of a reconciliation: the Transactions window shows these days as
@@ -230,7 +262,10 @@ public final class AppEnvironment {
     // for the owner, whose `UserDefaults` the host shares. A data set is never locked.
     let defaults: UserDefaults? = Self.isTestHost ? nil : .standard
     amounts = AmountPrivacy(defaults: defaults)
-    lock = PrivacyLock(applies: !Self.isTestHost && AppPaths.dataSet == nil, defaults: defaults)
+    // The password of the lock lives in the Keychain of this Mac; the test host never touches it.
+    lock = PrivacyLock(
+      applies: !Self.isTestHost && AppPaths.dataSet == nil, defaults: defaults,
+      passwords: Self.isTestHost ? InMemoryLockPasswordStore() : KeychainLockPasswordStore())
   }
 
   /// The stand-in of a view shown without the app's dependencies: never started, so it opens no
@@ -554,6 +589,8 @@ public final class AppEnvironment {
       Self.entryFieldOrderKey: EntryFieldOrder.encode(entryFieldOrder),
       Self.entryStyleKey: entryStyle.rawValue,
       Self.overviewTilesKey: OverviewTiles.encode(overviewTiles),
+      Self.overviewLayoutKey: overviewLayout.encode(),
+      PlanningLayoutStore.orderKey: PlanningLayoutStore.portableOrder(in: .standard),
     ]
     if let currencies = try? settings?.enabledCurrencies() {
       values["currencies"] = currencies.map(\.code).joined(separator: ",")

@@ -56,13 +56,33 @@ struct DeviceOwnerAuthenticator: LockAuthenticator {
 /// who could not switch it off. The data sets of a build and the tests are never locked
 /// (`applies`): synthetic books have nothing to hide, and a test must never wait for a finger.
 ///
-/// Kept in `UserDefaults` of this Mac (`privacy.lock.enabled`, `privacy.lock.idleMinutes`),
-/// never in the archive: another Mac may have no Touch ID.
+/// The app has a password of its own, chosen when the lock is turned on: the cover takes it, and
+/// Touch ID or the password of the Mac open it as well. Only a salted hash of it is kept, in the
+/// Keychain of this Mac (`LockPassword`). Five wrong passwords in a row pause the field for
+/// thirty seconds. «Забыли пароль?» asks Touch ID or the password of the Mac, then for a new
+/// password — within two minutes, and not past the sleep of the Mac or the lock of its screen. A lock turned on before the app had a password of its own keeps opening by Touch ID
+/// and the password of the Mac alone, until a password is chosen in Settings.
+///
+/// Kept in `UserDefaults` of this Mac (`privacy.lock.enabled`, `privacy.lock.idleMinutes`,
+/// `privacy.lock.pausedUntil`, `privacy.lock.wrongAttempts`) and its Keychain, never in the archive: another Mac may have no
+/// Touch ID.
 @MainActor
 @Observable
 final class PrivacyLock {
   nonisolated static let enabledKey = "privacy.lock.enabled"
   nonisolated static let idleMinutesKey = "privacy.lock.idleMinutes"
+  /// The end of a pause after wrong passwords: a quit and a relaunch do not shorten it.
+  nonisolated static let pausedUntilKey = "privacy.lock.pausedUntil"
+  /// Wrong passwords in a row, so a quit and a relaunch do not start the count again. Only the
+  /// count: nothing about what was typed.
+  nonisolated static let wrongAttemptsKey = "privacy.lock.wrongAttempts"
+  /// How long the proof of «Забыли пароль?» lets a new password be chosen, or put off, before
+  /// the cover asks for the password again: the owner may have walked away.
+  static let resetGrantSeconds: TimeInterval = 120
+  /// Wrong passwords in a row before the field pauses.
+  static let attemptsBeforePause = 5
+  /// How long the field pauses, in seconds.
+  static let pauseSeconds: TimeInterval = 30
   /// The idle times Settings offers, in minutes.
   static let idleChoices = [1, 5, 15, 60]
   static let defaultIdleMinutes = 5
@@ -92,25 +112,85 @@ final class PrivacyLock {
   /// cover and Settings say it in words. Cleared by the next attempt.
   private(set) var lastRefusal: LockAuthentication?
 
+  /// The app has a password of its own.
+  private(set) var hasPassword: Bool
+  /// A typed password is being checked: the field waits.
+  private(set) var isCheckingPassword = false
+  /// Wrong passwords since the last right one or the last pause.
+  private(set) var wrongAttempts = 0
+  /// The field takes no password until then.
+  private(set) var pausedUntil: Date?
+  /// What went wrong with the password last, for the cover and Settings. Cleared by the next
+  /// attempt.
+  private(set) var passwordProblem: PasswordProblem?
+  /// «Забыли пароль?» passed: the cover asks for a new password, until `resetGrantUntil`.
+  private(set) var isChoosingNewPassword = false
+  /// The end of the proof of «Забыли пароль?».
+  @ObservationIgnored private var resetGrantUntil: Date?
+  /// Raised by every record started and by every «Отмена»: a record whose number is no longer
+  /// the latest was cancelled while it was made, and is not kept.
+  @ObservationIgnored private var passwordRequest = 0
+  /// The owner proved who they are on the way to the first password (`beginEnabling`).
+  private(set) var isChoosingFirstPassword = false
+
+  /// What went wrong with a password.
+  enum PasswordProblem: Equatable, Sendable {
+    case wrong(attemptsLeft: Int)
+    case paused
+    /// The Keychain did not keep or give the record.
+    case keychain
+    /// Fewer than `LockPassword.minimumLength` characters.
+    case tooShort
+  }
+
+  /// What a typed password came to.
+  enum PasswordAttempt: Equatable, Sendable {
+    case unlocked
+    case wrong(attemptsLeft: Int)
+    case paused(until: Date)
+    /// No password is kept (or the Keychain gave none): Touch ID opens.
+    case noPassword
+    /// Not locked, or a check is under way.
+    case ignored
+  }
+
   @ObservationIgnored private let defaults: UserDefaults?
   @ObservationIgnored private let authenticator: any LockAuthenticator
+  @ObservationIgnored private let passwords: any LockPasswordStore
+  @ObservationIgnored private let iterations: Int
   @ObservationIgnored private let now: () -> Date
   /// The last key press, click or scroll in the app. Not observed: it changes with every event,
   /// and nothing on screen shows it.
   @ObservationIgnored private(set) var lastActivity: Date
   @ObservationIgnored private var watch: PrivacyLockWatch?
 
+  /// `passwords` is where the record of the password lives: the Keychain in the app
+  /// (`AppEnvironment`), memory in a test. `iterations` of a new record: fewer in a test.
   init(
     applies: Bool, defaults: UserDefaults?,
     authenticator: any LockAuthenticator = DeviceOwnerAuthenticator(),
+    passwords: any LockPasswordStore = InMemoryLockPasswordStore(),
+    iterations: Int = LockPassword.iterations,
     now: @escaping () -> Date = { Date() }
   ) {
     self.applies = applies
     self.defaults = defaults
     self.authenticator = authenticator
+    self.passwords = passwords
+    self.iterations = iterations
     self.now = now
     let enabled = applies && (defaults?.bool(forKey: Self.enabledKey) ?? false)
     isEnabled = enabled
+    // Where the lock does not apply the Keychain is not even read.
+    hasPassword = enabled && Self.record(in: passwords) != nil
+    if enabled, let until = defaults?.object(forKey: Self.pausedUntilKey) as? Date,
+      until > now()
+    {
+      pausedUntil = until
+    }
+    if enabled, let kept = defaults?.object(forKey: Self.wrongAttemptsKey) as? Int {
+      wrongAttempts = min(max(0, kept), Self.attemptsBeforePause - 1)
+    }
     idleMinutes = Self.sanitized(
       defaults?.object(forKey: Self.idleMinutesKey) as? Int ?? Self.defaultIdleMinutes)
     // Locked from the first frame: the window is never drawn with the books open first.
@@ -134,6 +214,7 @@ final class PrivacyLock {
   /// whether it locked now.
   @discardableResult
   func checkIdle() -> Bool {
+    expireResetGrantIfDue()
     guard isEnabled, !isLocked, !isAuthenticating else { return false }
     guard now().timeIntervalSince(lastActivity) >= TimeInterval(idleMinutes * 60) else {
       return false
@@ -144,6 +225,9 @@ final class PrivacyLock {
 
   /// Covers every window now.
   func lock(because reason: Reason) {
+    // Covered already while a new password is chosen: any reason to lock — the Mac sleeping,
+    // its screen locking — ends the proof, and the cover asks for the password again.
+    if isLocked, isChoosingNewPassword { endResetGrant() }
     guard isEnabled, !isLocked else { return }
     isLocked = true
     lastRefusal = nil
@@ -166,10 +250,279 @@ final class PrivacyLock {
         [LogPair("answer", .token(Self.token(answer)))])
       return false
     }
-    isLocked = false
-    lastActivity = now()
+    uncover()
     AppLog.info("privacy.unlocked", .ui, "the windows were uncovered")
     return true
+  }
+
+  /// Takes the cover away and forgets the wrong passwords and the pause: the owner is here.
+  private func uncover() {
+    isLocked = false
+    isChoosingNewPassword = false
+    resetGrantUntil = nil
+    passwordProblem = nil
+    endPause()
+    lastActivity = now()
+  }
+
+  private func endPause() {
+    wrongAttempts = 0
+    pausedUntil = nil
+    defaults?.removeObject(forKey: Self.pausedUntilKey)
+    defaults?.removeObject(forKey: Self.wrongAttemptsKey)
+  }
+
+  /// Whether the proof of «Забыли пароль?» still holds now.
+  private var hasLiveResetGrant: Bool {
+    guard isChoosingNewPassword, let resetGrantUntil else { return false }
+    return now() < resetGrantUntil
+  }
+
+  /// Ends the proof of «Забыли пароль?» when its time is up.
+  func expireResetGrantIfDue() {
+    guard isChoosingNewPassword, !hasLiveResetGrant else { return }
+    endResetGrant()
+  }
+
+  /// The cover goes back to asking for the password; a record being made is not kept.
+  private func endResetGrant() {
+    guard isChoosingNewPassword else { return }
+    isChoosingNewPassword = false
+    resetGrantUntil = nil
+    passwordProblem = nil
+    cancelRecord()
+    AppLog.info("privacy.resetEnded", .ui, "the proof of a forgotten password ended")
+  }
+
+  /// A record being made is not kept: the fields stop waiting at once.
+  private func cancelRecord() {
+    passwordRequest += 1
+    isCheckingPassword = false
+  }
+
+  // MARK: - The password
+
+  /// Whether the field is paused at a moment.
+  func isPaused(at date: Date) -> Bool {
+    guard let pausedUntil else { return false }
+    return date < pausedUntil
+  }
+
+  /// Whole seconds left of the pause at a moment, rounded up; 0 when there is none.
+  func secondsOfPauseLeft(at date: Date) -> Int {
+    guard let pausedUntil, date < pausedUntil else { return 0 }
+    return Int(pausedUntil.timeIntervalSince(date).rounded(.up))
+  }
+
+  /// The moment the lock reads its clock: the cover counts the pause down by it.
+  var currentDate: Date { now() }
+
+  /// Takes the cover away when `password` is the app's password. Wrong five times in a row,
+  /// the field pauses for thirty seconds; while it does, nothing is checked.
+  @discardableResult
+  func unlock(password: String) async -> PasswordAttempt {
+    guard isLocked, !isCheckingPassword, !isChoosingNewPassword else { return .ignored }
+    if let pausedUntil, isPaused(at: now()) {
+      passwordProblem = .paused
+      return .paused(until: pausedUntil)
+    }
+    guard let record = Self.record(in: passwords) else {
+      passwordProblem = hasPassword ? .keychain : nil
+      return .noPassword
+    }
+    isCheckingPassword = true
+    passwordProblem = nil
+    let matches = await Task.detached(priority: .userInitiated) {
+      record.matches(password)
+    }.value
+    isCheckingPassword = false
+    guard isLocked else { return .ignored }
+    guard matches else {
+      wrongAttempts += 1
+      defaults?.set(wrongAttempts, forKey: Self.wrongAttemptsKey)
+      let left = Self.attemptsBeforePause - wrongAttempts
+      guard left <= 0 else {
+        passwordProblem = .wrong(attemptsLeft: left)
+        AppLog.info(
+          "privacy.passwordWrong", .ui, "a wrong password was typed",
+          [LogPair("attempts", .count(wrongAttempts))])
+        return .wrong(attemptsLeft: left)
+      }
+      let until = now().addingTimeInterval(Self.pauseSeconds)
+      wrongAttempts = 0
+      defaults?.removeObject(forKey: Self.wrongAttemptsKey)
+      pausedUntil = until
+      defaults?.set(until, forKey: Self.pausedUntilKey)
+      passwordProblem = .paused
+      AppLog.info(
+        "privacy.passwordPaused", .ui, "too many wrong passwords: the field pauses",
+        [LogPair("seconds", .count(Int(Self.pauseSeconds)))])
+      return .paused(until: until)
+    }
+    uncover()
+    AppLog.info("privacy.passwordUnlock", .ui, "the windows were uncovered")
+    return .unlocked
+  }
+
+  /// The first step of turning the lock on from Settings: Touch ID or the password of the Mac,
+  /// then the app's own password (`enable(password:)`). Refused, the lock stays off.
+  @discardableResult
+  func beginEnabling(reason: String) async -> Bool {
+    guard applies, !isEnabled, !isAuthenticating else { return false }
+    isAuthenticating = true
+    lastRefusal = nil
+    let answer = await authenticator.authenticate(reason: reason)
+    isAuthenticating = false
+    guard answer == .passed else {
+      lastRefusal = answer
+      AppLog.info(
+        "privacy.enableRefused", .ui, "the lock stays off",
+        [LogPair("answer", .token(Self.token(answer)))])
+      return false
+    }
+    isChoosingFirstPassword = true
+    passwordProblem = nil
+    return true
+  }
+
+  /// The password was not chosen: the lock stays off.
+  func cancelEnabling() {
+    isChoosingFirstPassword = false
+    passwordProblem = nil
+    cancelRecord()
+  }
+
+  /// «Отмена» of a changed password in Settings: a record being made is not kept, and the old
+  /// password keeps opening.
+  func cancelPasswordChange() {
+    passwordProblem = nil
+    cancelRecord()
+  }
+
+  /// Turns the lock on with the app's own password, once `beginEnabling` has had the proof.
+  /// The Keychain refusing the record leaves the lock off.
+  @discardableResult
+  func enable(password: String) async -> Bool {
+    guard applies, !isEnabled, isChoosingFirstPassword else { return false }
+    guard await keep(password) else { return false }
+    isChoosingFirstPassword = false
+    isEnabled = true
+    lastActivity = now()
+    defaults?.set(true, forKey: Self.enabledKey)
+    AppLog.info("privacy.lockEnabled", .ui, "the lock was turned on")
+    return true
+  }
+
+  /// Sets or changes the app's password from Settings, while the lock is on and open.
+  @discardableResult
+  func setPassword(_ password: String) async -> Bool {
+    guard isEnabled, !isLocked else { return false }
+    return await keep(password)
+  }
+
+  /// Removes the app's password: Touch ID and the password of the Mac open the lock alone.
+  @discardableResult
+  func removePassword() -> Bool {
+    guard hasPassword else { return true }
+    do {
+      try passwords.delete()
+    } catch {
+      passwordProblem = .keychain
+      Self.journal(keychain: error)
+      return false
+    }
+    hasPassword = false
+    passwordProblem = nil
+    AppLog.info("privacy.passwordRemoved", .ui, "the app's password was removed")
+    return true
+  }
+
+  /// «Забыли пароль?»: Touch ID or the password of the Mac, then the cover asks for a new
+  /// password (`chooseNewPassword`). The windows stay covered until it is chosen or put off.
+  @discardableResult
+  func forgotPassword(reason: String) async -> Bool {
+    guard isLocked, !isAuthenticating else { return false }
+    isAuthenticating = true
+    lastRefusal = nil
+    let answer = await authenticator.authenticate(reason: reason)
+    isAuthenticating = false
+    guard answer == .passed else {
+      lastRefusal = answer
+      return false
+    }
+    endPause()
+    passwordProblem = nil
+    isChoosingNewPassword = true
+    resetGrantUntil = now().addingTimeInterval(Self.resetGrantSeconds)
+    // Ends the proof on time even when no timer of the lock is watching.
+    Task { [weak self] in
+      try? await Task.sleep(for: .seconds(Self.resetGrantSeconds))
+      self?.expireResetGrantIfDue()
+    }
+    AppLog.info("privacy.passwordReset", .ui, "the owner proved who they are")
+    return true
+  }
+
+  /// The new password after «Забыли пароль?»: kept, and the windows uncovered.
+  @discardableResult
+  func chooseNewPassword(_ password: String) async -> Bool {
+    expireResetGrantIfDue()
+    guard hasLiveResetGrant else { return false }
+    guard await keep(password) else { return false }
+    uncover()
+    return true
+  }
+
+  /// «Позже» after «Забыли пароль?»: the forgotten password goes, the windows are uncovered,
+  /// and Touch ID and the password of the Mac open the lock until a new one is chosen.
+  func putOffNewPassword() {
+    expireResetGrantIfDue()
+    guard hasLiveResetGrant else { return }
+    _ = removePassword()
+    uncover()
+  }
+
+  /// Writes the record of a new password to the store. Slow part away from the main actor.
+  private func keep(_ password: String) async -> Bool {
+    guard password.precomposedStringWithCanonicalMapping.count >= LockPassword.minimumLength
+    else {
+      passwordProblem = .tooShort
+      return false
+    }
+    passwordRequest += 1
+    let request = passwordRequest
+    isCheckingPassword = true
+    let iterations = self.iterations
+    let record = await Task.detached(priority: .userInitiated) {
+      LockPassword.make(password, iterations: iterations)
+    }.value
+    // «Отмена», or the end of the proof, came while the record was made: it wins.
+    guard request == passwordRequest else { return false }
+    isCheckingPassword = false
+    do {
+      try passwords.write(record.encoded())
+    } catch {
+      passwordProblem = .keychain
+      Self.journal(keychain: error)
+      return false
+    }
+    hasPassword = true
+    passwordProblem = nil
+    AppLog.info("privacy.passwordSet", .ui, "the app's password was kept")
+    return true
+  }
+
+  /// The record kept in a store, if it reads.
+  private static func record(in store: any LockPasswordStore) -> LockPassword? {
+    guard let data = try? store.read() else { return nil }
+    return LockPassword.decoded(data)
+  }
+
+  private static func journal(keychain error: any Error) {
+    let status = (error as? KeychainFailure)?.status ?? 0
+    AppLog.warning(
+      "privacy.keychainFailed", .ui, "the Keychain refused the record of the password",
+      [LogPair("status", .count(Int(status)))])
   }
 
   /// Turns the lock on, once the owner has proved who they are; refused, it stays off.
@@ -194,11 +547,17 @@ final class PrivacyLock {
     return true
   }
 
-  /// Turns the lock off. Only reachable from Settings, which the cover hides while locked.
+  /// Turns the lock off and forgets the app's password. Only reachable from Settings, which the
+  /// cover hides while locked.
   func disable() {
     guard isEnabled else { return }
+    _ = removePassword()
     isEnabled = false
     isLocked = false
+    isChoosingNewPassword = false
+    resetGrantUntil = nil
+    passwordProblem = nil
+    endPause()
     lastRefusal = nil
     defaults?.set(false, forKey: Self.enabledKey)
     AppLog.info("privacy.lockDisabled", .ui, "the lock was turned off")

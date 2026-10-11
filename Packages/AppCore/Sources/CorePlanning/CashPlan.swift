@@ -60,13 +60,20 @@ public struct CashPlan: Hashable, Sendable {
   /// The part of the lines due before today: due dates nothing paid, whose money is counted as
   /// not yet gone — of `scheduled`, of `debts`, and the tied dues `events` holds.
   public var overdue: AmountE4
+  /// How many due dates of scheduled payments `scheduled` adds up, and how many monthly dues of
+  /// debts `debts` does: the «впереди N платежей» of the sentence over the blocks. A due without
+  /// a rate today, left out of the sum, is left out of the count too.
+  public var scheduledDueCount: Int
+  public var debtDueCount: Int
 
   public init(
     scheduled: AmountE4 = .zero, debts: AmountE4 = .zero, goalSavings: AmountE4 = .zero,
     goalPlans: AmountE4 = .zero, events: AmountE4 = .zero, subtractsGoalSavings: Bool = true,
     reservesGoalPlans: Bool = true, withoutRate: [CurrencyCode] = [], overdue: AmountE4 = .zero,
-    reservesEventBudgets: Bool = true
+    reservesEventBudgets: Bool = true, scheduledDueCount: Int = 0, debtDueCount: Int = 0
   ) {
+    self.scheduledDueCount = scheduledDueCount
+    self.debtDueCount = debtDueCount
     self.scheduled = scheduled
     self.debts = debts
     self.goalSavings = goalSavings
@@ -130,6 +137,7 @@ public struct CashPlan: Hashable, Sendable {
 
     // Scheduled payments.
     var scheduled = AmountE4.zero
+    var scheduledCount = 0
     var overdue = AmountE4.zero
     var tied: [UUID: AmountE4] = [:]
     for due in scheduledDues(
@@ -145,16 +153,20 @@ public struct CashPlan: Hashable, Sendable {
         continue
       }
       scheduled += amount
+      if amount.raw > 0 { scheduledCount += 1 }
     }
 
     // Debts I owe, paid from the accounts in the summary.
     var debtTotal = AmountE4.zero
+    var debtCount = 0
     var payers: [UUID: UUID?] = [:]
     for due in debtDues(ledger: ledger, book: book, debts: debts, today: today, until: d) {
       payers[due.debtId] = .some(due.accountId)
       let account = DueAccounts.effective(due.accountId, accounts: list) ?? mainId
       guard accounts.isInSummary(account) else { continue }
-      debtTotal += rubles(due.amount, in: due.currency)
+      let amount = rubles(due.amount, in: due.currency)
+      debtTotal += amount
+      if amount.raw > 0 { debtCount += due.dueCount }
     }
     for line in debts.iOwe {
       let left = line.dues.balance(or: line.balance)
@@ -224,7 +236,8 @@ public struct CashPlan: Hashable, Sendable {
       events: eventTotal, subtractsGoalSavings: subtractGoalSavings,
       reservesGoalPlans: reserveGoalPlan,
       withoutRate: missing.sorted { $0.code < $1.code }, overdue: overdue,
-      reservesEventBudgets: reserveEventBudgets)
+      reservesEventBudgets: reserveEventBudgets, scheduledDueCount: scheduledCount,
+      debtDueCount: debtCount)
   }
 
   /// What the operations of each counted event dated after today add to its «потрачено», as my
@@ -300,8 +313,14 @@ public struct DebtDue: Hashable, Sendable {
   /// The account the debt is paid from: that of its last payment (`DebtAccount.lastPayment`);
   /// `nil` — the main account.
   public var accountId: UUID?
+  /// How many monthly dues `amount` is made of: the unpaid ones through the day.
+  public var dueCount: Int
 
-  public init(debtId: UUID, amount: AmountE4, currency: CurrencyCode, accountId: UUID? = nil) {
+  public init(
+    debtId: UUID, amount: AmountE4, currency: CurrencyCode, accountId: UUID? = nil,
+    dueCount: Int = 1
+  ) {
+    self.dueCount = dueCount
     self.debtId = debtId
     self.amount = amount
     self.currency = currency
@@ -418,6 +437,28 @@ extension CashPlan {
     return dues
   }
 
+  /// What the active scheduled payments of `kind` still ask through the last day of today's
+  /// month, in rubles at `rubPerUnit`: every unpaid due date of `scheduledDues` — overdue ones
+  /// of any month included, each at the price on its own date — so a weekly bill with three
+  /// dues left counts three times. A due in a currency without a rate adds nothing rather than
+  /// a guess.
+  public static func scheduledStillDueThisMonth(
+    of kind: ScheduledKind, ledger: Ledger, book: PlanningBook, accounts: AccountsSnapshot,
+    today: DateOnly, rubPerUnit: [CurrencyCode: Decimal], matches: ScheduledMatches
+  ) -> AmountE4 {
+    let ofKind = Set(book.scheduled.filter { $0.kind == kind }.map(\.id))
+    guard !ofKind.isEmpty else { return .zero }
+    let dues = scheduledDues(
+      ledger: ledger, book: book, accounts: accounts, today: today,
+      until: today.monthKey.lastDay, matches: matches)
+    var sum = AmountE4.zero
+    for due in dues where ofKind.contains(due.paymentId) {
+      sum +=
+        SubscriptionMath.rubles(due.amount, in: due.currency, rubPerUnit: rubPerUnit) ?? .zero
+    }
+    return sum
+  }
+
   /// What every open debt I owe with a monthly payment, a payment day and something left on it
   /// still asks through `until`, in the order of the Debts section: every unpaid monthly due
   /// through `until` — each payment closes the earliest due still unpaid, so a missed month of
@@ -431,7 +472,7 @@ extension CashPlan {
     ledger: Ledger, book: PlanningBook, debts: DebtsOverview, today: DateOnly,
     until d: DateOnly, paymentsThrough: DateOnly? = nil
   ) -> [DebtDue] {
-    var owing: [(line: DebtLine, amount: AmountE4)] = []
+    var owing: [(line: DebtLine, amount: AmountE4, dues: Int)] = []
     let candidates = debts.iOwe.filter { line in
       guard line.debt.hasDues else { return false }
       return line.dues.balance(or: line.balance).raw > 0
@@ -452,17 +493,17 @@ extension CashPlan {
       guard owed.raw > 0 else { continue }
       let left = state.balance(or: line.balance)
       guard left.raw > 0 else { continue }
-      owing.append((line, min(owed, left)))
+      owing.append((line, min(owed, left), max(1, state.unpaid(through: d).count)))
     }
     guard !owing.isEmpty else { return [] }
     let mainId = ledger.dataset.paymentMethods.first { $0.isDefault && !$0.archived }?.id
     let accounts = DebtAccount.lastPayments(
       of: Set(owing.map(\.line.debt.id)), ledger: ledger, journal: book.debtEntries,
       mainId: mainId)
-    return owing.map { line, amount in
+    return owing.map { line, amount, dues in
       DebtDue(
         debtId: line.debt.id, amount: amount, currency: line.debt.currency,
-        accountId: accounts[line.debt.id] ?? nil)
+        accountId: accounts[line.debt.id] ?? nil, dueCount: dues)
     }
   }
 }

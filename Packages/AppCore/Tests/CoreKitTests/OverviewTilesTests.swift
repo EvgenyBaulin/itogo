@@ -3,10 +3,10 @@ import Testing
 
 @testable import CoreKit
 
-/// The tiles of Overview as the settings keep them: twenty-two kinds to choose from, at most
-/// twelve at once, the twelve of 1.2 in their order by default, and a stored line from anywhere —
-/// another build, an archive of another Mac, a hand edit — that always reads as a choice the grid
-/// can show.
+/// The tiles of Overview as the flat list of the builds before groups kept them: twenty-two kinds,
+/// all of them can be shown at once, the twelve of 1.2 in their order first by default, and a
+/// stored line from anywhere — another build, an archive of another Mac, a hand edit — that
+/// always reads as a list the grid can show.
 @Suite("The tiles of Overview")
 struct OverviewTilesTests {
   /// Twenty-two kinds, in the order of the settings; the raw values are what is stored.
@@ -37,8 +37,8 @@ struct OverviewTilesTests {
         .monthToDate, .topCategories, .qualities, .canSave, .spendingForecast, .limits, .upcoming,
         .expectedIncome, .owedToMe, .event, .lastCount, .worthALook,
       ])
-    #expect(OverviewTiles.maximum == 12)
-    #expect(OverviewTiles.standard.count == OverviewTiles.maximum)
+    #expect(OverviewTiles.maximum == OverviewTile.allCases.count)
+    #expect(OverviewTiles.standard.count == 12)
     #expect(OverviewTiles.isStandard(OverviewTiles.standard))
   }
 
@@ -62,21 +62,20 @@ struct OverviewTilesTests {
     #expect(OverviewTiles.decode("tilesOfTomorrow") == OverviewTiles.standard)
   }
 
-  /// A stored line of more than twelve tiles keeps the first twelve: the grid never shows more.
-  @Test func moreThanTwelveKeepsTheFirstTwelve() {
+  /// There is no limit: a stored line of every tile keeps every tile.
+  @Test func aLineOfEveryTileKeepsThemAll() {
     let all = OverviewTiles.encode(OverviewTile.allCases)
-    #expect(OverviewTiles.decode(all) == Array(OverviewTile.allCases.prefix(12)))
+    #expect(OverviewTiles.decode(all) == OverviewTile.allCases)
   }
 
-  /// A thirteenth tile is refused, not put in place of another; a tile already shown is not added
-  /// twice; switched on, a tile goes to the end.
-  @Test func aThirteenthTileIsRefused() {
+  /// A thirteenth tile is switched on like any other, at the end; a tile already shown is not
+  /// added twice.
+  @Test func aThirteenthTileIsAdded() {
     let full = OverviewTiles.standard
-    #expect(!OverviewTiles.canAdd(.freeMoney, to: full))
-    #expect(OverviewTiles.adding(.freeMoney, to: full) == nil)
-    let eleven = Array(full.dropLast())
-    #expect(OverviewTiles.adding(.freeMoney, to: eleven) == eleven + [.freeMoney])
-    #expect(OverviewTiles.adding(.limits, to: eleven) == nil)
+    #expect(OverviewTiles.canAdd(.freeMoney, to: full))
+    #expect(OverviewTiles.adding(.freeMoney, to: full) == full + [.freeMoney])
+    #expect(OverviewTiles.adding(.limits, to: full) == nil)
+    #expect(!OverviewTiles.canAdd(.limits, to: OverviewTile.allCases))
   }
 
   /// A tile is switched off where it stands; the last one stays, so Overview is never left empty.

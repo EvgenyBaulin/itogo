@@ -12,8 +12,15 @@ struct GuideCardsView: View {
   /// Closed: `true` when skipped before the last card.
   let finish: (_ skipped: Bool) -> Void
 
-  @State private var index = 0
+  @State private var index: Int
   @FocusState private var focused: Bool
+
+  init(scenario: GuideScenario, finish: @escaping (_ skipped: Bool) -> Void) {
+    self.scenario = scenario
+    self.finish = finish
+    // Back from «Показать, где»: on the card it was shown from.
+    _index = State(initialValue: GuideStore.shared.takeCardIndex(for: scenario))
+  }
 
   private var russian: Bool { environment.language.resolvedCode.hasPrefix("ru") }
   private func t(_ key: String) -> String { environment.language(key, table: "Guide") }
@@ -113,6 +120,18 @@ struct GuideCardsView: View {
     .frame(maxWidth: .infinity)
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("guide.card.\(card.id)")
+    .overlay(alignment: .bottom) {
+      // The card speaks of a place on the screen: the cards step aside, the window darkens
+      // around it, and Esc or «Готово» brings them back on this card.
+      if card.target != nil {
+        Button(t("guide.spot.show")) {
+          GuideStore.shared.showOnScreen(card: index, of: scenario)
+        }
+        .buttonStyle(.link)
+        .offset(y: 34)
+        .accessibilityIdentifier("guide.spot.show")
+      }
+    }
   }
 
   private var dots: some View {

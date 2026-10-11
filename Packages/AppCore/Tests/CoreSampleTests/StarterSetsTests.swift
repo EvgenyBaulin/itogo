@@ -89,12 +89,17 @@ struct StarterSetsTests {
     #expect(!plan.budgets.contains { $0.categoryId.map(system.contains) ?? false })
   }
 
-  @Test func tilesAreAddedOnlyWhileThereIsRoom() {
-    let full = Array(OverviewTile.allCases.filter { $0 != .iOwe }.prefix(OverviewTiles.maximum))
+  @Test func tilesAreAddedOnlyWhenNotShownYet() {
+    let full = OverviewTile.allCases
     let plan = StarterSets.additions(
       for: StarterChoice(hasLoans: true), language: "en", existing: [], budgets: [], tiles: full,
       startMonth: month)
     #expect(plan.tiles.isEmpty)
+    let allButTheLoan = OverviewTile.allCases.filter { $0 != .iOwe }
+    let one = StarterSets.additions(
+      for: StarterChoice(hasLoans: true), language: "en", existing: [], budgets: [],
+      tiles: allButTheLoan, startMonth: month)
+    #expect(one.tiles == [.iOwe], "there is no limit: a hidden tile is always shown again")
     let roomy = StarterSets.additions(
       for: StarterChoice(hasLoans: true), language: "en", existing: [], budgets: [],
       tiles: [.monthToDate], startMonth: month)

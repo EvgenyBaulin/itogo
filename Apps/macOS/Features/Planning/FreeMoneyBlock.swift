@@ -17,14 +17,25 @@ import SwiftUI
 struct FreeMoneyBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
-  @State private var until: Date?
+  @Environment(\.planningCardHosted) private var hosted
+  /// D as the owner picked it, kept by the screen when it passes one: the sentence over the
+  /// blocks speaks of the same day. Without one the block keeps its own.
+  var picked: Binding<Date?>? = nil
+  @State private var ownPick: Date?
   /// A write the database refused; the alert says so (`AppEnvironment.attempt`).
   @State private var refused = false
 
+  private var until: Date? {
+    get { picked?.wrappedValue ?? ownPick }
+    nonmutating set {
+      if let picked { picked.wrappedValue = newValue } else { ownPick = newValue }
+    }
+  }
+
   var body: some View {
     ComputedBlock(
-      title: t("free.title"), state: compute.states.data,
-      retry: { compute.retry(ComputeStep.data) }
+      title: hosted ? nil : t("free.title"), state: compute.states.data,
+      style: hosted ? .plain : .card, retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let free = snapshot.planning.freeMoney(
         until: Self.day(

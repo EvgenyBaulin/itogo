@@ -1,8 +1,8 @@
 import AppCore
 import SwiftUI
 
-/// The grid of Overview: the tiles the owner chose (`AppEnvironment.overviewTiles`), in their
-/// order. Each tile is a block of the pipeline with its own title, bound to the state of the step
+/// The grids of Overview: the tiles of each group (`AppEnvironment.overviewLayout`,
+/// `OverviewGroupedGrid`), in their order. Each tile is a block of the pipeline with its own title, bound to the state of the step
 /// it comes from — the data step for the month, the categories, the qualities and the
 /// reconciliation; «owed to me» for its card; the forecast for the forecasts. A failed step turns
 /// only its own tiles into a message with «Повторить»; the rest keep their numbers.
@@ -389,32 +389,19 @@ enum OverviewText {
     }
   }
 
-  /// What «Стоит посмотреть» lists, newest first: the anomalies of the last month — from the
-  /// same day a month ago — as its empty line «За последний месяц ничего необычного» says,
-  /// and a reimbursement still waiting, dated by the day the money was paid but a state that
-  /// holds today. The rules run over the whole history; Analytics shows the rest.
+  /// What «Стоит посмотреть» lists (`WorthALook.recent`).
   static func recentAnomalies(_ report: AnomalyReport, today: DateOnly) -> [Anomaly] {
-    let start = today.adding(months: -1)
-    return report.visible.filter { $0.day >= start || $0.rule == .slowReimbursement }
+    WorthALook.recent(report, today: today)
   }
 
-  /// An account in the archive that still holds money — the archive of 1.1 took accounts with
-  /// money, 1.2 no longer does —, with what it holds per currency.
-  struct ArchivedMoneyLine: Hashable, Sendable {
-    var account: PaymentMethod
-    var leftovers: [ArchivedLeftover]
-  }
+  /// An account in the archive that still holds money, with what it holds per currency.
+  typealias ArchivedMoneyLine = ArchivedMoneyHolder
 
-  /// Every account in the archive whose balance is not zero in some currency it was counted in
-  /// (`ArchivedMoney.balancesToMove`), in the order of the accounts. A currency never counted
-  /// has no balance to move.
+  /// Every account in the archive that still holds money (`WorthALook.archivedMoney`).
   static func archivedMoney(
     accounts: [PaymentMethod], balances: AccountBalances
   ) -> [ArchivedMoneyLine] {
-    accounts.filter(\.archived).compactMap { account in
-      let leftovers = ArchivedMoney.balancesToMove(of: account, balances: balances).leftovers
-      return leftovers.isEmpty ? nil : ArchivedMoneyLine(account: account, leftovers: leftovers)
-    }
+    WorthALook.archivedMoney(accounts: accounts, balances: balances)
   }
 
   /// What an archived account holds, currency by currency, to the ruble: «1,000 ₽, −50 $» —
@@ -425,46 +412,14 @@ enum OverviewText {
   }
 
   /// A line of «Стоит посмотреть».
-  enum AnomalyLine: Hashable, Identifiable {
-    /// «Потратили деньги цели?»: what the goals hold and the money of the summary.
-    case goalsExceed(goals: AmountE4, money: AmountE4)
-    /// «На «Наличные» в архиве 1,000 ₽ — перевести на другой счёт?»
-    case archivedMoney(ArchivedMoneyLine)
-    case anomaly(Anomaly)
-    /// «и ещё N».
-    case more(Int)
-    /// «За последний месяц ничего необычного».
-    case nothingUnusual
+  typealias AnomalyLine = WorthALookLine
 
-    var id: String {
-      switch self {
-      case .goalsExceed: "goalsExceed"
-      case .archivedMoney(let line): "archivedMoney:\(line.account.id)"
-      case .anomaly(let anomaly): "anomaly:\(anomaly.id)"
-      case .more: "more"
-      case .nothingUnusual: "nothingUnusual"
-      }
-    }
-  }
-
-  /// The lines of «Стоит посмотреть», in order. First the goals holding more than the money
-  /// on the accounts of the summary — goal money was spent without «Забрать» —, then each
-  /// account in the archive that still holds money (`archived`), then at most `shown` anomalies
-  /// of the last month (`recentAnomalies`) and «и ещё N» for the rest. «Ничего необычного» only
-  /// when there is none of them: with such a line on the card, there is something worth a look.
+  /// The lines of «Стоит посмотреть», in order (`WorthALook.lines`).
   static func anomalyLines(
     _ report: AnomalyReport, today: DateOnly, free: FreeMoney?, shown: Int,
     archived: [ArchivedMoneyLine] = []
   ) -> [AnomalyLine] {
-    let all = recentAnomalies(report, today: today)
-    var lines: [AnomalyLine] = []
-    if let free, free.goalsExceedMoney {
-      lines.append(.goalsExceed(goals: free.goalSavings, money: free.moneyNow ?? .zero))
-    }
-    lines += archived.map { .archivedMoney($0) }
-    lines += all.prefix(shown).map { .anomaly($0) }
-    if all.count > shown { lines.append(.more(all.count - shown)) }
-    return lines.isEmpty ? [.nothingUnusual] : lines
+    WorthALook.lines(report, today: today, free: free, shown: shown, archived: archived)
   }
 
   /// When the model of the forecast was computed: the time today, the day and time before.

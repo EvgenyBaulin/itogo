@@ -49,6 +49,22 @@ public struct MonthIncomeEstimate: Hashable, Sendable {
   }
 }
 
+/// One due date of an expectation and what it still brings this month, in rubles: the part
+/// not received yet plus operations already linked to it that are dated after today.
+public struct ExpectedIncomeItem: Hashable, Sendable {
+  public var incomeId: UUID
+  public var name: String
+  public var due: DateOnly
+  public var rub: AmountE4
+
+  public init(incomeId: UUID, name: String, due: DateOnly, rub: AmountE4) {
+    self.incomeId = incomeId
+    self.name = name
+    self.due = due
+    self.rub = rub
+  }
+}
+
 /// The expected income of the current month: the income received this month plus what is
 /// still expected before its end; with nothing expected, the median income of 3 months.
 ///
@@ -77,32 +93,13 @@ public enum IncomeEstimate {
     ledger: Ledger, statuses: [ExpectedIncomeStatus], today: DateOnly, until: DateOnly? = nil
   ) -> MonthIncomeEstimate {
     let month = today.monthKey
-    let first = month.firstDay
-    let last = month.lastDay
-    let horizon = min(max(until ?? last, first), last)
     let received = ledger.income(attributedTo: [month], notAfter: today)
 
-    var expectationsExist = false
-    var expected = AmountE4.zero
-    var withoutRate: [UUID] = []
-    for status in statuses where !status.income.closed {
-      for occurrence in status.occurrences where occurrence.due.monthKey == month {
-        expectationsExist = true
-        guard occurrence.due <= horizon else { continue }
-        // A linked operation dated after today fills the due date already, but `received`
-        // counts only what came by today: until its day comes it is still expected — within
-        // a window that ends before its day, not at all: that money comes after `until`.
-        expected += rublesAhead(
-          of: occurrence, month: month, today: today, through: horizon < last ? horizon : nil,
-          ledger: ledger)
-        guard !occurrence.isFulfilled else { continue }
-        if let rubles = occurrence.remainingRub {
-          expected += rubles
-        } else if !withoutRate.contains(status.id) {
-          withoutRate.append(status.id)
-        }
-      }
-    }
+    let expectations = expectedThisMonth(
+      ledger: ledger, statuses: statuses, today: today, until: until)
+    let expectationsExist = expectations.exist
+    let expected = expectations.total
+    let withoutRate = expectations.withoutRate
 
     let history = SavingsMath.completeMonths(
       before: month, historyStart: historyStart(firstDay: ledger.firstDay), count: medianMonths)
@@ -127,6 +124,50 @@ public enum IncomeEstimate {
       month: month, received: received, expectedRemaining: expected, median3: median3,
       monthsInMedian: median3 == nil ? 0 : history.count, value: value, source: source,
       lowData: source == .receivedOnly, expectationsWithoutRate: withoutRate)
+  }
+
+  /// What the due dates of this month still wait for — the `expectedRemaining` of `month`, due
+  /// date by due date. Every due date of the month from the 1st through `until` (the end of the
+  /// month by default) adds what it has not received yet plus the operations linked to it that
+  /// are dated after today (`rublesAhead`); the items list those that add something, and add
+  /// up to `total` exactly. `exist` says whether any expectation is due this month at all.
+  public static func expectedThisMonth(
+    ledger: Ledger, statuses: [ExpectedIncomeStatus], today: DateOnly, until: DateOnly? = nil
+  ) -> (items: [ExpectedIncomeItem], total: AmountE4, exist: Bool, withoutRate: [UUID]) {
+    let month = today.monthKey
+    let first = month.firstDay
+    let last = month.lastDay
+    let horizon = min(max(until ?? last, first), last)
+    var exist = false
+    var total = AmountE4.zero
+    var withoutRate: [UUID] = []
+    var items: [ExpectedIncomeItem] = []
+    for status in statuses where !status.income.closed {
+      for occurrence in status.occurrences where occurrence.due.monthKey == month {
+        exist = true
+        guard occurrence.due <= horizon else { continue }
+        // A linked operation dated after today fills the due date already, but `received`
+        // counts only what came by today: until its day comes it is still expected — within
+        // a window that ends before its day, not at all: that money comes after `until`.
+        var item = rublesAhead(
+          of: occurrence, month: month, today: today, through: horizon < last ? horizon : nil,
+          ledger: ledger)
+        if !occurrence.isFulfilled {
+          if let rubles = occurrence.remainingRub {
+            item += rubles
+          } else if !withoutRate.contains(status.id) {
+            withoutRate.append(status.id)
+          }
+        }
+        total += item
+        if !item.isZero {
+          items.append(
+            ExpectedIncomeItem(
+              incomeId: status.id, name: status.income.name, due: occurrence.due, rub: item))
+        }
+      }
+    }
+    return (items, total, exist, withoutRate)
   }
 
   /// The first month the income history counts: the month of the first record when it is on

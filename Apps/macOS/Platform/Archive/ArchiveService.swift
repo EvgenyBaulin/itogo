@@ -368,13 +368,23 @@ enum ArchiveImportFlow {
     if let style = values[AppEnvironment.entryStyleKey], EntryStyle(rawValue: style) != nil {
       defaults.set(style, forKey: AppEnvironment.entryStyleKey)
     }
-    // The tiles of Overview are read as a choice the grid can show before they are kept: a tile
-    // this build does not know goes, and never more than twelve stay.
+    // The tiles of Overview are read as a list the grid can show before they are kept: a tile
+    // this build does not know goes.
     if let tiles = values[AppEnvironment.overviewTilesKey] {
       defaults.set(
         OverviewTiles.encode(OverviewTiles.decode(tiles)),
         forKey: AppEnvironment.overviewTilesKey)
     }
+    // The layout of Overview is read as a whole layout before it is kept. An archive of a build
+    // before groups carries only the list: the layout of this Mac goes, so the list is what the
+    // next launch reads.
+    if let layout = OverviewLayout.decode(values[AppEnvironment.overviewLayoutKey]) {
+      defaults.set(layout.encode(), forKey: AppEnvironment.overviewLayoutKey)
+    } else if values[AppEnvironment.overviewTilesKey] != nil {
+      defaults.removeObject(forKey: AppEnvironment.overviewLayoutKey)
+    }
+    // The order of the blocks of Planning, read as an order of every block once.
+    PlanningLayoutStore.applyPortable(values, to: defaults)
   }
 
   /// What an import asks the owner and what it tells them. Alerts in the app; a test answers

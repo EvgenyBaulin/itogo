@@ -3,23 +3,29 @@ import XCTest
 
 @testable import Itogo
 
-/// A tile dragged to another place in Settings → Appearance moves on Overview too: the grid lays
-/// out the tiles of the setting in their order, row by row.
+/// A tile dragged to another place in Settings → Appearance or on Overview moves on Overview: the
+/// grids lay out the tiles of each group in their order, row by row.
 @MainActor
 final class OverviewTilesOrderTests: XCTestCase {
   func testADraggedTileMovesOnOverview() {
     let environment = AppEnvironment()
-    let before = environment.overviewTiles
-    defer { environment.overviewTiles = before }
     environment.overviewTiles = [.monthToDate, .topCategories, .spendingForecast, .limits]
     XCTAssertEqual(
-      OverviewCard.rows(environment.overviewTiles, columns: 3),
-      [[.monthToDate, .topCategories, .spendingForecast], [.limits]])
-
-    XCTAssertTrue(OverviewTilesActions.drop(environment, .limits, onto: .monthToDate))
+      OverviewScreen.groups(of: environment.overviewLayout, editing: false),
+      [.money, .plan, .analysis])
     XCTAssertEqual(
-      OverviewCard.rows(environment.overviewTiles, columns: 3),
-      [[.limits, .monthToDate, .topCategories], [.spendingForecast]],
+      environment.overviewLayout.shownTiles(in: .analysis), [.topCategories, .spendingForecast])
+
+    XCTAssertTrue(OverviewTilesActions.drop(environment, .limits, onto: .topCategories))
+    XCTAssertEqual(
+      OverviewScreen.groups(of: environment.overviewLayout, editing: false), [.money, .analysis],
+      "a group with no tile shown is left out")
+    XCTAssertEqual(
+      OverviewScreen.groups(of: environment.overviewLayout, editing: true),
+      [.money, .plan, .analysis], "while editing, to drop a tile into")
+    XCTAssertEqual(
+      OverviewCard.rows(environment.overviewLayout.shownTiles(in: .analysis), columns: 2),
+      [[.limits, .topCategories], [.spendingForecast]],
       "the grid follows the order the drag left")
 
     let language = environment.language.choice

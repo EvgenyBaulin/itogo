@@ -15,6 +15,7 @@ struct LimitsBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
+  @Environment(\.planningCardHosted) private var hosted
   @Binding var sheet: PlanningSheet?
   /// A limit asked to be deleted: the confirmation comes first.
   @State private var deleting: Budget?
@@ -26,13 +27,18 @@ struct LimitsBlock: View {
 
   var body: some View {
     ComputedBlock(
-      title: t("limits.title"), state: compute.states.data, fillsHeight: true,
+      title: hosted ? nil : t("limits.title"), state: compute.states.data,
+      style: hosted ? .plain : .card, fillsHeight: !hosted,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       VStack(alignment: .leading, spacing: 10) {
         let ranked = LimitLists.ranked(snapshot, environment)
         if ranked.total == 0 {
-          Text(verbatim: t("limits.none")).foregroundStyle(.secondary)
+          if hosted {
+            PlanningEmptyHint(block: .limits) { sheet = .budget(nil) }
+          } else {
+            Text(verbatim: t("limits.none")).foregroundStyle(.secondary)
+          }
         }
         ForEach(ranked.shown, id: \.budget.id) { line in
           LimitRow(
@@ -43,8 +49,10 @@ struct LimitsBlock: View {
             edit: { sheet = .budget($0) }, delete: { deleting = $0 })
         }
         HStack(spacing: 8) {
-          Button(t("limits.add")) { sheet = .budget(nil) }
-            .buttonStyle(.bordered)
+          if !(hosted && ranked.total == 0) {
+            Button(t("limits.add")) { sheet = .budget(nil) }
+              .buttonStyle(.bordered)
+          }
           Button(t("limits.suggest.open")) {
             editing = nil
             suggests = true

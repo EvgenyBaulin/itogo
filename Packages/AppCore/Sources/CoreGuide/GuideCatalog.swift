@@ -32,7 +32,7 @@ public enum GuideCatalog {
           "Наберите «кофе 300» и нажмите Return. Сумма, дата и счёт понимаются из строки; Tab открывает все поля.",
           "Type «coffee 300» and press Return. Amount, date and account are read from the line; Tab opens every field."
         ),
-        symbol: "text.cursor"),
+        symbol: "text.cursor", target: GuideTarget.entryLine),
       GuideCard(
         id: "first.categories",
         title: GuideText("Категории и оценка", "Categories and a verdict"),
@@ -56,7 +56,7 @@ public enum GuideCatalog {
           "Платежи, подписки, цели и лимиты — в «Планировании». Свободная сумма учитывает их все.",
           "Payments, subscriptions, goals and limits live in Planning. The free amount takes them all into account."
         ),
-        symbol: "calendar"),
+        symbol: "calendar", target: GuideTarget.sidebarPlanning),
       GuideCard(
         id: "first.privacy",
         title: GuideText("Ваши данные — только у вас", "Your data stays with you"),
@@ -77,6 +77,26 @@ public enum GuideCatalog {
 
   // MARK: Tutorial
 
+  // Every task is a few steps, one place each: the window darkens around the place, the words
+  // beside it say what to press and why. A step that is typed does not move on by a click.
+
+  /// Opens a section of the sidebar: the first step of the tasks that live there.
+  private static func open(
+    _ target: String, _ russian: String, _ english: String, keys: String,
+    why: GuideText
+  ) -> GuideHint {
+    GuideHint(
+      target: target, text: GuideText("Откройте «\(russian)»", "Open \(english)"), why: why,
+      keys: keys, gesture: GuideText("Коснитесь «\(russian)»", "Tap \(english)"))
+  }
+
+  /// Types a line into the entry line and presses Return: the step of the tasks of a starter set.
+  private static func type(_ text: GuideText, why: GuideText) -> GuideHint {
+    GuideHint(
+      target: GuideTarget.entryLine, text: text, why: why,
+      gesture: GuideText("Коснитесь строки ввода", "Tap the entry line"), advancesOnClick: false)
+  }
+
   public static let tutorial = GuideScenario(
     kind: .tutorial,
     tasks: [
@@ -85,11 +105,19 @@ public enum GuideCatalog {
         title: GuideText("Запишите «кофе 300»", "Write down «coffee 300»"),
         hints: [
           GuideHint(
-            target: "entry.line",
-            text: GuideText(
+            target: GuideTarget.entryLine,
+            text: GuideText("Щёлкните строку внизу", "Click the line below"),
+            why: GuideText(
+              "Сюда пишется каждая трата и каждый доход — одной строкой.",
+              "Every expense and every income is written here, in one line."),
+            keys: "⌘N", gesture: GuideText("Коснитесь строки ввода", "Tap the entry line")),
+          type(
+            GuideText(
               "Наберите в строке внизу «кофе 300» и нажмите Return",
               "Type «coffee 300» in the line below and press Return"),
-            keys: "⌘N", gesture: GuideText("Коснитесь строки ввода", "Tap the entry line"))
+            why: GuideText(
+              "Сумму, дату и категорию Итого поймёт из строки сам.",
+              "Itogo reads the amount, the date and the category from the line itself.")),
         ],
         done: .any([
           .operation(words: "кофе", amountE4: 3_000_000),
@@ -101,11 +129,12 @@ public enum GuideCatalog {
         id: "task.textbook",
         title: GuideText("Запишите покупку учебника", "Write down a textbook"),
         hints: [
-          GuideHint(
-            target: "entry.line",
-            text: GuideText(
-              "Наберите «учебник 800» — для таких трат набор добавил «Учебники»",
-              "Type «textbook 800»: the set added «Textbooks» for it"))
+          type(
+            GuideText(
+              "Наберите «учебник 800» и нажмите Return", "Type «textbook 800» and press Return"),
+            why: GuideText(
+              "Для таких трат набор добавил «Учебники» — увидите, сколько уходит на учёбу.",
+              "The set added «Textbooks» for it: you will see what your studies cost."))
         ],
         done: .any([
           .operation(words: "учебник", amountE4: nil), .operation(words: "textbook", amountE4: nil),
@@ -115,11 +144,11 @@ public enum GuideCatalog {
         id: "task.lunch",
         title: GuideText("Запишите обед", "Write down a lunch"),
         hints: [
-          GuideHint(
-            target: "entry.line",
-            text: GuideText(
-              "Наберите «обед 450» — для этого набор добавил «Обеды»",
-              "Type «lunch 450»: the set added «Lunches» for it"))
+          type(
+            GuideText("Наберите «обед 450» и нажмите Return", "Type «lunch 450» and press Return"),
+            why: GuideText(
+              "Для этого набор добавил «Обеды» — увидите, сколько стоят обеды за месяц.",
+              "The set added «Lunches» for it: you will see what lunches cost a month."))
         ],
         done: .any([
           .operation(words: "обед", amountE4: nil), .operation(words: "lunch", amountE4: nil),
@@ -129,11 +158,13 @@ public enum GuideCatalog {
         id: "task.client",
         title: GuideText("Запишите оплату от заказчика", "Write down a payment from a client"),
         hints: [
-          GuideHint(
-            target: "entry.line",
-            text: GuideText(
-              "Наберите «+20000 заказчик» — доход ляжет в «Заказчики» из набора",
-              "Type «+20000 client»: the income goes to «Clients» of the set"))
+          type(
+            GuideText(
+              "Наберите «+20000 заказчик» и нажмите Return", "Type «+20000 client» and press Return"
+            ),
+            why: GuideText(
+              "«+» — это доход; он ляжет в «Заказчики» из набора.",
+              "«+» means income; it goes to «Clients» of the set."))
         ],
         done: .any([.income(words: "заказ"), .income(words: "client")]),
         audience: .only(.lifestyle(.freelance))),
@@ -141,11 +172,12 @@ public enum GuideCatalog {
         id: "task.familyHelp",
         title: GuideText("Запишите помощь родным", "Write down help to your family"),
         hints: [
-          GuideHint(
-            target: "entry.line",
-            text: GuideText(
-              "Наберите «помощь маме 3000» — для этого набор добавил «Помощь родным»",
-              "Type «help mum 3000»: the set added «Family help» for it"))
+          type(
+            GuideText(
+              "Наберите «помощь маме 3000» и нажмите Return",
+              "Type «help mum 3000» and press Return"),
+            why: GuideText(
+              "Для этого набор добавил «Помощь родным».", "The set added «Family help» for it."))
         ],
         done: .any([
           .operation(words: "помощ", amountE4: nil), .operation(words: "help", amountE4: nil),
@@ -155,11 +187,10 @@ public enum GuideCatalog {
         id: "task.date",
         title: GuideText("Запишите свидание", "Write down a date"),
         hints: [
-          GuideHint(
-            target: "entry.line",
-            text: GuideText(
-              "Наберите «свидание 2500» — для этого набор добавил «Свидания»",
-              "Type «date 2500»: the set added «Dates» for it"))
+          type(
+            GuideText(
+              "Наберите «свидание 2500» и нажмите Return", "Type «date 2500» and press Return"),
+            why: GuideText("Для этого набор добавил «Свидания».", "The set added «Dates» for it."))
         ],
         done: .any([
           .operation(words: "свидан", amountE4: nil), .operation(words: "date", amountE4: nil),
@@ -169,11 +200,12 @@ public enum GuideCatalog {
         id: "task.kids",
         title: GuideText("Запишите покупку для детей", "Write down something for the children"),
         hints: [
-          GuideHint(
-            target: "entry.line",
-            text: GuideText(
-              "Наберите «игрушки 1500» — набор добавил категорию «Дети»",
-              "Type «toys 1500»: the set added the category «Kids»"))
+          type(
+            GuideText(
+              "Наберите «игрушки 1500» и нажмите Return", "Type «toys 1500» and press Return"),
+            why: GuideText(
+              "Набор добавил категорию «Дети» — траты на детей видны отдельно.",
+              "The set added the category «Kids»: what the children cost shows apart."))
         ],
         done: .any([
           .operation(words: "игрушк", amountE4: nil), .operation(words: "toy", amountE4: nil),
@@ -183,32 +215,51 @@ public enum GuideCatalog {
         id: "task.category",
         title: GuideText("Поменяйте категорию операции", "Change the category of an operation"),
         hints: [
+          open(
+            GuideTarget.sidebarSpending, "Траты", "Spending", keys: "⌘4",
+            why: GuideText("Здесь все операции, новые сверху.", "Every operation, newest first.")),
           GuideHint(
-            target: "sidebar.spending",
+            target: GuideTarget.spendingList,
             text: GuideText(
-              "Откройте «Траты», дважды щёлкните операцию и выберите другую категорию",
-              "Open Spending, double-click an operation and pick another category"),
-            gesture: GuideText("Коснитесь операции", "Tap an operation"))
+              "Дважды щёлкните операцию и выберите другую категорию",
+              "Click an operation twice and pick another category"),
+            why: GuideText(
+              "Итого запомнит ваш выбор и в следующий раз подставит его сам.",
+              "Itogo remembers your choice and puts it in by itself next time."),
+            gesture: GuideText("Коснитесь операции", "Tap an operation"), advancesOnClick: false),
         ],
         done: .event(GuideEvent.categoryChanged)),
       GuideTask(
         id: "task.search",
         title: GuideText("Найдите трату за прошлую неделю", "Find an expense from last week"),
         hints: [
+          open(
+            GuideTarget.sidebarSpending, "Траты", "Spending", keys: "⌘4",
+            why: GuideText("Поиск — вверху списка.", "The search is at the top of the list.")),
           GuideHint(
-            target: "transactions.search",
-            text: GuideText(
-              "В «Тратах» наберите слово в поиске", "Type a word into the search of Spending"),
-            keys: "⌘F")
+            target: GuideTarget.spendingSearch,
+            text: GuideText("Наберите слово в поиске", "Type a word into the search"),
+            why: GuideText(
+              "Поиск ищет по всей истории: слова, категорию и место.",
+              "The search looks through the whole history: words, category and place."),
+            keys: "⌘F", advancesOnClick: false),
         ],
         done: .event(GuideEvent.searched)),
       GuideTask(
         id: "task.subscription",
         title: GuideText("Заведите платёж по подписке", "Add a subscription payment"),
         hints: [
+          open(
+            GuideTarget.sidebarPlanning, "Планирование", "Planning", keys: "⌘2",
+            why: GuideText(
+              "Здесь платежи, подписки, лимиты и цели.",
+              "Payments, subscriptions, limits and goals live here.")),
           GuideHint(
-            target: "planning.addPayment",
-            text: GuideText("«Планирование» → «+ Платёж»", "Planning → «+ Payment»"), keys: "⌘2")
+            target: GuideTarget.planningAddPayment,
+            text: GuideText("Нажмите «+ Платёж»", "Press «+ Payment»"),
+            why: GuideText(
+              "Платёж напомнит о себе в срок и заранее вычтется из свободной суммы.",
+              "A payment reminds you when it is due and is taken off the free sum in advance.")),
         ],
         done: .scheduledPaymentAdded,
         audience: .unlessNot(.subscriptions)),
@@ -217,9 +268,13 @@ public enum GuideCatalog {
         title: GuideText("Сверьте остаток счёта", "Count the balance of an account"),
         hints: [
           GuideHint(
-            target: "toolbar.reconcile",
+            target: GuideTarget.toolbarReconcile,
             text: GuideText(
-              "Кнопка «Сверка» на панели инструментов", "The Count button of the toolbar"))
+              "Нажмите «Сверка» на панели инструментов вверху окна",
+              "Press Count in the toolbar at the top of the window"),
+            why: GuideText(
+              "Впишите, сколько денег на счёте на самом деле, — разница станет видна сразу.",
+              "Write what the account really holds, and any difference shows at once."))
         ],
         done: .countMade),
       GuideTask(
@@ -227,21 +282,29 @@ public enum GuideCatalog {
         title: GuideText(
           "Посмотрите, сколько свободно до конца месяца", "See what is free to spend this month"),
         hints: [
+          open(
+            GuideTarget.sidebarPlanning, "Планирование", "Planning", keys: "⌘2",
+            why: GuideText(
+              "Свободная сумма — в начале экрана.", "The free sum is at the top of the screen.")),
           GuideHint(
-            target: "planning.freeToSpend",
-            text: GuideText(
-              "«Планирование», блок «Свободная сумма»", "Planning, the Free to Spend block"),
-            keys: "⌘2")
+            target: GuideTarget.planningFreeToSpend,
+            text: GuideText("Это свободная сумма", "This is the free sum"),
+            why: GuideText(
+              "Столько можно тратить, не задев платежи, долги и цели.",
+              "What you can spend without touching payments, debts and goals.")),
         ],
         done: .event(GuideEvent.freeToSpendSeen)),
       GuideTask(
         id: "task.transfer",
         title: GuideText("Переведите деньги строкой", "Transfer money from the line"),
         hints: [
-          GuideHint(
-            target: "entry.line",
-            text: GuideText(
-              "Наберите «перевод 1000 основной наличные»", "Type «transfer 1000 main cash»"))
+          type(
+            GuideText(
+              "Наберите «перевод 1000 основной наличные» и нажмите Return",
+              "Type «transfer 1000 main cash» and press Return"),
+            why: GuideText(
+              "Перевод между своими счетами — не трата: деньги просто переезжают.",
+              "A transfer between your own accounts is not spending: the money only moves."))
         ],
         done: .any([.event(GuideEvent.transferFromLine), .transferAdded])),
       GuideTask(
@@ -249,20 +312,35 @@ public enum GuideCatalog {
         title: GuideText("Заплатите за другого", "Pay for somebody else"),
         hints: [
           GuideHint(
-            target: "entry.forWhom",
+            target: GuideTarget.entryDetails,
+            text: GuideText("Откройте все поля операции", "Open every field of the operation"),
+            why: GuideText("«За кого» — среди полей.", "«For whom» is among the fields."),
+            keys: "Tab"),
+          GuideHint(
+            target: GuideTarget.entryForWhom,
             text: GuideText(
-              "В панели ↓ строка «За кого» → «За другого» или «Пополам»",
-              "In the ↓ panel, «For whom» → «For somebody» or «Half each»"),
-            keys: "Tab")
+              "В строке «За кого» выберите «За другого» или «Пополам»",
+              "In «For whom», pick «For somebody» or «Half each»"),
+            why: GuideText(
+              "Деньги, которые вам вернут, не станут вашей тратой.",
+              "Money you will get back does not count as your spending."),
+            advancesOnClick: false),
         ],
         done: .operationForSomebodyElse),
       GuideTask(
         id: "task.loan",
         title: GuideText("Заведите кредит или долг", "Add a loan or a debt"),
         hints: [
+          open(
+            GuideTarget.sidebarDebts, "Долги", "Debts", keys: "⌘3",
+            why: GuideText(
+              "Здесь «Я должен» и «Мне должны».", "«I owe» and «Owed to me» live here.")),
           GuideHint(
-            target: "sidebar.debts",
-            text: GuideText("«Долги» → «+ Долг»", "Debts → «+ Debt»"), keys: "⌘3")
+            target: GuideTarget.debtsAdd,
+            text: GuideText("Нажмите «+ Долг»", "Press «+ Debt»"),
+            why: GuideText(
+              "Итого напомнит о платеже и посчитает, сколько осталось.",
+              "Itogo reminds you of each payment and counts what is left.")),
         ],
         done: .debtAdded,
         audience: .only(.loans)),
@@ -270,9 +348,15 @@ public enum GuideCatalog {
         id: "task.cushion",
         title: GuideText("Заведите цель «Подушка»", "Add a goal «Cushion»"),
         hints: [
+          open(
+            GuideTarget.sidebarPlanning, "Планирование", "Planning", keys: "⌘2",
+            why: GuideText("Цели — внизу экрана.", "Goals are further down the screen.")),
           GuideHint(
-            target: "sidebar.planning",
-            text: GuideText("«Планирование» → «+ Цель»", "Planning → «+ Goal»"), keys: "⌘2")
+            target: GuideTarget.planningAddGoal,
+            text: GuideText("В блоке «Цели» нажмите «+ Цель»", "In Goals, press «+ Goal»"),
+            why: GuideText(
+              "Отложенное на цель не попадёт в свободную сумму.",
+              "Money put aside for a goal stays out of the free sum.")),
         ],
         done: .goalAdded,
         audience: .only(.cushion)),
@@ -281,10 +365,13 @@ public enum GuideCatalog {
         title: GuideText("Задайте кэшбэк счёта", "Set the cashback of an account"),
         hints: [
           GuideHint(
-            target: "settings.accounts",
+            target: GuideTarget.settingsAccounts,
             text: GuideText(
               "«Настройки → Счета» → счёт → «Кэшбэк…»",
               "Settings → Accounts → an account → «Cashback…»"),
+            why: GuideText(
+              "Итого посчитает, сколько кэшбэка ждать, и скажет, если он не пришёл.",
+              "Itogo works out the cashback to expect and tells you when it does not come."),
             keys: "⌘,")
         ],
         done: .cashbackRuleAdded,
@@ -294,10 +381,13 @@ public enum GuideCatalog {
         title: GuideText("Откройте список «Траты»", "Open the Spending list"),
         hints: [
           GuideHint(
-            target: "sidebar.spending",
+            target: GuideTarget.sidebarSpending,
             text: GuideText(
               "Пункт «Траты» в боковой панели или ↓ в пустой строке",
               "Spending in the sidebar, or ↓ in the empty line"),
+            why: GuideText(
+              "Все операции одним списком, поиск — по всей истории.",
+              "Every operation in one list, and a search through the whole history."),
             keys: "↓")
         ],
         done: .event(GuideEvent.spendingOpened)),
@@ -306,19 +396,91 @@ public enum GuideCatalog {
         title: GuideText("Посмотрите график валюты", "Look at a currency chart"),
         hints: [
           GuideHint(
-            target: "settings.overviewTiles",
+            target: GuideTarget.settingsOverviewTiles,
             text: GuideText(
               "«Настройки → Оформление» → плитка «График валюты»",
               "Settings → Appearance → the Currency Chart tile"),
+            why: GuideText(
+              "Плитка покажет курс и как он менялся за неделю, месяц или год.",
+              "The tile shows the rate and how it moved over a week, a month or a year."),
             keys: "⌘,")
         ],
         done: .event(GuideEvent.currencyChartSeen)),
     ])
 
+  // MARK: Where to click
+
+  /// «Показать, куда нажимать»: the places of the main window one at a time, each with what it
+  /// does and its keys.
+  public static let whereToClick: [GuideHint] = [
+    GuideHint(
+      target: GuideTarget.entryLine, text: GuideText("Запись операции", "Write an operation"),
+      why: GuideText(
+        "Наберите «кофе 300» и Return — трата записана.",
+        "Type «coffee 300» and Return, and the expense is written."),
+      keys: "⌘N", advancesOnClick: false),
+    GuideHint(
+      target: GuideTarget.entryDetails, text: GuideText("Все поля", "Every field"),
+      why: GuideText(
+        "Категория, счёт, «за кого», дата — если строки мало.",
+        "Category, account, «for whom», date — when the line is not enough."),
+      keys: "Tab"),
+    GuideHint(
+      target: GuideTarget.sidebarOverview, text: GuideText("Обзор", "Overview"),
+      why: GuideText("Месяц одним взглядом.", "The month at a glance."), keys: "⌘1"),
+    GuideHint(
+      target: GuideTarget.sidebarPlanning, text: GuideText("Планирование", "Planning"),
+      why: GuideText(
+        "Платежи, подписки, лимиты, цели и свободная сумма.",
+        "Payments, subscriptions, limits, goals and the free sum."),
+      keys: "⌘2"),
+    GuideHint(
+      target: GuideTarget.sidebarDebts, text: GuideText("Долги", "Debts"),
+      why: GuideText("Кому должны вы и кто должен вам.", "Whom you owe and who owes you."),
+      keys: "⌘3"),
+    GuideHint(
+      target: GuideTarget.sidebarSpending, text: GuideText("Траты", "Spending"),
+      why: GuideText(
+        "Все операции списком и поиск по истории.",
+        "Every operation in a list and a search through the history."),
+      keys: "⌘4"),
+    GuideHint(
+      target: GuideTarget.sidebarCalendar, text: GuideText("Календарь", "Calendar"),
+      why: GuideText(
+        "Сколько стоил каждый день и какие платежи впереди.",
+        "What each day cost and which payments are ahead."),
+      keys: "⌘5"),
+    GuideHint(
+      target: GuideTarget.sidebarCapital, text: GuideText("Капитал", "Capital"),
+      why: GuideText(
+        "Что есть минус что должны, по месяцам.", "What you have minus what you owe, by month."),
+      keys: "⌘6"),
+    GuideHint(
+      target: GuideTarget.toolbarTransactions,
+      text: GuideText(
+        "Таблица операций — на панели вверху", "The table of operations — in the toolbar"),
+      why: GuideText(
+        "Все операции с фильтрами и правкой нескольких сразу.",
+        "Every operation with filters and editing many at once."),
+      keys: "⌘⇧T"),
+    GuideHint(
+      target: GuideTarget.toolbarReconcile,
+      text: GuideText("Сверка остатка — на панели вверху", "Count the balance — in the toolbar"),
+      why: GuideText(
+        "Впишите, сколько денег на самом деле, — разница видна сразу.",
+        "Write what you really have, and any difference shows at once.")),
+    GuideHint(
+      target: GuideTarget.toolbarSettings,
+      text: GuideText("Настройки — на панели вверху", "Settings — in the toolbar"),
+      why: GuideText(
+        "Счета, категории, валюты, оформление.", "Accounts, categories, currencies, appearance."),
+      keys: "⌘,"),
+  ]
+
   // MARK: What is new
 
   public static let whatsNew: [GuideScenario] = [
-    whatsNew14, whatsNew15, whatsNew16, whatsNew17,
+    whatsNew14, whatsNew15, whatsNew16, whatsNew17, whatsNew18,
   ]
 
   public static let whatsNew14 = GuideScenario(
@@ -344,7 +506,7 @@ public enum GuideCatalog {
         body: GuideText(
           "Все операции — отдельным списком. ↓ в пустой строке переходит к самой новой.",
           "Every operation in a list of its own. ↓ in the empty line goes to the latest."),
-        symbol: "list.bullet"),
+        symbol: "list.bullet", target: GuideTarget.sidebarSpending),
       GuideCard(
         id: "new14.approx",
         title: GuideText("Серое «≈» для чужой валюты", "A grey «≈» for other currencies"),
@@ -400,7 +562,7 @@ public enum GuideCatalog {
         body: GuideText(
           "Месяц или неделя: сколько потрачено в каждый день, дорогие дни отмечены, впереди — платежи. ⌘5.",
           "A month or a week: what each day cost, costly days marked, payments ahead. ⌘5."),
-        symbol: "calendar"),
+        symbol: "calendar", target: GuideTarget.sidebarCalendar),
       GuideCard(
         id: "new15.hide",
         title: GuideText("Скрыть суммы", "Hide amounts"),
@@ -486,7 +648,7 @@ public enum GuideCatalog {
           "Что есть минус что должен: счета, вклады, имущество и долги — и график по концам месяцев. ⌘6.",
           "What you have minus what you owe: accounts, deposits, property and debts, with a chart of month ends. ⌘6."
         ),
-        symbol: "building.columns"),
+        symbol: "building.columns", target: GuideTarget.sidebarCapital),
       GuideCard(
         id: "new17.assets",
         title: GuideText("Имущество", "Property"),
@@ -511,5 +673,50 @@ public enum GuideCatalog {
           "«Goal…» sets a cushion of N months and what to put aside each month. «Keep the cushion out of the free sum» is in «Free sum» and Settings → Planning."
         ),
         symbol: "target"),
+    ])
+
+  public static let whatsNew18 = GuideScenario(
+    kind: .whatsNew(version: GuideVersion(major: 1, minor: 8)),
+    cards: [
+      GuideCard(
+        id: "new18.overview",
+        title: GuideText("Все плитки «Обзора» — по группам", "Every Overview tile, in groups"),
+        body: GuideText(
+          "Плитки разложены на «Деньги», «План» и «Анализ», группу можно свернуть. «Изменить» — перетащить плитку, перенести в другую группу, скрыть; то же — в «Настройки → Оформление».",
+          "Tiles sit in «Money», «Plan» and «Analysis», and a group folds away. «Edit» drags a tile, moves it to another group or hides it; the same is in Settings → Appearance."
+        ),
+        symbol: "square.grid.2x2", target: GuideTarget.sidebarOverview),
+      GuideCard(
+        id: "new18.why",
+        title: GuideText("«Почему так»", "«Why so»"),
+        body: GuideText(
+          "Щёлкните плитку: её число по строкам, правило одной фразой и «Открыть в …» — туда, где это живёт.",
+          "Click a tile: its figure line by line, the rule in one sentence, and «Open in …» where it lives."
+        ),
+        symbol: "questionmark.circle"),
+      GuideCard(
+        id: "new18.planning",
+        title: GuideText("Планирование короче", "A shorter Planning"),
+        body: GuideText(
+          "Сверху — сколько ещё можно потратить, лента «Ближайшие 14 дней», блоки карточками, в длинных — ближайшие и «Показать все». Кнопка «+» добавляет платёж, подписку, цель…",
+          "On top: what you can still spend, the «Next 14 days» ribbon, blocks as cards with the nearest first and «Show all». The «+» button adds a payment, a subscription, a goal…"
+        ),
+        symbol: "calendar.badge.clock", target: GuideTarget.sidebarPlanning),
+      GuideCard(
+        id: "new18.password",
+        title: GuideText("Пароль блокировки", "A lock password"),
+        body: GuideText(
+          "«Блокировать Итого» открывается своим паролем или Touch ID. Забыли пароль — сбросьте паролем Mac.",
+          "«Lock Itogo» opens with its own password or Touch ID. Forgot it? Reset it with the Mac password."
+        ),
+        symbol: "lock"),
+      GuideCard(
+        id: "new18.windows",
+        title: GuideText("Окна и подсказки", "Windows and hints"),
+        body: GuideText(
+          "Закрыли главное окно — приложение вышло. Аналитика, Операции и Отчёты — отдельные окна без вкладок, на полном экране — поверх. Учебный режим подсвечивает, куда нажать.",
+          "Closing the main window quits the app. Analytics, Transactions and Reports are separate windows with no tabs, over a full-screen window. The tutorial lights up where to click."
+        ),
+        symbol: "macwindow"),
     ])
 }

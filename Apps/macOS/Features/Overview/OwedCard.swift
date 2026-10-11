@@ -63,8 +63,8 @@ struct OwedCard: View {
 }
 
 /// The owed parts some money already came back for, which wait for the rest: how many, what
-/// came back and what is left. The rule of «owed» is `OverviewSummary`'s — an expected part
-/// with something left of it — so the card and the summary agree.
+/// came back and what is left. The rule of «owed» is `OwedParts` — an expected part with
+/// something left of it —, the summary's too, so the card and the summary agree.
 struct OwedPartly: Hashable, Sendable {
   var count = 0
   var returnedRub: AmountE4 = .zero
@@ -74,17 +74,13 @@ struct OwedPartly: Hashable, Sendable {
   var owed = OwedSummary()
 
   init(_ ledger: Ledger) {
-    for row in ledger.rows
-    where row.kind == .expense && row.reimbursable && row.reimbursementStatus == .expected {
-      let remaining = ledger.remaining(ofPart: row)
-      guard remaining.raw > 0 else { continue }
-      owed.amount += remaining
+    for part in OwedParts(ledger).parts {
+      owed.amount += part.remainingRub
       owed.count += 1
-      let returned = ledger.returned(forPart: row.partId)
-      guard returned.raw > 0 else { continue }
+      guard part.returnedRub.raw > 0 else { continue }
       count += 1
-      returnedRub += returned
-      remainingRub += remaining
+      returnedRub += part.returnedRub
+      remainingRub += part.remainingRub
     }
   }
 

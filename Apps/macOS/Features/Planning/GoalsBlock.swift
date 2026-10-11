@@ -11,7 +11,11 @@ struct GoalsBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
+  @Environment(\.planningCardHosted) private var hosted
   @Binding var sheet: PlanningSheet?
+  /// How many of the nearest goals show before «Показать все»: nearest by the day each is for.
+  var length: PlanningListLength = .all
+  @State private var showsAll = false
   @State private var showsArchive = false
   /// The archived goal «Удалить…» asks about.
   @State private var deleting: Goal?
@@ -20,7 +24,8 @@ struct GoalsBlock: View {
 
   var body: some View {
     ComputedBlock(
-      title: t("goals.title"), state: compute.states.data, fillsHeight: true,
+      title: hosted ? nil : t("goals.title"), state: compute.states.data,
+      style: hosted ? .plain : .card, fillsHeight: !hosted,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       VStack(alignment: .leading, spacing: 12) {
@@ -30,10 +35,17 @@ struct GoalsBlock: View {
         CushionPlanningRow(status: snapshot.planning.cushion)
         Divider()
         let goals = snapshot.planning.goals
+        let shown = PlanningShortListView.shown(
+          goals, length: length, expanded: showsAll, date: { $0.goal.targetDate })
         if goals.isEmpty {
-          Text(verbatim: t("goals.none")).foregroundStyle(.secondary)
+          if hosted {
+            PlanningEmptyHint(block: .goals) { sheet = .goal(nil) }
+              .guideTarget(GuideTarget.planningAddGoal)
+          } else {
+            Text(verbatim: t("goals.none")).foregroundStyle(.secondary)
+          }
         }
-        ForEach(goals) { status in
+        ForEach(shown.items) { status in
           VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
               Text(verbatim: status.goal.name).lineLimit(1)
@@ -109,9 +121,14 @@ struct GoalsBlock: View {
             }
           }
         }
-        Button(t("goals.add")) { sheet = .goal(nil) }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+        PlanningShowAllButton(
+          block: .goals, total: goals.count, hidden: shown.hidden, expanded: $showsAll)
+        if !(hosted && goals.isEmpty) {
+          Button(t("goals.add")) { sheet = .goal(nil) }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .guideTarget(GuideTarget.planningAddGoal)
+        }
         archive(snapshot.dataset.goals.filter(\.archived))
       }
     }

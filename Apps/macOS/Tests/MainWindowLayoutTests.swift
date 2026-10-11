@@ -588,7 +588,9 @@ final class MainWindowLayoutTests: XCTestCase {
     XCTAssertGreaterThan(
       document.bounds.height, planning.contentView.bounds.height - room,
       "the section fits above the bar, so its end proves nothing")
-    let title = environment.language("limits.add", table: "Planning")
+    // The book has no limits: the card of limits offers its first one with the button of its
+    // friendly empty state instead of «+ Лимит».
+    let title = environment.language("layout.empty.limits.add", table: "Planning")
     // At the top of the section the button may well sit under the bar: the screenshot's view.
     let atTop = try Self.frameInWindow(of: title, in: window)
     print("main layout «+ Лимит» at the top of Planning: \(atTop), room \(room)")

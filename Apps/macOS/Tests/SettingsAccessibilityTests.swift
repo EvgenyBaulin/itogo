@@ -431,12 +431,13 @@ final class SettingsAccessibilityTests: XCTestCase {
     }
   }
 
-  /// Settings → Оформление → «Плитки «Обзора»»: the tiles shown are moved by dragging them —
-  /// the list takes a drag —, no arrow buttons are left in the rows, and VoiceOver moves a tile
-  /// by the actions «Выше» and «Ниже» of its row: the first tile has no «Выше», the last shown
-  /// no «Ниже», a tile not shown neither.
+  /// Settings → Оформление → «Плитки «Обзора»»: the tiles and the groups are moved by dragging
+  /// them — every tile row and every group name takes a drop —, no arrow buttons are left in the
+  /// rows, and VoiceOver moves a tile by the actions «Выше», «Ниже» and «Перенести в «…»» of its
+  /// row, a group by «Группу выше» and «Группу ниже»: the first tile of a group has no «Выше»,
+  /// the last no «Ниже», the first group no «Группу выше».
   func testTheTilesAreDraggedAndVoiceOverMovesThemByActions() throws {
-    environment.overviewTiles = [.monthToDate, .limits, .event]
+    environment.overviewLayout = .standard
     let deps = AppDependencies(
       environment: environment, store: TransactionsStore(),
       compute: ComputeStore(calendar: .system))
@@ -444,23 +445,32 @@ final class SettingsAccessibilityTests: XCTestCase {
       AppearanceSettingsView().appDependencies(deps), size: CGSize(width: 620, height: 900))
     let up = environment.language("settings.entry.moveUp", table: "Settings")
     let down = environment.language("settings.entry.moveDown", table: "Settings")
-    func row(_ tile: OverviewTile) -> NSObject? {
+    func moveTo(_ group: OverviewTileGroup) -> String {
+      environment.format(
+        "settings.tiles.moveTo", table: "Settings",
+        OverviewTileText.groupName(of: group, environment))
+    }
+    func element(_ identifier: String) -> NSObject? {
       (Self.everything(in: window) + Self.elements(inRowsOf: window) { _ in true }).first {
-        Self.attribute($0, "accessibilityIdentifier") as? String
-          == "settings.tiles.\(tile.rawValue)"
+        Self.attribute($0, "accessibilityIdentifier") as? String == identifier
       }
     }
+    func row(_ tile: OverviewTile) -> NSObject? { element("settings.tiles.\(tile.rawValue)") }
     waitFor { row(.limits) != nil }
-    func actions(_ tile: OverviewTile) -> [String] {
-      guard let element = row(tile) else { return [] }
+    func actions(_ found: NSObject?) -> [String] {
+      guard let found else { return [] }
       let custom =
-        Self.attribute(element, "accessibilityCustomActions") as? [NSAccessibilityCustomAction]
+        Self.attribute(found, "accessibilityCustomActions") as? [NSAccessibilityCustomAction]
       return (custom ?? []).map(\.name)
     }
-    XCTAssertEqual(Set(actions(.limits)), [up, down], "the middle tile")
-    XCTAssertEqual(actions(.monthToDate), [down], "the first tile")
-    XCTAssertEqual(actions(.event), [up], "the last tile shown")
-    XCTAssertEqual(actions(.freeMoney), [], "a tile not shown")
+    XCTAssertEqual(
+      Set(actions(row(.canSave))), [up, down, moveTo(.plan), moveTo(.analysis)], "a middle tile")
+    XCTAssertEqual(
+      Set(actions(row(.limits))), [down, moveTo(.money), moveTo(.analysis)],
+      "the first tile of «План»")
+    XCTAssertEqual(
+      Set(actions(row(.cushion))), [up, moveTo(.plan), moveTo(.analysis)],
+      "the last tile of «Деньги»")
 
     let buttons =
       (Self.elements(in: window, role: "AXButton")
@@ -469,22 +479,33 @@ final class SettingsAccessibilityTests: XCTestCase {
       buttons.contains { $0.contains(up) || $0.contains(down) }, "an arrow is left: \(buttons)")
 
     // The grouped form is drawn by SwiftUI, not a table, so a list's move would do nothing in
-    // it: each tile shown is a place to drop a tile on — AppKit holds one dragging destination
-    // for each —, and a tile not shown is not.
+    // it: each tile and each group name is a place to drop on — AppKit holds one dragging
+    // destination for each.
     func views(in view: NSView) -> [NSView] { [view] + view.subviews.flatMap(views) }
     let destinations = (window.contentView.map(views) ?? []).filter {
       String(describing: type(of: $0)).contains("DraggingDestination")
         && !$0.registeredDraggedTypes.isEmpty
     }
-    XCTAssertEqual(destinations.count, 3, "a drop place for each tile shown")
+    XCTAssertEqual(
+      destinations.count, OverviewTile.allCases.count + OverviewTileGroup.allCases.count,
+      "a drop place for each tile and each group")
 
-    let element = try XCTUnwrap(row(.limits))
+    let found = try XCTUnwrap(row(.canSave))
     let custom =
-      Self.attribute(element, "accessibilityCustomActions") as? [NSAccessibilityCustomAction]
-    let moveUp = try XCTUnwrap(custom?.first { $0.name == up })
-    _ = moveUp.handler?()
-    waitFor { environment.overviewTiles == [.limits, .monthToDate, .event] }
-    XCTAssertEqual(environment.overviewTiles, [.limits, .monthToDate, .event])
+      Self.attribute(found, "accessibilityCustomActions") as? [NSAccessibilityCustomAction]
+    _ = try XCTUnwrap(custom?.first { $0.name == up }).handler?()
+    waitFor { environment.overviewLayout.tiles(in: .money).first == .canSave }
+    XCTAssertEqual(
+      Array(environment.overviewLayout.tiles(in: .money).prefix(2)), [.canSave, .monthToDate])
+    _ = try XCTUnwrap(custom?.first { $0.name == moveTo(.analysis) }).handler?()
+    waitFor { environment.overviewLayout.group(of: .canSave) == .analysis }
+    XCTAssertEqual(environment.overviewLayout.tiles(in: .analysis).last, .canSave)
+
+    let groupUp = environment.language("settings.tiles.groupUp", table: "Settings")
+    let groupDown = environment.language("settings.tiles.groupDown", table: "Settings")
+    waitFor { element("settings.tiles.group.money") != nil }
+    XCTAssertEqual(actions(element("settings.tiles.group.money")), [groupDown])
+    XCTAssertEqual(Set(actions(element("settings.tiles.group.plan"))), [groupUp, groupDown])
   }
 
   /// Every card of Overview is titled by the name its tile has in Settings, in both languages:

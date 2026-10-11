@@ -31,23 +31,14 @@ enum OverviewTileText {
     "overview.iOwe.next", "overview.lastRecord.none", "overview.lastCount.none",
   ]
 
-  /// The newest operation the owner wrote — by the rule of «Последняя запись»: the latest
-  /// `createdAt` of the live operations, the lines the app writes to keep the books right left
-  /// out. A transfer is no operation: `nil` when the last thing written was one, or nothing was.
+  /// The newest operation the owner wrote (`OverviewSummary.lastOperation`).
   static func lastOperation(in dataset: Dataset) -> TransactionEntry? {
-    guard let moment = OverviewSummary.lastRecordedAt(dataset) else { return nil }
-    return dataset.entries.last {
-      !$0.transaction.isDeleted && $0.transaction.createdAt == moment
-        && OperationLink(externalId: $0.transaction.externalId)?.isBookkeeping != true
-    }
+    OverviewSummary.lastOperation(in: dataset)
   }
 
   /// What the tile calls an operation: its note, else the category of its first part, else «—».
   static func title(of entry: TransactionEntry, tree: CategoryTree) -> String {
-    if let note = entry.transaction.note?.trimmingCharacters(in: .whitespaces), !note.isEmpty {
-      return note
-    }
-    return tree.category(entry.parts.first?.categoryId)?.name ?? "—"
+    OverviewSummary.title(of: entry, tree: tree) ?? "—"
   }
 
   /// The symbol of the kind of an operation, as every list shows it: never a colour alone.
@@ -118,48 +109,6 @@ struct IncomeForecastCard: View {
 
 // MARK: - Forecast of the balance
 
-/// What the accounts of the summary come to at the end of the month, currency by currency: the
-/// middle of each counted balance's forecast (`AccountForecast`), added up within its currency —
-/// never across currencies.
-struct BalanceForecastModel: Hashable, Sendable {
-  struct Total: Hashable, Sendable {
-    var currency: CurrencyCode
-    var middle: AmountE4
-    var accounts: Int
-  }
-
-  /// The currencies in the order they were first met, the accounts in their order.
-  var totals: [Total]
-  /// Some balance of the summary was never counted or has no rate: it is not in the totals.
-  var leftOut: Bool
-  var lowData: Bool
-  var through: DateOnly
-
-  init(forecast: AccountForecast, accountIds: [UUID]) {
-    var totals: [Total] = []
-    var leftOut = false
-    for id in accountIds {
-      for line in forecast.lines(of: id) {
-        guard line.status == .ready, let balance = line.balance else {
-          if line.flows.isHeld { leftOut = true }
-          continue
-        }
-        let currency = line.key.currency
-        if let index = totals.firstIndex(where: { $0.currency == currency }) {
-          totals[index].middle += balance.middle
-          totals[index].accounts += 1
-        } else {
-          totals.append(Total(currency: currency, middle: balance.middle, accounts: 1))
-        }
-      }
-    }
-    self.totals = totals
-    self.leftOut = leftOut
-    self.lowData = forecast.lowData
-    self.through = forecast.through
-  }
-}
-
 /// «Прогноз остатка до конца месяца» of the accounts in the summary.
 struct BalanceForecastCard: View {
   @Dependency(\.environment) private var environment
@@ -213,8 +162,8 @@ struct BalanceForecastCard: View {
   private var state: BlockState<BalanceForecastModel> {
     compute.states.forecast.flatMap { remainder, at in
       guard let snapshot = compute.snapshot else { return .calculating }
-      let ids = snapshot.planning.accounts.ordered(locale: environment.language.locale).sections
-        .filter(\.inSummary).flatMap { $0.accounts.map(\.account.id) }
+      let ids = BalanceForecastModel.summaryAccountIds(
+        snapshot.planning.accounts, locale: environment.language.locale)
       let model = BalanceForecastModel(
         forecast: snapshot.accountPlan.forecast(remainder: remainder), accountIds: ids)
       return model.totals.isEmpty ? .notEnoughData : .ready(model, at: at)

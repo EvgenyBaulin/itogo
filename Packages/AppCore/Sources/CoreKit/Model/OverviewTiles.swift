@@ -50,16 +50,50 @@ public enum OverviewTile: String, CaseIterable, Sendable, Hashable, Codable {
   case cushion
 }
 
-/// Which tiles Overview shows and in what order, as the owner chose them, and the one rule that
-/// reads the choice back. Whatever the stored text says — written by another build, carried by
-/// an archive of another Mac, edited by hand — it reads as a choice the grid can show: known
-/// tiles, each once, at least one and at most `maximum`.
-public enum OverviewTiles {
-  /// How many tiles the grid shows at most.
-  public static let maximum = 12
+extension OverviewTile: Identifiable {
+  public var id: Self { self }
+}
 
-  /// The tiles Overview had before they could be chosen, in their order: nothing moves for an
-  /// owner who never opens the setting.
+extension OverviewTile {
+  /// The group a tile stands in until the owner moves it: what money there is, what is planned
+  /// ahead, what the month says.
+  public var defaultGroup: OverviewTileGroup {
+    switch self {
+    case .monthToDate, .canSave, .balanceForecast, .owedToMe, .iOwe, .lastCount, .lastRecord,
+      .lastCountAndRecord, .freeMoney, .capital, .cushion:
+      return .money
+    case .limits, .upcoming, .expectedIncome, .event, .spendingCalendar:
+      return .plan
+    case .topCategories, .qualities, .spendingForecast, .incomeForecast, .worthALook,
+      .currencyChart:
+      return .analysis
+    }
+  }
+}
+
+/// A group of tiles on Overview: «Деньги», «План», «Анализ». The groups are fixed — the owner
+/// orders them and moves tiles between them, never renames, adds or removes one. The raw value
+/// is what the layout keeps: a case is never renamed.
+public enum OverviewTileGroup: String, CaseIterable, Sendable, Hashable, Codable, Identifiable {
+  case money
+  case plan
+  case analysis
+
+  public var id: Self { self }
+}
+
+/// Which tiles Overview shows and in what order, as a flat list — the form the setting
+/// `overview.tiles` kept before the tiles stood in groups, read now only where no layout was
+/// kept yet (`OverviewLayout`) and written beside the layout for a build that knows only the
+/// list. Whatever the stored text says it reads as a list the grid can show: known tiles, each
+/// once, at least one.
+public enum OverviewTiles {
+  /// How many tiles the grid shows at most: every one of them — there is no limit any more, and
+  /// a list of every tile is a list the grid shows.
+  public static let maximum = OverviewTile.allCases.count
+
+  /// The tiles Overview had before they could be chosen, in their order: they come first for an
+  /// owner who never chose, the rest after them (`OverviewLayout.init(tiles:)`).
   public static let standard: [OverviewTile] = [
     .monthToDate, .topCategories, .qualities, .canSave, .spendingForecast, .limits, .upcoming,
     .expectedIncome, .owedToMe, .event, .lastCount, .worthALook,
@@ -100,8 +134,7 @@ public enum OverviewTiles {
     tiles.contains(tile) && tiles.count > 1
   }
 
-  /// The choice with `tile` switched on, at the end; `nil` when it cannot be — a thirteenth tile
-  /// is refused, not put in place of another.
+  /// The choice with `tile` switched on, at the end; `nil` when it is shown already.
   public static func adding(_ tile: OverviewTile, to tiles: [OverviewTile]) -> [OverviewTile]? {
     guard canAdd(tile, to: tiles) else { return nil }
     return tiles + [tile]

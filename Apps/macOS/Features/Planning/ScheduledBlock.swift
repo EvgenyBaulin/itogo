@@ -3,20 +3,34 @@ import SwiftUI
 
 // MARK: - Scheduled payments
 
+/// Scheduled payments, as one block of both kinds or — on the Planning screen — as two:
+/// «Платежи» (`kind: .bill`) with the money each account needs, and «Подписки»
+/// (`kind: .subscription`) with their price a month and a year and the subscriptions the
+/// purchases suggest. Each lists the nearest due first, as many as `length` says, the rest behind
+/// «Показать все»; an empty one says what it is for, with the button that adds the first.
 struct ScheduledBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
+  @Environment(\.planningCardHosted) private var hosted
   @Binding var sheet: PlanningSheet?
+  /// Which payments the block lists; `nil` — both kinds.
+  var kind: ScheduledKind? = nil
+  /// How many of the nearest payments show before «Показать все».
+  var length: PlanningListLength = .all
+  @State private var showsAll = false
 
   var body: some View {
     ComputedBlock(
-      title: t("scheduled.title"), state: compute.states.data,
-      retry: { compute.retry(ComputeStep.data) }
+      title: hosted ? nil : t(titleKey), state: compute.states.data,
+      style: hosted ? .plain : .card, retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       let planning = snapshot.planning
+      let statuses = planning.scheduled.filter { kind == nil || $0.payment.kind == kind }
+      let shown = PlanningShortListView.shown(
+        statuses, length: length, expanded: showsAll, date: { $0.nextUnpaid })
       VStack(alignment: .leading, spacing: 10) {
-        HStack {
+        if kind == nil || (kind == .subscription && !statuses.isEmpty) {
           Text(
             verbatim: environment.language.format(
               "scheduled.totals", table: "Planning",
@@ -25,43 +39,79 @@ struct ScheduledBlock: View {
           )
           .font(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
-          Spacer()
-          Button(t("scheduled.add")) { sheet = .payment(nil) }
+        }
+        if statuses.isEmpty, hosted, kind == .bill {
+          PlanningEmptyHint(block: .payments) { add() }
             .guideTarget("planning.addPayment")
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+        } else if statuses.isEmpty, hosted, kind == .subscription {
+          PlanningEmptyHint(block: .subscriptions) { add() }
+        } else {
+          HStack {
+            if statuses.isEmpty {
+              Text(verbatim: t("scheduled.none")).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if kind == .subscription {
+              addButton
+            } else {
+              addButton.guideTarget("planning.addPayment")
+            }
+          }
         }
-        if planning.scheduled.isEmpty {
-          Text(verbatim: t("scheduled.none")).foregroundStyle(.secondary)
-        }
-        ForEach(planning.scheduled) { status in
+        ForEach(shown.items) { status in
           ScheduledRow(
             status: status, prices: planning.book.prices, matches: planning.matches,
             sheet: $sheet)
           Divider()
         }
-        if !planning.funding.isEmpty {
+        PlanningShowAllButton(
+          block: kind == .subscription ? .subscriptions : .payments, total: statuses.count,
+          hidden: shown.hidden, expanded: $showsAll)
+        if kind != .subscription, !planning.funding.isEmpty {
           FundingLines(lines: planning.funding, methods: snapshot.dataset.paymentMethods)
         }
-        ForEach(planning.candidates.prefix(3)) { candidate in
-          HStack(spacing: 6) {
-            Image(systemName: "sparkle.magnifyingglass").accessibilityHidden(true)
-            Text(
-              verbatim: environment.language.format(
-                "scheduled.candidate", table: "Planning", candidateName(candidate, snapshot),
-                environment.money.rounded(candidate.typicalAmount, currency: candidate.currency))
-            )
-            Spacer()
-            Button(t("scheduled.candidateCreate")) {
-              sheet = .subscription(from: candidate, name: candidateName(candidate, snapshot))
+        if kind != .bill {
+          ForEach(planning.candidates.prefix(3)) { candidate in
+            HStack(spacing: 6) {
+              Image(systemName: "sparkle.magnifyingglass").accessibilityHidden(true)
+              Text(
+                verbatim: environment.language.format(
+                  "scheduled.candidate", table: "Planning", candidateName(candidate, snapshot),
+                  environment.money.rounded(candidate.typicalAmount, currency: candidate.currency))
+              )
+              Spacer()
+              Button(t("scheduled.candidateCreate")) {
+                sheet = .subscription(from: candidate, name: candidateName(candidate, snapshot))
+              }
+              .buttonStyle(.link)
             }
-            .buttonStyle(.link)
+            .font(.caption)
+            .foregroundStyle(.secondary)
           }
-          .font(.caption)
-          .foregroundStyle(.secondary)
         }
       }
     }
+  }
+
+  private var addButton: some View {
+    Button(t(kind == .subscription ? "layout.add.subscriptionButton" : "scheduled.add")) {
+      add()
+    }
+    .buttonStyle(.bordered)
+    .controlSize(.small)
+  }
+
+  private var titleKey: String {
+    switch kind {
+    case .bill: "layout.block.payments"
+    case .subscription: "layout.block.subscriptions"
+    case nil: "scheduled.title"
+    }
+  }
+
+  /// «+ Платёж» opens an empty payment; in «Подписки» the form starts as a subscription.
+  private func add() {
+    sheet = kind == .subscription ? .newSubscription(environment) : .payment(nil)
   }
 
   /// What a candidate is called: the place it was bought at, or the description of its

@@ -44,7 +44,7 @@ final class StarterSetFlowTests: XCTestCase {
   }
 
   private func plan(
-    _ choice: StarterChoice, tiles: [OverviewTile] = OverviewTiles.standard
+    _ choice: StarterChoice, tiles: [OverviewTile] = OverviewTile.allCases
   ) throws -> StarterAdditions {
     StarterSets.additions(
       for: choice, language: "ru", existing: try references.categories(includeArchived: true),
@@ -100,8 +100,8 @@ final class StarterSetFlowTests: XCTestCase {
     XCTAssertEqual(
       StarterSetActions.limitNames(full, environment: environment, dataset: nil),
       ["Дети — " + environment.money.rounded(AmountE4(whole: 20_000))])
-    XCTAssertTrue(full.tiles.isEmpty, "twelve tiles leave no room")
-    let roomy = try plan(choice, tiles: Array(OverviewTiles.standard.prefix(11)))
+    XCTAssertTrue(full.tiles.isEmpty, "every tile shown leaves nothing to add")
+    let roomy = try plan(choice, tiles: OverviewTile.allCases.filter { $0 != .iOwe })
     XCTAssertEqual(roomy.tiles, [.iOwe])
     XCTAssertEqual(Self.russian("starter.categories", table: "Onboarding"), "Категории:")
     XCTAssertEqual(Self.russian("starter.limits", table: "Onboarding"), "Лимиты:")

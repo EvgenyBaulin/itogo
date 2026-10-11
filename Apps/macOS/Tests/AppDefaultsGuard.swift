@@ -24,8 +24,8 @@ final class TestBundlePrincipal: NSObject {
 /// `AppleLanguages` (the live run of 19 September). A test that sets `AppTheme.scheme` or
 /// `.accent` writes two more keys, and would leave the owner in the theme of the last test;
 /// one that moves a field of the ↓ panel writes the order of the fields, one that picks the
-/// form writes the style, and one that chooses the tiles of Overview writes them — so the guard
-/// holds all seven.
+/// form writes the style, and one that chooses the tiles of Overview writes them, their layout and
+/// the collapsed groups — so the guard holds all nine.
 ///
 /// The guard takes the keys from the app's own domain before the first test — not through
 /// `UserDefaults`, which would answer `AppleLanguages` from the system's global domain when
@@ -53,6 +53,10 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
   static let entryStyleKey = AppEnvironment.entryStyleKey
   /// The key the choice of the tiles of Overview writes (`AppEnvironment.overviewTiles`).
   static let overviewTilesKey = AppEnvironment.overviewTilesKey
+  /// The keys the layout of Overview and its collapsed groups write
+  /// (`AppEnvironment.overviewLayout`, `.overviewCollapsed`).
+  static let overviewLayoutKey = AppEnvironment.overviewLayoutKey
+  static let overviewCollapsedKey = AppEnvironment.overviewCollapsedKey
 
   static let shared = AppDefaultsGuard(
     defaults: .standard, domain: Bundle.main.bundleIdentifier ?? "io.github.EvgenyBaulin.itogo")
@@ -70,11 +74,14 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
     var entryFieldOrder: String?
     var entryStyle: String?
     var overviewTiles: String?
+    var overviewLayout: String?
+    var overviewCollapsed: String?
 
     init(
       language: String? = nil, appleLanguages: [String]? = nil, themeScheme: String? = nil,
       themeAccent: String? = nil, entryFieldOrder: String? = nil, entryStyle: String? = nil,
-      overviewTiles: String? = nil
+      overviewTiles: String? = nil, overviewLayout: String? = nil,
+      overviewCollapsed: String? = nil
     ) {
       self.language = language
       self.appleLanguages = appleLanguages
@@ -83,6 +90,8 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
       self.entryFieldOrder = entryFieldOrder
       self.entryStyle = entryStyle
       self.overviewTiles = overviewTiles
+      self.overviewLayout = overviewLayout
+      self.overviewCollapsed = overviewCollapsed
     }
 
     /// Only what `domain` itself holds: neither the global domain nor the arguments.
@@ -95,6 +104,8 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
       entryFieldOrder = values[AppDefaultsGuard.entryFieldOrderKey] as? String
       entryStyle = values[AppDefaultsGuard.entryStyleKey] as? String
       overviewTiles = values[AppDefaultsGuard.overviewTilesKey] as? String
+      overviewLayout = values[AppDefaultsGuard.overviewLayoutKey] as? String
+      overviewCollapsed = values[AppDefaultsGuard.overviewCollapsedKey] as? String
     }
 
     /// Writes the values back; a key that was missing is removed.
@@ -106,6 +117,8 @@ final class AppDefaultsGuard: NSObject, XCTestObservation, @unchecked Sendable {
       Self.put(entryFieldOrder, forKey: AppDefaultsGuard.entryFieldOrderKey, in: defaults)
       Self.put(entryStyle, forKey: AppDefaultsGuard.entryStyleKey, in: defaults)
       Self.put(overviewTiles, forKey: AppDefaultsGuard.overviewTilesKey, in: defaults)
+      Self.put(overviewLayout, forKey: AppDefaultsGuard.overviewLayoutKey, in: defaults)
+      Self.put(overviewCollapsed, forKey: AppDefaultsGuard.overviewCollapsedKey, in: defaults)
     }
 
     private static func put(_ value: Any?, forKey key: String, in defaults: UserDefaults) {

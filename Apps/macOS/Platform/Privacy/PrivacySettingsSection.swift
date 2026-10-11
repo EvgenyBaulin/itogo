@@ -1,11 +1,13 @@
 import SwiftUI
 
 /// Settings → «Основные» → «Конфиденциальность»: hiding the amounts, and the lock with its idle
-/// time. Both are switches of this Mac (`AmountPrivacy`, `PrivacyLock`), never data of the books.
+/// time and its password. All are of this Mac (`AmountPrivacy`, `PrivacyLock`), never data of the
+/// books. Turning the lock on asks Touch ID or the password of the Mac, then the app's password.
 struct PrivacySettingsSection: View {
   @Dependency(\.environment) private var environment
   /// The lock the section shows: the app's own, unless a test hands one that answers as it says.
   var lockShown: PrivacyLock?
+  @State private var passwordSheet: LockPasswordSheet.Purpose?
 
   var body: some View {
     @Bindable var amounts = environment.amounts
@@ -22,7 +24,9 @@ struct PrivacySettingsSection: View {
           set: { on in
             if on {
               let reason = environment.language("privacy.enable.reason")
-              Task { await lock.enable(reason: reason) }
+              Task {
+                if await lock.beginEnabling(reason: reason) { passwordSheet = .first }
+              }
             } else {
               lock.disable()
             }
@@ -32,6 +36,14 @@ struct PrivacySettingsSection: View {
       }
       .disabled(!lock.applies || lock.isAuthenticating)
       .accessibilityIdentifier("settings.privacy.lock")
+      .sheet(item: $passwordSheet) {
+        if !lock.isEnabled { lock.cancelEnabling() }
+      } content: { purpose in
+        // dependencies: none — the sheet is handed the lock and the language it reads.
+        LockPasswordSheet(purpose: purpose, lock: lock, language: environment.language) {
+          passwordSheet = nil
+        }
+      }
 
       Picker(selection: $lock.idleMinutes) {
         ForEach(PrivacyLock.idleChoices, id: \.self) { minutes in
@@ -44,6 +56,10 @@ struct PrivacySettingsSection: View {
         Text(verbatim: environment.language("settings.privacy.idle", table: "Settings"))
       }
       .disabled(!lock.isEnabled)
+
+      if lock.isEnabled {
+        passwordRow(lock)
+      }
 
       if !lock.isEnabled, let refusal = lock.lastRefusal,
         let key = Self.refusalKey(refusal)
@@ -64,6 +80,54 @@ struct PrivacySettingsSection: View {
           table: "Settings")
       )
       .foregroundStyle(.secondary)
+    }
+  }
+
+  /// The password of the lock: change or remove it, or set it where the lock was turned on before
+  /// the app had one.
+  @ViewBuilder
+  private func passwordRow(_ lock: PrivacyLock) -> some View {
+    LabeledContent {
+      HStack {
+        if lock.hasPassword {
+          Button {
+            passwordSheet = .change
+          } label: {
+            Text(
+              verbatim: environment.language("settings.privacy.changePassword", table: "Settings"))
+          }
+          .accessibilityIdentifier("settings.privacy.changePassword")
+          Button {
+            lock.removePassword()
+          } label: {
+            Text(
+              verbatim: environment.language("settings.privacy.removePassword", table: "Settings"))
+          }
+          .accessibilityIdentifier("settings.privacy.removePassword")
+        } else {
+          Button {
+            passwordSheet = .change
+          } label: {
+            Text(
+              verbatim: environment.language("settings.privacy.setPassword", table: "Settings"))
+          }
+          .accessibilityIdentifier("settings.privacy.setPassword")
+        }
+      }
+    } label: {
+      Text(verbatim: environment.language("settings.privacy.password", table: "Settings"))
+      Text(
+        verbatim: environment.language(
+          lock.hasPassword ? "settings.privacy.passwordSet" : "settings.privacy.noPassword",
+          table: "Settings"))
+    }
+    if lock.passwordProblem == .keychain, passwordSheet == nil {
+      Label {
+        Text(verbatim: environment.language("privacy.password.keychain"))
+      } icon: {
+        Image(systemName: "exclamationmark.octagon")
+      }
+      .foregroundStyle(.red)
     }
   }
 

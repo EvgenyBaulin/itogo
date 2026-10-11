@@ -59,8 +59,8 @@ final class AppQuit {
 }
 
 /// The delegate exists for two things: the app is asked to quit and the database is put down in
-/// order before it does, and the chosen light or dark is on the app before the first window and the
-/// first alert.
+/// order before it does — by ⌘Q, by the Dock, or by closing the main window (`AppWindows`) —, and
+/// the chosen light or dark is on the app before the first window and the first alert.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var quitting: AppQuit?
@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminate(
     _ sender: NSApplication
   ) -> NSApplication.TerminateReply {
+    AppWindows.noteQuitting()
     guard hasStarted() else { return .terminateNow }
     // ⌘Q pressed twice while the first stop is still running. `AppLaunch.hasStarted` stays
     // true until it finishes, so without this a second `AppQuit` would replace the first —

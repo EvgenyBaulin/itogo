@@ -45,15 +45,17 @@ final class CurrencyChartCardTests: XCTestCase {
     return window
   }
 
-  func testTheTileTakesThePlaceOfAnotherButNeverOfAThirteenth() {
+  func testTheTileIsShownByDefaultAndCanBeHiddenAndShownAgain() {
     let environment = AppEnvironment()
-    XCTAssertEqual(environment.overviewTiles.count, 12)
-    XCTAssertFalse(environment.overviewTiles.contains(.currencyChart))
-    XCTAssertFalse(OverviewTilesActions.toggle(environment, .currencyChart), "no thirteenth")
-    XCTAssertTrue(OverviewTilesActions.toggle(environment, .qualities))
+    XCTAssertEqual(environment.overviewTiles.count, OverviewTile.allCases.count)
+    XCTAssertTrue(environment.overviewTiles.contains(.currencyChart))
+    XCTAssertEqual(environment.overviewLayout.group(of: .currencyChart), .analysis)
     XCTAssertTrue(OverviewTilesActions.toggle(environment, .currencyChart))
-    XCTAssertEqual(environment.overviewTiles.last, .currencyChart)
-    XCTAssertEqual(AppEnvironment().overviewTiles.last, .currencyChart, "kept for the next launch")
+    XCTAssertFalse(environment.overviewTiles.contains(.currencyChart))
+    XCTAssertFalse(
+      AppEnvironment().overviewTiles.contains(.currencyChart), "kept for the next launch")
+    XCTAssertTrue(OverviewTilesActions.toggle(environment, .currencyChart))
+    XCTAssertEqual(environment.overviewLayout.shownTiles(in: .analysis).last, .currencyChart)
   }
 
   /// The pair and the period chosen before are read back when the card appears — the card does

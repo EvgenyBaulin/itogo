@@ -12,24 +12,36 @@ struct ExpectedIncomeBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
+  @Environment(\.planningCardHosted) private var hosted
   @Binding var sheet: PlanningSheet?
+  /// How many of the nearest incomes show before «Показать все».
+  var length: PlanningListLength = .all
   /// The income «Удалить…» asks about.
   @State private var deleting: ExpectedIncome?
   @State private var showsArchive = false
+  @State private var showsAll = false
 
   var body: some View {
     ComputedBlock(
-      title: t("expected.title"), state: compute.states.data, fillsHeight: true,
+      title: hosted ? nil : t("expected.title"), state: compute.states.data,
+      style: hosted ? .plain : .card, fillsHeight: !hosted,
       retry: { compute.retry(ComputeStep.data) }
     ) { snapshot in
       VStack(alignment: .leading, spacing: 8) {
         let statuses = snapshot.planning.expected
+        let shown = PlanningShortListView.shown(
+          statuses, length: length, expanded: showsAll,
+          date: { Self.nextDue(of: $0) })
         let deposits = DepositPayoutRows.shown(
           snapshot.planning.deposits, today: environment.today)
         if statuses.isEmpty, deposits.isEmpty {
-          Text(verbatim: t("expected.none")).foregroundStyle(.secondary)
+          if hosted {
+            PlanningEmptyHint(block: .expectedIncome) { sheet = .expected(nil) }
+          } else {
+            Text(verbatim: t("expected.none")).foregroundStyle(.secondary)
+          }
         }
-        ForEach(statuses) { status in
+        ForEach(shown.items) { status in
           VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
               Text(verbatim: status.income.name).lineLimit(1)
@@ -73,11 +85,16 @@ struct ExpectedIncomeBlock: View {
             Button(t("expected.delete")) { deleting = status.income }
           }
         }
+        PlanningShowAllButton(
+          block: .expectedIncome, total: statuses.count, hidden: shown.hidden,
+          expanded: $showsAll)
         DepositPayoutRows(
           payouts: snapshot.planning.deposits, accounts: snapshot.dataset.paymentMethods)
-        Button(t("expected.add")) { sheet = .expected(nil) }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+        if !(hosted && statuses.isEmpty && deposits.isEmpty) {
+          Button(t("expected.add")) { sheet = .expected(nil) }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
         archive(Self.archived(snapshot.dataset.planning.expected))
       }
     }
@@ -94,6 +111,13 @@ struct ExpectedIncomeBlock: View {
     } message: {
       Text(verbatim: t("expected.deleteMessage"))
     }
+  }
+
+  /// The day an income is nearest by: the first of its dues with money still to come, else its
+  /// latest due, else the day it was set for; nothing for an income with no day at all.
+  static func nextDue(of status: ExpectedIncomeStatus) -> DateOnly? {
+    status.occurrences.first { !$0.isFulfilled }?.due ?? status.current?.due
+      ?? status.income.dueDate
   }
 
   /// The closed incomes, the archive of the block, in the order of the book.
@@ -205,6 +229,7 @@ struct ExpectedIncomeBlock: View {
 struct AdviceBlock: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
+  @Environment(\.planningCardHosted) private var hosted
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -218,8 +243,8 @@ struct AdviceBlock: View {
       .font(.caption)
       .foregroundStyle(.secondary)
       ComputedBlock(
-        title: t("advice.title"), state: compute.states.advice,
-        retry: { compute.retry(ComputeStep.advice) }
+        title: hosted ? nil : t("advice.title"), state: compute.states.advice,
+        style: hosted ? .plain : .card, retry: { compute.retry(ComputeStep.advice) }
       ) { report in
         VStack(alignment: .leading, spacing: 12) {
           ForEach(report.items) { advice in

@@ -5322,6 +5322,40 @@
         }
       }
     },
+    "settings.planning.blockOrderHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag a block onto the place it should take. The order moves to another Mac with the transfer archive."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перетащите блок на место, которое он должен занять. Порядок переезжает на другой Mac вместе с архивом переноса."
+          }
+        }
+      }
+    },
+    "settings.planning.blockOrderReset": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standard order"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Как было"
+          }
+        }
+      }
+    },
     "settings.planning.cushion": {
       "extractionState": "manual",
       "localizations": {
@@ -5613,6 +5647,40 @@
         }
       }
     },
+    "settings.planning.listLength": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rows in long blocks"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Строк в длинных блоках"
+          }
+        }
+      }
+    },
+    "settings.planning.listLengthHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Payments, subscriptions, expected incomes and goals show the nearest first and the rest behind «Show all». A block can set its own number in its header."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платежи, подписки, поступления и цели показывают ближайшие, остальные — за «Показать все». Блок может задать своё число в своём заголовке."
+          }
+        }
+      }
+    },
     "settings.planning.reconcileEvery": {
       "extractionState": "manual",
       "localizations": {
@@ -5785,6 +5853,23 @@
         }
       }
     },
+    "settings.planning.screen": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Planning screen"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экран «Планирование»"
+          }
+        }
+      }
+    },
     "settings.privacy": {
       "extractionState": "manual",
       "localizations": {
@@ -5798,6 +5883,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Конфиденциальность"
+          }
+        }
+      }
+    },
+    "settings.privacy.changePassword": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сменить…"
           }
         }
       }
@@ -5825,13 +5927,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Hidden amounts read «•••» on every screen and chart; what you type and the exported files stay as they are. The lock asks for Touch ID or the password of this Mac when Itogo opens, after the idle time and when the Mac sleeps or locks its screen; calculations and backups go on behind it. Both are kept on this Mac only."
+            "value": "Hidden amounts read «•••» on every screen and chart; what you type and the exported files stay as they are. The lock asks for the password of Itogo, Touch ID or the password of this Mac when Itogo opens, after the idle time and when the Mac sleeps or locks its screen; calculations and backups go on behind it. Five wrong passwords pause the field for 30 seconds. All of it is kept on this Mac only; the password — as a hash in its Keychain."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Скрытые суммы видны как «•••» на всех экранах и графиках; то, что вы вводите, и выгруженные файлы не меняются. Блокировка просит Touch ID или пароль этого Mac при открытии Итого, после простоя и когда Mac засыпает или блокирует экран; расчёты и копии за ней идут как обычно. Обе настройки хранятся только на этом Mac."
+            "value": "Скрытые суммы видны как «•••» на всех экранах и графиках; то, что вы вводите, и выгруженные файлы не меняются. Блокировка просит пароль Итого, Touch ID или пароль этого Mac при открытии Итого, после простоя и когда Mac засыпает или блокирует экран; расчёты и копии за ней идут как обычно. После пяти неверных паролей поле ждёт 30 секунд. Всё это хранится только на этом Mac, пароль — хешем в связке ключей."
           }
         }
       }
@@ -5972,6 +6074,23 @@
         }
       }
     },
+    "settings.privacy.noPassword": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not set — Touch ID and the password of the Mac open the lock."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не задан — блокировку открывают Touch ID и пароль Mac."
+          }
+        }
+      }
+    },
     "settings.privacy.notInDataSet": {
       "extractionState": "manual",
       "localizations": {
@@ -5985,6 +6104,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "В наборе данных и в учебном режиме блокировки нет: там учёт выдуманный."
+          }
+        }
+      }
+    },
+    "settings.privacy.password": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Password of Itogo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пароль Итого"
+          }
+        }
+      }
+    },
+    "settings.privacy.passwordSet": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set — Touch ID opens the lock as well."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Задан — Touch ID тоже открывает блокировку."
+          }
+        }
+      }
+    },
+    "settings.privacy.removePassword": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Убрать"
+          }
+        }
+      }
+    },
+    "settings.privacy.setPassword": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set Password…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Задать пароль…"
           }
         }
       }
@@ -6278,19 +6465,87 @@
         }
       }
     },
+    "settings.tiles.groupDown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move Group Down"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Группу ниже"
+          }
+        }
+      }
+    },
+    "settings.tiles.groupDrag": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag to reorder the groups"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перетащите, чтобы переставить группы"
+          }
+        }
+      }
+    },
+    "settings.tiles.groupUp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move Group Up"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Группу выше"
+          }
+        }
+      }
+    },
     "settings.tiles.hint": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ticked tiles are shown in this order; drag them with the mouse to reorder."
+            "value": "Ticked tiles are shown on Overview. Drag a tile with the mouse to another place, in its group or another one; drag a group by its name. An unticked tile is hidden and keeps its place."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Отмеченные плитки показываются в этом порядке; чтобы переставить, перетаскивайте их мышью."
+            "value": "Отмеченные плитки показываются в «Обзоре». Чтобы переставить плитку — в своей группе или в другую, — перетащите её мышью; группу перетаскивайте за название. Неотмеченная плитка скрыта и остаётся на своём месте."
+          }
+        }
+      }
+    },
+    "settings.tiles.moveTo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move to «%@»"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перенести в «%@»"
           }
         }
       }

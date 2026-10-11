@@ -34,32 +34,51 @@ public struct GuideCard: Hashable, Sendable, Identifiable {
   public var symbol: String
   /// How long the card takes to read, in seconds.
   public var seconds: Int
+  /// The place on the screen the card speaks of, when it speaks of one: «Показать, где» darkens
+  /// the window around it.
+  public var target: String?
 
-  public init(id: String, title: GuideText, body: GuideText, symbol: String, seconds: Int = 12) {
+  public init(
+    id: String, title: GuideText, body: GuideText, symbol: String, seconds: Int = 12,
+    target: String? = nil
+  ) {
     self.id = id
     self.title = title
     self.body = body
     self.symbol = symbol
     self.seconds = seconds
+    self.target = target
   }
 }
 
-/// Where to press for a step of a task: the element the frame goes around, the keys on a Mac
-/// and the gesture on a touch screen.
+/// One step of where to press: the element the window is darkened around, what to do there,
+/// why, the keys on a Mac and the gesture on a touch screen.
 public struct GuideHint: Hashable, Sendable {
-  /// The accessibility identifier of the element in the app.
+  /// The id the element marks itself with in the app. A place the app does not mark, or does
+  /// not show now (a toolbar button, another window), gets the words alone, in the middle.
   public var target: String
+  /// What to press or type: one short sentence.
   public var text: GuideText
+  /// Why: what it gives, for someone who would rather not read the rest.
+  public var why: GuideText?
   /// Keys on a Mac, such as «⌘N»; nil when the step is a click.
   public var keys: String?
   /// The same step on a touch screen.
   public var gesture: GuideText?
+  /// A click on the element moves to the next step. Off where the step is typed, not clicked:
+  /// a click into a line only puts the cursor there.
+  public var advancesOnClick: Bool
 
-  public init(target: String, text: GuideText, keys: String? = nil, gesture: GuideText? = nil) {
+  public init(
+    target: String, text: GuideText, why: GuideText? = nil, keys: String? = nil,
+    gesture: GuideText? = nil, advancesOnClick: Bool = true
+  ) {
     self.target = target
     self.text = text
+    self.why = why
     self.keys = keys
     self.gesture = gesture
+    self.advancesOnClick = advancesOnClick
   }
 }
 

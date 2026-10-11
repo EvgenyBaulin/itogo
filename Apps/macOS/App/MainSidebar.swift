@@ -88,5 +88,16 @@ struct MainSidebar: View {
       else { return }
       selection = .section(chosen)
     }
+    // «Открыть «Всего»» of a breakdown of Overview, and any other place that names an item of
+    // the sidebar itself rather than a section by its number.
+    .onReceive(NotificationCenter.default.publisher(for: .openSidebarItem)) { note in
+      guard let item = note.object as? SidebarItem else { return }
+      selection = item
+    }
   }
+}
+
+extension Notification.Name {
+  /// Chooses an item of the sidebar of the main window; the object is the `SidebarItem`.
+  static let openSidebarItem = Notification.Name("io.github.EvgenyBaulin.itogo.openSidebarItem")
 }
