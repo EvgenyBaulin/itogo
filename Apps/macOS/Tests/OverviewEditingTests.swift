@@ -193,6 +193,11 @@ final class OverviewEditingTests: XCTestCase {
   /// The groups lay out at 720, 900, 1,100 and 1,400 pt, in Russian and in English, editing or
   /// not, with a group collapsed — and the window settles: the same sizes pass after pass, nothing
   /// left dirty, no loop in the log, with either kind of scroll bars.
+  /// The width of the widest visible frame among the screens of this Mac.
+  private static var widestScreen: CGFloat {
+    NSScreen.screens.map(\.visibleFrame.width).max() ?? 0
+  }
+
   func testTheGroupsLayOutAtEveryWidthWithoutALoop() throws {
     let needles = [
       LogProbe.Message.layoutLoop, LogProbe.Message.updateConstraints,
@@ -206,7 +211,9 @@ final class OverviewEditingTests: XCTestCase {
       try ScrollerStyleOverride.with(style) {
         for choice in [AppLanguage.Choice.russian, .english] {
           environment.language.choice = choice
-          for width in [CGFloat(720), 900, 1_100, 1_400] {
+          // A width no screen of this Mac holds is left out: AppKit keeps the window inside the
+          // screen (the runner of CI is 1024 points wide), and the test would measure the screen.
+          for width in [CGFloat(720), 900, 1_100, 1_400] where width <= Self.widestScreen {
             for editing in [false, true] {
               let what =
                 "\(style == .legacy ? "legacy" : "overlay") \(choice.rawValue) "
