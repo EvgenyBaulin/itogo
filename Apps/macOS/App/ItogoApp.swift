@@ -385,7 +385,7 @@ struct MainWindow: View {
         daily: reminders, overdue: overdue,
         shownToday: defaults.string(forKey: Self.remindersShownKey) == today,
         askedThisLaunch: environment.overdueAskedThisLaunch,
-        suppressed: LaunchOptions.current.suppressesReminders)
+        suppressed: LaunchOptions.current.suppressesReminders, locked: environment.lock.isLocked)
     else { return }
     if shown.marksDailyShown { defaults.set(today, forKey: Self.remindersShownKey) }
     if shown.asksOverdue {
@@ -507,7 +507,8 @@ struct MainWindow: View {
     .navigationSubtitle(RecomputeText.subtitle(compute: compute, environment: environment))
     .journalsSection(selection.journalToken, in: .main)
     // The cards of the first launch, of «Что нового» or of the Help menu.
-    .sheet(item: Bindable(guide).cards) { scenario in
+    // Like every question the app raises by itself, never over the cover of the locked app.
+    .sheet(item: environment.lock.presenting(Bindable(guide).cards)) { scenario in
       GuideCardsView(scenario: scenario) { skipped in
         guide.cardsDone(version: Self.version, skipped: skipped)
       }
@@ -560,7 +561,7 @@ struct MainWindow: View {
     ) {
       ReconcileSheet().appDependencies(deps)
     }
-    .sheet(item: $remindersShown) { shown in
+    .sheet(item: environment.lock.presenting($remindersShown)) { shown in
       RemindersSheet(reminders: shown.reminders, asksOverdue: shown.asksOverdue) {
         selection = .section($0)
       }
@@ -574,10 +575,11 @@ struct MainWindow: View {
       environment.language("replacement.notApplied.title"),
       isPresented: Binding(
         get: {
-          AccountSetupOffer.lets(
-            environment.replacementProblem == .notApplied, asksSetup: asksSetup)
+          environment.lock.lets(
+            AccountSetupOffer.lets(
+              environment.replacementProblem == .notApplied, asksSetup: asksSetup))
         },
-        set: { if !$0 { environment.replacementProblem = nil } })
+        set: { if !$0, !environment.lock.isLocked { environment.replacementProblem = nil } })
     ) {
       Button(environment.language("action.retry")) { AppRestart.relaunch() }
       Button(environment.language("replacement.giveUp"), role: .destructive) {
@@ -592,9 +594,11 @@ struct MainWindow: View {
       environment.language("replacement.refused.title"),
       isPresented: Binding(
         get: {
-          AccountSetupOffer.lets(environment.replacementProblem == .refused, asksSetup: asksSetup)
+          environment.lock.lets(
+            AccountSetupOffer.lets(environment.replacementProblem == .refused, asksSetup: asksSetup)
+          )
         },
-        set: { if !$0 { environment.replacementProblem = nil } })
+        set: { if !$0, !environment.lock.isLocked { environment.replacementProblem = nil } })
     ) {
       Button(environment.language("action.ok")) {}
     } message: {
@@ -604,8 +608,11 @@ struct MainWindow: View {
     .alert(
       environment.language("backups.afterImport.title", table: "Settings"),
       isPresented: Binding(
-        get: { AccountSetupOffer.lets(environment.asksForMirrorFolder, asksSetup: asksSetup) },
-        set: { if !$0 { environment.asksForMirrorFolder = false } })
+        get: {
+          environment.lock.lets(
+            AccountSetupOffer.lets(environment.asksForMirrorFolder, asksSetup: asksSetup))
+        },
+        set: { if !$0, !environment.lock.isLocked { environment.asksForMirrorFolder = false } })
     ) {
       Button(environment.language("settings.backups.choose", table: "Settings")) {
         // After the alert is gone: the panel is modal of its own.
@@ -616,6 +623,12 @@ struct MainWindow: View {
       Text(verbatim: environment.language("backups.afterImport.message", table: "Settings"))
     }
     .onChange(of: remindersDay) { _, _ in showRemindersOnce() }
+    // What waited for the unlock is asked now: the reminders, and an archive from Finder.
+    .onChange(of: environment.lock.isLocked) { _, locked in
+      guard !locked else { return }
+      showRemindersOnce()
+      Task { @MainActor in ArchiveImportFlow.resumeDeferred(in: environment) }
+    }
     // An archive double-clicked in Finder before the database opened waits for the start to be
     // over. After this update: its questions are modal alerts of their own.
     .onChange(of: environment.state, initial: true) { _, _ in

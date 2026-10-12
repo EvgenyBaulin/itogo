@@ -240,8 +240,9 @@ public final class AppEnvironment {
   /// «Скрыть суммы» of this Mac (`AmountPrivacy`): read by `money`, so every money text of
   /// the interface follows it.
   public let amounts: AmountPrivacy
-  /// «Блокировать Итого» of this Mac (`PrivacyLock`): the cover of every window.
-  let lock: PrivacyLock
+  /// «Блокировать Итого» of this Mac (`PrivacyLock`): the cover of every window. Set once here;
+  /// a test hands in a lock that applies, since the host's own never locks.
+  var lock: PrivacyLock
 
   public var money: MoneyFormatter {
     MoneyFormatter(locale: language.locale, hidesAmounts: amounts.hidesAmounts)

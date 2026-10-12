@@ -7,6 +7,22 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.8.1] — 2026-10-12
+
+A fix for a lockout: with «Lock Itogo» on, a window the app opened by itself at launch could hide the way to unlock it.
+
+### Fixed
+
+- **The app could not be unlocked at launch.** When the lock was on and the app opened a window of its own over the
+  locked main window — the overdue payments, «The last session did not end» after a forced quit, the guide cards — that
+  window was covered too, with no way in, and it kept the unlock of the main window out of reach; a forced quit brought
+  «The last session did not end» back on the next launch. Now nothing the app opens by itself appears while it is locked:
+  it waits and appears after the unlock, and if the lock comes while such a window is up, it goes away and comes back
+  after the unlock, still unanswered. An archive opened from Finder while the app is locked waits for the unlock too.
+- **Every window covered by the lock can unlock it.** A sheet or panel open while the app is locked carries its own
+  password field (when the app has a password) and «Touch ID or Mac password»; Return, Enter, Esc and Tab can no longer
+  press a button of the covered window blind.
+
 ## [1.8.0] — 2026-10-12
 
 Every Overview tile, laid out in groups and able to explain its own figure; a shorter and friendlier

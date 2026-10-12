@@ -21,9 +21,9 @@ struct PrivacyCurtain: ViewModifier {
       }
       .onAppear {
         lock.startWatching()
-        PrivacySheetCovers.update(locked: lock.isLocked)
+        PrivacySheetCovers.update(lock: lock, language: language)
       }
-      .onChange(of: locked) { _, now in PrivacySheetCovers.update(locked: now) }
+      .onChange(of: locked) { _, _ in PrivacySheetCovers.update(lock: lock, language: language) }
   }
 }
 
@@ -238,41 +238,198 @@ extension PrivacyCurtain {
 }
 
 /// Sheets, popovers and other windows attached to a window of the app float above the cover of
-/// their parent. While the app is locked each gets a plain cover of its own, an AppKit view on top
-/// of its content, and loses it when the app is unlocked; the button to unlock stays on the
-/// window underneath.
+/// their parent. While the app is locked each gets a cover of its own, an AppKit view on top of
+/// its content, and loses it when the app is unlocked. A sheet is modal: the cover of the window
+/// under it takes no click and no key while it is up, so the cover of the sheet carries the way
+/// in itself — the app's password and «Touch ID или пароль Mac» (`SheetCover`); nothing open
+/// while locked can keep the owner out. A sheet that comes while locked is covered as it comes.
 @MainActor
 enum PrivacySheetCovers {
   static let identifier = NSUserInterfaceItemIdentifier("privacy.sheetCover")
 
-  static func update(locked: Bool) {
-    for window in NSApp.windows where window.sheetParent != nil || window.parent != nil {
-      guard let content = window.contentView else { continue }
-      let existing = content.subviews.filter { $0.identifier == identifier }
-      if locked {
-        guard existing.isEmpty else { continue }
-        // dependencies: none — the cover reads nothing but a symbol.
-        let cover = NSHostingView(rootView: SheetCover())
-        cover.identifier = identifier
-        cover.frame = content.bounds
-        cover.autoresizingMask = [.width, .height]
-        content.addSubview(cover, positioned: .above, relativeTo: nil)
-      } else {
-        existing.forEach { $0.removeFromSuperview() }
+  /// The lock and the language the covers were made for, while locked.
+  private static var lock: PrivacyLock?
+  private static var language: AppLanguage?
+  private static var windowsWatch: NSObjectProtocol?
+  private static var keysWatch: Any?
+
+  static func update(lock: PrivacyLock, language: AppLanguage) {
+    if lock.isLocked {
+      self.lock = lock
+      self.language = language
+      coverEverySheet()
+      watch()
+    } else {
+      self.lock = nil
+      self.language = nil
+      stopWatching()
+      for window in NSApp.windows {
+        window.contentView?.subviews.filter { $0.identifier == identifier }
+          .forEach { $0.removeFromSuperview() }
       }
     }
   }
 
-  /// A cover with nothing to read on it but the padlock.
-  private struct SheetCover: View {
+  /// Covers every sheet, popover and child window that has no cover yet.
+  private static func coverEverySheet() {
+    guard let lock, let language, lock.isLocked else { return }
+    for window in NSApp.windows where window.sheetParent != nil || window.parent != nil {
+      guard let content = window.contentView, cover(in: window) == nil else { continue }
+      // dependencies: none — the cover reads only the lock and the language it is handed.
+      let cover = NSHostingView(rootView: SheetCover(lock: lock, language: language))
+      cover.identifier = identifier
+      cover.frame = content.bounds
+      cover.autoresizingMask = [.width, .height]
+      content.addSubview(cover, positioned: .above, relativeTo: nil)
+      // The keys go to the cover, not to a field of the sheet hidden under it.
+      window.makeFirstResponder(cover)
+    }
+  }
+
+  private static func cover(in window: NSWindow) -> NSView? {
+    window.contentView?.subviews.first { $0.identifier == identifier }
+  }
+
+  private static func watch() {
+    if windowsWatch == nil {
+      windowsWatch = NotificationCenter.default.addObserver(
+        forName: NSApplication.didUpdateNotification, object: nil, queue: .main
+      ) { _ in
+        MainActor.assumeIsolated { coverEverySheet() }
+      }
+    }
+    if keysWatch == nil {
+      keysWatch = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        let handled = MainActor.assumeIsolated { handles(event) }
+        return handled ? nil : event
+      }
+    }
+  }
+
+  private static func stopWatching() {
+    if let windowsWatch { NotificationCenter.default.removeObserver(windowsWatch) }
+    if let keysWatch { NSEvent.removeMonitor(keysWatch) }
+    windowsWatch = nil
+    keysWatch = nil
+  }
+
+  /// Return, Enter, Esc and Tab in a covered window belong to the cover alone: they would press
+  /// the default or the cancel button of the alert under it — «Позже» of the offer of a report,
+  /// pressed blind, would spend it — or take the focus there. Return in the field of the
+  /// password submits it; anywhere else on the cover it asks Touch ID. Whether the event was
+  /// taken.
+  static func handles(_ event: NSEvent) -> Bool {
+    let guarded: Set<UInt16> = [36, 76, 53, 48]
+    guard lock?.isLocked == true, event.type == .keyDown, guarded.contains(event.keyCode),
+      let window = event.window ?? NSApp.window(withWindowNumber: event.windowNumber),
+      let cover = cover(in: window)
+    else { return false }
+    guard event.keyCode == 36 || event.keyCode == 76 else { return true }
+    if let editor = window.firstResponder as? NSTextView, editor.isDescendant(of: cover) {
+      editor.keyDown(with: event)
+    } else if let lock, let language, !lock.isAuthenticating {
+      let reason = language("privacy.unlock.reason")
+      Task { await lock.unlock(reason: reason) }
+    }
+    return true
+  }
+
+  /// The cover of a sheet: the padlock, the app's password when it has one (Return unlocks), and
+  /// «Touch ID или пароль Mac». Small enough for an alert of about 260 × 150 pt; «Забыли
+  /// пароль?» and a new password stay on the cover of the window — Touch ID or the password of
+  /// the Mac open the app from here as well.
+  struct SheetCover: View {
+    let lock: PrivacyLock
+    let language: AppLanguage
+
     var body: some View {
       ZStack {
         Rectangle().fill(.background)
-        Image(systemName: "lock.fill")
-          .font(.system(size: 28))
-          .foregroundStyle(.secondary)
+        Controls(lock: lock, language: language)
       }
-      .accessibilityHidden(true)
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("privacy.sheetCover")
+    }
+  }
+
+  /// What the cover of a sheet offers, at its own size.
+  struct Controls: View {
+    let lock: PrivacyLock
+    let language: AppLanguage
+
+    @State private var password = ""
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+      VStack(spacing: 8) {
+        Image(systemName: "lock.fill")
+          .font(.system(size: 18))
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+        if lock.hasPassword, !lock.isChoosingNewPassword {
+          passwordEntry
+        }
+        Button {
+          Task { await lock.unlock(reason: language("privacy.unlock.reason")) }
+        } label: {
+          Label {
+            Text(verbatim: language("privacy.unlock.touchID"))
+          } icon: {
+            Image(systemName: "touchid")
+          }
+        }
+        .controlSize(.small)
+        .disabled(lock.isAuthenticating)
+        .accessibilityIdentifier("privacy.sheetCover.touchID")
+        if let refusal = lock.lastRefusal, let key = LockCover.refusalKey(refusal) {
+          caption(language(key))
+        }
+      }
+      .multilineTextAlignment(.center)
+      .padding(10)
+    }
+
+    /// The field of the app's password, and the pause or what went wrong under it.
+    private var passwordEntry: some View {
+      TimelineView(.periodic(from: .now, by: 1)) { _ in
+        let left = lock.secondsOfPauseLeft(at: lock.currentDate)
+        VStack(spacing: 4) {
+          SecureField(text: $password) {
+            Text(verbatim: language("privacy.password"))
+          }
+          .textFieldStyle(.roundedBorder)
+          .controlSize(.small)
+          .frame(maxWidth: 200)
+          .focused($fieldFocused)
+          .onSubmit(submit)
+          .disabled(left > 0 || lock.isCheckingPassword)
+          .accessibilityIdentifier("privacy.sheetCover.password")
+          if left > 0 {
+            caption(language.format("privacy.password.pausedFor", counts: left), problem: false)
+          } else if let key = PrivacyCurtain.problemKey(lock.passwordProblem) {
+            caption(LockCover.problemText(lock.passwordProblem, key: key, language: language))
+          }
+        }
+      }
+      .onAppear { fieldFocused = true }
+    }
+
+    private func caption(_ text: String, problem: Bool = true) -> some View {
+      Text(verbatim: text)
+        .font(.caption)
+        .foregroundStyle(problem ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+        .lineLimit(2)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func submit() {
+      guard !password.isEmpty else { return }
+      let typed = password
+      Task {
+        let attempt = await lock.unlock(password: typed)
+        if attempt != .ignored { password = "" }
+        fieldFocused = true
+      }
     }
   }
 }

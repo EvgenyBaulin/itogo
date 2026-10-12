@@ -17,12 +17,14 @@ struct RemindersPresentation: Equatable {
   /// * `overdue` are asked about when there are any and they were not asked this launch
   ///   (`askedThisLaunch`), whatever the daily ones did — a reminder put off hides no overdue
   ///   due date;
-  /// * `suppressed` — the launch said «no reminders» — shows nothing at all.
+  /// * `suppressed` — the launch said «no reminders» — shows nothing at all;
+  /// * `locked` — the app is locked: nothing is decided, marked shown or asked until it is
+  ///   unlocked, so no sheet stands over the cover (`PrivacyLock.lets`).
   static func decide(
     daily: [Reminder], overdue: [OverdueDue], shownToday: Bool, askedThisLaunch: Bool,
-    suppressed: Bool = false
+    suppressed: Bool = false, locked: Bool = false
   ) -> RemindersPresentation? {
-    guard !suppressed else { return nil }
+    guard !suppressed, !locked else { return nil }
     let showsDaily = !daily.isEmpty && !shownToday
     let asks = !overdue.isEmpty && !askedThisLaunch
     guard showsDaily || asks else { return nil }

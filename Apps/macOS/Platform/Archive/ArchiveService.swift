@@ -457,6 +457,14 @@ enum ArchiveImportFlow {
   static func begin(with url: URL, environment: AppEnvironment, questions: Questions? = nil) {
     // One archive at a time: a double click while another is being written or opened.
     guard !ArchiveProgressPanel.isShowing else { return }
+    // Its questions are modal alerts: never over the cover of the locked app. The archive waits
+    // for the unlock (the main window resumes it then).
+    if environment.lock.isLocked, !environment.isClosed {
+      environment.pendingArchiveImport = url
+      AppLog.info(
+        "archive.import.locked", .archive, "an archive handed over waits for the unlock")
+      return
+    }
     let questions = questions ?? .alerts(environment)
     guard let archives = environment.archives, let backups = environment.backups else {
       if case .starting = environment.state, !environment.isClosed {

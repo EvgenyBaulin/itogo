@@ -18,20 +18,23 @@ struct AccountSetupOffer: ViewModifier {
     content
       // The starter set first on a new database — after the cards of the guide —, then the
       // accounts: one flow of questions, one sheet at a time.
+      // Neither waits over the cover of the locked app (`PrivacyLock.presenting`).
       .sheet(
-        isPresented: Binding(
-          get: {
-            StarterSetOffer.shared.isRequested
-              || StarterSetOffer.isDue(deps.environment, guide: GuideStore.shared)
-          },
-          set: { if !$0 { StarterSetOffer.shared.isRequested = false } })
+        isPresented: deps.environment.lock.presenting(
+          Binding(
+            get: {
+              StarterSetOffer.shared.isRequested
+                || StarterSetOffer.isDue(deps.environment, guide: GuideStore.shared)
+            },
+            set: { if !$0 { StarterSetOffer.shared.isRequested = false } }))
       ) {
         StarterSetSheet().appDependencies(deps)
       }
       .sheet(
-        isPresented: Binding(
-          get: { Self.isUp(deps.environment) },
-          set: { if !$0 { AccountSetupRequest.shared.isRequested = false } })
+        isPresented: deps.environment.lock.presenting(
+          Binding(
+            get: { Self.isUp(deps.environment) },
+            set: { if !$0 { AccountSetupRequest.shared.isRequested = false } }))
       ) {
         // A sheet is laid out by a host of its own: the dependencies are handed over.
         AccountSetupSheet().appDependencies(deps)

@@ -6,6 +6,11 @@ import XCTest
 
 @testable import Itogo
 
+/// Touch ID that always says it is the owner.
+private struct PassingAuthenticator: LockAuthenticator {
+  func authenticate(reason: String) async -> LockAuthentication { .passed }
+}
+
 /// The main window keeps the same promise the window of Transactions was made to keep on
 /// 19.09: nothing measured off the screen comes back into the layout, and the
 /// window settles.
@@ -730,6 +735,53 @@ final class MainWindowLayoutTests: XCTestCase {
     Self.wait { window.attachedSheet == nil }
     XCTAssertNil(window.attachedSheet)
     XCTAssertFalse(environment.offersProblemReport, "the offer was not spent")
+  }
+
+  /// A lock that applies and opens at once, locked: the test host's own lock never locks.
+  private func lockTheApp() async -> PrivacyLock {
+    let lock = PrivacyLock(
+      applies: true, defaults: nil, authenticator: PassingAuthenticator(),
+      passwords: InMemoryLockPasswordStore())
+    let enabled = await lock.enable(reason: "test")
+    XCTAssertTrue(enabled)
+    lock.lock(because: .launch)
+    environment.lock = lock
+    return lock
+  }
+
+  /// 1.8.0: the offer «Прошлый сеанс оборвался» stood over the cover of the locked app at
+  /// launch, modal, and took the clicks the cover needed — the app could not be entered, and the
+  /// next launch after a force quit offered it again. While locked, nothing is asked; once
+  /// unlocked, the offer comes.
+  func testTheOfferOfAReportWaitsForTheAppToBeUnlocked() async throws {
+    let lock = await lockTheApp()
+    environment.offersProblemReport = true
+    let window = makeWindow()
+    Self.wait(timeout: 1.5) { window.attachedSheet != nil }
+    XCTAssertNil(window.attachedSheet, "the offer stands over the locked app")
+
+    _ = await lock.unlock(reason: "test")
+    XCTAssertNotNil(Self.waitForSheet(of: window), "the offer did not come after the unlock")
+    XCTAssertTrue(environment.offersProblemReport)
+  }
+
+  /// The lock coming while the offer is up takes the offer down without spending it: it comes
+  /// back after the unlock.
+  func testTheLockTakesTheOfferDownAndKeepsIt() async throws {
+    let lock = await lockTheApp()
+    _ = await lock.unlock(reason: "test")
+    environment.offersProblemReport = true
+    let window = makeWindow()
+    XCTAssertNotNil(Self.waitForSheet(of: window), "no offer")
+
+    lock.lock(because: .idle)
+    Self.wait { window.attachedSheet == nil }
+    XCTAssertNil(window.attachedSheet, "the offer stays over the locked app")
+    XCTAssertTrue(environment.offersProblemReport, "the lock spent the offer")
+
+    _ = await lock.unlock(reason: "test")
+    XCTAssertNotNil(Self.waitForSheet(of: window), "the offer did not come back")
+    XCTAssertTrue(environment.offersProblemReport)
   }
 
   /// «Справка» → «Собрать отчёт о проблеме…» only opened the settings: on whatever tab they

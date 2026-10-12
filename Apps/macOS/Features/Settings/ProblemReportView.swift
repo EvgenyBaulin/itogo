@@ -165,8 +165,10 @@ struct ProblemReportOffer: ViewModifier {
         // The alert goes only through its buttons, and each of them says what comes next:
         // the offer stays raised while the report it led to is open, so nothing else asks
         // over it.
+        // Never over the cover of the locked app: it waits, unspent, for the unlock.
         isPresented: Binding(
-          get: { environment.offersProblemReport && !collects }, set: { _ in })
+          get: { environment.lock.lets(environment.offersProblemReport && !collects) },
+          set: { _ in })
       ) {
         Button(t("report.offer.collect")) { collects = true }
         Button(t("report.offer.later"), role: .cancel) {
@@ -176,7 +178,11 @@ struct ProblemReportOffer: ViewModifier {
         Text(verbatim: t("report.offer.message"))
       }
       // A sheet is laid out by a host of its own: the dependencies are handed over.
-      .sheet(isPresented: $collects, onDismiss: { environment.offersProblemReport = false }) {
+      // Taken down by the lock, the report comes back after the unlock: the offer is not spent.
+      .sheet(
+        isPresented: environment.lock.presenting($collects),
+        onDismiss: { if !environment.lock.isLocked { environment.offersProblemReport = false } }
+      ) {
         ProblemReportSheet().appDependencies(deps)
       }
   }

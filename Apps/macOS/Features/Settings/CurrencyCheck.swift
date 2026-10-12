@@ -108,8 +108,9 @@ struct CurrencyNotice: ViewModifier {
         t("currencies.missing.title"),
         isPresented: Binding(
           get: {
-            !environment.currenciesMissingAtBank.isEmpty && !environment.offersProblemReport
-              && !waits
+            environment.lock.lets(
+              !environment.currenciesMissingAtBank.isEmpty && !environment.offersProblemReport
+                && !waits)
           },
           set: { _ in })
       ) {
