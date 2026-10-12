@@ -208,7 +208,7 @@ final class OverviewEditingTests: XCTestCase {
     environment.overviewLayout = .standard
     environment.overviewCollapsed = [.plan]
     for style in [NSScroller.Style.legacy, .overlay] {
-      try ScrollerStyleOverride.with(style) {
+      ScrollerStyleOverride.with(style) {
         for choice in [AppLanguage.Choice.russian, .english] {
           environment.language.choice = choice
           // A width no screen of this Mac holds is left out: AppKit keeps the window inside the
