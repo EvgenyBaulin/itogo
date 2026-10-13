@@ -104,7 +104,7 @@ struct RecomputeStatusLine: View {
         }
       }
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
   }
 

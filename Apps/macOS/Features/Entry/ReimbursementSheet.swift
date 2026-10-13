@@ -76,7 +76,7 @@ struct ReimbursementSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text(verbatim: environment.language("reimbursement.title", table: "Entry"))
-        .font(.headline)
+        .appFont(.headline)
 
       Picker(selection: $personId) {
         Text(verbatim: "—").tag(UUID?.none)
@@ -98,12 +98,12 @@ struct ReimbursementSheet: View {
                   Text(verbatim: part.note ?? "—")
                   Spacer()
                   Text(verbatim: amountText(for: part))
-                    .font(.body.monospacedDigit())
+                    .appFont(.body.monospacedDigit())
                 }
                 if part.rateProvisional {
                   // The rubles a link fixes now would drift from the refined ones.
                   Text(verbatim: t("reimbursement.provisionalRate"))
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                 }
                 if part.returnedRubE4.raw > 0 {
@@ -113,7 +113,7 @@ struct ReimbursementSheet: View {
                       "reimbursement.returnedSoFar", table: "Entry",
                       environment.money.exact(part.returnedRubE4))
                   )
-                  .font(.caption)
+                  .appFont(.caption)
                   .foregroundStyle(.secondary)
                 }
               }
@@ -142,7 +142,7 @@ struct ReimbursementSheet: View {
 
       Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
         GridRow {
-          Text(verbatim: t("entry.currency")).font(.caption).foregroundStyle(.secondary)
+          Text(verbatim: t("entry.currency")).appFont(.caption).foregroundStyle(.secondary)
           Picker(selection: $currency) {
             ForEach(currencyChoices, id: \.code) { Text(verbatim: $0.code).tag($0) }
           } label: {
@@ -157,14 +157,14 @@ struct ReimbursementSheet: View {
           }
         }
         GridRow {
-          Text(verbatim: t("entry.account.to")).font(.caption).foregroundStyle(.secondary)
+          Text(verbatim: t("entry.account.to")).appFont(.caption).foregroundStyle(.secondary)
           AccountPicker(title: t("entry.account.to"), accounts: accounts, selection: $accountId)
             .labelsHidden()
             .onChange(of: accountId) { _, _ in typedLeg = nil }
         }
         if let leg = legFigure {
           GridRow {
-            Text(verbatim: t("moneyBack.received")).font(.caption).foregroundStyle(.secondary)
+            Text(verbatim: t("moneyBack.received")).appFont(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
               AmountField(
                 amount: Binding(
@@ -231,14 +231,14 @@ struct ReimbursementSheet: View {
 
       if let errorText {
         Text(verbatim: errorText)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
       } else if ReimbursementRecording.payer(chosen: personId, closing: selectedParts)
         == .differentPeople
       {
         // Why «Save» is off: with «—» the list shows everybody's parts.
         Text(verbatim: t("reimbursement.differentPeople"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
 

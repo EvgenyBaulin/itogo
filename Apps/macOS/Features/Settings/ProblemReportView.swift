@@ -27,6 +27,7 @@ struct ProblemReportView: View {
         } icon: {
           Image(systemName: "exclamationmark.triangle")
         }
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
 
@@ -63,7 +64,7 @@ struct ProblemReportView: View {
   @ViewBuilder
   private func contents(of contents: ProblemReport.Contents) -> some View {
     VStack(alignment: .leading, spacing: 4) {
-      Text(verbatim: t("report.contents")).font(.headline)
+      Text(verbatim: t("report.contents")).appFont(.headline)
       if contents.journalUnavailable {
         Text(verbatim: t("report.contents.journal.unavailable"))
       } else {
@@ -81,7 +82,7 @@ struct ProblemReportView: View {
       Text(verbatim: t(contents.integrityKey))
       if contents.crashReport { Text(verbatim: t("report.contents.crash")) }
     }
-    .font(.callout)
+    .appFont(.callout)
     .foregroundStyle(.secondary)
   }
 

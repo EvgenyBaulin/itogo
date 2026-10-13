@@ -36,7 +36,7 @@ final class SelectionUndoUITests: XCTestCase {
 
     // Another window in front while the rows are looked for, as a restored window or one the
     // app opens itself would stand: the search reads the main window all the same.
-    openTransactions(app)
+    openAnalytics(app)
     // Two neighbouring rows filed under ordinary categories: a reimbursement has none, and
     // nothing is moved out of a system one by hand.
     // The cards fill the top of the list, and the selection bar floats over its bottom: the
@@ -44,7 +44,7 @@ final class SelectionUndoUITests: XCTestCase {
     let list = main.scrollViews.element(boundBy: 1)
     let band = (list.frame.minY + 40)...(list.frame.maxY - 90)
     var found = firstOrdinaryPair(in: main, within: band)
-    // The main window stands behind Transactions now; its entry line brings it forward without
+    // The main window stands behind Analytics now; its entry line brings it forward without
     // moving it. A scroll goes to the window under the pointer, and the clicks below need the
     // main window in front.
     main.textFields["entry.line"].click()
@@ -99,14 +99,14 @@ final class SelectionUndoUITests: XCTestCase {
     app.terminate()
   }
 
-  /// The Transactions window, from its item of the Window menu (see WindowsUITests.openWindow).
-  private func openTransactions(_ app: XCUIApplication) {
+  /// The Analytics window, from its item of the Window menu (see WindowsUITests.openWindow).
+  /// Transactions was the window opened here until it became a screen of the main window.
+  private func openAnalytics(_ app: XCUIApplication) {
     app.menuBars.menuBarItems["Window"].click()
-    let item = app.menuBars.menuItems["Transactions"]
-    XCTAssertTrue(item.waitForExistence(timeout: 5), "no Transactions in the Window menu")
+    let item = app.menuBars.menuItems["Analytics"]
+    XCTAssertTrue(item.waitForExistence(timeout: 5), "no Analytics in the Window menu")
     item.click()
-    XCTAssertTrue(
-      app.windows["transactions"].waitForExistence(timeout: 20), "no Transactions window")
+    XCTAssertTrue(app.windows["analytics"].waitForExistence(timeout: 20), "no Analytics window")
   }
 
   private func values(_ first: XCUIElement, _ second: XCUIElement) -> [String?] {

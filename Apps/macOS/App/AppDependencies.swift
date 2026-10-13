@@ -141,6 +141,8 @@ private struct AppTheming: ViewModifier {
     content
       .environment(\.appAccent, theme.accentColor)
       .tint(theme.tint)
+      // The size of the text chosen in Settings → Appearance, for every window and sheet.
+      .modifier(AppFontSizing(size: theme.fontSize))
   }
 }
 
@@ -176,7 +178,7 @@ extension View {
     var body: some View {
       if !watch.readers.isEmpty {
         Text(verbatim: "⚠︎ " + watch.readers.sorted().joined(separator: ", "))
-          .font(.caption.monospaced())
+          .appFont(.caption.monospaced())
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
           .background(.red, in: Capsule())

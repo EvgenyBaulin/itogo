@@ -47,7 +47,8 @@ final class CurrencyChartCardTests: XCTestCase {
 
   func testTheTileIsShownByDefaultAndCanBeHiddenAndShownAgain() {
     let environment = AppEnvironment()
-    XCTAssertEqual(environment.overviewTiles.count, OverviewTile.allCases.count)
+    XCTAssertEqual(
+      environment.overviewTiles.count, OverviewTile.allCases.filter(\.isShownUnnamed).count)
     XCTAssertTrue(environment.overviewTiles.contains(.currencyChart))
     XCTAssertEqual(environment.overviewLayout.group(of: .currencyChart), .analysis)
     XCTAssertTrue(OverviewTilesActions.toggle(environment, .currencyChart))

@@ -15,7 +15,15 @@ extension CoreKit.Category: @retroactive FetchableRecord, @retroactive Persistab
       archived: try RowMapping.flag(row, "archived", fallback: false),
       quality: (row["quality"] as String?).flatMap(Quality.init(rawValue:)),
       systemRole: (row["system_role"] as String?).flatMap(SystemRole.init(rawValue:)),
-      essential: Self.essential(row))
+      essential: Self.essential(row),
+      tax: Self.tax(row))
+  }
+
+  /// The tax of an income. A rate that does not read reads as none.
+  private static func tax(_ row: Row) -> IncomeTax? {
+    guard let rate = RowMapping.decimal(row, "tax_rate") else { return nil }
+    return IncomeTax(
+      rate: rate, npd: (try? RowMapping.flag(row, "tax_npd", fallback: false)) ?? false)
   }
 
   /// The mark «Необходимая трата». A value that is not a number — only a hand edit leaves one —
@@ -37,6 +45,8 @@ extension CoreKit.Category: @retroactive FetchableRecord, @retroactive Persistab
     container["quality"] = quality?.rawValue
     container["system_role"] = systemRole?.rawValue
     container["essential"] = essential
+    container["tax_rate"] = RowMapping.string(tax?.rate)
+    container["tax_npd"] = tax?.npd ?? false
   }
 }
 
@@ -104,7 +114,44 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
       cashbackPayout: Self.cashbackPayout(row),
       cashbackPointsAccountId: RowMapping.optionalUUID(row, "cashback_points_account_id"),
       interest: Self.interest(row),
-      cushion: try RowMapping.flag(row, "cushion", fallback: false))
+      cushion: try RowMapping.flag(row, "cushion", fallback: false),
+      credit: Self.credit(row),
+      mainCardId: RowMapping.optionalUUID(row, "main_card_id"))
+  }
+
+  /// The terms of a credit card. A limit or a grace period that does not read reads as no
+  /// credit card, any other term that does not as not said: one damaged cell must not stop the
+  /// history from being read.
+  private static func credit(_ row: Row) -> CreditCardTerms? {
+    func integer(_ column: String) -> Int? {
+      (try? RowMapping.optionalInteger(row, column)) ?? nil
+    }
+    func amount(_ column: String) -> AmountE4? {
+      (try? RowMapping.optionalAmount(row, column)) ?? nil
+    }
+    guard let limit = amount("credit_limit_e4"), limit.raw > 0 else { return nil }
+    let grace: CreditGrace
+    switch row["credit_grace"] as String? {
+    case "statement":
+      guard let day = integer("credit_statement_day"), let payDays = integer("credit_pay_days")
+      else { return nil }
+      grace = .statement(day: day, payDays: payDays)
+    case "purchase":
+      guard let days = integer("credit_grace_days") else { return nil }
+      grace = .fromPurchase(days: days)
+    default:
+      return nil
+    }
+    return CreditCardTerms(
+      limitE4: limit, grace: grace,
+      purchaseRate: RowMapping.decimal(row, "credit_purchase_rate"),
+      cashRate: RowMapping.decimal(row, "credit_cash_rate"),
+      minPercent: RowMapping.decimal(row, "credit_min_percent"),
+      minFloorE4: amount("credit_min_floor_e4"),
+      cashFeePercent: RowMapping.decimal(row, "credit_cash_fee_percent"),
+      cashFeeFixedE4: amount("credit_cash_fee_fixed_e4"),
+      cashWithoutGrace: (try? RowMapping.flag(row, "credit_cash_no_grace", fallback: false))
+        ?? false)
   }
 
   /// The interest the account earns. A rate or a period that does not read reads as none, a day
@@ -167,6 +214,28 @@ extension PaymentMethod: @retroactive FetchableRecord, @retroactive PersistableR
     container["deposit_opened_on"] = interest?.openedOn?.iso
     container["deposit_ends_on"] = interest?.endsOn?.iso
     container["cushion"] = cushion
+    container["credit_limit_e4"] = credit?.limitE4.raw
+    container["credit_grace"] = credit?.grace.storedKind
+    if case .statement(let day, let payDays) = credit?.grace {
+      container["credit_statement_day"] = day
+      container["credit_pay_days"] = payDays
+    } else {
+      container["credit_statement_day"] = nil
+      container["credit_pay_days"] = nil
+    }
+    if case .fromPurchase(let days) = credit?.grace {
+      container["credit_grace_days"] = days
+    } else {
+      container["credit_grace_days"] = nil
+    }
+    container["credit_purchase_rate"] = RowMapping.string(credit?.purchaseRate)
+    container["credit_cash_rate"] = RowMapping.string(credit?.cashRate)
+    container["credit_min_percent"] = RowMapping.string(credit?.minPercent)
+    container["credit_min_floor_e4"] = credit?.minFloorE4?.raw
+    container["credit_cash_fee_percent"] = RowMapping.string(credit?.cashFeePercent)
+    container["credit_cash_fee_fixed_e4"] = credit?.cashFeeFixedE4?.raw
+    container["credit_cash_no_grace"] = credit?.cashWithoutGrace ?? false
+    container["main_card_id"] = mainCardId?.uuidString
   }
 }
 
@@ -240,7 +309,10 @@ extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
       subcategoryId: RowMapping.optionalUUID(row, "subcategory_id"),
       archived: try RowMapping.flag(row, "archived", fallback: false),
       currency: CurrencyCode(row["currency"] ?? "RUB"),
-      planStartMonth: RowMapping.month(row, "plan_start_month"))
+      planStartMonth: RowMapping.month(row, "plan_start_month"),
+      accountId: RowMapping.optionalUUID(row, "account_id"),
+      transfersOnContribution: (try? RowMapping.flag(
+        row, "transfer_on_contribution", fallback: false)) ?? false)
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -253,6 +325,8 @@ extension Goal: @retroactive FetchableRecord, @retroactive PersistableRecord {
     container["archived"] = archived
     container["currency"] = currency.code
     container["plan_start_month"] = planStartMonth?.iso
+    container["account_id"] = accountId?.uuidString
+    container["transfer_on_contribution"] = transfersOnContribution
   }
 }
 

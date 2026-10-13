@@ -96,7 +96,7 @@ struct GuideCatalogTests {
   }
 
   /// «Что нового в 1.8»: Overview in groups with «Почему так», the shorter Planning, the lock
-  /// password, and windows without tabs with the lit-up tutorial — the latest version.
+  /// password, and windows without tabs with the lit-up tutorial.
   @Test func whatsNewOfOnePointEightTellsOfTheOverviewThePlanningAndTheLock() throws {
     let scenario = GuideCatalog.whatsNew18
     #expect(scenario.kind == .whatsNew(version: GuideVersion(major: 1, minor: 8)))
@@ -105,12 +105,50 @@ struct GuideCatalogTests {
       scenario.cards.map(\.id)
         == ["new18.overview", "new18.why", "new18.planning", "new18.password", "new18.windows"])
     #expect(scenario.cards.allSatisfy { !$0.symbol.isEmpty && $0.id.hasPrefix("new18.") })
-    let last = try #require(GuideCatalog.whatsNew.last)
-    #expect(last.id == scenario.id)
     let progress = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.7.0")
     #expect(
       progress.whatsNewDue(current: "1.8.0", catalog: GuideCatalog.whatsNew).map(\.id)
         == ["whatsNew.1.8"])
+  }
+
+  /// «Что нового в 1.9»: six cards — instalments and the true cost, the credit card as the bank
+  /// keeps it, early repayment and the ladder, the allocation of the salary, self-employment,
+  /// and what became easier — the latest version.
+  @Test func whatsNewOfOnePointNineTellsOfCreditAllocationAndSelfEmployment() throws {
+    let scenario = GuideCatalog.whatsNew19
+    #expect(scenario.kind == .whatsNew(version: GuideVersion(major: 1, minor: 9)))
+    #expect(scenario.id == "whatsNew.1.9")
+    #expect(
+      scenario.cards.map(\.id)
+        == [
+          "new19.instalments", "new19.creditCard", "new19.prepay", "new19.allocation",
+          "new19.selfEmployed", "new19.easier",
+        ])
+    #expect(scenario.cards.allSatisfy { !$0.symbol.isEmpty && $0.id.hasPrefix("new19.") })
+    #expect(scenario.cards.allSatisfy { $0.title.isComplete && $0.body.isComplete })
+    let easier = try #require(scenario.cards.first { $0.id == "new19.easier" })
+    #expect(easier.body.russian.contains("«Операции» вместо «Трат»"))
+    #expect(easier.target == GuideTarget.sidebarOperations)
+    let card = try #require(scenario.cards.first { $0.id == "new19.creditCard" })
+    #expect(card.body.russian.contains("25 дней"))
+    let last = try #require(GuideCatalog.whatsNew.last)
+    #expect(last.id == scenario.id)
+  }
+
+  /// A database of 1.8 gets «Что нового в 1.9» once: due on the first launch of 1.9, and not
+  /// again once it was shown; a database already on 1.9 never gets it.
+  @Test func whatsNewOfOnePointNineIsShownOnceToADatabaseOfOnePointEight() {
+    var progress = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.8.1")
+    #expect(
+      progress.whatsNewDue(current: "1.9.0", catalog: GuideCatalog.whatsNew).map(\.id)
+        == ["whatsNew.1.9"])
+    progress.whatsNewSeen = "1.9.0"
+    #expect(progress.whatsNewDue(current: "1.9.0", catalog: GuideCatalog.whatsNew).isEmpty)
+    #expect(progress.whatsNewDue(current: "1.9.2", catalog: GuideCatalog.whatsNew).isEmpty)
+    let older = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.7.0")
+    #expect(
+      older.whatsNewDue(current: "1.9.0", catalog: GuideCatalog.whatsNew).map(\.id)
+        == ["whatsNew.1.8", "whatsNew.1.9"])
   }
 
   @Test func theTutorialHasTheTasksOfTheRelease() {
@@ -195,15 +233,15 @@ struct GuideProgressTests {
 
   @Test func severalVersionsAreShownOldestFirst() {
     let later = GuideScenario(
-      kind: .whatsNew(version: GuideVersion(major: 1, minor: 9)),
+      kind: .whatsNew(version: GuideVersion(major: 1, minor: 10)),
       cards: [GuideCard(id: "x", title: .init("а", "a"), body: .init("б", "b"), symbol: "star")])
     let progress = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.3.2")
-    let due = progress.whatsNewDue(current: "1.9.0", catalog: [later] + GuideCatalog.whatsNew)
+    let due = progress.whatsNewDue(current: "1.10.0", catalog: [later] + GuideCatalog.whatsNew)
     #expect(
       due.map(\.id)
         == [
           "whatsNew.1.4", "whatsNew.1.5", "whatsNew.1.6", "whatsNew.1.7", "whatsNew.1.8",
-          "whatsNew.1.9",
+          "whatsNew.1.9", "whatsNew.1.10",
         ])
     #expect(
       progress.whatsNewDue(current: "1.4.1", catalog: [later] + GuideCatalog.whatsNew).count == 1)
@@ -212,7 +250,7 @@ struct GuideProgressTests {
   @Test func tasksStayDoneAndRestartForgetsThem() {
     var progress = GuideProgress()
     let tasks = GuideCatalog.tutorial.tasks
-    progress.events.insert(GuideEvent.spendingOpened)
+    progress.events.insert(GuideEvent.operationsOpened)
     let fresh = progress.record(
       GuideFacts(operations: [.init(text: "кофе", amountE4: 3_000_000)]), tasks: tasks)
     #expect(Set(fresh) == ["task.coffee", "task.spending"])

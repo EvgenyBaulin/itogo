@@ -61,6 +61,24 @@ final class GuideTests: XCTestCase {
     XCTAssertNil(patch.cards, "a fix release has nothing new to show")
   }
 
+  /// An owner of 1.8 gets «Что нового в 1.9» after the update, once, and not at the next launch
+  /// or after a fix release.
+  func testWhatsNewOfOnePointNineComesOnceToAnOwnerOfOnePointEight() throws {
+    let memory = GuideProgress(firstLaunchShown: true, whatsNewSeen: "1.8.1")
+    defaults.set(try JSONEncoder().encode(memory), forKey: GuideStore.progressKey)
+    let guide = store()
+    guide.begin(databaseInUse: true, version: "1.9.0", dataSet: nil, isTestHost: false)
+    XCTAssertEqual(guide.cards?.id, "whatsNew.1.9")
+    XCTAssertEqual(guide.cards?.cards.count, 6)
+    guide.cardsDone(version: "1.9.0", skipped: false)
+    let next = store()
+    next.begin(databaseInUse: true, version: "1.9.0", dataSet: nil, isTestHost: false)
+    XCTAssertNil(next.cards)
+    let patch = store()
+    patch.begin(databaseInUse: true, version: "1.9.1", dataSet: nil, isTestHost: false)
+    XCTAssertNil(patch.cards)
+  }
+
   /// A set of synthetic data is nobody's first launch.
   func testNoCardsOnADataSet() {
     let guide = store()

@@ -68,7 +68,7 @@ struct AccountPaymentsBlock: View {
         }
         .padding(.top, 4)
       } label: {
-        Text(verbatim: t("account.screen.payments")).font(.headline)
+        Text(verbatim: t("account.screen.payments")).appFont(.headline)
       }
       Button {
         sheet = Self.newPaymentSheet(
@@ -114,7 +114,7 @@ struct AccountPaymentsBlock: View {
         } icon: {
           Image(systemName: "exclamationmark.circle")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Text(
@@ -133,7 +133,7 @@ struct AccountPaymentsBlock: View {
           } icon: {
             Image(systemName: "archivebox")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         } else if let name = row.cardName {
           Label {
@@ -143,7 +143,7 @@ struct AccountPaymentsBlock: View {
           } icon: {
             Image(systemName: "creditcard")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }

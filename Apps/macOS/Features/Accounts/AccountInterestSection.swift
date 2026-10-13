@@ -91,7 +91,7 @@ struct AccountInterestSection: View {
             }
             .labelsHidden()
             .multilineTextAlignment(.trailing)
-            .font(.body.monospacedDigit())
+            .appFont(.body.monospacedDigit())
             .frame(width: 80)
             .accessibilityIdentifier("account.interest.rate")
             Text(verbatim: "%").foregroundStyle(.secondary)

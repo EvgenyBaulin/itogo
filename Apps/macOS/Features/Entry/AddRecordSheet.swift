@@ -36,10 +36,10 @@ struct AddRecordSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text(verbatim: title)
-        .font(.headline)
+        .appFont(.headline)
       if let context {
         Text(verbatim: context)
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -69,7 +69,7 @@ struct AddRecordSheet: View {
 
       if let refusal {
         Text(verbatim: refusal)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }

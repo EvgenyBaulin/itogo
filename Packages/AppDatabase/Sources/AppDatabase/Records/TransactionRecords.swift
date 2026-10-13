@@ -164,7 +164,39 @@ extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
       deletedAt: try RowMapping.optionalInstant(row, "deleted_at"),
       accruesInterest: try RowMapping.flag(row, "accrues_interest", fallback: false),
       grace: Self.grace(row),
-      repayMonths: (try? RowMapping.optionalInteger(row, "repay_months")) ?? nil)
+      repayMonths: (try? RowMapping.optionalInteger(row, "repay_months")) ?? nil,
+      steps: Self.steps(row),
+      parts: Self.integer(row, "parts"),
+      markupE4: (try? RowMapping.optionalAmount(row, "markup_e4")) ?? nil,
+      psk: RowMapping.decimal(row, "psk"),
+      prepayAnyDay: (try? RowMapping.flag(row, "prepay_any_day", fallback: true)) ?? true,
+      prepayNoticeDays: Self.integer(row, "prepay_notice_days"),
+      plannedPrepay: Self.plannedPrepay(row),
+      inLadder: Self.integer(row, "in_ladder").map { $0 != 0 },
+      pledge: (try? RowMapping.flag(row, "pledge", fallback: false)) ?? false,
+      returnBy: RowMapping.day(row, "return_by"),
+      termsReviewed: (try? RowMapping.flag(row, "terms_reviewed", fallback: false)) ?? false)
+  }
+
+  /// A number that does not read — only a hand edit leaves one — reads as not said.
+  private static func integer(_ row: Row, _ column: String) -> Int? {
+    (try? RowMapping.optionalInteger(row, column)) ?? nil
+  }
+
+  /// Dues every few days: the step and the first day, both or neither.
+  private static func steps(_ row: Row) -> DebtSteps? {
+    guard let every = integer(row, "step_days"), DebtSteps.range.contains(every),
+      let first = RowMapping.day(row, "first_due_on")
+    else { return nil }
+    return DebtSteps(everyDays: every, firstDue: first)
+  }
+
+  /// The early repayment planned: the day and the sum, both or neither.
+  private static func plannedPrepay(_ row: Row) -> PlannedPrepay? {
+    guard let day = RowMapping.day(row, "planned_prepay_on"),
+      let amount = (try? RowMapping.optionalAmount(row, "planned_prepay_e4")) ?? nil
+    else { return nil }
+    return PlannedPrepay(day: day, amountE4: amount)
   }
 
   /// The grace period. A day or a word that does not read — only a hand edit leaves one — or a
@@ -201,6 +233,19 @@ extension Debt: @retroactive FetchableRecord, @retroactive PersistableRecord {
     container["grace_kind"] = grace?.payment.storedKind
     container["grace_payment_e4"] = grace?.payment.fixedAmount?.raw
     container["repay_months"] = repayMonths
+    container["step_days"] = steps?.everyDays
+    container["first_due_on"] = steps?.firstDue.iso
+    container["parts"] = parts
+    container["markup_e4"] = markupE4?.raw
+    container["psk"] = RowMapping.string(psk)
+    container["prepay_any_day"] = prepayAnyDay
+    container["prepay_notice_days"] = prepayNoticeDays
+    container["planned_prepay_on"] = plannedPrepay?.day.iso
+    container["planned_prepay_e4"] = plannedPrepay?.amountE4.raw
+    container["in_ladder"] = inLadder
+    container["pledge"] = pledge
+    container["return_by"] = returnBy?.iso
+    container["terms_reviewed"] = termsReviewed
   }
 }
 
@@ -225,7 +270,8 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
       accountCurrency: RowMapping.currency(row, "account_currency"),
       accountAmountE4: try RowMapping.optionalAmount(row, "account_amount_e4"),
       closesTerm: row["closes_term"] ?? false,
-      tranche: row["tranche"] ?? false)
+      tranche: row["tranche"] ?? false,
+      prepay: (row["prepay"] as String?).flatMap(PrepayChoice.init(rawValue:)))
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -246,5 +292,6 @@ extension DebtEntry: @retroactive FetchableRecord, @retroactive PersistableRecor
     container["account_amount_e4"] = accountAmountE4?.raw
     container["closes_term"] = closesTerm
     container["tranche"] = tranche
+    container["prepay"] = prepay?.rawValue
   }
 }

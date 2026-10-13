@@ -86,7 +86,7 @@ struct CushionGoalForm: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t("cushion.goal.title"))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         Stepper(value: $draft.months, in: CapitalSettings.targetMonthsRange) {
           Text(

@@ -97,10 +97,36 @@ public final class AppTheme {
     }
   }
 
+  /// The size of the text of every window (`AppFontSize`, `app.fontSize`). This Mac only, never
+  /// in the archive. The test host neither reads nor writes it: a test is laid out at the size
+  /// of the system, whatever the owner chose for his Debug copy.
+  public var fontSize: AppFontSize {
+    didSet {
+      guard fontSize != oldValue else { return }
+      habits?.set(fontSize.rawValue, forKey: AppFontSize.key)
+    }
+  }
+
+  /// How an amount names its currency (`CurrencyStyle`, `app.currencyStyle`): read by
+  /// `AppEnvironment.money`. This Mac only, never in the archive; the test host keeps the
+  /// symbol, so no test reads «RUB» because of the owner's choice.
+  public var currencyStyle: CurrencyStyle {
+    didSet {
+      guard currencyStyle != oldValue else { return }
+      habits?.set(currencyStyle.rawValue, forKey: CurrencyStyle.key)
+    }
+  }
+
+  /// Where the size of the text and the style of the currency are kept: nil in the test host.
+  @ObservationIgnored private let habits: UserDefaults?
+
   public init() {
     let defaults = UserDefaults.standard
     scheme = defaults.string(forKey: Self.schemeKey).flatMap(Scheme.init(rawValue:)) ?? .system
     accent = defaults.string(forKey: Self.accentKey).flatMap(Accent.init(rawValue:)) ?? .system
+    habits = AppEnvironment.isTestHost ? nil : defaults
+    fontSize = AppFontSize.stored(in: habits)
+    currencyStyle = CurrencyStyle.stored(in: habits)
   }
 
   /// Light or dark, for the whole application. It reaches the alerts and the open/save panels

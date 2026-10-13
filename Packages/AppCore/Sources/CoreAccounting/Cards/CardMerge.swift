@@ -106,4 +106,17 @@ public enum CardMerge {
     return .success(
       CardMergePlan(merged: merged, kept: kept, movedRules: moved, droppedRules: dropped))
   }
+
+  /// The account of a merge once it is made, when the merged card was its main one: the kept
+  /// card is main then, in the same step. `nil` — the account does not change.
+  public static func account(
+    _ account: PaymentMethod, after plan: CardMergePlan
+  ) -> PaymentMethod? {
+    guard account.id == plan.kept.accountId, account.mainCardId == plan.merged.id else {
+      return nil
+    }
+    var changed = account
+    changed.mainCardId = plan.kept.id
+    return changed
+  }
 }

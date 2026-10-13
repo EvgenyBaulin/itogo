@@ -139,11 +139,12 @@ struct ChangeStreamTests {
   @Test func theTablesOfTheAccountsAreWatched() throws {
     for table in [
       "account_groups", "transfers", "reconciliation_balances", "cards", "cashback_rules",
-      "banks", "assets", "asset_valuations",
+      "banks", "assets", "asset_valuations", "debt_instalments", "debt_costs",
+      "allocation_rules", "custom_currencies",
     ] {
       #expect(DatabaseStack.ledgerTables.contains(table), "\(table) is not watched")
     }
-    #expect(DatabaseStack.ledgerTables.count == 29)
+    #expect(DatabaseStack.ledgerTables.count == 33)
     #expect(Set(DatabaseStack.ledgerTables).count == DatabaseStack.ledgerTables.count)
   }
 

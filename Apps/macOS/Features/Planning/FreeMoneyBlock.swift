@@ -43,7 +43,11 @@ struct FreeMoneyBlock: View {
         ledger: snapshot.ledger)
       VStack(alignment: .leading, spacing: 8) {
         ForEach(
-          Self.parts(of: free, hasCushion: !snapshot.planning.cushion.accounts.isEmpty),
+          Self.parts(
+            of: free, hasCushion: !snapshot.planning.cushion.accounts.isEmpty,
+            half: snapshot.planning.halfFreeMoney(ledger: snapshot.ledger),
+            payHalf: snapshot.planning.payHalf,
+            cards: Self.cardsDue(snapshot, until: free.until)),
           id: \.name
         ) { part in
           view(of: part, free, snapshot)
@@ -82,8 +86,16 @@ struct FreeMoneyBlock: View {
     case overdue(AmountE4)
     /// Currencies of planned amounts left out of the lines for want of a rate today.
     case planWithoutRate([CurrencyCode])
+    /// Each credit card out of the summary whose statement is to be paid by D: «Кредитка «…»
+    /// к оплате до …» — the lines of the grey line add them up.
+    case cardsDue([CardDue])
     /// «Можно тратить в день», from the grey line.
     case perDay(AmountE4, days: Int)
+    /// «До 25-го: X · в день Y»: the grey line through the day of the next income of a month
+    /// paid twice; the main figure stays the same.
+    case half(AmountE4, perDay: AmountE4, until: DateOnly)
+    /// «Зарплата не пришла?»: the day of the next income passed without it.
+    case salaryLate(DateOnly)
     /// What the expectations still wait for until D: shown, never added.
     case stillExpected(AmountE4)
     case stillExpectedWithoutRate
@@ -108,7 +120,10 @@ struct FreeMoneyBlock: View {
       case .grey: "grey"
       case .overdue: "overdue"
       case .planWithoutRate: "planWithoutRate"
+      case .cardsDue: "cardsDue"
       case .perDay: "perDay"
+      case .half: "half"
+      case .salaryLate: "salaryLate"
       case .stillExpected: "stillExpected"
       case .stillExpectedWithoutRate: "stillExpectedWithoutRate"
       case .reserveSwitch: "reserveSwitch"
@@ -121,7 +136,14 @@ struct FreeMoneyBlock: View {
   /// What the block shows of `free`: with no count only the way to the first one; the groups
   /// left out of the summary apart, in either case. `hasCushion`: an account is marked as the
   /// safety cushion, so the switch that keeps it out of the free sum is offered.
-  static func parts(of free: FreeMoney, hasCushion: Bool = false) -> [Part] {
+  ///
+  /// `half` is the free sum through the next income of a month paid twice
+  /// (`PlanningSnapshot.halfFreeMoney`) and `payHalf` that half; `cards` the credit cards out
+  /// of the summary to pay by D (`cardsDue`).
+  static func parts(
+    of free: FreeMoney, hasCushion: Bool = false, half: FreeMoney? = nil,
+    payHalf: PayHalf? = nil, cards: [CardDue] = []
+  ) -> [Part] {
     var parts: [Part] = []
     switch free.state {
     case .noReconciliation:
@@ -138,7 +160,12 @@ struct FreeMoneyBlock: View {
       parts.append(.grey(free.grey ?? .zero, lines: free.lines))
       if free.overdue > .zero { parts.append(.overdue(free.overdue)) }
       if !free.planWithoutRate.isEmpty { parts.append(.planWithoutRate(free.planWithoutRate)) }
+      if !cards.isEmpty { parts.append(.cardsDue(cards)) }
       parts.append(.perDay(free.dailyGuide, days: free.days))
+      if let half, let payHalf, let grey = half.grey {
+        parts.append(.half(grey, perDay: half.dailyGuide, until: half.until))
+        if payHalf.late { parts.append(.salaryLate(payHalf.nextIncomeDay)) }
+      }
       for line in free.info where line.key == FreeMoney.Key.stillExpected {
         parts.append(.stillExpected(line.amount))
       }
@@ -185,7 +212,7 @@ struct FreeMoneyBlock: View {
       } icon: {
         Image(systemName: CushionText.symbol)
       }
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
     case .grey(let grey, let lines):
@@ -201,7 +228,7 @@ struct FreeMoneyBlock: View {
         } icon: {
           Image(systemName: "exclamationmark.circle")
         }
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
         Spacer(minLength: 8)
@@ -216,8 +243,39 @@ struct FreeMoneyBlock: View {
         verbatim: environment.language.format(
           "free.perDay", table: "Planning", environment.money.rounded(amount), days)
       )
-      .font(.callout.monospacedDigit())
+      .appFont(.callout.monospacedDigit())
       .foregroundStyle(.secondary)
+    case .cardsDue(let cards):
+      VStack(alignment: .leading, spacing: 2) {
+        ForEach(cards) { card in
+          caption(
+            environment.format(
+              "free.cardDue", table: "Planning", card.name, dayText(card.due, snapshot),
+              environment.money.rounded(card.amount, currency: card.currency)))
+        }
+      }
+      .accessibilityIdentifier("free.cardsDue")
+    case .half(let amount, let perDay, let day):
+      Text(
+        verbatim: environment.format(
+          "free.half", table: "Planning", dayText(day, snapshot), environment.money.rounded(amount),
+          environment.money.rounded(perDay))
+      )
+      .appFont(.callout.monospacedDigit())
+      .fixedSize(horizontal: false, vertical: true)
+      .accessibilityIdentifier("free.half")
+    case .salaryLate(let day):
+      Label {
+        Text(
+          verbatim: environment.format(
+            "free.salaryLate", table: "Planning", dayText(day, snapshot)))
+      } icon: {
+        Image(systemName: "questionmark.circle")
+      }
+      .appFont(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      .accessibilityIdentifier("free.salaryLate")
     case .stillExpected(let amount):
       caption(
         environment.format(
@@ -238,6 +296,36 @@ struct FreeMoneyBlock: View {
     case .excluded(let groups):
       excluded(groups)
     }
+  }
+
+  // MARK: Credit cards out of the summary
+
+  /// A credit card out of the summary with its statement to pay by D.
+  struct CardDue: Hashable, Identifiable {
+    var accountId: UUID
+    var name: String
+    var due: DateOnly
+    var amount: AmountE4
+    var currency: CurrencyCode
+    var id: UUID { accountId }
+  }
+
+  /// The credit cards out of the summary whose payment is due by `until`, by their day: what
+  /// the line «Кредитки к оплате (вне сводки)» holds back, named card by card. A card in the
+  /// summary is left out — its minus is already in the money now —, as is one with nothing to
+  /// pay.
+  static func cardsDue(_ snapshot: DataSnapshot, until: DateOnly) -> [CardDue] {
+    let planning = snapshot.planning
+    return planning.creditCards.compactMap { accountId, card -> CardDue? in
+      guard let line = planning.accounts.line(of: accountId), !line.account.archived,
+        !planning.accounts.isInSummary(accountId), let due = card.payBy, due <= until,
+        card.toPayNoInterestE4.raw > 0
+      else { return nil }
+      return CardDue(
+        accountId: accountId, name: line.account.name, due: due,
+        amount: card.toPayNoInterestE4, currency: line.account.mainCurrency)
+    }
+    .sorted { ($0.due, $0.name) < ($1.due, $1.name) }
   }
 
   // MARK: Pieces
@@ -264,9 +352,9 @@ struct FreeMoneyBlock: View {
     HStack(alignment: .firstTextBaseline, spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: environment.money.rounded(main))
-          .font(.title2.monospacedDigit())
+          .appFont(.title2.monospacedDigit())
         Text(verbatim: t(spendable ? "free.mainSpendable" : "free.main"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       Spacer(minLength: 8)
@@ -295,7 +383,7 @@ struct FreeMoneyBlock: View {
         } icon: {
           Image(systemName: "exclamationmark.triangle")
         }
-        .font(.caption)
+        .appFont(.caption)
       }
       Spacer(minLength: 8)
       Text(verbatim: environment.money.rounded(grey))
@@ -337,7 +425,7 @@ struct FreeMoneyBlock: View {
       Text(verbatim: environment.language(label, table: "Settings"))
     }
     .toggleStyle(.checkbox)
-    .font(.caption)
+    .appFont(.caption)
   }
 
   /// Every group left out of the summary with its own total, and no free sum.
@@ -345,7 +433,7 @@ struct FreeMoneyBlock: View {
   private func excluded(_ groups: [FreeMoney.ExcludedGroup]) -> some View {
     Divider()
     Text(verbatim: t("free.excludedTitle"))
-      .font(.caption.weight(.semibold))
+      .appFont(.caption.weight(.semibold))
       .foregroundStyle(.secondary)
     ForEach(groups, id: \.group.id) { apart in
       HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -358,7 +446,7 @@ struct FreeMoneyBlock: View {
         Text(verbatim: apart.totalRub.map { "≈ " + environment.money.rounded($0) } ?? "—")
           .monospacedDigit()
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .accessibilityElement(children: .combine)
       if !apart.withoutRate.isEmpty {
@@ -379,7 +467,7 @@ struct FreeMoneyBlock: View {
 
   private func caption(_ text: String, tertiary: Bool = false) -> some View {
     Text(verbatim: text)
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(tertiary ? .tertiary : .secondary)
       .fixedSize(horizontal: false, vertical: true)
   }

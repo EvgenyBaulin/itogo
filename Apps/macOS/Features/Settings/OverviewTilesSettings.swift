@@ -42,6 +42,7 @@ struct OverviewTilesSection: View {
         Button(t("settings.tiles.reset")) { OverviewTilesActions.reset(environment) }
           .disabled(layout.isStandard)
       }
+      .appFont(.callout)
       .foregroundStyle(.secondary)
     }
   }
@@ -52,7 +53,7 @@ struct OverviewTilesSection: View {
     let key = "group:" + group.rawValue
     return HStack(spacing: 8) {
       Text(verbatim: OverviewTileText.groupName(of: group, environment))
-        .font(.headline)
+        .appFont(.headline)
       Spacer()
       Image(systemName: "line.3.horizontal")
         .foregroundStyle(.tertiary)

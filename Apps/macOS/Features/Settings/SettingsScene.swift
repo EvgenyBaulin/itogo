@@ -3,7 +3,15 @@ import AppDatabase
 import AppKit
 import SwiftUI
 
-/// ⌘, — settings, a tab for each part of them.
+/// ⌘, — the settings, as System Settings shows its own: the sections in a sidebar with their
+/// symbols and a search field above them, the section chosen on the right in a grouped form.
+///
+/// The search finds a section by its name or by the caption of a setting it holds, in either
+/// language (`SettingsSearch`); under a section found by a setting the captions that matched
+/// are listed, and a click on one opens the section. Return opens the first section found.
+///
+/// Whatever the settings open — an editor, the rules of cashback, the password of the lock, the
+/// starter set — is a sheet on this very window, never something behind it in the main one.
 struct SettingsView: View {
   let deps: AppDependencies
 
@@ -12,99 +20,34 @@ struct SettingsView: View {
   }
 
   private var environment: AppEnvironment { deps.environment }
+  @State private var navigation = SettingsNavigation.shared
+  /// «Выбрать стартовый набор…» of «Основные»: the set, on a sheet over the settings.
+  @State private var starterSet = SettingsStarterSet.shared
 
-  /// The smallest the window may be made: the ten tabs of the toolbar in either language —
-  /// «Ввод» took about seventy points more.
+  /// The smallest the window may be made: the sidebar and a section beside it whose grouped
+  /// form still holds a row of the accent circles and a category per row with its quality.
   static let minimumSize = CGSize(width: 850, height: 460)
   /// The size it opens at.
   static let idealSize = CGSize(width: 910, height: 620)
+  /// The sidebar of the sections: the longest name, «Справочники», «Планирование», with its
+  /// symbol, in either language.
+  static let sidebarWidth: (min: CGFloat, ideal: CGFloat, max: CGFloat) = (180, 200, 260)
 
   var body: some View {
-    TabView {
-      GeneralSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.general", table: "Settings"))
-          } icon: {
-            Image(systemName: "gearshape")
-          }
-        }
-      AppearanceSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.appearance", table: "Settings"))
-          } icon: {
-            Image(systemName: "paintpalette")
-          }
-        }
-      CurrenciesSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.currencies", table: "Settings"))
-          } icon: {
-            Image(systemName: "banknote")
-          }
-        }
-      AccountsSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.accounts", table: "Settings"))
-          } icon: {
-            Image(systemName: "building.columns")
-          }
-        }
-      CategoriesSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.categories", table: "Settings"))
-          } icon: {
-            Image(systemName: "folder")
-          }
-        }
-      ReferenceBooksView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.references", table: "Settings"))
-          } icon: {
-            Image(systemName: "books.vertical")
-          }
-        }
-      EntrySettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.entry", table: "Settings"))
-          } icon: {
-            Image(systemName: "keyboard")
-          }
-        }
-      TemplatesSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.templates", table: "Settings"))
-          } icon: {
-            Image(systemName: "square.grid.2x2")
-          }
-        }
-      PlanningSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.planning", table: "Settings"))
-          } icon: {
-            Image(systemName: "calendar")
-          }
-        }
-      BackupSettingsView()
-        .tabItem {
-          Label {
-            Text(verbatim: environment.language("settings.tab.backups", table: "Settings"))
-          } icon: {
-            Image(systemName: "externaldrive")
-          }
-        }
+    NavigationSplitView {
+      SettingsSidebar(navigation: navigation, environment: environment)
+        .navigationSplitViewColumnWidth(
+          min: Self.sidebarWidth.min, ideal: Self.sidebarWidth.ideal, max: Self.sidebarWidth.max)
+    } detail: {
+      SettingsSectionContent(section: navigation.section)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .navigationTitle(environment.language(navigation.section.titleKey, table: "Settings"))
     }
-    // Room for what the tabs hold now — the row of accent circles, a category per row with its
-    // quality — and a window that can be made larger still: the tabs scroll, but a list of
-    // categories read through a slot of 420 points is a list nobody reads.
+    // The sidebar stays: a settings window without its sections is a window without a way on.
+    .toolbar(removing: .sidebarToggle)
+    // Room for what the sections hold — the row of accent circles, a category per row with its
+    // quality — and a window that can be made larger still: a list of categories read through
+    // a slot of 420 points is a list nobody reads.
     .frame(
       minWidth: Self.minimumSize.width, idealWidth: Self.idealSize.width, maxWidth: .infinity,
       minHeight: Self.minimumSize.height, idealHeight: Self.idealSize.height,
@@ -113,7 +56,7 @@ struct SettingsView: View {
     .background(ResizableSettingsWindow(minimum: Self.minimumSize))
     // So a UI test can say the settings really opened when the gear of the toolbar is pressed.
     .accessibilityIdentifier("settings.window")
-    // «Справка» → «Собрать отчёт о проблеме…»: the report itself, not a tab to look for it
+    // «Справка» → «Собрать отчёт о проблеме…»: the report itself, not a section to look for it
     // in. A sheet is laid out by a host of its own: the dependencies are handed over.
     .sheet(
       isPresented: Binding(
@@ -122,6 +65,105 @@ struct SettingsView: View {
     ) {
       ProblemReportSheet(height: 380).appDependencies(deps)
     }
+    // The starter set asked from «Основные» comes over the settings, where it was asked: the
+    // main window's sheet stood behind this window, out of sight.
+    .sheet(
+      isPresented: environment.lock.presenting(
+        Binding(get: { starterSet.isUp }, set: { if !$0 { starterSet.isUp = false } }))
+    ) {
+      StarterSetSheet().appDependencies(deps)
+    }
+  }
+}
+
+/// What a section shows: the views of the ten tabs the settings had, each as it was.
+struct SettingsSectionContent: View {
+  let section: SettingsSection
+
+  var body: some View {
+    switch section {
+    case .general: GeneralSettingsView()
+    case .appearance: AppearanceSettingsView()
+    case .currencies: CurrenciesSettingsView()
+    case .accounts: AccountsSettingsView()
+    case .categories: CategoriesSettingsView()
+    case .references: ReferenceBooksView()
+    case .entry: EntrySettingsView()
+    case .templates: TemplatesSettingsView()
+    case .planning: PlanningSettingsView()
+    case .backups: BackupSettingsView()
+    }
+  }
+}
+
+/// The sections, and the search field above them. While a query is typed only the sections it
+/// finds stay, each with the captions of the settings that matched.
+struct SettingsSidebar: View {
+  @Bindable var navigation: SettingsNavigation
+  let environment: AppEnvironment
+  /// The words of both languages, read once for the sidebar.
+  @State private var words = SettingsSearch.catalogWords()
+
+  var body: some View {
+    let found = SettingsSearch.find(navigation.query, words: words)
+    List(
+      selection: Binding(
+        get: { navigation.section },
+        set: { if let section = $0 { navigation.section = section } })
+    ) {
+      ForEach(found, id: \.section) { found in
+        Label {
+          Text(verbatim: environment.language(found.section.titleKey, table: "Settings"))
+        } icon: {
+          Image(systemName: found.section.symbol)
+        }
+        .tag(found.section)
+        .accessibilityIdentifier("settings.section.\(found.section.rawValue)")
+        ForEach(found.captions, id: \.self) { caption in
+          Button {
+            navigation.section = found.section
+          } label: {
+            Text(verbatim: environment.language(caption.key, table: caption.table))
+              .appFont(.callout)
+              .foregroundStyle(.secondary)
+              .lineLimit(2)
+              .padding(.leading, 26)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityIdentifier("settings.found.\(caption.key)")
+        }
+      }
+      if found.isEmpty {
+        Text(verbatim: environment.language("settings.search.nothing", table: "Settings"))
+          .appFont(.callout)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .listStyle(.sidebar)
+    .searchable(
+      text: $navigation.query, placement: .sidebar,
+      prompt: Text(verbatim: environment.language("settings.search.prompt", table: "Settings"))
+    )
+    .onSubmit(of: .search) {
+      if let first = found.first { navigation.section = first.section }
+    }
+    .accessibilityIdentifier("settings.sidebar")
+  }
+}
+
+/// The starter set asked from Settings → «Основные»: a sheet of the settings window. Apart from
+/// `StarterSetOffer`, which the main window reads for the sheet it asks on a new database.
+@MainActor
+@Observable
+final class SettingsStarterSet {
+  static let shared = SettingsStarterSet()
+  var isUp = false
+
+  /// «Выбрать стартовый набор…»: the set over the settings, the main window's offer untouched.
+  func open() {
+    isUp = true
   }
 }
 
@@ -201,13 +243,14 @@ struct GeneralSettingsView: View {
       // «Стартовый набор»: categories, limits and tiles for the way the owner lives; only adds.
       Section {
         Button(environment.language("settings.starter.open", table: "Settings")) {
-          StarterSetOffer.shared.isRequested = true
+          SettingsStarterSet.shared.open()
         }
         .accessibilityIdentifier("settings.starter.open")
       } header: {
         Text(verbatim: environment.language("settings.starter", table: "Settings"))
       } footer: {
         Text(verbatim: environment.language("settings.starter.hint", table: "Settings"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -234,6 +277,7 @@ struct GeneralSettingsView: View {
         }
       } footer: {
         Text(verbatim: environment.language("settings.events.automaticHint", table: "Settings"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -256,6 +300,7 @@ struct GeneralSettingsView: View {
         Text(verbatim: environment.language("settings.forWhomLabels", table: "Settings"))
       } footer: {
         Text(verbatim: environment.language("settings.forWhom.fixedHint", table: "Settings"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -280,13 +325,14 @@ struct GeneralSettingsView: View {
         }
         if !ReferenceNames.folded(newPerson).isEmpty, !canAddPerson {
           Text(verbatim: environment.language("references.nameTaken", table: "Settings"))
-            .font(.caption)
+            .appFont(.callout)
             .foregroundStyle(.secondary)
         }
       } header: {
         Text(verbatim: environment.language("settings.forWhom.people", table: "Settings"))
       } footer: {
         Text(verbatim: environment.language("settings.forWhom.peopleHint", table: "Settings"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -305,6 +351,7 @@ struct GeneralSettingsView: View {
           }
         } label: {
           Text(verbatim: environment.language("settings.language.restartHint", table: "Settings"))
+            .appFont(.callout)
             .foregroundStyle(.secondary)
         }
       }
@@ -340,6 +387,7 @@ struct GeneralSettingsView: View {
               ? "settings.updates.automaticHint" : "settings.updates.unavailableHint",
             table: "Settings")
         )
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
     }
@@ -413,11 +461,33 @@ struct CurrenciesSettingsView: View {
   /// A write the database refused; the alert says so (`AppEnvironment.attempt`).
   @State private var refused = false
 
-  /// Everything the Bank of Russia publishes, plus the ruble. The list is short on purpose:
-  /// the specification caps the enabled currencies at ten.
+  /// The currencies of the bank a checkbox is offered for: everything the Bank of Russia
+  /// publishes, plus the ruble — the ones on a fresh install first — and any other code of the
+  /// bank switched on elsewhere. As many as the owner likes can be on.
   private var offered: [CurrencyCode] {
-    let extras = ["GBP", "JPY", "CHF", "PLN", "UAH", "BYN", "KGS", "UZS", "AZN", "RSD"]
-    return CurrencyCode.defaultEnabled + extras.map(CurrencyCode.init)
+    Self.offered(enabled: enabled, catalog: environment.currencyCatalog)
+  }
+
+  /// The codes the Bank of Russia publishes in its daily table besides the ten of a fresh
+  /// install, the usual ones first.
+  static let published: [CurrencyCode] = [
+    "GBP", "JPY", "CHF", "PLN", "UAH", "BYN", "KGS", "UZS", "AZN", "RSD", "AUD", "DZD", "BHD",
+    "BGN", "BOB", "BRL", "HUF", "VND", "HKD", "DKK", "EGP", "INR", "IDR", "IRR", "CAD", "QAR",
+    "CUP", "MDL", "MNT", "NGN", "NZD", "NOK", "OMR", "SAR", "RON", "XDR", "SGD", "TJS", "BDT",
+    "TMT", "CZK", "SEK", "ETB", "ZAR", "KRW", "MMK",
+  ].map(CurrencyCode.init)
+
+  /// What the checkboxes offer: the currencies of a fresh install, the others the bank
+  /// publishes, then any code of the bank switched on that is in neither list. A custom
+  /// currency is never a checkbox: it has a section of its own.
+  static func offered(enabled: [CurrencyCode], catalog: CurrencyCatalog) -> [CurrencyCode] {
+    var seen = Set<CurrencyCode>()
+    var all: [CurrencyCode] = []
+    for code in CurrencyCode.defaultEnabled + published + enabled
+    where !catalog.isCustom(code) && seen.insert(code).inserted {
+      all.append(code)
+    }
+    return all
   }
 
   /// Why a currency that is on stays on.
@@ -447,7 +517,7 @@ struct CurrenciesSettingsView: View {
     Form {
       Section {
         Picker(selection: defaultBinding) {
-          ForEach(enabled, id: \.code) { currency in
+          ForEach(environment.currencyCatalog.choices(enabled: enabled), id: \.code) { currency in
             Text(verbatim: "\(currency.code)  \(environment.money.symbol(for: currency))")
               .tag(currency)
           }
@@ -456,6 +526,7 @@ struct CurrenciesSettingsView: View {
         }
       } footer: {
         Text(verbatim: t("settings.currencies.defaultHint"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -468,6 +539,7 @@ struct CurrenciesSettingsView: View {
             HStack(spacing: 8) {
               Text(verbatim: currency.code)
               Text(verbatim: environment.money.symbol(for: currency))
+                .appFont(.callout)
                 .foregroundStyle(.secondary)
               if let lock, let caption = caption(lock) {
                 Label {
@@ -475,7 +547,7 @@ struct CurrenciesSettingsView: View {
                 } icon: {
                   Image(systemName: "lock")
                 }
-                .font(.caption)
+                .appFont(.callout)
                 .foregroundStyle(.secondary)
               }
               if notPublished.contains(currency) {
@@ -486,13 +558,13 @@ struct CurrenciesSettingsView: View {
                 } icon: {
                   Image(systemName: "exclamationmark.triangle")
                 }
-                .font(.caption)
+                .appFont(.callout)
                 .foregroundStyle(.orange)
               }
             }
           }
           .toggleStyle(.checkbox)
-          .disabled(lock != nil || (!enabled.contains(currency) && isFull))
+          .disabled(lock != nil)
           .help(lock.map(tooltip) ?? "")
         }
       } header: {
@@ -500,11 +572,14 @@ struct CurrenciesSettingsView: View {
       } footer: {
         Text(
           verbatim: environment.format(
-            "settings.currencies.count", table: "Settings",
-            counts: enabled.count, CurrencyCode.maxEnabled)
+            "settings.currencies.countOn", table: "Settings",
+            counts: enabled.filter { !environment.currencyCatalog.isCustom($0) }.count)
         )
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
+
+      CustomCurrenciesSection()
     }
     .formStyle(.grouped)
     .padding()
@@ -534,8 +609,6 @@ struct CurrenciesSettingsView: View {
     case .held: t("currencies.lock.held")
     }
   }
-
-  private var isFull: Bool { enabled.count >= CurrencyCode.maxEnabled }
 
   /// A new default is one of the enabled currencies.
   private var defaultBinding: Binding<CurrencyCode> {
@@ -569,7 +642,7 @@ struct CurrenciesSettingsView: View {
     return written
   }
 
-  /// Switches `currency` on — last, while fewer than ten are on — or off. The ruble always
+  /// Switches `currency` on — last — or off; there is no limit to how many are on. The ruble always
   /// stays; the default currency and a currency a live account holds stay too: the database
   /// refuses to drop them (`SettingsWriteError.currencyInUse`), whatever the checkbox did. True
   /// when there was nothing to do or the write landed.
@@ -579,7 +652,6 @@ struct CurrenciesSettingsView: View {
   ) -> Bool {
     var updated = enabled.filter { $0 != currency }
     if isOn {
-      guard updated.count < CurrencyCode.maxEnabled else { return true }
       updated.append(currency)
     }
     // The ruble is the base currency and cannot be switched off.

@@ -131,6 +131,8 @@ public enum TileExplanations {
     case .spendingCalendar: spendingCalendar(inputs.calendarWeek)
     case .capital: capital(inputs.planning.capital)
     case .cushion: cushion(inputs.planning.cushion)
+    case .installments: installments(inputs.planning.instalments)
+    case .selfEmployment: selfEmployment(inputs.planning.npd, today: inputs.today)
     }
   }
 
@@ -622,7 +624,8 @@ public enum TileExplanations {
       accounts: inputs.ledger.dataset.paymentMethods,
       balances: inputs.planning.accounts.balances)
     let recent = WorthALook.recent(report, today: inputs.today)
-    var rows: [TileRow] = []
+    var rows: [TileRow] = noteRows(
+      WorthALook.notes(planning: inputs.planning, ledger: inputs.ledger, today: inputs.today))
     for line in WorthALook.lines(
       report, today: inputs.today, free: inputs.planning.freeMoney, shown: recent.count,
       archived: archived)
@@ -663,6 +666,35 @@ public enum TileExplanations {
       ],
       notes: recent.count > inputs.anomaliesShown
         ? [TilePhrase("why.look.more", .count(recent.count - inputs.anomaliesShown))] : [])
+  }
+
+  /// The lines of 1.9 of «Стоит посмотреть», each with its figure.
+  static func noteRows(_ notes: [WorthALookNote]) -> [TileRow] {
+    notes.compactMap { note -> TileRow? in
+      switch note {
+      case .debt:
+        return TileRow(TilePhrase("why.look.debtReminder"), mark: .warning)
+      case .npdDue(let month):
+        return TileRow(
+          TilePhrase("why.look.npdDue", .day(month.month.firstDay), .day(month.due)),
+          .money(month.toPayE4, .rub), mark: month.state == .overdue ? .overdue : nil)
+      case .salaryLate(let half):
+        return TileRow(TilePhrase("why.look.salaryLate"), .day(half.nextIncomeDay), mark: .warning)
+      case .allocate(_, let left, let currency):
+        return TileRow(TilePhrase("why.look.allocate"), .money(left, currency))
+      case .monthRest(let offer):
+        return TileRow(
+          TilePhrase("why.look.monthRest", .day(offer.month.firstDay)), .money(offer.amountE4, .rub)
+        )
+      case .npdLimit(let year):
+        return TileRow(
+          TilePhrase(year.exceeded ? "why.look.npdLimitExceeded" : "why.look.npdLimit"),
+          .money(year.leftRub, .rub), mark: .warning, share: year.shareBp)
+      case .burnout(let signal):
+        return TileRow(
+          TilePhrase("why.look.burnout", .count(signal.lastWeekCount), .count(signal.usualCount)))
+      }
+    }
   }
 
   /// The money now, what of it is not free, and what the plans to the end of the month take.
@@ -720,6 +752,8 @@ public enum TileExplanations {
     case FreeMoney.Key.debts: "why.free.debts"
     case FreeMoney.Key.goalPlans: "why.free.goalPlans"
     case FreeMoney.Key.events: "why.free.events"
+    case FreeMoney.Key.npdTax: "why.free.npdTax"
+    case FreeMoney.Key.creditCards: "why.free.creditCards"
     default: "why.free.other"
     }
   }
@@ -853,6 +887,89 @@ public enum TileExplanations {
       notes.append(TilePhrase("why.cushion.unanchored", .count(status.unanchored.count)))
     }
     return TileExplanation(tile: .cushion, sections: sections, notes: notes)
+  }
+
+  /// What hangs in instalment plans and purchases on credit, and the payments coming first.
+  public static func installments(_ summary: InstalmentsSummary) -> TileExplanation {
+    guard summary.count > 0 else {
+      return TileExplanation(tile: .installments, state: .empty(TilePhrase("why.instalments.none")))
+    }
+    let rows = summary.next.map { payment in
+      TileRow(
+        TilePhrase("why.instalments.payment", .day(payment.due)),
+        .money(payment.amountE4, payment.currency))
+    }
+    var notes: [TilePhrase] = []
+    if !summary.withoutRate.isEmpty { notes.append(TilePhrase("why.noRate")) }
+    return TileExplanation(
+      tile: .installments,
+      sections: [
+        TileSection(
+          rows: [TileRow(TilePhrase("why.instalments.count"), .count(summary.count))],
+          total: TileRow(TilePhrase("why.instalments.total"), money(summary.totalRub))),
+        TileSection(title: TilePhrase("why.instalments.nextTitle"), rows: rows),
+      ],
+      notes: notes)
+  }
+
+  /// The tax to pay: the income of its month less what the deduction took, and the year
+  /// against its limit.
+  public static func selfEmployment(_ npd: NPDState?, today: DateOnly) -> TileExplanation {
+    guard let npd, let block = SelfEmploymentBlock.build(npd: npd, today: today) else {
+      return TileExplanation(
+        tile: .selfEmployment, state: .empty(TilePhrase("why.selfEmployed.off")))
+    }
+    var sections: [TileSection] = []
+    if let month = npd.nextDue ?? npd.months.first(where: { $0.month == today.monthKey }) {
+      var rows = [
+        TileRow(
+          TilePhrase("why.selfEmployed.taxBefore"), money(month.taxBeforeDeductionE4), role: .plus)
+      ]
+      if !month.deductionUsedE4.isZero {
+        rows.append(
+          TileRow(
+            TilePhrase("why.selfEmployed.deduction"), money(month.deductionUsedE4), role: .minus))
+      }
+      if !month.carriedInE4.isZero {
+        rows.append(
+          TileRow(TilePhrase("why.selfEmployed.carried"), money(month.carriedInE4), role: .plus))
+      }
+      // The tax of another rate, kept apart from the minimum: what rounds the lines to the sum.
+      let rest =
+        month.toPayE4 - month.taxBeforeDeductionE4 + month.deductionUsedE4
+        - month.carriedInE4
+      if !rest.isZero {
+        rows.append(
+          TileRow(
+            TilePhrase("why.selfEmployed.rounding"), money(rest.magnitude),
+            role: rest.isNegative ? .minus : .plus))
+      }
+      rows.append(
+        TileRow(TilePhrase("why.selfEmployed.income"), money(month.incomeRub)))
+      sections.append(
+        TileSection(
+          title: TilePhrase("why.selfEmployed.monthTitle", .day(month.month.firstDay)),
+          rows: rows,
+          total: TileRow(
+            TilePhrase("why.selfEmployed.toPay", .day(month.due)), money(month.toPayE4),
+            mark: month.state == .overdue ? .overdue : nil)))
+    }
+    var year = [
+      TileRow(TilePhrase("why.selfEmployed.yearIncome"), money(npd.year.incomeRub)),
+      TileRow(TilePhrase("why.selfEmployed.yearLimit"), money(npd.year.limitRub)),
+    ]
+    year.append(
+      TileRow(
+        TilePhrase("why.selfEmployed.yearLeft"), money(block.yearLeftRub),
+        mark: npd.year.exceeded ? .warning : nil, share: npd.year.shareBp))
+    sections.append(TileSection(title: TilePhrase("why.selfEmployed.yearTitle"), rows: year))
+    var notes = [TilePhrase("why.selfEmployed.rates")]
+    if let left = npd.deductionLeftE4 {
+      notes.append(TilePhrase("why.selfEmployed.deductionLeft", .money(left, .rub)))
+    } else {
+      notes.append(TilePhrase("why.selfEmployed.deductionUnknown"))
+    }
+    return TileExplanation(tile: .selfEmployment, sections: sections, notes: notes)
   }
 
   // MARK: - Pieces

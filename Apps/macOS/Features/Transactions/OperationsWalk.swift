@@ -59,3 +59,23 @@ extension View {
     modifier(WalkedFromTheEntryLine(firstRow: firstRow, selection: selection))
   }
 }
+
+/// The row ↓ or ↑ selects in «Операции»: the next or the one before the row selected, in the order
+/// of the table. Nothing selected, ↓ is the first row; several rows, the arrows are the table's
+/// own.
+enum OperationsArrows {
+  static func next(from selection: Set<UUID>, rows: [UUID], down: Bool) -> UUID? {
+    guard !rows.isEmpty else { return nil }
+    guard let selected = selection.first else { return down ? rows.first : nil }
+    guard selection.count == 1, let index = rows.firstIndex(of: selected) else { return nil }
+    let target = down ? index + 1 : index - 1
+    // At either end the selection stays where it is.
+    return rows.indices.contains(target) ? rows[target] : selected
+  }
+
+  /// The operations and transfers of the table from top to bottom; the parts of a split are not
+  /// selected, so the arrows pass them by.
+  static func rows(of listing: TransactionListing) -> [UUID] {
+    listing.sections.flatMap { $0.rows.map(\.transactionId) }
+  }
+}

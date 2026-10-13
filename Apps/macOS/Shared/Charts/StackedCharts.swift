@@ -96,7 +96,7 @@ struct StackedShareChart: View {
           AxisValueLabel {
             if let id = value.as(String.self), let column = byId[id] {
               Text(verbatim: column.axisLabel)
-                .font(.caption)
+                .appFont(.caption)
             }
           }
         }
@@ -107,7 +107,7 @@ struct StackedShareChart: View {
           AxisValueLabel {
             if let points = value.as(Int64.self) {
               Text(verbatim: money.percent(basisPoints: Int(points), fractionDigits: 0))
-                .font(.caption.monospacedDigit())
+                .appFont(.caption.monospacedDigit())
             }
           }
         }
@@ -198,7 +198,7 @@ struct StackedRowChart: View {
           AxisValueLabel {
             if let id = value.as(String.self), let row = byId[id] {
               Text(verbatim: row.axisLabel)
-                .font(.callout)
+                .appFont(.callout)
                 .lineLimit(1)
                 .frame(maxWidth: 180, alignment: .leading)
             }
@@ -211,7 +211,7 @@ struct StackedRowChart: View {
             AxisGridLine()
             AxisValueLabel {
               Text(verbatim: ChartAxis.money(value, money))
-                .font(.caption.monospacedDigit())
+                .appFont(.caption.monospacedDigit())
             }
           }
         }

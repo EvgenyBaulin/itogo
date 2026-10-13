@@ -33,7 +33,11 @@ struct OverviewLayoutTests {
         .monthToDate, .canSave, .balanceForecast, .owedToMe, .iOwe, .lastCount, .lastRecord,
         .lastCountAndRecord, .freeMoney, .capital, .cushion,
       ])
-    #expect(plan == [.limits, .upcoming, .expectedIncome, .event, .spendingCalendar])
+    #expect(
+      plan == [
+        .limits, .upcoming, .expectedIncome, .event, .spendingCalendar, .installments,
+        .selfEmployment,
+      ])
     #expect(
       analysis == [
         .topCategories, .qualities, .spendingForecast, .incomeForecast, .worthALook, .currencyChart,
@@ -41,11 +45,12 @@ struct OverviewLayoutTests {
   }
 
   /// No choice kept: the twelve cards of the first Overview first, then the rest, each in its
-  /// default group, every one of the twenty-two shown.
+  /// default group, every one of the twenty-two shown; the two that came later wait hidden at
+  /// the end of «План» until the owner adds them.
   @Test func theStandardLayoutShowsEveryTile() {
     let layout = OverviewLayout.standard
     #expect(isWhole(layout))
-    #expect(layout.hidden.isEmpty)
+    #expect(layout.hidden == [.installments, .selfEmployment])
     #expect(layout.shown.count == 22)
     #expect(layout.groups == [.money, .plan, .analysis])
     #expect(
@@ -54,7 +59,10 @@ struct OverviewLayoutTests {
         .lastCountAndRecord, .freeMoney, .capital, .cushion,
       ])
     #expect(
-      layout.tiles(in: .plan) == [.limits, .upcoming, .expectedIncome, .event, .spendingCalendar])
+      layout.tiles(in: .plan) == [
+        .limits, .upcoming, .expectedIncome, .event, .spendingCalendar, .installments,
+        .selfEmployment,
+      ])
     #expect(
       layout.tiles(in: .analysis) == [
         .topCategories, .qualities, .spendingForecast, .worthALook, .incomeForecast, .currencyChart,
@@ -63,11 +71,11 @@ struct OverviewLayoutTests {
   }
 
   /// The flat list of the builds before groups: its tiles keep their order, the ones it lacks
-  /// follow in the order of the catalog, all shown.
+  /// follow in the order of the catalog, all shown but the ones that wait to be added.
   @Test func aFlatListKeepsItsOrderAndGetsTheRestAtTheEnd() {
     let layout = OverviewLayout(tiles: [.freeMoney, .limits, .monthToDate, .qualities])
     #expect(isWhole(layout))
-    #expect(layout.hidden.isEmpty)
+    #expect(layout.hidden == [.installments, .selfEmployment])
     #expect(Array(layout.tiles(in: .money).prefix(2)) == [.freeMoney, .monthToDate])
     #expect(layout.tiles(in: .money).count == 11)
     #expect(layout.tiles(in: .plan).first == .limits)
@@ -76,7 +84,26 @@ struct OverviewLayoutTests {
       Array(layout.tiles(in: .analysis).dropFirst()) == [
         .topCategories, .spendingForecast, .incomeForecast, .worthALook, .currencyChart,
       ])
-    #expect(OverviewLayout(tiles: []) == OverviewLayout(tiles: OverviewTile.allCases))
+    #expect(
+      OverviewLayout(tiles: [])
+        == OverviewLayout(
+          tiles: OverviewTile.allCases.filter { $0 != .installments && $0 != .selfEmployment }))
+    // A list that names one of them shows it.
+    #expect(!OverviewLayout(tiles: [.installments]).isHidden(.installments))
+    #expect(OverviewLayout(tiles: [.installments]).isHidden(.selfEmployment))
+  }
+
+  /// A tile that came after a layout was kept waits hidden at the end of its group: the two of
+  /// the credits and the self-employment, which nothing names yet, appear only when added.
+  @Test func aTileTheTextDoesNotNameWaitsHiddenWhenItWaitsToBeAdded() throws {
+    let layout = try #require(OverviewLayout.decode("money:monthToDate;plan:limits"))
+    #expect(isWhole(layout))
+    #expect(layout.isHidden(.installments) && layout.isHidden(.selfEmployment))
+    #expect(Array(layout.tiles(in: .plan).suffix(2)) == [.installments, .selfEmployment])
+    #expect(!layout.isHidden(.capital), "an older tile not named is still shown")
+    let added = try #require(layout.showing(.selfEmployment))
+    #expect(OverviewLayout.decode(added.encode()) == added)
+    #expect(!(try #require(OverviewLayout.decode(added.encode()))).isHidden(.selfEmployment))
   }
 
   /// The text: groups in order, tiles in order, «-» before a hidden tile; it reads back as itself.
@@ -89,7 +116,10 @@ struct OverviewLayoutTests {
     #expect(text.hasPrefix("money:currencyChart,monthToDate,"))
     #expect(text.contains(",-lastRecord,"))
     #expect(text.contains(";analysis:topCategories,"))
-    #expect(text.hasSuffix(";plan:limits,upcoming,expectedIncome,event,spendingCalendar"))
+    #expect(
+      text.hasSuffix(
+        ";plan:limits,upcoming,expectedIncome,event,spendingCalendar,-installments,-selfEmployment"
+      ))
     #expect(OverviewLayout.decode(text) == layout)
     #expect(OverviewLayout.decode(OverviewLayout.standard.encode()) == .standard)
   }
@@ -149,7 +179,7 @@ struct OverviewLayoutTests {
     }.joined(separator: ";")
     let layout = try #require(OverviewLayout.decode(text))
     #expect(layout.shown == [.monthToDate])
-    #expect(layout.hidden.count == 21)
+    #expect(layout.hidden.count == OverviewTile.allCases.count - 1)
   }
 
   /// A hidden tile keeps its place and comes back there; the last shown tile cannot be hidden.
@@ -158,7 +188,7 @@ struct OverviewLayoutTests {
     layout = try #require(layout.hiding(.canSave))
     #expect(!layout.shown.contains(.canSave))
     #expect(layout.tiles(in: .money)[1] == .canSave)
-    #expect(layout.hiddenInOrder == [.canSave])
+    #expect(layout.hiddenInOrder == [.canSave, .installments, .selfEmployment])
     #expect(layout.hiding(.canSave) == nil, "hidden already")
     #expect(layout.showing(.limits) == nil, "shown already")
     layout = try #require(layout.showing(.canSave))

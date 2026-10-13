@@ -185,7 +185,7 @@ final class GuideFlowTests: XCTestCase {
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whatsNew")))
-    XCTAssertEqual(guide.cards?.id, "whatsNew.1.8")
+    XCTAssertEqual(guide.cards?.id, "whatsNew.1.9")
     guide.cards = nil
 
     press(try XCTUnwrap(item("guide.menu.whereToClick")))
@@ -302,7 +302,7 @@ final class GuideFlowTests: XCTestCase {
       },
       [
         "Запись операции ⌘N", "Все поля Tab", "Обзор ⌘1", "Планирование ⌘2", "Долги ⌘3",
-        "Траты ⌘4", "Календарь ⌘5", "Капитал ⌘6", "Таблица операций — на панели вверху ⌘⇧T",
+        "Операции ⌘4", "Календарь ⌘5", "Капитал ⌘6", "Таблица операций — на панели вверху ⌘⇧T",
         "Сверка остатка — на панели вверху", "Настройки — на панели вверху ⌘,",
       ])
     guide.showsWhereToClick = true
@@ -341,8 +341,8 @@ final class GuideFlowTests: XCTestCase {
   }
 
   /// Every step of every task that points into the main window has its place: the line, its
-  /// toggle and «За кого» of the panel, the sections of the sidebar, the list and the search of
-  /// «Траты», the blocks of Planning, «+ Долг» of Debts.
+  /// toggle and «За кого» of the panel, the sections of the sidebar, the table and the search of
+  /// «Операции», the blocks of Planning, «+ Долг» of Debts.
   func testThePlacesOfTheTasksAreMarked() async throws {
     let deps = try await startedDependencies()
     var marked = marks(
@@ -353,7 +353,11 @@ final class GuideFlowTests: XCTestCase {
           EmptyView()
         }
         .appDependencies(deps)))
-    marked.formUnion(marks(of: SpendingView(actions: OperationActions()).appDependencies(deps)))
+    marked.formUnion(
+      marks(
+        of: OperationsScreen(
+          deps: deps, actions: OperationActions(), state: OperationsScreenState()
+        ).appDependencies(deps)))
     marked.formUnion(marks(of: PlanningView().appDependencies(deps), width: 980))
     marked.formUnion(marks(of: DebtsView().appDependencies(deps), width: 980))
     // A toolbar item and the settings window have no place in the window to cut out: those
@@ -412,7 +416,7 @@ final class GuideFlowTests: XCTestCase {
     XCTAssertTrue(guide.isDone(try task("task.coffee")))
     XCTAssertNil(guide.framedTask, "a task done is framed no more")
 
-    guide.report(GuideEvent.spendingOpened)
+    guide.report(GuideEvent.operationsOpened)
     guide.check(after)
     XCTAssertEqual(guide.tutorial.done, 2)
     XCTAssertTrue(guide.isDone(try task("task.spending")))
@@ -423,7 +427,7 @@ final class GuideFlowTests: XCTestCase {
   /// «Начать учебный режим заново»: the tasks forgotten, the next launch makes the set anew —
   /// asked once —, and what was written in the set is gone with it.
   func testStartingOverForgetsTheTasksAndMakesTheSetAnew() throws {
-    guide.report(GuideEvent.spendingOpened)
+    guide.report(GuideEvent.operationsOpened)
     guide.check(Dataset())
     XCTAssertEqual(guide.tutorial.done, 1)
     guide.restartTutorial()
@@ -570,16 +574,18 @@ final class GuideFlowTests: XCTestCase {
     }
   }
 
-  /// «Траты» reports itself opened, and its search used; Planning, that the free sum was seen;
+  /// «Операции» reports itself opened, and its search used; Planning, that the free sum was seen;
   /// the card of the currency chart, that it was on the screen.
   func testTheScreensReportTheirTasks() throws {
     let deps = plainDependencies()
-    let spending = show(SpendingView(actions: OperationActions()).appDependencies(deps))
-    XCTAssertTrue(guide.progress.events.contains(GuideEvent.spendingOpened))
-    let prompt = deps.environment.language("spending.search.prompt", table: "Overview")
+    let spending = show(
+      OperationsScreen(deps: deps, actions: OperationActions(), state: OperationsScreenState())
+        .appDependencies(deps))
+    XCTAssertTrue(guide.progress.events.contains(GuideEvent.operationsOpened))
+    let prompt = deps.environment.language("operations.search.prompt", table: "Transactions")
     let search = try XCTUnwrap(
       textFields(in: spending.contentView).first { $0.placeholderString == prompt },
-      "the search of «Траты»")
+      "the search of «Операции»")
     XCTAssertTrue(spending.makeFirstResponder(search))
     let editor = try XCTUnwrap(spending.firstResponder as? NSTextView)
     editor.insertText("кофе", replacementRange: editor.selectedRange())
@@ -603,7 +609,7 @@ final class GuideFlowTests: XCTestCase {
   /// Outside the tutorial nothing is heard: the owner's own guide keeps no tasks.
   func testOutsideTheTutorialNothingIsHeard() {
     let own = GuideStore(defaults: defaults, tutorial: false)
-    own.report(GuideEvent.spendingOpened)
+    own.report(GuideEvent.operationsOpened)
     XCTAssertTrue(own.progress.events.isEmpty)
   }
 

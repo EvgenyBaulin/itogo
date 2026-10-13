@@ -27,7 +27,7 @@ final class SettingsWindowSizeTests: XCTestCase {
     XCTAssertLessThanOrEqual(SettingsView.idealSize.height, 700)
   }
 
-  /// Made larger by hand, the window gives the room to the tabs instead of centring a fixed box;
+  /// Made larger by hand, the window gives the room to the sections instead of centring a fixed box;
   /// made smaller, it stops at the minimum.
   func testTheTabsTakeTheRoomOfTheWindowDownToTheMinimum() {
     let deps = AppDependencies.forTests(AppEnvironment())
@@ -46,7 +46,7 @@ final class SettingsWindowSizeTests: XCTestCase {
   /// The window of the Settings scene itself, opened the way ⌘, opens it. The Settings scene
   /// gave its window no corner to drag, whatever `windowResizability` said, and the sizes of
   /// the content above said nothing about that. Now it can be dragged larger, keeps the size it
-  /// was given when another tab is chosen, and stops at the minimum.
+  /// was given when another section is chosen, and stops at the minimum.
   ///
   /// The window keeps its frame and its tab in the defaults of the test host, which are the
   /// owner's Debug ones: whatever the test changed there is put back.
@@ -105,18 +105,17 @@ final class SettingsWindowSizeTests: XCTestCase {
     XCTAssertEqual(content.frame.width, 880, accuracy: 1, "not made wider; \(room())")
     XCTAssertEqual(content.frame.height, 700, accuracy: 1, "not made taller; \(room())")
 
-    // Another tab: SwiftUI sets the frame of the window again, and the corner stays.
-    let toolbar = try XCTUnwrap(window.toolbar, "the tabs are not in a toolbar")
-    let other = try XCTUnwrap(
-      toolbar.items.first { $0.itemIdentifier != toolbar.selectedItemIdentifier })
-    toolbar.selectedItemIdentifier = other.itemIdentifier
-    if let action = other.action { NSApp.sendAction(action, to: other.target, from: other) }
+    // Another section: SwiftUI lays the window out again, and the corner and the size stay.
+    let navigation = SettingsNavigation.shared
+    let shown = navigation.section
+    defer { navigation.section = shown }
+    navigation.section = navigation.section == .accounts ? .backups : .accounts
     RunLoop.main.run(until: Date().addingTimeInterval(0.5))
-    XCTAssertTrue(window.styleMask.contains(.resizable), "another tab took the corner away")
+    XCTAssertTrue(window.styleMask.contains(.resizable), "another section took the corner away")
     XCTAssertEqual(
-      content.frame.width, 880, accuracy: 1, "another tab shrank the window; \(room())")
+      content.frame.width, 880, accuracy: 1, "another section shrank the window; \(room())")
     XCTAssertEqual(
-      content.frame.height, 700, accuracy: 1, "another tab shrank the window; \(room())")
+      content.frame.height, 700, accuracy: 1, "another section shrank the window; \(room())")
   }
 
   /// The domain as it was: a key the test added goes, a key it changed or removed gets its

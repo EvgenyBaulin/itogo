@@ -23,7 +23,7 @@ struct PlanningLayoutTests {
     #expect(
       read == [
         .goals, .payments, .advice, .freeMoney, .subscriptions, .expectedIncome,
-        .limits, .events,
+        .limits, .events, .selfEmployment,
       ])
     #expect(Set(read) == Set(PlanningBlock.allCases))
     #expect(read.count == PlanningBlock.allCases.count)
@@ -32,15 +32,15 @@ struct PlanningLayoutTests {
   @Test func encodeAndDecodeRoundTrip() {
     let order: [PlanningBlock] = [
       .advice, .events, .goals, .limits, .expectedIncome,
-      .subscriptions, .payments, .freeMoney,
+      .subscriptions, .payments, .freeMoney, .selfEmployment,
     ]
     #expect(
       PlanningBlocks.encode(order) == "advice,events,goals,limits,expectedIncome,"
-        + "subscriptions,payments,freeMoney")
+        + "subscriptions,payments,freeMoney,selfEmployment")
     #expect(PlanningBlocks.decode(PlanningBlocks.encode(order)) == order)
     // An order missing blocks is written whole.
     #expect(PlanningBlocks.decode(PlanningBlocks.encode([.goals])).first == .goals)
-    #expect(PlanningBlocks.decode(PlanningBlocks.encode([.goals])).count == 8)
+    #expect(PlanningBlocks.decode(PlanningBlocks.encode([.goals])).count == 9)
   }
 
   /// The raw values are what the setting and the archive keep: renaming one would lose the order.
@@ -48,7 +48,7 @@ struct PlanningLayoutTests {
     #expect(
       PlanningBlock.allCases.map(\.rawValue) == [
         "freeMoney", "payments", "subscriptions", "expectedIncome", "limits", "goals", "events",
-        "advice",
+        "advice", "selfEmployment",
       ])
   }
 
@@ -67,10 +67,10 @@ struct PlanningLayoutTests {
     let order = PlanningBlocks.standard
     #expect(PlanningBlocks.moving(.payments, by: -1, in: order).first == .payments)
     #expect(PlanningBlocks.moving(.freeMoney, by: -1, in: order) == order)
-    #expect(PlanningBlocks.moving(.advice, by: 1, in: order) == order)
+    #expect(PlanningBlocks.moving(.selfEmployment, by: 1, in: order) == order)
     #expect(!PlanningBlocks.canMove(.freeMoney, by: -1, in: order))
     #expect(PlanningBlocks.canMove(.freeMoney, by: 1, in: order))
-    #expect(!PlanningBlocks.canMove(.advice, by: 1, in: order))
+    #expect(!PlanningBlocks.canMove(.selfEmployment, by: 1, in: order))
     #expect(PlanningBlocks.isStandard(order))
     #expect(!PlanningBlocks.isStandard(PlanningBlocks.moving(.limits, by: 1, in: order)))
   }
@@ -80,7 +80,7 @@ struct PlanningLayoutTests {
     let order = PlanningBlocks.standard
     #expect(PlanningBlocks.columns(order, count: 1) == [order])
     let two = PlanningBlocks.columns(order, count: 2)
-    #expect(two[0] == [.freeMoney, .subscriptions, .limits, .events])
+    #expect(two[0] == [.freeMoney, .subscriptions, .limits, .events, .selfEmployment])
     #expect(two[1] == [.payments, .expectedIncome, .goals, .advice])
     #expect(PlanningBlocks.columns(order, count: 0) == [order])
   }

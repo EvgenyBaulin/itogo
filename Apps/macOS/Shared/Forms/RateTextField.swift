@@ -58,7 +58,7 @@ struct RateFormulaResult: View {
 
   var body: some View {
     Text(verbatim: "= \(NumberText.plain(rate, minus: "\u{2212}"))")
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
       .lineLimit(1)
       .fixedSize()

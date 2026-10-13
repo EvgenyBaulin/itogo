@@ -304,7 +304,7 @@ public enum AdviceBook {
     items += AdviceRules.badCutScenarios(context, goals: planning.goals)
     items += AdviceRules.badLimitSuggestion(context, budgets: budgets)
     items += AdviceRules.debtLoad(
-      context, debts: planning.debts, income: planning.income.value,
+      context, debts: planning.debts, accounts: planning.accounts.balances,
       rubPerUnit: planning.rubPerUnit)
     items += AdviceRules.debtPayoffs(planning.debts)
     items += AdviceRules.owedByPerson(context, debts: planning.debts)

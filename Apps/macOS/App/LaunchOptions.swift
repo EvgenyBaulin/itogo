@@ -20,7 +20,8 @@ import SwiftUI
 /// * `--slow-pipeline` — Debug only: every step of the pipeline takes three seconds from the
 ///   run of the launch on, as Debug → Pipeline → «Slow down» makes it for ⌘R, so the
 ///   placeholders of the start can be seen (`make sample ARGS=--slow-pipeline`).
-/// * `--open transactions,analytics,reports` — open these windows at launch;
+/// * `--open transactions,analytics,reports` — open these windows at launch (`transactions` is
+///   «Операции» of the main window, chosen in place of the screen it opens on);
 ///   `--analytics-section <id>` and `--analytics-period <month|year|12m>` choose what the
 ///   Analytics window shows, and only on a data set: the set keeps them under keys of its
 ///   own (`AnalyticsWindow.storageKey`), because the Debug build and the Release of
@@ -190,7 +191,8 @@ enum LaunchWindows {
         forKey: AnalyticsWindow.storageKey(
           AnalyticsWindow.periodStorageName, dataSet: options.dataSet))
     }
-    for window in options.windows {
+    // Transactions is a screen of the main window, which chooses it itself (`MainWindow`).
+    for window in options.windows where window != .transactions {
       openWindow(id: window.rawValue)
     }
   }

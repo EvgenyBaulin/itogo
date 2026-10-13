@@ -40,7 +40,7 @@ struct EventsBlock: View {
             HStack(alignment: .firstTextBaseline) {
               Text(verbatim: plan.event.name)
               Text(verbatim: PlanningText.eventWhen(plan, environment))
-                .font(.caption).foregroundStyle(.secondary)
+                .appFont(.caption).foregroundStyle(.secondary)
               Spacer(minLength: 6)
               if let budget = plan.budget {
                 Text(
@@ -52,7 +52,7 @@ struct EventsBlock: View {
               }
               Button(t("events.edit")) { form = EventFormItem(event: plan.event) }
                 .buttonStyle(.link)
-                .font(.caption)
+                .appFont(.caption)
                 .accessibilityLabel(Text(verbatim: "\(t("events.edit")): \(plan.event.name)"))
             }
             if plan.overBudget || plan.pacing {
@@ -61,7 +61,7 @@ struct EventsBlock: View {
               } icon: {
                 Image(systemName: "exclamationmark.triangle")
               }
-              .font(.caption)
+              .appFont(.caption)
             }
             if !plan.byCategory.isEmpty {
               Text(
@@ -69,7 +69,7 @@ struct EventsBlock: View {
                   "\(PlanningText.categoryPath($0.categoryId, tree: snapshot.ledger.tree) ?? "—") \(environment.money.rounded($0.amount))"
                 }.joined(separator: " · ")
               )
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
             }
             let tied = Self.tiedDues(of: plan.event, snapshot)
@@ -85,7 +85,7 @@ struct EventsBlock: View {
                       + environment.money.exact(due.amount, currency: due.currency)
                   }.joined(separator: "; "))
               )
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
             }
@@ -99,7 +99,7 @@ struct EventsBlock: View {
                         "events.monthly", table: "Planning", environment.money.rounded($0))
                   } ?? "")
               )
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
             }
           }

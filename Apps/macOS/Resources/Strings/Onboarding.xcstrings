@@ -800,23 +800,6 @@
         }
       }
     },
-    "onboarding.issue.tooManyCurrencies": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "More than ten currencies would be switched on."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Включённых валют стало бы больше десяти."
-          }
-        }
-      }
-    },
     "onboarding.kind.account": {
       "extractionState": "manual",
       "localizations": {

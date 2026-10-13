@@ -1,3 +1,4 @@
+import CoreAccounting
 import CoreAnalytics
 import CoreKit
 import Foundation
@@ -12,20 +13,29 @@ extension AdviceRules {
   /// The oldest expectations listed.
   static let oldestShown = 3
 
-  /// The debt load («общий остаток и нагрузка — платежи / доход»): the total balance of
-  /// the debts I owe and `DebtLoad` — their monthly payments against the income of the month
-  /// «can save» divides by as well. No debt I owe: no suggestion; no income: «not enough
-  /// data».
+  /// The debt load: the total balance of the debts I owe and `DebtLoad.month` — what the
+  /// schedules of the month ask plus 5 % of the debt on credit cards, against the median income
+  /// of «Заработок» of the six full months before (`DebtLoad.history`, its last month). No debt
+  /// I owe: no suggestion; no earnings: «not enough data».
   static func debtLoad(
-    _ context: AdviceContext, debts: DebtsOverview, income: AmountE4?,
-    rubPerUnit: [CurrencyCode: Decimal]
+    _ context: AdviceContext, debts: DebtsOverview, accounts: AccountBalances,
+    rubPerUnit: [CurrencyCode: Decimal], earnings: ((UUID?) -> Bool)? = nil
   ) -> [Advice] {
     guard !debts.iOwe.isEmpty else { return [] }
-    var dues: [UUID: DebtDueState] = [:]
-    for line in debts.iOwe + debts.closed { dues[line.id] = line.dues }
-    let load = DebtLoad.load(
-      debts: context.ledger.dataset.debts, ledger: context.ledger, today: context.today,
-      income: income, rubPerUnit: rubPerUnit, dues: dues)
+    let dataset = context.ledger.dataset
+    let tree = context.ledger.tree
+    let isEarnings =
+      earnings ?? { categoryId in
+        Allocation.isEarnings(
+          categoryId: categoryId, tree: tree, settings: dataset.allocationSettings)
+      }
+    guard
+      let load = DebtLoad.history(
+        months: 1, ledger: context.ledger, debts: dataset.debts,
+        journal: dataset.planning.debtEntries, accounts: accounts, rubPerUnit: rubPerUnit,
+        today: context.today, earnings: isEarnings
+      ).last?.load
+    else { return [.notEnoughData(.debtLoad, reason: Reason.noIncome)] }
     guard case .ready = load.status, let loadBp = load.loadBp, let incomeRub = load.incomeRub
     else {
       return [.notEnoughData(.debtLoad, reason: Reason.noIncome)]

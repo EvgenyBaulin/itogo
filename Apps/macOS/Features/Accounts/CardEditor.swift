@@ -55,7 +55,7 @@ struct CardEditor: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t(previous == nil ? "card.editor.newTitle" : "card.editor.title"))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         NameField(
           title: t("card.editor.name"), text: $draft.name, identifier: "card.editor.name")
@@ -132,7 +132,7 @@ struct CardRefusalNote: View {
       )
       .fixedSize(horizontal: false, vertical: true)
     }
-    .font(.callout)
+    .appFont(.callout)
     .accessibilityElement(children: .combine)
   }
 }

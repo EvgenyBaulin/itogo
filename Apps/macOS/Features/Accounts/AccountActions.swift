@@ -64,6 +64,8 @@ enum AccountRefusal: Error, Hashable, Sendable {
   case balanceChanged(BalanceKey)
   /// «Проценты» do not read, or name where the interest cannot go.
   case interest(InterestIssue)
+  /// The terms of a credit card do not read.
+  case credit(CreditTermsIssue)
 
   /// The account a refusal of `inUse` is about: it can still be merged or archived.
   var accountInUse: UUID? {
@@ -241,6 +243,9 @@ struct AccountActions {
     if previous == nil {
       account.sort = AccountRules.sortForNewAccount(among: all.filter { !$0.archived })
     }
+    // The main card is always a live card of the account: one that went to the archive or was
+    // merged away since the form opened is not written.
+    account.mainCardId = CardRules.validMainCard(of: account, cards: cards)
     let at = environment.now()
     var bankRows: [Bank] = []
     let banks = self.banks
@@ -282,7 +287,24 @@ struct AccountActions {
     if account.interest != nil, !account.archived {
       addInterestCategory(to: &change, books: books)
     }
-    return apply(change)
+    let outcome = apply(change)
+    if outcome == .done { Self.logCredit(of: account, previous: previous) }
+    return outcome
+  }
+
+  /// A saved account whose terms of a credit card or main card changed is said in the journal,
+  /// by id and flags only.
+  static func logCredit(of account: PaymentMethod, previous: PaymentMethod?) {
+    if account.credit != previous?.credit {
+      AppLog.info(
+        "cards.credit.saved", .db, "the terms of a credit card were saved",
+        [LogPair("account", .id(account.id)), LogPair("credit", .flag(account.credit != nil))])
+    }
+    if account.mainCardId != previous?.mainCardId {
+      AppLog.info(
+        "cards.mainCard.set", .db, "the main card of an account changed",
+        [LogPair("account", .id(account.id)), LogPair("chosen", .flag(account.mainCardId != nil))])
+    }
   }
 
   /// Makes a live account the main one; the flag leaves every other in the same write.
@@ -469,13 +491,11 @@ struct AccountActions {
     guard !live.contains(where: { Self.folded($0.name) == name }) else {
       return .refused(.nameTaken)
     }
+    // Every currency the account holds is switched on again, however many are on already.
     let enabled = enabledCurrencies
     var missing: [CurrencyCode] = []
     for currency in account.currencies where !enabled.contains(currency) {
       if !missing.contains(currency) { missing.append(currency) }
-    }
-    if let first = missing.first, enabled.count + missing.count > CurrencyCode.maxEnabled {
-      return .refused(.currencyNotEnabled(first))
     }
     var rows = PlanningRows()
     if let groupId = account.groupId,
@@ -1029,6 +1049,7 @@ enum AccountText {
     case .bankMerge(.notFound), .bankMerge(.sameBank): return t("account.refusal.notFound")
     case .notFound: return t("account.refusal.notFound")
     case .interest(let issue): return t(InterestText.issueKey(issue))
+    case .credit(let issue): return t(issue.messageKey)
     case .balanceChanged(let key):
       let name =
         (try? environment.accounts?.accounts(includeArchived: true))?
@@ -1071,7 +1092,7 @@ struct AccountRefusalNote: View {
         }
       }
     }
-    .font(.callout)
+    .appFont(.callout)
     .accessibilityElement(children: .contain)
   }
 }
@@ -1114,7 +1135,7 @@ struct MainHandOverSheet: View {
         verbatim: environment.format(
           "account.handOver.title", table: AccountText.table, leaving.name)
       )
-      .font(.headline)
+      .appFont(.headline)
       if candidates.isEmpty {
         AccountRefusalNote(refusal: .noSuccessor)
       } else {
@@ -1204,7 +1225,7 @@ struct AccountMergeSheet: View {
       Text(
         verbatim: environment.format("account.merge.title", table: AccountText.table, source.name)
       )
-      .font(.headline)
+      .appFont(.headline)
       Picker(selection: $target) {
         ForEach(targets, id: \.id) { account in
           Text(verbatim: account.name).tag(UUID?.some(account.id))
@@ -1256,27 +1277,27 @@ struct AccountMergeSheet: View {
         verbatim: environment.format(
           "account.merge.balances", table: AccountText.table, targetName)
       )
-      .font(.subheadline)
+      .appFont(.subheadline)
       .foregroundStyle(.secondary)
       Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
         ForEach(counted, id: \.key) { key, amount in
           GridRow {
             Text(verbatim: key.currency.code)
-              .font(.body.monospaced())
+              .appFont(.body.monospaced())
             Text(verbatim: environment.money.exact(amount, currency: key.currency))
-              .font(.body.monospacedDigit())
+              .appFont(.body.monospacedDigit())
           }
         }
         ForEach(preview.needsBalance, id: \.self) { key in
           GridRow {
             Text(verbatim: key.currency.code)
-              .font(.body.monospaced())
+              .appFont(.body.monospaced())
             TextField(
               text: Binding(get: { answers[key] ?? "" }, set: { answers[key] = $0 })
             ) {
               Text(verbatim: t("account.merge.unknown"))
             }
-            .font(.body.monospacedDigit())
+            .appFont(.body.monospacedDigit())
             .frame(width: 160)
           }
         }
@@ -1288,7 +1309,7 @@ struct AccountMergeSheet: View {
               "account.merge.emptyKeepsCount", table: AccountText.table, targetName)
             : t("account.merge.unknownHint")
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       }

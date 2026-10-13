@@ -260,7 +260,7 @@ struct AccountInterestBlock: View {
       } icon: {
         Image(systemName: lines.ended ? "calendar.badge.checkmark" : "calendar")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       if let notCounted = lines.notCounted {
         Label {
@@ -323,9 +323,9 @@ struct DepositIncomeSheet: View {
   var body: some View {
     VStack(alignment: .leading) {
       Text(verbatim: t("account.interest.recordTitle"))
-        .font(.headline)
+        .appFont(.headline)
       Text(verbatim: depositName)
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       Form {
         LabeledContent(t("account.interest.recordAmount")) {
@@ -342,7 +342,7 @@ struct DepositIncomeSheet: View {
           Text(verbatim: categoryName)
         }
         Text(verbatim: t("account.interest.recordHint"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }

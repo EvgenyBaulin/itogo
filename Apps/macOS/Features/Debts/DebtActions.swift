@@ -31,18 +31,34 @@ struct DebtActions {
   /// A loan written on the day its payment falls due (`DebtTerms.asksAboutThisMonth`) is asked
   /// whether this month's payment is made already: with `termPaid` the first line is followed by
   /// a payment of nothing that closes the due of the day, so the first one owed is next month's.
+  ///
+  /// `costs` — the fees and insurance of a loan (`debt_costs`) — are written with it: a cost
+  /// held back from the loan (`inLoan`) grows the first line by its sum, one paid once apart is
+  /// an expense of its own on its day (`costOperations`).
   @discardableResult
   func create(
     _ debt: Debt, balance: AmountE4, on day: DateOnly, moneyMovedNow: Bool,
-    account: UUID? = nil, charged: Money? = nil, at moment: Date? = nil, termPaid: Bool = false
+    account: UUID? = nil, charged: Money? = nil, at moment: Date? = nil, termPaid: Bool = false,
+    costs: [DebtCost] = []
   ) -> Bool {
     guard !balance.isNegative else { return false }
+    let costs = costs.map { cost in
+      var own = cost
+      own.debtId = debt.id
+      return own
+    }
+    let balance =
+      balance + AmountE4.sum(costs.filter { $0.inLoan && $0.every == .once }.map(\.amountE4))
     // Named without the spaces around it: the Loans subcategory and the entry line's word
     // take the name as it is saved.
     var debt = debt
     debt.name = debt.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Made with the terms of this version in view: never asked about them as an old debt.
+    debt.termsReviewed = true
     var rows = PlanningRows.empty
     rows.debts = [withSubcategory(debt, rows: &rows)]
+    debt = rows.debts[0]
+    let costsWritten = costOperations(debt, costs: costs, account: account, rows: &rows)
     // What is owed when the debt is written down is not money that moves now, unless it is
     // (money lent or borrowed today): a reconciliation must not count an old loan as cash
     // that came in.
@@ -66,7 +82,13 @@ struct DebtActions {
             closesTerm: true))
       }
     }
-    return apply(PlanningChange(upsert: rows))
+    guard apply(PlanningChange(created: costsWritten, upsert: rows)) else { return false }
+    if !costs.isEmpty {
+      AppLog.info(
+        "debts.costs.saved", .db, "the costs of a loan were saved",
+        [LogPair("debt", .id(debt.id)), LogPair("costs", .count(costs.count))])
+    }
+    return true
   }
 
   /// A line of money borrowed or lent through the journal alone names the account it moved on
@@ -208,11 +230,14 @@ struct DebtActions {
   /// when typed from the statement, else the prefill at the rate of the operation.
   ///
   /// With `closesTerm` — «в этом месяце больше платежей не будет» — the line says the due the
-  /// payment was made for is closed although the payment is smaller than the monthly one.
+  /// payment was made for is closed although the payment is smaller than the monthly one. With
+  /// `prepay` the payment is an early repayment and the line keeps the answer
+  /// (`DebtPrepayment.marking`); the markup of an instalment plan is an operation of its own,
+  /// like the interest of a loan.
   @discardableResult
   func pay(
     _ debt: Debt, amount: AmountE4, on day: Date, paymentMethodId: UUID?, closing: Bool = false,
-    charged: Money? = nil, closesTerm: Bool = false
+    charged: Money? = nil, closesTerm: Bool = false, prepay: PrepayChoice? = nil
   ) -> Bool {
     guard !debt.closed else { return false }
     var rows = PlanningRows.empty
@@ -243,10 +268,15 @@ struct DebtActions {
     // On a loan that accrues interest the payment pays the interest accrued first: that part is
     // an operation of its own in «Кредиты» (`DebtInterestPayment`), and only the rest lowers the
     // principal.
-    let change = DebtInterestPayment.parting(
-      PlanningChange(created: [entry], upsert: rows), paying: debt,
-      environment: planning.environment, snapshot: snapshot)
-    let interest = AmountE4.sum(change.created.dropFirst().map(\.transaction.amountE4))
+    let change = DebtPrepayment.marking(
+      DebtInterestPayment.parting(
+        PlanningChange(created: [entry], upsert: rows), paying: debt,
+        environment: planning.environment, snapshot: snapshot),
+      debt: debt, choice: prepay)
+    let interest = AmountE4.sum(
+      change.created.dropFirst()
+        .filter { DebtInterestPayment.payment(ofKey: $0.transaction.externalId) != nil }
+        .map(\.transaction.amountE4))
     rows = change.upsert
     if closing, let left = balance(of: debt), let owed = payoff(of: debt),
       Self.paysOff(amount, balance: owed)

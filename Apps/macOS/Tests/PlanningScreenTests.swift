@@ -388,7 +388,8 @@ final class PlanningScreenTests: XCTestCase {
       "2 подсказки")
     for block in PlanningBlock.allCases {
       XCTAssertEqual(
-        PlanningBlockText.emptyHint(of: block) != nil, ![.freeMoney, .advice].contains(block))
+        PlanningBlockText.emptyHint(of: block) != nil,
+        ![.freeMoney, .advice, .selfEmployment].contains(block))
     }
   }
 

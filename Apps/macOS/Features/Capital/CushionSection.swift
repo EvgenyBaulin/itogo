@@ -68,16 +68,16 @@ struct CushionSection: View {
         .fixedSize(horizontal: false, vertical: true)
       } else {
         Text(verbatim: CushionText.lastsLine(status, environment))
-          .font(.title3.weight(.semibold).monospacedDigit())
+          .appFont(.title3.weight(.semibold).monospacedDigit())
         Text(verbatim: CushionText.summaryLine(status, environment))
-          .font(.callout.monospacedDigit())
+          .appFont(.callout.monospacedDigit())
           .foregroundStyle(.secondary)
         if let breakdown = CushionText.breakdown(of: status.obligatory) {
           breakdownLines(breakdown)
         }
         CushionBar(status: status, settings: settings)
         Text(verbatim: CushionText.goalHint(status.goal, settings: settings, environment))
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         if !status.unanchored.isEmpty {
@@ -86,7 +86,7 @@ struct CushionSection: View {
           } icon: {
             Image(systemName: "hourglass")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -112,7 +112,7 @@ struct CushionSection: View {
         .foregroundStyle(.secondary)
       }
     }
-    .font(.caption)
+    .appFont(.caption)
     .frame(maxWidth: 360, alignment: .leading)
   }
 
@@ -148,7 +148,7 @@ struct CushionBar: View {
         .frame(height: 6)
         .accessibilityHidden(true)
       Text(verbatim: CushionText.barLabel(status, environment))
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
         .fixedSize()
     }
@@ -168,7 +168,7 @@ struct CushionPlanningRow: View {
       } icon: {
         Image(systemName: CushionText.symbol)
       }
-      .font(.callout.monospacedDigit())
+      .appFont(.callout.monospacedDigit())
       Spacer(minLength: 6)
       Button(CushionText.t("cushion.planning.open", environment)) {
         NotificationCenter.default.post(

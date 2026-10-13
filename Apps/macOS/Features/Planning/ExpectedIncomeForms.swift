@@ -23,7 +23,7 @@ struct ExpectedIncomeForm: View {
   var body: some View {
     let choices = PlanningChoices(compute, environment)
     VStack(alignment: .leading) {
-      Text(verbatim: t(original == nil ? "form.expected.new" : "form.expected.edit")).font(
+      Text(verbatim: t(original == nil ? "form.expected.new" : "form.expected.edit")).appFont(
         .headline)
       Form {
         TextField(t("form.name"), text: $income.name)
@@ -333,7 +333,7 @@ struct LinkIncomeForm: View {
     let candidates = self.candidates
     VStack(alignment: .leading, spacing: 10) {
       Text(verbatim: environment.format("form.link.title", table: "Planning", status.income.name))
-        .font(.headline)
+        .appFont(.headline)
       if candidates.isEmpty {
         Text(verbatim: t("form.link.none")).foregroundStyle(.secondary)
       }

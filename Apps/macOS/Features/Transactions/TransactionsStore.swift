@@ -810,6 +810,38 @@ public final class TransactionsStore {
     }
   }
 
+  // MARK: The allocation of an income
+
+  /// What the allocation of the incomes among `ids` wrote (`Allocation.linked`) and `ids` does
+  /// not name already: the contributions and the transfers «Удалить и распределение» takes along
+  /// in the same step of ⌘Z — `delete(ids:)` with them added deletes them as any operation and
+  /// transfer. Nothing when no income among `ids` was allocated.
+  public func allocation(
+    ofDeleting ids: some Collection<UUID>
+  ) -> (contributions: [UUID], transfers: [UUID]) {
+    guard let dataset = listing?.dataset, !ids.isEmpty else { return ([], []) }
+    let asked = Set(ids)
+    var contributions: [UUID] = []
+    var transfers: [UUID] = []
+    for entry in entries(ids: asked) where entry.transaction.kind == .income {
+      let linked = Allocation.linked(
+        incomeId: entry.id, entries: dataset.entries, transfers: dataset.transfers)
+      contributions += linked.contributions.filter { !asked.contains($0) }
+      transfers += linked.transfers.filter { !asked.contains($0) }
+    }
+    return (contributions, transfers)
+  }
+
+  /// «Распределено больше, чем пришло»: what the allocation of the income comes to above
+  /// `amount`, the sum the edit gives it; `nil` while it is not more. The edit is not refused —
+  /// the sheet of the income says it too.
+  public func allocatedBeyond(incomeId: UUID, amount: AmountE4) -> AmountE4? {
+    guard let dataset = listing?.dataset else { return nil }
+    let done = Allocation.distributed(
+      incomeId: incomeId, entries: dataset.entries, transfers: dataset.transfers)
+    return done > amount ? done - amount : nil
+  }
+
   // MARK: Transfers
 
   /// The transfers among `ids`, as the lists show them now; the rest of `ids` are operations.

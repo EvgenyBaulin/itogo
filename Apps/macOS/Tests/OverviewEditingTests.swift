@@ -101,16 +101,20 @@ final class OverviewEditingTests: XCTestCase {
   /// hidden tiles nobody sees.
   func testEditingOnOverviewChangesTheLayout() {
     environment.overviewLayout = .standard
-    XCTAssertTrue(environment.overviewLayout.hiddenInOrder.isEmpty)
+    // Only the tiles that wait to be added are hidden at first.
+    XCTAssertEqual(environment.overviewLayout.hiddenInOrder, [.installments, .selfEmployment])
     XCTAssertTrue(OverviewTilesActions.hide(environment, .canSave))
     XCTAssertTrue(OverviewTilesActions.hide(environment, .worthALook))
-    XCTAssertEqual(environment.overviewLayout.hiddenInOrder, [.canSave, .worthALook])
+    XCTAssertEqual(
+      environment.overviewLayout.hiddenInOrder,
+      [.canSave, .installments, .selfEmployment, .worthALook])
     XCTAssertEqual(OverviewTilesActions.moves(environment, .monthToDate, amongShown: true), [1])
     XCTAssertTrue(OverviewTilesActions.move(environment, .monthToDate, by: 1, amongShown: true))
     XCTAssertEqual(
       Array(environment.overviewLayout.shownTiles(in: .money).prefix(2)), [.owedToMe, .monthToDate])
     XCTAssertTrue(OverviewTilesActions.show(environment, .canSave))
-    XCTAssertEqual(environment.overviewLayout.hiddenInOrder, [.worthALook])
+    XCTAssertEqual(
+      environment.overviewLayout.hiddenInOrder, [.installments, .selfEmployment, .worthALook])
 
     XCTAssertTrue(OverviewTilesActions.drop(environment, .capital, onto: .limits))
     XCTAssertEqual(environment.overviewLayout.shownTiles(in: .plan).first, .capital)

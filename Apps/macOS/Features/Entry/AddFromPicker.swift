@@ -433,8 +433,9 @@ struct NewRecordForm {
     return .success(account.id)
   }
 
-  /// «Вернуть» of an account from «Add…»: first whether its currencies fit among the ten that
-  /// may be on, then the account by the rules of the accounts, then its currencies switched on.
+  /// «Вернуть» of an account from «Add…»: the account by the rules of the accounts, then its
+  /// currencies of the bank switched on — as many as it holds; the owner's own currencies are
+  /// never switched on, they are always offered.
   @MainActor
   static func restoreAccount(
     _ id: UUID, environment: AppEnvironment, store: TransactionsStore
@@ -444,9 +445,8 @@ struct NewRecordForm {
         .first(where: { $0.id == id })
     else { return .refused(.notFound) }
     let enabled = (try? settings.enabledCurrencies()) ?? CurrencyCode.defaultEnabled
-    let missing = account.currencies.filter { !enabled.contains($0) }
-    if let first = missing.first, enabled.count + missing.count > CurrencyCode.maxEnabled {
-      return .refused(.currencyNotEnabled(first))
+    let missing = account.currencies.filter {
+      !enabled.contains($0) && !environment.currencyCatalog.isCustom($0)
     }
     let outcome = AccountActions(environment: environment, store: store).restore(id)
     guard outcome == .done, !missing.isEmpty else { return outcome }

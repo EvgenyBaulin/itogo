@@ -460,6 +460,40 @@
         }
       }
     },
+    "entry.allocate.action": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allocate…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Распределить…"
+          }
+        }
+      }
+    },
+    "entry.allocate.offer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recorded. Allocate %@?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записано. Распределить %@?"
+          }
+        }
+      }
+    },
     "entry.amount": {
       "extractionState": "manual",
       "localizations": {
@@ -1871,6 +1905,193 @@
         }
       }
     },
+    "entry.instalments": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalments"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рассрочка частями"
+          }
+        }
+      }
+    },
+    "entry.instalments.markup": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Markup"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переплата"
+          }
+        }
+      }
+    },
+    "entry.instalments.name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalments"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рассрочка"
+          }
+        }
+      }
+    },
+    "entry.instalments.parts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Частей"
+          }
+        }
+      }
+    },
+    "entry.instalments.step": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pay"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Платить"
+          }
+        }
+      }
+    },
+    "entry.instalments.step.days": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every %lld days"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "каждые %lld дн."
+          }
+        }
+      }
+    },
+    "entry.instalments.step.month": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "once a month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "раз в месяц"
+          }
+        }
+      }
+    },
+    "entry.instalments.step.twoWeeks": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every 2 weeks"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "каждые 2 недели"
+          }
+        }
+      }
+    },
+    "entry.instalments.step.week": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every week"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "каждую неделю"
+          }
+        }
+      }
+    },
+    "entry.instalments.summary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A part is %@; the first on the day of the purchase."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Часть — %@, первая — в день покупки."
+          }
+        }
+      }
+    },
+    "entry.instalments.summary.month": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A part is %@; the first a month after the purchase."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Часть — %@, первая — через месяц после покупки."
+          }
+        }
+      }
+    },
     "entry.kind.tiles": {
       "extractionState": "manual",
       "localizations": {
@@ -2037,6 +2258,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "За другого"
+          }
+        }
+      }
+    },
+    "entry.payWith.account": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счёт"
+          }
+        }
+      }
+    },
+    "entry.payWith.card": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карта"
+          }
+        }
+      }
+    },
+    "entry.payWith.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Card: the purchase is made with the card the line named, the one used at this place, or the main card of the account. Account: the money leaves the account itself, with no card — as «from account» in the line."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Карта — трата с карты, названной в строке, с той, что платили здесь в прошлый раз, или с основной карты счёта. Счёт — деньги уходят со счёта без карты, как «со счёта» в строке."
           }
         }
       }
@@ -2381,6 +2653,91 @@
         }
       }
     },
+    "entry.prepay.forward": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It is a payment ahead"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это платёж вперёд"
+          }
+        }
+      }
+    },
+    "entry.prepay.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Will the bank shorten the term of the loan or lower its monthly payment — or does the money pay the next payments ahead?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк уменьшит срок кредита или ежемесячный платёж — или деньги закроют следующие платежи вперёд?"
+          }
+        }
+      }
+    },
+    "entry.prepay.payment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lower the payment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Уменьшить платёж"
+          }
+        }
+      }
+    },
+    "entry.prepay.term": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shorten the term"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Уменьшить срок"
+          }
+        }
+      }
+    },
+    "entry.prepay.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ above the payment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сверх платежа %@"
+          }
+        }
+      }
+    },
     "entry.quality": {
       "extractionState": "manual",
       "localizations": {
@@ -2704,6 +3061,40 @@
         }
       }
     },
+    "entry.selfEmployed.action": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включить…"
+          }
+        }
+      }
+    },
+    "entry.selfEmployed.offer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recorded. Count the tax of the self-employed?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Записано. Учитывать налог самозанятого?"
+          }
+        }
+      }
+    },
     "entry.split": {
       "extractionState": "manual",
       "localizations": {
@@ -2734,6 +3125,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Подкатегория"
+          }
+        }
+      }
+    },
+    "entry.tax.estimate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tax ≈ %1$@ (%2$@)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "налог ≈ %1$@ (%2$@)"
           }
         }
       }

@@ -13,7 +13,10 @@ import Foundation
 /// - with no network at all the last known rate is used and the operation is marked
 ///   provisional, to be refined once the real rate arrives — before everything the table
 ///   holds, the nearest rate it knows;
-/// - a rate entered by hand or brought in by an import is never overwritten automatically.
+/// - a rate entered by hand or brought in by an import is never overwritten automatically;
+/// - a currency outside ISO 4217 — a custom one, with rates typed by hand — is never asked of
+///   the bank, which publishes none: its rate on a day is the last one typed for that day or
+///   before it, and before the first one there is no rate at all, not a guess.
 public struct RateTable: Sendable, Equatable {
   /// Rates per currency, ascending by date, at most one per date.
   private let series: [CurrencyCode: [Rate]]
@@ -51,6 +54,19 @@ public struct RateTable: Sendable, Equatable {
 
   public var isEmpty: Bool { series.isEmpty }
 
+  /// Whether the bank is ever asked for the currency: every code of ISO 4217 but the ruble. A
+  /// custom currency is never one — its code is not ISO by definition — and the bank publishes
+  /// nothing but ISO codes.
+  public static func isAskedOfTheBank(_ currency: CurrencyCode) -> Bool {
+    currency != .rub && ISOCurrencies.contains(currency)
+  }
+
+  /// Every rate of the currency, latest first: the history of the rates of a custom currency, as
+  /// its list shows it.
+  public func history(of currency: CurrencyCode) -> [Rate] {
+    (series[currency] ?? []).reversed()
+  }
+
   // MARK: - Lookup
 
   /// The rate that applies to an operation made on `day`: the rate published that day, or,
@@ -83,7 +99,7 @@ public struct RateTable: Sendable, Equatable {
   /// days between them without a rate, although the bank published one for each; nothing
   /// but the bank can tell such a day from a holiday.
   public func needsFetch(currency: CurrencyCode, on day: DateOnly) -> Bool {
-    if currency == .rub { return false }
+    guard RateTable.isAskedOfTheBank(currency) else { return false }
     guard let rate = rate(for: currency, on: day) else { return true }
     if rate.date == day { return false }
     // The bank said nothing was published after `publication` up to this day. A rate the
@@ -106,7 +122,13 @@ public struct RateTable: Sendable, Equatable {
   /// first one, provisional: without it the operation could not be saved at all, and
   /// offline an operation takes the last known rate with the flag anyway. Only a currency
   /// with no rate at all resolves to nil.
+  ///
+  /// A custom currency is never provisional — no bank will ever refine its rate —, and a day
+  /// before its first rate has none: the owner types it.
   public func resolve(_ currency: CurrencyCode, on day: DateOnly) -> RateResolution? {
+    if currency != .rub, !RateTable.isAskedOfTheBank(currency) {
+      return rate(for: currency, on: day).map { RateResolution(rate: $0, isProvisional: false) }
+    }
     guard let rate = rate(for: currency, on: day) else {
       guard currency != .rub, let nearest = series[currency]?.first else { return nil }
       return RateResolution(rate: nearest, isProvisional: true)

@@ -61,7 +61,7 @@ struct ExpectedIncomeBlock: View {
               .monospacedDigit()
             }
             Text(verbatim: detail(status))
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.secondary)
             HStack(spacing: 8) {
               Button(t("expected.link")) { sheet = .linkIncome(status) }
@@ -73,7 +73,7 @@ struct ExpectedIncomeBlock: View {
               }
             }
             .buttonStyle(.link)
-            .font(.caption)
+            .appFont(.caption)
           }
           .contextMenu {
             Button(t("expected.edit")) { sheet = .expected(status.income) }
@@ -161,7 +161,7 @@ struct ExpectedIncomeBlock: View {
         Text(
           verbatim: environment.format("expected.archive", table: "Planning", counts: closed.count))
       }
-      .font(.callout)
+      .appFont(.callout)
       .accessibilityIdentifier("expected.archive")
     }
   }
@@ -240,7 +240,7 @@ struct AdviceBlock: View {
       } icon: {
         Image(systemName: "info.circle")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       ComputedBlock(
         title: hosted ? nil : t("advice.title"), state: compute.states.advice,
@@ -266,22 +266,25 @@ private struct AdviceRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 3) {
       Text(verbatim: AdviceText.title(advice, environment, tree: compute.snapshot?.ledger.tree))
-        .font(.callout.weight(.medium))
+        .appFont(.callout.weight(.medium))
       switch advice.status {
       case .ready:
         if let result = advice.result {
           Text(verbatim: AdviceText.line(result, environment, tree: compute.snapshot?.ledger.tree))
-            .font(.callout.monospacedDigit())
+            .appFont(.callout.monospacedDigit())
         }
         ForEach(Array(advice.terms.enumerated()), id: \.offset) { _, term in
           Text(verbatim: AdviceText.line(term, environment, tree: compute.snapshot?.ledger.tree))
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
         ForEach(Array(advice.notes.enumerated()), id: \.offset) { _, note in
           Text(verbatim: AdviceText.line(note, environment, tree: compute.snapshot?.ledger.tree))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.tertiary)
+        }
+        if advice.kind == .debtLoad, let history = compute.snapshot?.planning.debtLoadHistory {
+          DebtLoadHistoryView(history: history)
         }
       case .notEnoughData(let reason):
         Label {
@@ -291,10 +294,98 @@ private struct AdviceRow: View {
         } icon: {
           Image(systemName: "hourglass")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
     .accessibilityElement(children: .combine)
   }
+}
+
+/// The debt load month by month, the last twelve months, under its suggestion: each month's
+/// share of income, and a symbol with a word where the Bank of Russia calls a load high (from
+/// 50 %) or very high (from 80 %) — said in words, never in colour; then those thresholds and
+/// that a bank counts a credit card stricter, by its limit.
+struct DebtLoadHistoryView: View {
+  @Dependency(\.environment) private var environment
+  let history: [DebtLoadMonth]
+
+  var body: some View {
+    let rows = Self.rows(history)
+    VStack(alignment: .leading, spacing: 4) {
+      if !rows.isEmpty {
+        Text(verbatim: t("advice.load.history"))
+          .appFont(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+          ForEach(rows, id: \.month) { row in
+            GridRow {
+              Text(verbatim: environment.dates.shortMonthAndYear(row.month))
+                .foregroundStyle(.secondary)
+              Text(
+                verbatim: row.loadBp.map { environment.money.percent(basisPoints: $0) } ?? "—"
+              )
+              .monospacedDigit()
+              .gridColumnAlignment(.trailing)
+              if let level = Self.level(row.loadBp) {
+                Label {
+                  Text(verbatim: t(level.key))
+                } icon: {
+                  Image(systemName: level.symbol)
+                }
+              } else {
+                Text(verbatim: "")
+              }
+            }
+            .accessibilityElement(children: .combine)
+          }
+        }
+        .appFont(.caption)
+      }
+      Text(verbatim: t("advice.load.thresholds"))
+        .appFont(.caption)
+        .foregroundStyle(.tertiary)
+        .fixedSize(horizontal: false, vertical: true)
+      Text(verbatim: t("advice.load.bank"))
+        .appFont(.caption)
+        .foregroundStyle(.tertiary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .accessibilityIdentifier("advice.load.history")
+  }
+
+  /// A month of the history and its load; `nil` where it could not be counted.
+  struct Row: Hashable {
+    var month: MonthKey
+    var loadBp: Int?
+  }
+
+  /// The months, newest first.
+  static func rows(_ history: [DebtLoadMonth]) -> [Row] {
+    history.map { Row(month: $0.month, loadBp: $0.load.loadBp) }.sorted { $0.month > $1.month }
+  }
+
+  /// How the Bank of Russia would call the load: high from 50 %, very high from 80 %
+  /// (`DebtLoad.highBp`, `veryHighBp`); below that, nothing is said.
+  enum Level: Hashable {
+    case high
+    case veryHigh
+
+    var key: String { self == .high ? "advice.load.high" : "advice.load.veryHigh" }
+    var symbol: String { self == .high ? "exclamationmark.circle" : "exclamationmark.triangle" }
+  }
+
+  static func level(_ loadBp: Int?) -> Level? {
+    guard let loadBp else { return nil }
+    if loadBp >= DebtLoad.veryHighBp { return .veryHigh }
+    if loadBp >= DebtLoad.highBp { return .high }
+    return nil
+  }
+
+  static let keys = [
+    "advice.load.history", "advice.load.thresholds", "advice.load.bank", "advice.load.high",
+    "advice.load.veryHigh",
+  ]
+
+  private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
 }

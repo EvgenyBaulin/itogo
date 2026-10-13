@@ -34,7 +34,7 @@ struct BankEditor: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t(previous == nil ? "bank.editor.newTitle" : "bank.editor.title"))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         Section {
           NameField(title: t("bank.editor.name"), text: $name, identifier: "bank.editor.name")

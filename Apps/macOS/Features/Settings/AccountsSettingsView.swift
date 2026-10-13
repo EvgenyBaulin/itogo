@@ -153,7 +153,7 @@ struct AccountsSettingsView: View {
         Text(verbatim: t("accounts.groupsHint"))
         Text(verbatim: t("accounts.banksHint"))
       }
-      .font(.caption)
+      .appFont(.callout)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
       footer
@@ -215,6 +215,7 @@ struct AccountsSettingsView: View {
       Section {
         if liveBanks.isEmpty {
           Text(verbatim: t("accounts.noBanks"))
+            .appFont(.callout)
             .foregroundStyle(.secondary)
         }
         ForEach(liveBanks, id: \.id) { bank in
@@ -241,6 +242,7 @@ struct AccountsSettingsView: View {
       Section {
         if liveGroups.isEmpty {
           Text(verbatim: t("accounts.noGroups"))
+            .appFont(.callout)
             .foregroundStyle(.secondary)
         }
         ForEach(liveGroups, id: \.id) { group in
@@ -257,6 +259,7 @@ struct AccountsSettingsView: View {
             && archivedBanks.isEmpty
           {
             Text(verbatim: t("accounts.archiveEmpty"))
+              .appFont(.callout)
               .foregroundStyle(.secondary)
           }
           ForEach(archived, id: \.id) { account in
@@ -346,12 +349,12 @@ struct AccountsSettingsView: View {
               Image(systemName: "star.fill")
             }
             .labelStyle(.titleAndIcon)
-            .font(.caption)
+            .appFont(.callout)
             .foregroundStyle(.secondary)
           }
         }
         Text(verbatim: caption(of: account))
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
       Spacer()
@@ -368,12 +371,26 @@ struct AccountsSettingsView: View {
         .frame(width: 18)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 2) {
-        Text(verbatim: card.name)
+        HStack(spacing: 6) {
+          Text(verbatim: card.name)
+          if isMainCard(card) {
+            // The main card is told by a symbol and a word, like the main account.
+            Label {
+              Text(verbatim: environment.language("card.main", table: CardText.table))
+            } icon: {
+              Image(systemName: "star.fill")
+            }
+            .labelStyle(.titleAndIcon)
+            .appFont(.callout)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("accounts.card.main")
+          }
+        }
         Text(
           verbatim: ([card.aliases.isEmpty ? nil : card.aliases.joined(separator: ", ")]
             + [cardRulesCaption(card)]).compactMap { $0 }.joined(separator: " · ")
         )
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
       Spacer()
@@ -398,10 +415,22 @@ struct AccountsSettingsView: View {
     return environment.format("card.caption", table: CardText.table, counts: own)
   }
 
+  /// Whether the card is the main one of its account: purchases on the account are made with
+  /// it unless they name another card or «со счёта».
+  private func isMainCard(_ card: PaymentCard) -> Bool {
+    guard let account = accounts.first(where: { $0.id == card.accountId }) else { return false }
+    return CardRules.validMainCard(of: account, cards: cards) == card.id
+  }
+
   @ViewBuilder
   private func cardMenuItems(_ card: PaymentCard) -> some View {
     Button(environment.language("action.edit")) {
       sheet = .card(card, accountId: card.accountId)
+    }
+    if !card.archived, !isMainCard(card) {
+      Button(environment.language("card.makeMain", table: CardText.table)) {
+        perform(cardActions.makeMain(card.id))
+      }
     }
     Button(environment.language("card.cashback", table: CardText.table)) {
       sheet = .cashback(accountId: card.accountId, .card(card.id))
@@ -459,6 +488,9 @@ struct AccountsSettingsView: View {
   /// otherwise than the account.
   private func caption(of account: PaymentMethod) -> String {
     var parts = [t(AccountText.kindKey(account.kind))]
+    if account.credit != nil {
+      parts.append(environment.language("accounts.caption.credit", table: "Settings"))
+    }
     parts.append(account.currencies.map(\.code).joined(separator: ", "))
     if let id = account.groupId, let group = groups.first(where: { $0.id == id }) {
       parts.append(AccountText.groupTitle(group, environment))
@@ -508,6 +540,13 @@ struct AccountsSettingsView: View {
     Button(environment.language("card.cashback", table: CardText.table)) {
       sheet = .cashback(accountId: account.id, .account(account.id))
     }
+    // The terms of a credit card live in the editor of its account: the same sheet, over the
+    // settings.
+    if account.kind == .card || account.credit != nil {
+      Button(environment.language("accounts.creditTerms", table: "Settings")) {
+        sheet = .account(account)
+      }
+    }
     Divider()
     Button(t("accounts.archive")) { archive(account) }
     Button(t("accounts.delete"), role: .destructive) { askToDelete([account.id]) }
@@ -526,7 +565,7 @@ struct AccountsSettingsView: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: bank.name)
         Text(verbatim: bankCaption(accounts: live.count, cards: cardCount))
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
       Spacer()
@@ -596,7 +635,7 @@ struct AccountsSettingsView: View {
               "accounts.group.countWithMain", table: "Accounts", counts: count)
             : environment.format("accounts.group.count", table: "Accounts", counts: count)
         )
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
       Spacer()
@@ -644,7 +683,7 @@ struct AccountsSettingsView: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: account.name)
         Text(verbatim: caption(of: account))
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
       Spacer()
@@ -700,6 +739,7 @@ struct AccountsSettingsView: View {
           verbatim: environment.format(
             "accounts.selected", table: "Accounts", counts: selection.count)
         )
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         Spacer()
         Button(t("accounts.deleteSelected"), role: .destructive) {

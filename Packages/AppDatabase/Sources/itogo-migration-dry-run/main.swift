@@ -70,6 +70,11 @@ struct AccountsAfter {
   var live = 0
   /// Accounts with a name that sit under no bank.
   var withoutABank = 0
+  /// Open debts the owner has not yet seen the terms of this version for: every one the update
+  /// finds. Said, never a difference.
+  var debtsToReview = 0
+  /// Accounts with the terms of a credit card: the update gives none.
+  var creditCards = 0
 
   var holds: Bool { withoutAnAccount == 0 && liveMain == (live > 0 ? 1 : 0) }
   var filed: Bool { withoutABank == 0 }
@@ -92,7 +97,14 @@ func accountsAfter(_ url: URL) throws -> AccountsAfter {
         """
         SELECT COUNT(*) FROM payment_methods
         WHERE bank_id IS NULL AND length(trim(name)) > 0
-        """))
+        """),
+      debtsToReview: try count(
+        """
+        SELECT COUNT(*) FROM debts
+        WHERE terms_reviewed = 0 AND closed = 0 AND deleted_at IS NULL
+        """),
+      creditCards: try count(
+        "SELECT COUNT(*) FROM payment_methods WHERE credit_limit_e4 IS NOT NULL"))
   }
 }
 
@@ -161,6 +173,9 @@ func measure(_ url: URL) throws -> Measures {
     return result
   }
 }
+
+/// The schema that brought the terms of a credit card (`0009_credit_and_allocation`).
+let creditTermsSchema = 9
 
 func say(_ line: String) {
   FileHandle.standardOutput.write(Data((line + "\n").utf8))
@@ -301,6 +316,14 @@ func run() async -> Int32 {
   say(
     "accounts without a bank after: \(accounts.withoutABank)"
       + (accounts.filed ? "" : "   differ"))
+  say("debts to review after: \(accounts.debtsToReview)")
+  // The update gives no account the terms of a credit card; a file already at the schema
+  // that brought them may hold the owner's own.
+  let creditCardsExpected = schemaBefore < creditTermsSchema ? 0 : accounts.creditCards
+  if accounts.creditCards != creditCardsExpected { equal = false }
+  say(
+    "credit cards after: \(accounts.creditCards)"
+      + (accounts.creditCards == creditCardsExpected ? "" : "   differ"))
   say("sums:")
   for label in Set(before.sums.keys).union(after.sums.keys).sorted() {
     let same = before.sums[label] == after.sums[label]

@@ -42,6 +42,9 @@ public struct DebtDueState: Hashable, Sendable {
   /// What each due asks for, by its index. Without a schedule of its own, the monthly payment
   /// (`monthlyE4`) for every due; none when there is no monthly payment either.
   public var instalments: DebtInstalments
+  /// Dues every few days from a first day instead of on `paymentDay` of every month
+  /// (`Debt.steps`); `nil` — monthly.
+  public var steps: DebtSteps? = nil
 
   public init(
     debtId: UUID, firstDue: DateOnly?, paidCount: Int, owes: Bool, paymentDay: Int,
@@ -72,10 +75,14 @@ public struct DebtDueState: Hashable, Sendable {
   static let limit = 1_200
 
   /// The due of index `index`, 0 the first: the payment day of the month `index` months after
-  /// the first one, clipped to its length. Without a first due, the payment day of no month:
-  /// 1 January 1970.
+  /// the first one, clipped to its length — or, for dues every few days (`steps`), the first due
+  /// and `index` steps of days after it, whatever months they fall in. Without a first due, the
+  /// payment day of no month: 1 January 1970.
   public func due(_ index: Int) -> DateOnly {
     guard let firstDue else { return DateOnly(year: 1970, month: 1, day: 1) }
+    if let steps {
+      return firstDue.adding(days: max(0, index) * max(1, steps.everyDays))
+    }
     let month = firstDue.monthKey.adding(months: max(0, index))
     return DebtDueState.payday(paymentDay, in: month)
   }
@@ -177,7 +184,19 @@ public struct DebtDueState: Hashable, Sendable {
   /// The index of the due of `day`, one of the debt's dues.
   private func index(of day: DateOnly) -> Int? {
     guard let firstDue else { return nil }
+    if let steps {
+      return firstDue.days(to: day) / max(1, steps.everyDays)
+    }
     return firstDue.monthKey.months(to: day.monthKey)
+  }
+
+  /// The index of the first due on `day` or after it; `nil` without a first due.
+  public func firstIndex(onOrAfter day: DateOnly) -> Int? {
+    guard let firstDue else { return nil }
+    guard day > firstDue else { return 0 }
+    var index = max(0, self.index(of: day) ?? 0)
+    while index < Self.limit, due(index) < day { index += 1 }
+    return min(index, Self.limit)
   }
 
   /// The unpaid dues before `today`.
@@ -264,6 +283,10 @@ public enum DebtDues {
     var at: Date
     var amountE4: AmountE4
     var closesTerm: Bool
+    /// An early repayment (`DebtEntry.prepay` term or payment): its money pays what is left of
+    /// the due it was made for, and the rest lowers the debt alone — it is not kept toward the
+    /// next dues. A payment ahead (`forward`) is not one.
+    var prepay: Bool = false
   }
 
   /// How many dues the money of `payments` pays when the monthly payment is `monthly`, and what
@@ -290,6 +313,12 @@ public enum DebtDues {
     for payment in ordered {
       let target = paid
       kept += payment.amountE4
+      if payment.prepay {
+        if kept + slack >= monthly { paid += 1 }
+        kept = kept + slack >= monthly ? .zero : kept
+        paid = min(paid, DebtDueState.limit)
+        continue
+      }
       let covered = Int(min((kept + slack).raw / monthly.raw, Int64(DebtDueState.limit)))
       if covered > 0 {
         paid += covered
@@ -332,6 +361,17 @@ public enum DebtDues {
       skipNothing()
       let target = paid
       kept += payment.amountE4
+      if payment.prepay {
+        // What is left of the due it was made for; the rest went to the principal.
+        let amount = instalments.amount(at: paid)
+        if amount.raw > 0, kept + tolerance(of: amount) >= amount {
+          paid += 1
+          kept = .zero
+          skipNothing()
+        }
+        paid = min(paid, DebtDueState.limit)
+        continue
+      }
       while paid < DebtDueState.limit {
         let amount = instalments.amount(at: paid)
         guard amount.raw > 0, kept + tolerance(of: amount) >= amount else { break }
@@ -385,6 +425,10 @@ public enum DebtDues {
     let through = paymentsThrough ?? today
     let calendar = ledger.calendar
     let notPayments = DebtRules.notPayments(journal)
+    var typed: [UUID: [DebtInstalmentStep]] = [:]
+    for step in ledger.dataset.debtInstalments where wanted.contains(step.debtId) {
+      typed[step.debtId, default: []].append(step)
+    }
 
     var journals: [UUID: [DebtEntry]] = [:]
     for line in journal where wanted.contains(line.debtId) {
@@ -423,7 +467,10 @@ public enum DebtDues {
         left += DebtRules.balance(entries: interest.lines) + interest.accruedE4
       }
       let owes = !debt.closed && (!opened || left.raw > 0)
-      guard let paymentDay = debt.paymentDay, paymentDay >= 1 else {
+      // Dues every few days start on their first day, whatever the month.
+      let steps = debt.steps
+      let paymentDay = steps?.firstDue.day ?? debt.paymentDay ?? 0
+      guard steps != nil || paymentDay >= 1 else {
         result[debt.id] = DebtDueState(
           debtId: debt.id, firstDue: nil, paidCount: 0, owes: owes, paymentDay: 0)
         continue
@@ -431,7 +478,11 @@ public enum DebtDues {
       let start = allocationStart(of: effective, calendar: calendar)
       let firstDue: DateOnly
       let countsFrom: DateOnly
-      if let start, let month = DebtStart.firstMonth(of: debt, startsOn: start, calendar: calendar)
+      if let steps {
+        firstDue = steps.firstDue
+        countsFrom = min(start ?? steps.firstDue, steps.firstDue)
+      } else if let start,
+        let month = DebtStart.firstMonth(of: debt, startsOn: start, calendar: calendar)
       {
         firstDue = DebtDueState.payday(paymentDay, in: month)
         countsFrom = start
@@ -454,7 +505,7 @@ public enum DebtDues {
           Payment(
             day: day, at: at,
             amountE4: line?.amountE4.magnitude ?? partsMoney[transactionId] ?? .zero,
-            closesTerm: line?.closesTerm ?? false))
+            closesTerm: line?.closesTerm ?? false, prepay: line?.prepay?.isEarlyRepayment == true))
       }
       for line in lines where line.kind == .payment {
         if let transactionId = line.transactionId, paidByOperation.contains(transactionId) {
@@ -466,12 +517,13 @@ public enum DebtDues {
         payments.append(
           Payment(
             day: day, at: line.occurredAt ?? calendar.startOfDay(day),
-            amountE4: line.amountE4.magnitude, closesTerm: line.closesTerm))
+            amountE4: line.amountE4.magnitude, closesTerm: line.closesTerm,
+            prepay: line.prepay?.isEarlyRepayment == true))
       }
 
-      let instalments = DebtSchedulePlan.instalments(
-        debt: debt, journal: lines, firstDue: firstDue, paymentDay: paymentDay, today: today,
-        calendar: calendar)
+      let instalments = Self.instalments(
+        of: debt, journal: lines, firstDue: firstDue, paymentDay: paymentDay, steps: steps,
+        today: today, typed: typed[debt.id] ?? [], calendar: calendar)
       let paid: Int
       var partial = AmountE4.zero
       if !instalments.isEmpty {
@@ -479,13 +531,40 @@ public enum DebtDues {
       } else {
         paid = payments.count
       }
-      result[debt.id] = DebtDueState(
+      var state = DebtDueState(
         debtId: debt.id, firstDue: firstDue, paidCount: paid, owes: owes,
         paymentDay: paymentDay, partialE4: partial,
         balanceE4: opened ? left : nil,
         monthlyE4: debt.monthlyPaymentE4, instalments: instalments)
+      state.steps = steps
+      result[debt.id] = state
     }
     return result
+  }
+
+  /// What each due of `debt` asks for: its schedule (`DebtSchedulePlan.plan`), the new sums the
+  /// early repayments that lowered the payment worked out (`DebtAmortization.prepaySteps`), and
+  /// over them the sums typed from the bank's app, each holding until the next step of either
+  /// kind. A debt with none of these reads as its schedule alone.
+  public static func instalments(
+    of debt: Debt, journal: [DebtEntry], firstDue: DateOnly, paymentDay: Int,
+    steps: DebtSteps?, today: DateOnly, typed: [DebtInstalmentStep], calendar: CalendarContext
+  ) -> DebtInstalments {
+    let schedule = DebtSchedulePlan.plan(
+      debt: debt, journal: journal, firstDue: firstDue, paymentDay: paymentDay, today: today,
+      calendar: calendar
+    ).instalments
+    var computed = schedule
+    if journal.contains(where: { $0.debtId == debt.id && $0.prepay == .payment }) {
+      var probe = DebtDueState(
+        debtId: debt.id, firstDue: firstDue, paidCount: 0, owes: true, paymentDay: paymentDay,
+        monthlyE4: debt.monthlyPaymentE4, instalments: schedule)
+      probe.steps = steps
+      let prepaid = DebtAmortization.prepaySteps(
+        debt: debt, journal: journal, dues: probe, calendar: calendar)
+      if !prepaid.isEmpty { computed = DebtInstalments(steps: schedule.steps + prepaid) }
+    }
+    return .merged(computed: computed, typed: typed.filter { $0.debtId == debt.id })
   }
 
   /// The day the schedule of a debt starts: the day it began (`DebtStart.day`), moved to the

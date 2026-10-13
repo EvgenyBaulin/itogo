@@ -86,7 +86,9 @@ public enum LimitSuggestions {
     let months = months(before: today)
     let candidates = ledger.dataset.categories.filter { category in
       category.parentId == nil
-        && LimitRules.offersLimit(on: category.id, tree: tree, limitless: limitless)
+        && LimitRules.offersLimit(
+          on: category.id, tree: tree, limitless: limitless,
+          taxCategoryId: ledger.dataset.selfEmployment.taxCategoryId)
         && LimitRules.categoryLimit(of: category.id, in: budgets) == nil
     }
     let candidateIds = Set(candidates.map(\.id))

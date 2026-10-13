@@ -61,11 +61,15 @@ public struct Transfer: Identifiable, Hashable, Sendable, Codable {
   public var note: String?
   public var createdAt: Date
   public var updatedAt: Date
+  /// What wrote the transfer, when the app did: `alloc:<income>:<uuid>` — the allocation of an
+  /// income. Unique among transfers; `nil` — the owner wrote it.
+  public var externalId: String?
 
   public init(
     id: UUID = UUID(), occurredAt: Date, fromAccountId: UUID, fromCurrency: CurrencyCode,
     fromAmountE4: AmountE4, toAccountId: UUID, toCurrency: CurrencyCode, toAmountE4: AmountE4,
-    note: String? = nil, createdAt: Date = Date(), updatedAt: Date = Date()
+    note: String? = nil, createdAt: Date = Date(), updatedAt: Date = Date(),
+    externalId: String? = nil
   ) {
     self.id = id
     self.occurredAt = occurredAt
@@ -78,6 +82,7 @@ public struct Transfer: Identifiable, Hashable, Sendable, Codable {
     self.note = note
     self.createdAt = createdAt
     self.updatedAt = updatedAt
+    self.externalId = externalId
   }
 
   public var from: BalanceKey { BalanceKey(accountId: fromAccountId, currency: fromCurrency) }

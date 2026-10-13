@@ -362,7 +362,7 @@ struct BulkCategoryPopover: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text(verbatim: environment.language("bulk.category", table: "Transactions"))
-        .font(.headline)
+        .appFont(.headline)
       if kinds.count > 1 {
         Picker(selection: $kind) {
           ForEach(kinds, id: \.self) { kind in
@@ -472,7 +472,7 @@ struct ReferencePickerPopover: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(verbatim: title)
-        .font(.headline)
+        .appFont(.headline)
       TextField(text: $search) {
         Text(verbatim: environment.language("bulk.search", table: "Transactions"))
       }
@@ -726,6 +726,18 @@ private struct BulkConfirmationDialog: ViewModifier {
         if !ids.isEmpty {
           Button(environment.language("action.delete"), role: .destructive) {
             confirmed(.delete(ids))
+          }
+          // An income allocated: its contributions and transfers can go with it, in the same
+          // step (`TransactionsStore.allocation(ofDeleting:)`).
+          let allocation = store.allocation(ofDeleting: ids)
+          if !allocation.contributions.isEmpty || !allocation.transfers.isEmpty {
+            Button(
+              environment.format(
+                "allocation.deleteWith", table: "Allocation", allocation.contributions.count,
+                allocation.transfers.count), role: .destructive
+            ) {
+              confirmed(.delete(ids + allocation.contributions + allocation.transfers))
+            }
           }
           // A debt this payment had closed: deleted with it, it can be opened in the same step.
           if !reopening.isEmpty {

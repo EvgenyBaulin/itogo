@@ -96,7 +96,7 @@ struct PlanningOrderEditor: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(verbatim: PlanningBlockText.t("layout.edit.hint", environment))
-        .font(.callout)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       VStack(alignment: .leading, spacing: 4) {

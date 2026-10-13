@@ -20,7 +20,7 @@ struct AllLimitsSheet: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(verbatim: t("limits.allTitle")).font(.headline)
+      Text(verbatim: t("limits.allTitle")).appFont(.headline)
       ScrollView {
         VStack(alignment: .leading, spacing: 12) {
           if let snapshot = compute.snapshot {

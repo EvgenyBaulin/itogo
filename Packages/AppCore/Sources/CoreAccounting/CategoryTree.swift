@@ -84,6 +84,15 @@ public struct CategoryTree: Hashable, Sendable {
     return parent(of: category.id)?.essential ?? false
   }
 
+  /// The tax an income in the category owes: its own, else its parent's, else none. Only an
+  /// income category owes one. A rate of zero is a subcategory said to owe none under a taxed
+  /// category: no tax.
+  public func tax(of id: UUID?) -> IncomeTax? {
+    guard let category = category(id), category.kind == .income else { return nil }
+    guard let tax = category.tax ?? parent(of: category.id)?.tax, tax.rate > 0 else { return nil }
+    return tax
+  }
+
   /// `true` when the subcategory has no quality of its own and follows its parent.
   public func inheritsQuality(_ id: UUID?) -> Bool {
     guard let category = category(id) else { return false }

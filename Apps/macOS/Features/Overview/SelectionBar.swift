@@ -77,7 +77,7 @@ struct SelectionBar: View {
         verbatim: environment.language.format(
           "selection.count", table: "Transactions", counts: actions.selection.count)
       )
-      .font(.callout.weight(.semibold))
+      .appFont(.callout.weight(.semibold))
       .monospacedDigit()
       .lineLimit(1)
       if store.isWritingInBackground {
@@ -140,7 +140,7 @@ struct SelectionBar: View {
       WritingIndicator()
         .accessibilityHidden(true)
       Text(verbatim: t("selection.writing"))
-        .font(.callout)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       if !hugsContent { Spacer(minLength: 0) }
     }

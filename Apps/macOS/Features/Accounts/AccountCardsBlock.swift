@@ -69,11 +69,19 @@ struct AccountCardsBlock: View {
       rules: compute.snapshot?.dataset.cashbackRules ?? [], locale: environment.language.locale)
   }
 
+  /// The main card of the account, while it is one of its live cards.
+  private var mainCardId: UUID? {
+    guard let snapshot = compute.snapshot,
+      let account = snapshot.dataset.paymentMethods.first(where: { $0.id == accountId })
+    else { return nil }
+    return CardRules.validMainCard(of: account, cards: snapshot.dataset.cards)
+  }
+
   var body: some View {
     let model = self.model
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Text(verbatim: t("card.section.title")).font(.headline)
+        Text(verbatim: t("card.section.title")).appFont(.headline)
         Spacer()
         Button {
           sheet = .edit(nil)
@@ -148,12 +156,21 @@ struct AccountCardsBlock: View {
               : environment.format("card.caption", table: CardText.table, counts: item.rules),
           ].compactMap { $0 }.joined(separator: " · ")
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Spacer()
+      if item.card.id == mainCardId {
+        Text(verbatim: t("card.main"))
+          .appFont(.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("account.cards.main")
+      }
       Menu {
         Button(environment.language("action.edit")) { sheet = .edit(item.card) }
+        if item.card.id != mainCardId {
+          Button(t("card.makeMain")) { run(actions.makeMain(item.id)) }
+        }
         Button(t("card.cashback")) { sheet = .rules(.card(item.id)) }
         if mergeable {
           Button(t("card.merge")) { sheet = .merge(item.card) }

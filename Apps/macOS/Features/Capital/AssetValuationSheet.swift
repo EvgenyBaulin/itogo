@@ -19,7 +19,7 @@ struct AssetValuationSheet: View {
     let replaces = valuations.contains { $0.assetId == asset.id && $0.day == chosen }
     VStack(alignment: .leading) {
       Text(verbatim: CapitalText.format("capital.valuation.title", environment, asset.name))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         LabeledContent(CapitalText.t("capital.editor.value", environment)) {
           HStack {
@@ -40,7 +40,7 @@ struct AssetValuationSheet: View {
           } icon: {
             Image(systemName: "arrow.triangle.2.circlepath")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("capital.valuation.replaces")
@@ -83,7 +83,7 @@ struct AssetHistorySheet: View {
       of: asset.id, among: compute.snapshot?.dataset.assetValuations ?? [])
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: CapitalText.format("capital.history.title", environment, asset.name))
-        .font(.headline)
+        .appFont(.headline)
       if history.isEmpty {
         Text(verbatim: CapitalText.t("capital.history.empty", environment))
           .foregroundStyle(.secondary)
@@ -94,7 +94,7 @@ struct AssetHistorySheet: View {
             Text(verbatim: environment.dates.longDay(valuation.day))
             if let note = valuation.note {
               Text(verbatim: note)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             }
           }
@@ -135,7 +135,7 @@ struct AssetDisposalSheet: View {
     let chosen = day ?? environment.today
     VStack(alignment: .leading) {
       Text(verbatim: CapitalText.format("capital.dispose.title", environment, asset.name))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         DatePicker(
           CapitalText.t("capital.dispose.day", environment),
@@ -144,7 +144,7 @@ struct AssetDisposalSheet: View {
             set: { day = environment.calendar.day(of: $0) }),
           displayedComponents: .date)
         Text(verbatim: CapitalText.t("capital.dispose.hint", environment))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }

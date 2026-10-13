@@ -23,20 +23,20 @@ struct ReconciliationCard: View {
       VStack(alignment: .leading, spacing: 6) {
         if let last = snapshot.planning.lastReconciliation {
           Text(verbatim: environment.dates.longDay(last.date))
-            .font(.title3)
+            .appFont(.title3)
           Text(
             verbatim: environment.language.format(
               "overview.reconciliationAgo", table: "Planning",
               counts: max(0, last.date.days(to: snapshot.today)))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           if let found = Self.found(
             by: last, balances: snapshot.dataset.planning.reconciledBalances,
             accounts: snapshot.dataset.paymentMethods, environment)
           {
             Text(verbatim: found)
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }
@@ -124,7 +124,7 @@ struct ReconciliationCard: View {
       } icon: {
         Image(systemName: "flag")
       }
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
       // Content, not floating controls: plain small buttons, never glass.
       Button(environment.language("reconcile.firstCount.fix", table: "Planning")) {

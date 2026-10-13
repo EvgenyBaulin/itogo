@@ -27,7 +27,7 @@ struct BankMergeSheet: View {
       Text(
         verbatim: environment.format("bank.merge.title", table: AccountText.table, bank.name)
       )
-      .font(.headline)
+      .appFont(.headline)
       Form {
         Picker(selection: Binding(get: { selected }, set: { target = $0 })) {
           ForEach(targets) { bank in

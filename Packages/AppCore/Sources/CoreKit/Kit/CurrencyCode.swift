@@ -21,6 +21,8 @@ public struct CurrencyCode: Hashable, Sendable, Codable, CustomStringConvertible
     CurrencyCode("AED"), CurrencyCode("GEL"), CurrencyCode("AMD"), CurrencyCode("THB"),
   ]
 
+  /// The old limit of the enabled currencies. The storage no longer holds anyone to it — any
+  /// number may be on —; it stays only until the screens that still count against it let go.
   public static let maxEnabled = 10
 
   public init(from decoder: Decoder) throws {

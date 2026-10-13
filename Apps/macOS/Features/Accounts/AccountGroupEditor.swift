@@ -32,7 +32,7 @@ struct AccountGroupEditor: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t(previous == nil ? "account.group.newTitle" : "account.group.title"))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         NameField(
           title: t("account.group.name"), text: $group.name, identifier: "account.group.name")

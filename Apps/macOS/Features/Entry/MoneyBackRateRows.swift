@@ -79,7 +79,7 @@ struct MoneyBackRateRows: View {
                 environment.money.exact(
                   Self.rubles(purchase.amount, at: typed) ?? .zero))
             )
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
           } else if purchase.provisional {
@@ -88,7 +88,7 @@ struct MoneyBackRateRows: View {
             } icon: {
               Image(systemName: "hourglass")
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
           }
@@ -103,7 +103,7 @@ struct MoneyBackRateRows: View {
 
   private func label(_ text: String) -> some View {
     Text(verbatim: text)
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .gridColumnAlignment(.leading)
   }

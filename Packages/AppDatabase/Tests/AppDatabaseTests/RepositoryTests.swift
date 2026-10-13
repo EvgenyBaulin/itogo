@@ -153,14 +153,14 @@ struct RepositoryTests {
     #expect(listed.map(\.transaction.note) == ["newer", "older"])
   }
 
-  @Test func currenciesAreCappedAtTen() throws {
+  @Test func currenciesAreNotCapped() throws {
     let stack = try TestSupport.makeStack()
     let settings = SettingsRepository(writer: stack.writer)
     // The ruble is the default currency, which stays on.
     let twelve = [CurrencyCode.rub] + (1...11).map { CurrencyCode("C\($0)") }
 
     try settings.setEnabledCurrencies(twelve)
-    #expect(try settings.enabledCurrencies().count == CurrencyCode.maxEnabled)
+    #expect(try settings.enabledCurrencies().count == 12)
   }
 
   @Test func settingsAreKeyValue() throws {

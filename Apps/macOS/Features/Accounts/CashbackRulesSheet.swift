@@ -263,7 +263,7 @@ struct CashbackRulesSheet: View {
             "cashback.sheet.title", table: CardText.table,
             CardText.holderName(draft.holder, cards: cards, accounts: accounts))
         )
-        .font(.headline)
+        .appFont(.headline)
         form(draft)
       } else {
         ProgressView()
@@ -279,7 +279,7 @@ struct CashbackRulesSheet: View {
             Image(systemName: "exclamationmark.triangle")
               .foregroundStyle(.orange)
           }
-          .font(.caption)
+          .appFont(.caption)
         }
       }
       if let refusal { CardRefusalNote(refusal: refusal) }
@@ -341,7 +341,7 @@ struct CashbackRulesSheet: View {
           verbatim: t(
             current.isAccountShown ? "cashback.sheet.accountHint" : "cashback.sheet.cardHint")
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       if current.isAccountShown { settingsSections(current, model: model) }
@@ -545,7 +545,7 @@ struct CashbackRulesSheet: View {
           Image(systemName: "exclamationmark.triangle")
             .foregroundStyle(.orange)
         }
-        .font(.caption)
+        .appFont(.caption)
       }
     }
   }

@@ -178,7 +178,7 @@ struct ChartLegend: View {
       HStack(spacing: 14) { entries }
       VStack(alignment: .leading, spacing: 4) { entries }
     }
-    .font(.caption)
+    .appFont(.caption)
     .accessibilityElement(children: .combine)
   }
 
@@ -267,10 +267,10 @@ struct ChartCallout: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
       Text(verbatim: title)
-        .font(.caption.weight(.semibold))
+        .appFont(.caption.weight(.semibold))
       ForEach(lines, id: \.self) { line in
         Text(verbatim: line)
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
       }
     }
     .foregroundStyle(.primary)
@@ -297,7 +297,7 @@ struct ChartInlineLabel: View {
       Text(verbatim: text)
         .monospacedDigit()
     }
-    .font(.caption2)
+    .appFont(.caption2)
     .foregroundStyle(.primary)
     .lineLimit(1)
     .padding(.horizontal, 4)

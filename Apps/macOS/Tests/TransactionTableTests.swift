@@ -372,13 +372,13 @@ final class TransactionFiltersTests: XCTestCase {
 
     filters.reset()
     XCTAssertFalse(filters.canReset)
-    XCTAssertEqual(filters.period, .thisMonth)
+    XCTAssertEqual(filters.period, .allTime, "the whole history, as «Операции» opens")
     XCTAssertNil(filters.kind)
     XCTAssertNil(filters.quality)
     XCTAssertNil(filters.status)
     XCTAssertEqual(filters.search, "")
     XCTAssertEqual(filters.customStart, DateOnly(year: 2026, month: 1, day: 1))
-    XCTAssertEqual(filters.entryFilter(today: today), EntryFilter(period: .month(today.monthKey)))
+    XCTAssertEqual(filters.entryFilter(today: today), EntryFilter())
   }
 
   /// A value chosen in the sidebar and archived since — in Settings, or by a restore — is no
@@ -444,13 +444,14 @@ final class TransactionFiltersTests: XCTestCase {
     XCTAssertEqual(filters.eventId, trip.id)
     XCTAssertEqual(
       filters.entryFilter(today: today),
-      EntryFilter(
-        period: .month(today.monthKey), personId: anya.id, placeId: cafe.id, eventId: trip.id))
+      EntryFilter(personId: anya.id, placeId: cafe.id, eventId: trip.id))
   }
 
   /// Each period as the core reads it; a custom range in either order; the search trimmed.
   func testThePeriodsAndTheSearchAsTheCoreReadsThem() {
     var filters = TransactionFilters(today: today)
+    XCTAssertNil(filters.period(today: today), "the whole history at first")
+    filters.period = .thisMonth
     XCTAssertEqual(filters.period(today: today), .month(today.monthKey))
     filters.period = .lastMonth
     XCTAssertEqual(filters.period(today: today), .month(today.monthKey.previous))
@@ -597,7 +598,6 @@ final class TransactionTableMeasurementTests: XCTestCase {
       AnyView(
         TransactionsTable(
           deps: deps, listing: listing, selection: .constant(selection),
-          columns: .constant(TableColumnCustomization<TransactionRowItem>()),
           menu: { _ in EmptyView() }, primaryAction: { _ in }, deleteAction: { _ in }
         )
         .appDependencies(deps)

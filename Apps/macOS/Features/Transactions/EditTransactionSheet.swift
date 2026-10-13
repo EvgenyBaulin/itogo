@@ -7,6 +7,7 @@ import SwiftUI
 /// shows the same editor in its inspector.
 struct EditTransactionSheet: View {
   @Dependency(\.environment) private var environment
+  @Dependency(\.store) private var store
   @Environment(\.dismiss) private var dismiss
 
   let entry: TransactionEntry
@@ -15,7 +16,28 @@ struct EditTransactionSheet: View {
   var body: some View {
     Group {
       if let editor {
-        TransactionEditor(editor: editor, style: .sheet) { dismiss() }
+        VStack(alignment: .leading, spacing: 0) {
+          TransactionEditor(editor: editor, style: .sheet) { dismiss() }
+          // An income allocated beyond the sum the edit gives it: said, not refused.
+          if entry.transaction.kind == .income,
+            let beyond = store.allocatedBeyond(
+              incomeId: entry.id, amount: editor.draft.draft.amount)
+          {
+            Label {
+              Text(
+                verbatim: environment.format(
+                  "allocation.over", table: "Allocation",
+                  environment.money.rounded(
+                    beyond, currency: entry.transaction.currency)))
+            } icon: {
+              Image(systemName: "exclamationmark.triangle")
+            }
+            .appFont(.caption)
+            .foregroundStyle(.orange)
+            .padding([.horizontal, .bottom], 20)
+            .accessibilityIdentifier("edit.allocationOver")
+          }
+        }
       } else {
         ProgressView()
           .padding(20)

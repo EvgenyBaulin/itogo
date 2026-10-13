@@ -54,6 +54,11 @@ struct CategoriesSettingsView: View {
   @State private var limitless: Set<UUID> = []
   /// Why the last amount typed into a limit's field was not written, and in which row.
   @State private var limitRefusal: LimitRefusal?
+  /// Self-employment as the database has it: the tax of an income category is offered only
+  /// while it is on, and the category the tax is paid in takes no limit.
+  @State private var selfEmployment = SelfEmploymentSettings.standard
+  /// The income category whose «Другая…» rate of tax is being typed.
+  @State private var otherTax: CoreKit.Category?
 
   /// `asking` opens the tab with the question of a deletion already on screen: how a test
   /// lays out the sheet without a click on a row's menu.
@@ -94,7 +99,7 @@ struct CategoriesSettingsView: View {
             // It is listed after this line rather than disappearing from the only screen that
             // can rename, archive or delete it.
             Text(verbatim: environment.language("categories.orphans", table: "Settings"))
-              .font(.caption)
+              .appFont(.callout)
               .foregroundStyle(.secondary)
           }
         }
@@ -122,7 +127,7 @@ struct CategoriesSettingsView: View {
 
       if let refusalKey {
         Text(verbatim: environment.language(refusalKey, table: "Settings"))
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.red)
           .onTapGesture { self.refusalKey = nil }
       }
@@ -130,13 +135,13 @@ struct CategoriesSettingsView: View {
       if kind == .expense {
         if let limitRefusal {
           Text(verbatim: limitRefusal.text)
-            .font(.caption)
+            .appFont(.callout)
             .foregroundStyle(.red)
             .onTapGesture { self.limitRefusal = nil }
             .accessibilityIdentifier("categories.limit.refusal")
         }
         Text(verbatim: environment.language("categories.limit.hint", table: "Settings"))
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -160,8 +165,19 @@ struct CategoriesSettingsView: View {
       limitRefusal = nil
       reload()
     }
-    // A limit set or taken back elsewhere — in Planning, by ⌘Z — shows in its row at once.
-    .onChange(of: compute.generation) { reloadLimits() }
+    // A limit set or taken back elsewhere — in Planning, by ⌘Z — shows in its row at once;
+    // so does self-employment switched on or off.
+    .onChange(of: compute.generation) {
+      selfEmployment = SelfEmploymentSettingsForm.read(environment)
+      reloadLimits()
+    }
+    // «Налог → Другая…»: a rate typed by hand, on a sheet over the settings.
+    .sheet(item: $otherTax) { category in
+      OtherTaxSheet(category: category) { rate in
+        setTax(of: category, to: .other(rate))
+      }
+      .handingOver(dependencies)
+    }
     // A sheet, not a `confirmationDialog`: when the operations of a category have to move,
     // the owner has to choose where — and a dialog holds buttons, not a picker. On the root
     // of the tab, never on a row: the rows are rebuilt by every reload.
@@ -298,14 +314,14 @@ struct CategoriesSettingsView: View {
       // hover, rather than by a bare lock.
       if isSystem {
         Text(verbatim: environment.language("categories.system", table: "Settings"))
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
           .help(environment.language("categories.system.help", table: "Settings"))
           .accessibilityIdentifier("categories.row.system")
       } else {
         if category.archived {
           Text(verbatim: environment.language("categories.archived", table: "Settings"))
-            .font(.caption)
+            .appFont(.callout)
             .foregroundStyle(.secondary)
         }
         if kind == .expense, tree.isEssential(category.id) {
@@ -314,11 +330,41 @@ struct CategoriesSettingsView: View {
           } icon: {
             Image(systemName: CushionText.symbol)
           }
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
           .accessibilityIdentifier("categories.row.essential")
         }
+        if kind == .income, selfEmployment.enabled,
+          let mark = CategoryTax.mark(category.id, tree: tree, environment)
+        {
+          // The tax, in words beside its symbol: never told by colour.
+          Label {
+            Text(verbatim: mark)
+          } icon: {
+            Image(systemName: "percent")
+          }
+          .appFont(.callout)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("categories.row.tax")
+        }
         Menu {
+          if kind == .income, selfEmployment.enabled {
+            Picker(selection: taxBinding(for: category, tree: tree)) {
+              ForEach(
+                taxChoices(for: category), id: \.self
+              ) { choice in
+                Text(verbatim: CategoryTax.title(choice, environment)).tag(choice)
+              }
+            } label: {
+              Text(verbatim: environment.language("categories.tax", table: "Settings"))
+            }
+            .disabled(CategoryTax.isFixed(category, in: tree))
+            Button(environment.language("categories.tax.other", table: "Settings")) {
+              otherTax = category
+            }
+            .disabled(CategoryTax.isFixed(category, in: tree))
+            Divider()
+          }
           if kind == .expense {
             Picker(selection: essentialBinding(for: category, tree: tree)) {
               ForEach(Self.essentialChoices(for: category), id: \.self) { choice in
@@ -362,7 +408,10 @@ struct CategoriesSettingsView: View {
       }
       Spacer(minLength: 8)
       if kind == .expense {
-        if LimitRules.offersLimit(on: category.id, tree: tree, limitless: limitless) {
+        if LimitRules.offersLimit(
+          on: category.id, tree: tree, limitless: limitless,
+          taxCategoryId: selfEmployment.taxCategoryId)
+        {
           CategoryLimitField(
             stored: LimitRules.categoryLimit(of: category.id, in: budgets),
             commit: { commitLimit($0, for: category.id) },
@@ -443,6 +492,41 @@ struct CategoriesSettingsView: View {
       })
   }
 
+  /// The choices of the tax menu of a row, with a rate typed by hand kept as a choice of its
+  /// own while it is the one stored.
+  private func taxChoices(for category: CoreKit.Category) -> [TaxChoice] {
+    var choices = CategoryTax.choices(for: category, reference: selfEmployment.reference)
+    let stored = CategoryTax.choice(of: category)
+    if !choices.contains(stored) { choices.append(stored) }
+    return choices
+  }
+
+  private func taxBinding(
+    for category: CoreKit.Category, tree: CategoryTree
+  ) -> Binding<TaxChoice> {
+    Binding(
+      get: { CategoryTax.choice(of: category) },
+      set: { choice in _ = setTax(of: category, to: choice) })
+  }
+
+  /// The tax of a category as one step of ⌘Z. True when it is written or was already so.
+  @discardableResult
+  private func setTax(of category: CoreKit.Category, to choice: TaxChoice) -> Bool {
+    let tree = wholeTree()
+    let current = tree.category(category.id) ?? category
+    guard let change = CategoryTax.change(current, to: choice, tree: tree, at: environment.now())
+    else { return true }
+    guard store.apply(change) else {
+      refused = true
+      return false
+    }
+    AppLog.info(
+      "categories.tax.set", .db, "the tax of an income category changed",
+      [LogPair("categories", .count(1))])
+    reload()
+    return true
+  }
+
   /// The income category whose money Analytics counts as cashback, subcategories included.
   private var cashbackPicker: some View {
     VStack(alignment: .leading, spacing: 4) {
@@ -458,11 +542,11 @@ struct CategoriesSettingsView: View {
         Text(verbatim: environment.language("categories.cashback", table: "Settings"))
       }
       Text(verbatim: environment.language("categories.cashbackHint", table: "Settings"))
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       // What the category above receives is set here; what to expect, by the cards' rules.
       Text(verbatim: environment.language(Self.cashbackRulesHintKey, table: "Settings"))
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -764,6 +848,7 @@ struct CategoriesSettingsView: View {
     // A name still being typed is saved first: the read below would put the stored one back.
     if let editingName { commitName(of: editingName) }
     categories = (try? environment.references?.categories(includeArchived: showsArchived)) ?? []
+    selfEmployment = SelfEmploymentSettingsForm.read(environment)
     cashbackId = (try? environment.settings?.string(AnalyticsSettings.cashbackCategoryKey))
       .flatMap { $0 }.flatMap(UUID.init(uuidString:))
     reloadLimits()
@@ -771,7 +856,10 @@ struct CategoriesSettingsView: View {
 
   private func reloadLimits() {
     budgets = LimitWrites.budgets(environment, compute.snapshot)
+    // The category the tax of self-employment is paid in, and everything under it, takes no
+    // limit: the tax is not spending to hold back.
     limitless = LimitWrites.limitless(environment, compute.snapshot)
+      .union(selfEmployment.taxCategoryId.map { [$0] } ?? [])
   }
 
   /// Under the cashback category: how much cashback to expect is set by the cards' rules.
@@ -921,7 +1009,7 @@ struct CategoryLimitField: View {
       }
       .labelsHidden()
       .textFieldStyle(.roundedBorder)
-      .font(.body.monospacedDigit())
+      .appFont(.body.monospacedDigit())
       .multilineTextAlignment(.trailing)
       .focused($focused)
       .help(environment.language("categories.limit.placeholder", table: "Settings"))
@@ -1114,7 +1202,7 @@ private struct CategoryDeletionSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(verbatim: title)
-        .font(.headline)
+        .appFont(.headline)
       Text(verbatim: message)
         .fixedSize(horizontal: false, vertical: true)
 

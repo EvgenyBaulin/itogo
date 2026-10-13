@@ -25,7 +25,7 @@ struct TemplatesStrip: View {
           } label: {
             HStack(spacing: 4) {
               if template.pinned {
-                Image(systemName: "pin.fill").font(.caption2)
+                Image(systemName: "pin.fill").appFont(.caption2)
               }
               Text(verbatim: title(for: template))
             }
@@ -259,7 +259,8 @@ enum Templates {
     of line: String, in environment: AppEnvironment, model: EntryDraftModel?
   ) -> CurrencyCode {
     let parsed = CoreLineInterpreter(
-      vocabulary: environment.vocabulary, calendar: environment.calendar
+      vocabulary: environment.vocabulary, calendar: environment.calendar,
+      catalog: environment.currencyCatalog
     ).interpret(line, today: environment.today, kind: model?.draft.kind)
     return EntryPreview.currency(of: parsed, model: model, in: environment)
   }

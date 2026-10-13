@@ -147,8 +147,14 @@ struct SampleFeatureLayersTests {
     }
     #expect(Array(unmarked.prefix(accounts.categories.count)) == accounts.categories)
     #expect(Array(set.places.prefix(accounts.places.count)) == accounts.places)
+    // The credit layer gives the main account its main card; nothing else of an account changes.
+    let withoutMainCards = set.paymentMethods.map { account in
+      var account = account
+      account.mainCardId = nil
+      return account
+    }
     #expect(
-      Array(set.paymentMethods.prefix(accounts.paymentMethods.count)) == accounts.paymentMethods)
+      Array(withoutMainCards.prefix(accounts.paymentMethods.count)) == accounts.paymentMethods)
   }
 
   /// Every live account of the kind «card» has a card named like it, with the id the update of

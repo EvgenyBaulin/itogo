@@ -75,6 +75,21 @@ public struct Dataset: Sendable {
   public var assetValuations: [AssetValuation]
   /// The safety cushion's goal and how its obligatory spending is taken.
   public var capitalSettings: CapitalSettings
+  /// The sums of dues typed from a bank's app, by debt and then from the first due.
+  public var debtInstalments: [DebtInstalmentStep]
+  /// What else the loans cost, by debt in the owner's order.
+  public var debtCosts: [DebtCost]
+  /// How the owner usually allocates an income, in the owner's order.
+  public var allocationRules: [AllocationRule]
+  /// The currencies outside the Bank of Russia list, archived ones included, in the owner's
+  /// order.
+  public var customCurrencies: [CustomCurrency]
+  /// Self-employment and the tax on professional income.
+  public var selfEmployment: SelfEmploymentSettings
+  /// What the allocation of income remembers.
+  public var allocationSettings: AllocationSettings
+  /// The payoff ladder, the reminder to a debtor, the interest of credit cards.
+  public var debtSettings: DebtSettings
 
   public init(
     entries: [TransactionEntry] = [],
@@ -100,7 +115,14 @@ public struct Dataset: Sendable {
     banks: [Bank] = [],
     assets: [Asset] = [],
     assetValuations: [AssetValuation] = [],
-    capitalSettings: CapitalSettings = .standard
+    capitalSettings: CapitalSettings = .standard,
+    debtInstalments: [DebtInstalmentStep] = [],
+    debtCosts: [DebtCost] = [],
+    allocationRules: [AllocationRule] = [],
+    customCurrencies: [CustomCurrency] = [],
+    selfEmployment: SelfEmploymentSettings = .standard,
+    allocationSettings: AllocationSettings = .standard,
+    debtSettings: DebtSettings = .standard
   ) {
     self.entries = entries
     self.links = links
@@ -126,6 +148,13 @@ public struct Dataset: Sendable {
     self.assets = assets
     self.assetValuations = assetValuations
     self.capitalSettings = capitalSettings
+    self.debtInstalments = debtInstalments
+    self.debtCosts = debtCosts
+    self.allocationRules = allocationRules
+    self.customCurrencies = customCurrencies
+    self.selfEmployment = selfEmployment
+    self.allocationSettings = allocationSettings
+    self.debtSettings = debtSettings
   }
 
   public static let empty = Dataset()

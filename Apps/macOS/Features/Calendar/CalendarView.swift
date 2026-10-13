@@ -68,7 +68,7 @@ struct CalendarView: View {
   private func header(_ calendar: SpendingCalendar, today: DateOnly) -> some View {
     HStack(spacing: 12) {
       Text(verbatim: CalendarText.title(of: calendar, environment))
-        .font(.title2.weight(.semibold))
+        .appFont(.title2.weight(.semibold))
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("calendar.title")
       Spacer(minLength: 8)
@@ -122,7 +122,7 @@ struct CalendarView: View {
       HStack(spacing: 16) { summaryItems(calendar) }
       VStack(alignment: .leading, spacing: 4) { summaryItems(calendar) }
     }
-    .font(.callout)
+    .appFont(.callout)
   }
 
   @ViewBuilder
@@ -165,7 +165,7 @@ struct CalendarView: View {
       legendItem(CalendarText.symbol(of: .payment), "calendar.payment", tint: .secondary)
       legendItem(CalendarText.symbol(of: .income), "calendar.income", tint: .secondary)
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
   }
 
@@ -184,7 +184,7 @@ struct CalendarView: View {
       GridRow {
         ForEach(calendar.weekdays, id: \.self) { weekday in
           Text(verbatim: environment.dates.shortWeekday(weekday))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
         }
@@ -214,10 +214,10 @@ struct CalendarView: View {
     if let day {
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: environment.dates.longDay(day.day))
-          .font(.headline)
+          .appFont(.headline)
         if !day.plans.isEmpty {
           Text(verbatim: t("calendar.planned"))
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(.secondary)
           ForEach(day.plans) { plan in
             HStack(spacing: 6) {
@@ -231,7 +231,7 @@ struct CalendarView: View {
               Text(verbatim: CalendarText.amount(of: plan, environment))
                 .monospacedDigit()
             }
-            .font(.callout)
+            .appFont(.callout)
             .accessibilityElement(children: .combine)
           }
         }

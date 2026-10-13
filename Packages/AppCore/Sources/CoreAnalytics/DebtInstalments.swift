@@ -36,6 +36,18 @@ public struct DebtInstalments: Hashable, Sendable {
   /// No dues to pay: every due asks for nothing.
   public static let none = DebtInstalments(steps: [])
 
+  /// The steps worked out and the steps typed from the bank's app together, by index: on one
+  /// index the typed step holds, and a step holds until the next step of either kind — a sum
+  /// worked out again after a later early repayment holds over a sum typed before it.
+  public static func merged(
+    computed: DebtInstalments, typed: [DebtInstalmentStep]
+  ) -> DebtInstalments {
+    guard !typed.isEmpty else { return computed }
+    return DebtInstalments(
+      steps: computed.steps
+        + typed.map { Step(fromIndex: $0.fromIndex, amountE4: $0.amountE4) })
+  }
+
   /// Whether the instalments ask for anything at all.
   public var isEmpty: Bool { steps.allSatisfy { $0.amountE4.isZero } }
 

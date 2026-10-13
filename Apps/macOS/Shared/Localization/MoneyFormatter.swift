@@ -13,18 +13,31 @@ import Foundation
 /// signed, on an axis — is written as `mask`; counts, percents, rates and plain numbers are not
 /// money and stay as they are: a share or a change in percent does not tell how much there is,
 /// and a plain number is what the entry line is given back to edit.
+///
+/// `currencyStyle` (Settings → Appearance → «Валюта») names the currency after the number —
+/// «1,250 ₽», «1,250 RUB», «1,250 руб.» — in every amount written here; `symbol(for:)` stays the
+/// sign itself, for the unit beside a field where an amount is typed.
 public struct MoneyFormatter: Sendable {
   private let locale: Locale
   /// The figures of money are hidden behind `mask`.
   public let hidesAmounts: Bool
+  /// How an amount names its currency.
+  public let currencyStyle: CurrencyStyle
+  /// The custom currencies (USDT, points…): their symbols and names are the owner's.
+  public let catalog: CurrencyCatalog
 
   /// What stands in place of a hidden amount, its sign and its currency included: one width
   /// everywhere, so neither the length of a figure nor its sign is left to read.
   public static let mask = "•••"
 
-  public init(locale: Locale, hidesAmounts: Bool = false) {
+  public init(
+    locale: Locale, hidesAmounts: Bool = false, currencyStyle: CurrencyStyle = .symbol,
+    catalog: CurrencyCatalog = .empty
+  ) {
     self.locale = locale
     self.hidesAmounts = hidesAmounts
+    self.currencyStyle = currencyStyle
+    self.catalog = catalog
   }
 
   private var isRussian: Bool { locale.language.languageCode?.identifier == "ru" }
@@ -34,7 +47,7 @@ public struct MoneyFormatter: Sendable {
   /// «4.625 ₽».
   public func exact(_ amount: AmountE4, currency: CurrencyCode = .rub) -> String {
     if hidesAmounts { return Self.mask }
-    return "\(NumberText.amount(amount))\u{00A0}\(symbol(for: currency))"
+    return "\(NumberText.amount(amount))\u{00A0}\(unit(for: currency))"
   }
 
   /// Rounded to whole units, half away from zero — the form used by totals and charts.
@@ -48,7 +61,7 @@ public struct MoneyFormatter: Sendable {
   /// from the number itself: the largest whole rubles have no E4 to go back to.
   public func rubles(_ whole: Int64) -> String {
     if hidesAmounts { return Self.mask }
-    return "\(NumberText.integer(whole))\u{00A0}₽"
+    return "\(NumberText.integer(whole))\u{00A0}\(unit(for: .rub))"
   }
 
   /// Whole rubles of a chart with their sign, as `signedRounded` writes a difference:
@@ -61,7 +74,7 @@ public struct MoneyFormatter: Sendable {
 
   /// A figure rounded to whole units already, its thousands grouped.
   private func wholeText(_ whole: Decimal, _ currency: CurrencyCode) -> String {
-    "\(NumberText.decimal(whole, fractionDigits: 0...0))\u{00A0}\(symbol(for: currency))"
+    "\(NumberText.decimal(whole, fractionDigits: 0...0))\u{00A0}\(unit(for: currency))"
   }
 
   /// A label of a money axis: whole rubles below a million, from a million the compact form
@@ -78,7 +91,7 @@ public struct MoneyFormatter: Sendable {
     let number = NumberText.decimal(scaled, fractionDigits: 0...1)
     let suffix =
       isRussian ? (billions ? "\u{00A0}млрд" : "\u{00A0}млн") : (billions ? "B" : "M")
-    return "\(number)\(suffix)\u{00A0}₽"
+    return "\(number)\(suffix)\u{00A0}\(unit(for: .rub))"
   }
 
   /// A whole number with its thousands grouped: «1,250» — counts on a chart.
@@ -154,19 +167,26 @@ public struct MoneyFormatter: Sendable {
     return isRussian ? "\(number)\u{00A0}%" : "\(number)%"
   }
 
+  /// The sign of a currency — «₽», «$» —, whatever the style: the unit beside a field where an
+  /// amount is typed, and the list of currencies in Settings.
+  /// A custom currency's sign is the owner's, its code when it has none.
   public func symbol(for currency: CurrencyCode) -> String {
-    switch currency.code {
-    case "RUB": "₽"
-    case "USD": "$"
-    case "EUR": "€"
-    case "KZT": "₸"
-    case "CNY": "¥"
-    case "TRY": "₺"
-    case "GEL": "₾"
-    case "AMD": "֏"
-    case "THB": "฿"
-    case "AED": "AED"
-    default: currency.code
+    catalog.symbol(currency) ?? CurrencyStyle.symbol(for: currency)
+  }
+
+  /// What follows the number of an amount, in the style chosen: «₽», «RUB» or «руб.». A custom
+  /// currency is written by the owner's symbol (its code when it has none), by its code, or by
+  /// the owner's name — in Russian; English writes the code for a name, as for every currency.
+  public func unit(for currency: CurrencyCode) -> String {
+    guard catalog.isCustom(currency) else {
+      return currencyStyle.unit(for: currency, russian: isRussian)
+    }
+    switch currencyStyle {
+    case .symbol: return catalog.symbol(currency) ?? currency.code
+    case .code: return currency.code
+    case .name:
+      let language = isRussian ? "ru" : "en"
+      return isRussian ? catalog.name(currency, language: language) ?? currency.code : currency.code
     }
   }
 }

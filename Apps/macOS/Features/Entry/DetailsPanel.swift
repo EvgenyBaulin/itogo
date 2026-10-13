@@ -78,7 +78,7 @@ struct DetailsPanel: View {
         fieldsAndActions
       } else {
         Text(verbatim: t("entry.form.chooseKind"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("entry.form.chooseKind")
@@ -136,7 +136,7 @@ struct DetailsPanel: View {
       } icon: {
         Image(systemName: "lock")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
       .accessibilityIdentifier("entry.reconcileDifference.locked")
@@ -153,14 +153,14 @@ struct DetailsPanel: View {
     // width it is given: the panel is also the inspector, a column of a split view.
     if let refusal = model.shownRefusalKey {
       Text(verbatim: t(refusal))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.red)
         .accessibilityIdentifier("entry.refusal")
     }
     // A record «Add…» asked for that the database refused: nothing was chosen.
     if let failure = model.creationFailureKey {
       Text(verbatim: t(failure))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.red)
     }
   }
@@ -372,7 +372,7 @@ struct DetailsPanel: View {
     if let sentence = payingForSentence {
       fieldRow(nil) {
         Text(verbatim: sentence)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("entry.payingFor.outcome")
@@ -550,7 +550,7 @@ struct DetailsPanel: View {
         // writes them.
         if let expression = model.draft.amountExpression {
           Text(verbatim: ExpressionEvaluator.canonical(expression) ?? expression)
-            .font(.caption.monospaced())
+            .appFont(.caption.monospaced())
             .foregroundStyle(.secondary)
         }
         // Another currency than the default one: grey «≈ 1,240 ₽», display only.
@@ -559,10 +559,19 @@ struct DetailsPanel: View {
           compute: compute)
         {
           Text(verbatim: approximate)
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
             .accessibilityIdentifier("entry.approximate")
         }
+      }
+    }
+    // An income in a category with a tax: grey «налог ≈ 240 ₽ (4 %)», never money.
+    if let tax = taxEstimateText {
+      fieldRow(nil) {
+        Text(verbatim: tax)
+          .appFont(.caption.monospacedDigit())
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("entry.taxEstimate")
       }
     }
     if !model.isSplit && model.hasClosedPart {
@@ -604,7 +613,7 @@ struct DetailsPanel: View {
     } icon: {
       Image(systemName: "exclamationmark.circle")
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.tint)
     .fixedSize()
     .accessibilityIdentifier("entry.gap.mark")
@@ -717,6 +726,27 @@ struct DetailsPanel: View {
       .focused($focus, equals: .account)
       .disabled(moneyLocked)
       .accessibilityIdentifier("entry.account")
+    }
+    // «Карта · Счёт»: a purchase is made with a card — the one the line named, the one of the
+    // place, the main card of the account —, unless it is said to leave the account itself.
+    if model.offersCardOrAccount {
+      fieldRow(nil) {
+        Picker(
+          selection: Binding(
+            get: { model.paysWithCard }, set: { model.setPaysFromAccount(!$0) })
+        ) {
+          Text(verbatim: t("entry.payWith.card")).tag(true)
+          Text(verbatim: t("entry.payWith.account")).tag(false)
+        } label: {
+          EmptyView()
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .fixedSize()
+        .help(t("entry.payWith.help"))
+        .disabled(moneyLocked)
+        .accessibilityIdentifier("entry.payWith")
+      }
     }
     if model.needsCharge {
       fieldRow("entry.accountCharge") {
@@ -865,7 +895,7 @@ struct DetailsPanel: View {
               "entry.periodMonth.cashback", table: "Entry",
               environment.dates.monthTitle(model.shownPeriodMonth))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("entry.periodMonth.cashback")
@@ -985,7 +1015,7 @@ struct DetailsPanel: View {
                 HStack(spacing: 10) { partPaidForSomeone(index, part) }
               }
             }
-            .font(.caption)
+            .appFont(.caption)
           }
           if model.isClosedPart(id: part.id) {
             closedPartCaption
@@ -999,10 +1029,10 @@ struct DetailsPanel: View {
         Text(
           verbatim: environment.money.exact(model.draft.unallocated, currency: model.draft.currency)
         )
-        .font(.body.monospacedDigit())
+        .appFont(.body.monospacedDigit())
         .foregroundStyle(model.draft.isBalanced ? Color.secondary : Color.red)
       }
-      .font(.caption)
+      .appFont(.caption)
     }
   }
 
@@ -1151,9 +1181,25 @@ struct DetailsPanel: View {
         }
         .labelsHidden()
       }
+      // A new debt may be an instalment plan: equal parts, the first today, a markup on top.
+      if plan.wrappedValue.debtId == nil {
+        fieldRow(nil) {
+          Toggle(
+            isOn: Binding(
+              get: { plan.wrappedValue.instalments }, set: { model.setInstalments($0) })
+          ) {
+            Text(verbatim: t("entry.instalments"))
+          }
+          .toggleStyle(.checkbox)
+          .accessibilityIdentifier("entry.instalments")
+        }
+      }
+      if plan.wrappedValue.debtId == nil, plan.wrappedValue.instalments {
+        instalmentFields(plan.wrappedValue)
+      }
       // The count and the instalment move together, and only a new debt takes them: an
       // existing one keeps its own payment.
-      if plan.wrappedValue.debtId == nil {
+      if plan.wrappedValue.debtId == nil, !plan.wrappedValue.instalments {
         fieldRow("entry.payments") {
           Stepper(
             value: Binding(
@@ -1161,7 +1207,7 @@ struct DetailsPanel: View {
             in: EntryDraftModel.creditPaymentsRange
           ) {
             Text(verbatim: "\(plan.wrappedValue.payments)")
-              .font(.body.monospacedDigit())
+              .appFont(.body.monospacedDigit())
           }
           .fixedSize()
         }
@@ -1176,12 +1222,68 @@ struct DetailsPanel: View {
     }
   }
 
+  /// The parts of an instalment plan: how many, how often, the markup, and what one part is.
+  @ViewBuilder
+  private func instalmentFields(_ plan: EntryDraftModel.CreditPlan) -> some View {
+    fieldRow("entry.instalments.parts") {
+      Stepper(
+        value: Binding(get: { plan.payments }, set: { model.setCreditPayments($0) }),
+        in: EntryDraftModel.instalmentPartsRange
+      ) {
+        Text(verbatim: "\(plan.payments)")
+          .appFont(.body.monospacedDigit())
+      }
+      .fixedSize()
+      .accessibilityIdentifier("entry.instalments.parts")
+    }
+    fieldRow("entry.instalments.step") {
+      Picker(
+        selection: Binding(get: { plan.everyDays }, set: { model.setInstalmentStep($0) })
+      ) {
+        Text(verbatim: t("entry.instalments.step.week")).tag(Int?.some(7))
+        Text(verbatim: t("entry.instalments.step.twoWeeks")).tag(Int?.some(14))
+        Text(verbatim: t("entry.instalments.step.month")).tag(Int?.none)
+        if let days = plan.everyDays, ![7, 14].contains(days) {
+          Text(
+            verbatim: environment.language.format(
+              "entry.instalments.step.days", table: "Entry", days)
+          )
+          .tag(Int?.some(days))
+        }
+      } label: {
+        EmptyView()
+      }
+      .labelsHidden()
+      .fixedSize()
+      .accessibilityIdentifier("entry.instalments.step")
+    }
+    fieldRow("entry.instalments.markup") {
+      AmountField(
+        amount: Binding(get: { plan.markup }, set: { model.setInstalmentMarkup($0) })
+      )
+      .frame(width: gridWidth(120))
+      .accessibilityIdentifier("entry.instalments.markup")
+    }
+    fieldRow(nil) {
+      Text(
+        verbatim: environment.language.format(
+          plan.everyDays == nil ? "entry.instalments.summary.month" : "entry.instalments.summary",
+          table: "Entry",
+          environment.money.exact(plan.monthlyAmount, currency: model.draft.currency))
+      )
+      .appFont(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      .accessibilityIdentifier("entry.instalments.summary")
+    }
+  }
+
   // MARK: Pieces
 
   /// `marked`: the field Enter asks for — its name stands out.
   private func fieldLabel(_ key: String, marked: Bool = false) -> some View {
     Text(verbatim: t(key))
-      .font(.caption)
+      .appFont(.caption)
       .fontWeight(marked ? .semibold : .regular)
       .foregroundStyle(marked ? Color.primary : Color.secondary)
       .gridColumnAlignment(.leading)
@@ -1381,13 +1483,54 @@ struct DetailsPanel: View {
     .labelsHidden()
   }
 
+  /// The tax of the income being entered, as the panel shows it; `nil` when there is none.
+  private var taxEstimateText: String? {
+    guard model.draft.kind == .income, let snapshot = compute.snapshot,
+      let tax = model.taxEstimate(
+        settings: snapshot.dataset.selfEmployment, dayRates: snapshot.context.dayRates,
+        deductionLeft: snapshot.planning.npd?.deductionLeftE4)
+    else { return nil }
+    return Self.taxText(tax.taxE4, rate: tax.rate, environment: environment)
+  }
+
+  /// «налог ≈ 240 ₽ (4 %)»: the rate with as many digits as it has, up to two.
+  static func taxText(_ tax: AmountE4, rate: Decimal, environment: AppEnvironment) -> String {
+    let digits =
+      DecimalMath.round(rate, scale: 0) == rate
+      ? 0
+      : DecimalMath.round(rate, scale: 1) == rate
+        ? 1 : 2
+    let basisPoints = NSDecimalNumber(decimal: DecimalMath.round(rate * 100, scale: 0)).intValue
+    return environment.language.format(
+      "entry.tax.estimate", table: "Entry", environment.money.exact(tax, currency: .rub),
+      environment.money.percent(basisPoints: basisPoints, fractionDigits: digits))
+  }
+
+  /// The currencies the picker offers: the enabled ones of the bank, then the owner's own, and the
+  /// operation's own currency should it be neither.
+  private var currencyChoices: [CurrencyCode] {
+    let catalog = environment.currencyCatalog
+    var choices = catalog.choices(enabled: environment.vocabulary.enabledCurrencies)
+    if !choices.contains(model.draft.currency) { choices.append(model.draft.currency) }
+    return choices
+  }
+
+  /// «ZZT · Звёзды» for a currency of the owner's own, the code for the bank's.
+  private func currencyTitle(_ currency: CurrencyCode) -> String {
+    let catalog = environment.currencyCatalog
+    guard catalog.isCustom(currency),
+      let name = catalog.name(currency, language: environment.language.locale.identifier)
+    else { return currency.code }
+    return "\(currency.code) · \(name)"
+  }
+
   /// A currency picked here is the owner's: the account chosen after it does not replace it.
   private var currencyPicker: some View {
     Picker(
       selection: Binding(get: { model.draft.currency }, set: { model.setCurrency($0) })
     ) {
-      ForEach(environment.vocabulary.enabledCurrencies, id: \.code) { currency in
-        Text(verbatim: currency.code).tag(currency)
+      ForEach(currencyChoices, id: \.code) { currency in
+        Text(verbatim: currencyTitle(currency)).tag(currency)
       }
     } label: {
       EmptyView()
@@ -1435,7 +1578,7 @@ struct DetailsPanel: View {
   /// Why a field cannot be changed here, or where it is changed instead.
   private func caption(_ key: String) -> some View {
     Text(verbatim: t(key))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
   }
 
@@ -1447,7 +1590,7 @@ struct DetailsPanel: View {
         .disabled(!model.canTypeRate || moneyLocked)
       if model.draft.rateSource == .manual {
         Text(verbatim: t("entry.rateManual"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
     }
@@ -1569,7 +1712,7 @@ struct AmountField: View {
       Text(verbatim: "0")
     }
     .labelsHidden()
-    .font(.body.monospacedDigit())
+    .appFont(.body.monospacedDigit())
     .focused($isFocused)
     .onAppear { show(amount) }
     .onChange(of: amount) { _, newValue in

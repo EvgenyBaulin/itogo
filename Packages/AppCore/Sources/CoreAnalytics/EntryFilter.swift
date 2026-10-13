@@ -69,7 +69,7 @@ public struct EntryFilter: Hashable, Sendable {
 
   /// The ids of the matching live operations, newest first.
   public func apply(to ledger: Ledger) -> [UUID] {
-    let words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+    let words = NameKey.fold(text).split(whereSeparator: \.isWhitespace).map(String.init)
     var matched: [UUID] = []
     var seen: Set<UUID> = []
     // Rows are oldest first, so walking them backwards gives newest first.

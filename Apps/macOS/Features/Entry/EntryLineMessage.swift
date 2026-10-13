@@ -14,6 +14,11 @@ enum EntryLineMessage: Equatable {
   case gap(EntryGap)
   /// An operation dated ahead became a plan instead of a record: what it became, and its day.
   case planned(OperationAhead.Plan, DateOnly)
+  /// An income in «Заработок» was written: «Записано. Распределить 120 000 ₽?» with
+  /// «Распределить…».
+  case allocate(UUID, String)
+  /// «смз» was written with self-employment off: the one offer to count its tax.
+  case offerSelfEmployment
 
   /// The words on screen.
   @MainActor func text(_ environment: AppEnvironment) -> String {
@@ -35,13 +40,38 @@ enum EntryLineMessage: Equatable {
       return environment.language.format(
         plan == .payment ? "entry.ahead.planned.payment" : "entry.ahead.planned.income",
         table: "Entry", environment.dates.longDay(day))
+    case .allocate(_, let amount):
+      return environment.language.format("entry.allocate.offer", table: "Entry", amount)
+    case .offerSelfEmployment:
+      return environment.language("entry.selfEmployed.offer", table: "Entry")
+    }
+  }
+
+  /// The key of the button beside a notice that offers something.
+  var actionKey: String? {
+    switch self {
+    case .allocate: "entry.allocate.action"
+    case .offerSelfEmployment: "entry.selfEmployed.action"
+    default: nil
+    }
+  }
+
+  /// A notice of what was done, not a question about the line: the next keystroke takes it away.
+  var isNotice: Bool {
+    switch self {
+    case .planned, .allocate, .offerSelfEmployment: true
+    default: false
     }
   }
 
   /// The symbol before a message that is not an error.
   var symbol: String {
-    if case .planned = self { return "calendar.badge.plus" }
-    return "exclamationmark.circle"
+    switch self {
+    case .planned: "calendar.badge.plus"
+    case .allocate: "arrow.triangle.branch"
+    case .offerSelfEmployment: "briefcase"
+    default: "exclamationmark.circle"
+    }
   }
 
   /// The words beside the picker the panel marks.
@@ -56,7 +86,7 @@ enum EntryLineMessage: Equatable {
   /// choice, and the panel says which one.
   var isError: Bool {
     switch self {
-    case .gap, .planned: false
+    case .gap, .planned, .allocate, .offerSelfEmployment: false
     case .error, .date, .time: true
     }
   }

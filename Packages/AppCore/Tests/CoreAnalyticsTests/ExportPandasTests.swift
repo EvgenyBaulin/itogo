@@ -68,6 +68,13 @@ struct ExportPandasTests {
     let (assets, valuations) = Self.assetsAndValuations()
     rows[ExportTables.assets] = assets.map(ExportTables.row)
     rows[ExportTables.assetValuations] = valuations.map(ExportTables.row)
+    // The tables of loans, allocation and own currencies the sample does not fill yet: headers alone.
+    for table in [
+      ExportTables.debtInstalments, ExportTables.debtCosts, ExportTables.allocationRules,
+      ExportTables.customCurrencies, ExportTables.settings,
+    ] where rows[table] == nil {
+      rows[table] = []
+    }
     return rows
   }
 
@@ -126,7 +133,7 @@ struct ExportPandasTests {
       months: 6, endingOn: Synthetic.endingOn, calendar: Synthetic.calendar, language: "ru"
     ).withAccounts(seed: 20_260_918, calendar: Synthetic.calendar, language: "ru")
     let rows = Self.rows(of: set)
-    #expect(ExportTables.all.count == 26)
+    #expect(ExportTables.all.count == 31)
     #expect(Set(rows.keys) == Set(ExportTables.all), "a file of Export has no rows here")
     for table in [
       ExportTables.accountGroups, ExportTables.transfers, ExportTables.reconciliationBalances,
@@ -158,7 +165,7 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: Reading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 26)
+    #expect(readings.count == 31)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")
@@ -313,7 +320,7 @@ struct ExportPandasTests {
     try #require(run.status == 0, "pandas failed: \(run.output)")
     let readings = try JSONDecoder().decode(
       [String: TextReading].self, from: Data(contentsOf: output))
-    #expect(readings.count == 26)
+    #expect(readings.count == 31)
     for (path, table) in paths.sorted(by: { $0.key < $1.key }) {
       let reading = try #require(readings[path], "pandas did not read \(table.fileName)")
       #expect(reading.rows == (rows[table] ?? []).count, "\(table.fileName): rows")

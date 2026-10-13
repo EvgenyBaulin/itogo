@@ -18,6 +18,9 @@ public struct Category: Identifiable, Hashable, Sendable, Codable {
   /// spending of the safety cushion. `nil` on a subcategory inherits its parent, `nil` on a top
   /// category means no (`CategoryTree.isEssential`); only an expense category says yes.
   public var essential: Bool?
+  /// The tax an income in this category owes; `nil` on a subcategory follows its parent, on a
+  /// category means none (`CategoryTree.tax(of:)`). Only an income category has one.
+  public var tax: IncomeTax?
 
   public init(
     id: UUID = UUID(),
@@ -28,7 +31,8 @@ public struct Category: Identifiable, Hashable, Sendable, Codable {
     archived: Bool = false,
     quality: Quality? = nil,
     systemRole: SystemRole? = nil,
-    essential: Bool? = nil
+    essential: Bool? = nil,
+    tax: IncomeTax? = nil
   ) {
     self.id = id
     self.parentId = parentId
@@ -39,6 +43,7 @@ public struct Category: Identifiable, Hashable, Sendable, Codable {
     self.quality = quality
     self.systemRole = systemRole
     self.essential = essential
+    self.tax = tax
   }
 
   public var isSystem: Bool { systemRole != nil }
@@ -116,6 +121,11 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
   public var interest: DepositTerms?
   /// The money of the account is the owner's safety cushion, every currency of it.
   public var cushion: Bool
+  /// The terms of a credit card, in the main currency of the account; `nil`: not a credit card.
+  public var credit: CreditCardTerms?
+  /// The card a purchase on the account is made with unless it says otherwise — always a card
+  /// of this account; `nil`: none chosen.
+  public var mainCardId: UUID?
 
   public init(
     id: UUID = UUID(), name: String, kind: PaymentMethodKind = .card,
@@ -123,7 +133,8 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     archived: Bool = false, groupId: UUID? = nil, sort: Int = 0,
     otherCurrencies: [CurrencyCode] = [], bankId: UUID? = nil,
     cashbackRounding: CashbackRounding = .standard, cashbackPayout: CashbackPayout? = nil,
-    cashbackPointsAccountId: UUID? = nil, interest: DepositTerms? = nil, cushion: Bool = false
+    cashbackPointsAccountId: UUID? = nil, interest: DepositTerms? = nil, cushion: Bool = false,
+    credit: CreditCardTerms? = nil, mainCardId: UUID? = nil
   ) {
     self.id = id
     self.name = name
@@ -141,7 +152,12 @@ public struct PaymentMethod: Identifiable, Hashable, Sendable, Codable {
     self.cashbackPointsAccountId = cashbackPointsAccountId
     self.interest = interest
     self.cushion = cushion
+    self.credit = credit
+    self.mainCardId = mainCardId
   }
+
+  /// A credit card: an account with a limit, whose balance may go below zero.
+  public var isCreditCard: Bool { credit != nil }
 
   /// The one account every operation without an account of its own belongs to.
   public var isMain: Bool { isDefault }
@@ -236,11 +252,16 @@ public struct Goal: Identifiable, Hashable, Sendable, Codable {
   /// The month the monthly plan counts from: money put in before it is not paid ahead of the
   /// plan. `nil` — from the month of the first contribution.
   public var planStartMonth: MonthKey?
+  /// The account the money of the goal is kept on; `nil` — not said.
+  public var accountId: UUID?
+  /// A contribution from the allocation of an income also moves the money to `accountId`.
+  public var transfersOnContribution: Bool
 
   public init(
     id: UUID = UUID(), name: String, targetE4: AmountE4, targetDate: DateOnly? = nil,
     monthlyPlanE4: AmountE4? = nil, subcategoryId: UUID? = nil, archived: Bool = false,
-    currency: CurrencyCode = .rub, planStartMonth: MonthKey? = nil
+    currency: CurrencyCode = .rub, planStartMonth: MonthKey? = nil, accountId: UUID? = nil,
+    transfersOnContribution: Bool = false
   ) {
     self.id = id
     self.name = name
@@ -251,6 +272,8 @@ public struct Goal: Identifiable, Hashable, Sendable, Codable {
     self.archived = archived
     self.currency = currency
     self.planStartMonth = planStartMonth
+    self.accountId = accountId
+    self.transfersOnContribution = transfersOnContribution
   }
 }
 
@@ -284,6 +307,29 @@ public struct Debt: Identifiable, Hashable, Sendable, Codable {
   /// The months the main payment is worked out over at the rate of the debt, when the owner
   /// did not type it (`monthlyPaymentE4`); `nil` — not said.
   public var repayMonths: Int?
+  /// Dues every few days from a first day instead of on `paymentDay` of every month.
+  public var steps: DebtSteps?
+  /// «Рассрочка»: a purchase I owe for, paid in this many parts; `nil` — not one.
+  public var parts: Int?
+  /// What the instalment plan costs above the price, all parts together.
+  public var markupE4: AmountE4?
+  /// The full cost of credit from the contract, % a year.
+  public var psk: Decimal?
+  /// The bank takes an early repayment on any day; `false` — only on a payment day.
+  public var prepayAnyDay: Bool
+  /// How many days before an early repayment the bank wants the application; `nil` — one day.
+  public var prepayNoticeDays: Int?
+  /// An early repayment the owner plans; not money.
+  public var plannedPrepay: PlannedPrepay?
+  /// In the payoff ladder: `nil` — the standard rule, every debt I owe.
+  public var inLadder: Bool?
+  /// A pledge or a deposit owed back to me.
+  public var pledge: Bool
+  /// The day a pledge is due back.
+  public var returnBy: DateOnly?
+  /// The owner has seen the terms this version added for the debt, or the debt was made with
+  /// them.
+  public var termsReviewed: Bool
 
   public init(
     id: UUID = UUID(), direction: DebtDirection, type: DebtType, name: String,
@@ -291,7 +337,11 @@ public struct Debt: Identifiable, Hashable, Sendable, Codable {
     monthlyPaymentE4: AmountE4? = nil, paymentDay: Int? = nil, remindDaysBefore: Int? = nil,
     paymentsAreExpenses: Bool = true, origin: DebtOrigin = .existing, note: String? = nil,
     closed: Bool = false, loansSubcategoryId: UUID? = nil, deletedAt: Date? = nil,
-    accruesInterest: Bool = false, grace: DebtGrace? = nil, repayMonths: Int? = nil
+    accruesInterest: Bool = false, grace: DebtGrace? = nil, repayMonths: Int? = nil,
+    steps: DebtSteps? = nil, parts: Int? = nil, markupE4: AmountE4? = nil, psk: Decimal? = nil,
+    prepayAnyDay: Bool = true, prepayNoticeDays: Int? = nil, plannedPrepay: PlannedPrepay? = nil,
+    inLadder: Bool? = nil, pledge: Bool = false, returnBy: DateOnly? = nil,
+    termsReviewed: Bool = false
   ) {
     self.id = id
     self.direction = direction
@@ -312,14 +362,30 @@ public struct Debt: Identifiable, Hashable, Sendable, Codable {
     self.accruesInterest = accruesInterest
     self.grace = grace
     self.repayMonths = repayMonths
+    self.steps = steps
+    self.parts = parts
+    self.markupE4 = markupE4
+    self.psk = psk
+    self.prepayAnyDay = prepayAnyDay
+    self.prepayNoticeDays = prepayNoticeDays
+    self.plannedPrepay = plannedPrepay
+    self.inLadder = inLadder
+    self.pledge = pledge
+    self.returnBy = returnBy
+    self.termsReviewed = termsReviewed
   }
 
   public var isDeleted: Bool { deletedAt != nil }
 
-  /// Whether the debt has monthly dues at all: it is paid on a day of the month, and the day
-  /// asks for something — a monthly payment, a grace period, or a main payment worked out over
-  /// a number of months. Every rule of the dues asks this before anything else.
+  /// «Рассрочка»: a purchase on credit paid in a number of parts.
+  public var isInstalmentPlan: Bool { origin == .purchase && parts != nil }
+
+  /// Whether the debt has dues at all: it is paid every few days (`steps`), or on a day of the
+  /// month and the day asks for something — a monthly payment, a grace period, or a main
+  /// payment worked out over a number of months. Every rule of the dues asks this before
+  /// anything else.
   public var hasDues: Bool {
+    if steps != nil { return true }
     guard paymentDay != nil else { return false }
     if let monthly = monthlyPaymentE4, monthly.raw > 0 { return true }
     return grace != nil || repayMonths != nil
@@ -353,13 +419,17 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
   /// A part of the loan drawn later — a term of tuition the bank paid. Only money that grows the
   /// debt is one: a `borrowed` line or an `adjustment` with a positive amount.
   public var tranche: Bool
+  /// An early repayment and what the owner chose for it; only a `payment` carries one. `nil` —
+  /// an ordinary payment, which closes dues as it always did.
+  public var prepay: PrepayChoice?
 
   public init(
     id: UUID = UUID(), debtId: UUID, groupName: String? = nil, date: DateOnly? = nil,
     description: String? = nil, fullAmountE4: AmountE4? = nil, share: Decimal? = nil,
     amountE4: AmountE4, kind: DebtEntryKind, transactionId: UUID? = nil, note: String? = nil,
     paymentMethodId: UUID? = nil, occurredAt: Date? = nil, accountCurrency: CurrencyCode? = nil,
-    accountAmountE4: AmountE4? = nil, closesTerm: Bool = false, tranche: Bool = false
+    accountAmountE4: AmountE4? = nil, closesTerm: Bool = false, tranche: Bool = false,
+    prepay: PrepayChoice? = nil
   ) {
     self.id = id
     self.debtId = debtId
@@ -378,6 +448,7 @@ public struct DebtEntry: Identifiable, Hashable, Sendable, Codable {
     self.accountAmountE4 = accountAmountE4
     self.closesTerm = closesTerm
     self.tranche = tranche
+    self.prepay = prepay
   }
 }
 

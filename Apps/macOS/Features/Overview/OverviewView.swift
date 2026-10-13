@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The month so far, as tiles. The cards come from the calculation pipeline (`ComputeStore`):
 /// nothing here reads the database, and nothing here counts — every figure is the core's, only
-/// put into words. The operations by day are «Траты» of the sidebar (`SpendingView`); ↓ in the
+/// put into words. The operations are «Операции» of the sidebar (`OperationsScreen`); ↓ in the
 /// entry line goes there. The sheets the cards open live in `actions`, which the window presents
 /// from its root.
 struct OverviewView: View {

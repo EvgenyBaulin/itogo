@@ -257,7 +257,8 @@ final class EntryCardTests: XCTestCase {
     let saved = try book.save(model)
     XCTAssertEqual(try book.stored(saved.id)?.transaction.cardId, book.virtual.id)
 
-    // A card archived since is not brought.
+    // A card archived since is not brought: the purchase is made with the one live card left
+    // on the account, its default card.
     var archived = book.virtual
     archived.archived = true
     _ = try XCTUnwrap(book.environment.planning).apply(
@@ -265,7 +266,7 @@ final class EntryCardTests: XCTestCase {
     let next = book.model()
     try book.enter("продукты 400 в Магните", into: next)
     XCTAssertEqual(next.draft.paymentMethodId, book.tBank.id)
-    XCTAssertNil(next.draft.cardId)
+    XCTAssertEqual(next.draft.cardId, book.black.id)
   }
 
   /// A refund picked from a purchase takes the purchase's card while it is live and of the

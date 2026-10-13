@@ -8,6 +8,7 @@ import SwiftUI
 /// pointing at the purchase, so ⌘Z takes them away with it instead of leaving the debt
 /// behind — the line a debt payment moves its debt by, and the link of income to what was
 /// expected. `nil` when the operation is all there is: then the store saves it the usual way.
+/// `openingLine`: the first line of a new instalment plan, which owes the markup too.
 enum EntryCommit {
   /// The debt is kept in another currency than the operation: its journal counts its own
   /// units, and rubles are never taken for dollars (review of the app, 19.09).
@@ -60,7 +61,8 @@ enum EntryCommit {
   static func change(
     entry: TransactionEntry, openedCredit: Debt?, creditIsNew: Bool = true, paidDebt: Debt?,
     expectedIncomeId: UUID?, day: DateOnly, paidDebtBalance: AmountE4? = nil,
-    surplus: SurplusSetting? = nil, closesTerm: Bool = false, now: Date = Date()
+    surplus: SurplusSetting? = nil, closesTerm: Bool = false, openingLine: DebtEntry? = nil,
+    now: Date = Date()
   ) throws -> PlanningChange? {
     var rows = PlanningRows.empty
     var created = [entry]
@@ -69,10 +71,16 @@ enum EntryCommit {
       guard entry.transaction.kind.canBeBoughtOnCredit else { throw CreditNotPurchase() }
       guard debt.currency == entry.transaction.currency else { throw CurrencyMismatch() }
       if creditIsNew { rows.debts = [debt] }
-      rows.debtEntries.append(
-        try DebtRules.creditPurchaseOpening(
-          on: debt, amountE4: entry.transaction.amountE4, date: day, transactionId: entry.id,
-          description: note))
+      // An instalment plan opens with its own line — the price and the markup together
+      // (`InstalmentPlan.make`); a credit with the price.
+      if let openingLine, openingLine.debtId == debt.id {
+        rows.debtEntries.append(openingLine)
+      } else {
+        rows.debtEntries.append(
+          try DebtRules.creditPurchaseOpening(
+            on: debt, amountE4: entry.transaction.amountE4, date: day, transactionId: entry.id,
+            description: note))
+      }
     }
     if let debt = paidDebt {
       guard debt.currency == entry.transaction.currency else { throw CurrencyMismatch() }

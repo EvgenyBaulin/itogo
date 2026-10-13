@@ -277,7 +277,7 @@ final class AccountScreenTests: XCTestCase {
 
   /// What the choice of the sidebar means for the window: the account whose screen is open
   /// takes new operations, the journal gets a word and never a name, the screens of accounts
-  /// list operations like «Траты», and a screen whose account or group is gone goes back to
+  /// list operations like «Операции», and a screen whose account or group is gone goes back to
   /// Overview.
   func testTheChoiceOfTheSidebarFocusesTheAccountAndFallsBackWhenItIsGone() {
     let id = UUID()
@@ -290,8 +290,8 @@ final class AccountScreenTests: XCTestCase {
     XCTAssertEqual(SidebarItem.group(group).journalToken, "group")
     XCTAssertEqual(SidebarItem.section(.planning).journalToken, "planning")
 
-    // Overview shows tiles only: the list of operations is «Траты».
-    XCTAssertTrue(SidebarItem.section(.spending).listsOperations)
+    // Overview shows tiles only: the list of operations is «Операции».
+    XCTAssertTrue(SidebarItem.section(.operations).listsOperations)
     XCTAssertFalse(SidebarItem.section(.overview).listsOperations)
     XCTAssertFalse(SidebarItem.section(.planning).listsOperations)
     XCTAssertTrue(SidebarItem.allAccounts.listsOperations)

@@ -1,9 +1,10 @@
 import XCTest
 
-/// The double click that hung the window on 19.09, by hand and in every shape: a plain
-/// operation, a split, a part of a split, the header of a day; with the inspector closed and
-/// with it already open; and with the main window closed, since the Transactions window then
-/// stands alone (`TransactionsLayoutTests` covers the same ground without a click).
+/// The double click that hung the window of Transactions on 19.09, by hand and in every shape,
+/// in «Операции» of the main window where the table lives now: a plain operation, a split, a part
+/// of a split, the header of a day; with the editor closed and with it already open
+/// (`TransactionsLayoutTests` covers the same ground without a click). And ⌘⇧T's item of the
+/// Window menu brings that screen, not a window of its own.
 ///
 /// Written to be run by the owner with `make test-ui`: it needs the automation mode and
 /// Accessibility for the runner, which only the owner can grant.
@@ -19,8 +20,8 @@ import XCTest
 ///   read once as a snapshot and the row is clicked by its frame.
 @MainActor
 final class TransactionsDoubleClickUITests: XCTestCase {
-  /// SwiftUI gives a window the identifier of its scene. It does not change with the
-  /// interface language; the title does — it carries the DEBUG and data-set badges.
+  /// The identifier SwiftUI gave the window of Transactions, after its scene: there must be no
+  /// such window any more.
   private static let transactionsWindow = "transactions"
 
   override func setUp() {
@@ -32,10 +33,7 @@ final class TransactionsDoubleClickUITests: XCTestCase {
     XCTAssertTrue(mainWindow(app).waitForExistence(timeout: 120), "no main window")
 
     let transactions = openTransactions(app)
-    XCTAssertTrue(
-      transactions.outlines.firstMatch.outlineRows.element(boundBy: 1)
-        .waitForExistence(timeout: 30), "the table listed nothing")
-    // The window must not widen to make room for the inspector: AppKit never shrinks a window
+    // The window must not widen to make room for the editor: AppKit never shrinks a window
     // back, so one double click would leave it wide for good.
     let width = transactions.frame.width
 
@@ -44,7 +42,7 @@ final class TransactionsDoubleClickUITests: XCTestCase {
     expectInspector(in: transactions, app)
     XCTAssertEqual(
       transactions.frame.width, width, accuracy: 1,
-      "the window grew for the inspector instead of the sidebar giving way")
+      "the window grew for the editor")
 
     // Another operation while the inspector is open: the window rearranges both columns.
     doubleClickRow("transactions.row.single", nth: 1, in: transactions, app)
@@ -71,7 +69,9 @@ final class TransactionsDoubleClickUITests: XCTestCase {
     }
 
     // The header of a day carries no operation: nothing opens, and nothing breaks.
-    let header = transactions.outlines.firstMatch.outlineRows.element(boundBy: 0)
+    let header = transactions.outlines.containing(
+      NSPredicate(format: "identifier BEGINSWITH 'transactions.row.'")
+    ).firstMatch.outlineRows.element(boundBy: 0)
     header.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).doubleClick()
     XCTAssertEqual(app.state, .runningForeground)
 
@@ -82,34 +82,19 @@ final class TransactionsDoubleClickUITests: XCTestCase {
       transactions.frame.width, width, accuracy: 1, "the window kept the inspector's room")
   }
 
-  /// The Transactions window on its own: the main window closed, as the owner leaves it.
-  func testADoubleClickWithTheMainWindowClosedLeavesTheAppAlive() throws {
+  /// The item of the Window menu (⌘⇧T) opens no window: the main window shows «Операции».
+  func testTheMenuItemShowsOperationsInTheMainWindow() throws {
     let app = launch()
     let main = mainWindow(app)
     XCTAssertTrue(main.waitForExistence(timeout: 120), "no main window")
-
     let transactions = openTransactions(app)
-    // The guard for the defect of 21.09: `app.windows.firstMatch` used to stand here, and by
-    // this line it was the Transactions window.
-    XCTAssertNotEqual(
-      main.identifier, Self.transactionsWindow, "the main-window query caught Transactions")
-    // The main window stands behind Transactions now; its entry line brings it forward.
-    app.textFields["entry.line"].click()
-    main.buttons[XCUIIdentifierCloseWindow].click()
-
-    XCTAssertTrue(waitForGone(main, timeout: 10), "the main window did not close")
-    XCTAssertTrue(transactions.exists, "Transactions closed with the main window")
-    XCTAssertEqual(app.state, .runningForeground, "the app died with the main window")
-
+    XCTAssertEqual(transactions.identifier, main.identifier, "not the main window")
+    XCTAssertFalse(
+      app.windows[Self.transactionsWindow].exists, "a window of Transactions opened")
     XCTAssertTrue(
-      transactions.outlines.firstMatch.outlineRows.element(boundBy: 1)
-        .waitForExistence(timeout: 30), "the table listed nothing")
-    let width = transactions.frame.width
-    doubleClickRow("transactions.row.single", in: transactions, app)
-    expectInspector(in: transactions, app)
-    XCTAssertEqual(
-      transactions.frame.width, width, accuracy: 1,
-      "the window grew for the inspector instead of the sidebar giving way")
+      main.textFields["transactions.search"].waitForExistence(timeout: 20),
+      "the search of «Операции» is not in the main window")
+    XCTAssertEqual(app.state, .runningForeground)
   }
 
   // MARK: - Helpers
@@ -132,12 +117,17 @@ final class TransactionsDoubleClickUITests: XCTestCase {
     app.windows.containing(.textField, identifier: "entry.line").firstMatch
   }
 
+  /// «Операции» of the main window, from the item of the Window menu that opened the window of
+  /// Transactions until 1.9: the main window comes forward on its table.
   private func openTransactions(_ app: XCUIApplication) -> XCUIElement {
     let menu = app.menuBars.menuBarItems["Window"]
     menu.click()
     menu.menuItems["Transactions"].click()
-    let window = app.windows[Self.transactionsWindow]
-    XCTAssertTrue(window.waitForExistence(timeout: 20), "no Transactions window")
+    let window = mainWindow(app)
+    XCTAssertTrue(
+      window.descendants(matching: .any).matching(
+        NSPredicate(format: "identifier BEGINSWITH 'transactions.row.'")
+      ).firstMatch.waitForExistence(timeout: 30), "no table of «Операции» in the main window")
     return window
   }
 
@@ -162,7 +152,7 @@ final class TransactionsDoubleClickUITests: XCTestCase {
   private func rowFrame(_ kind: String, nth: Int = 0, in window: XCUIElement) -> CGRect? {
     guard let snapshot = try? window.snapshot() else { return nil }
     let matches = Self.nodes(in: snapshot) { $0.identifier == kind }
-    guard !matches.isEmpty, let table = Self.firstOutline(snapshot) else { return nil }
+    guard !matches.isEmpty, let table = Self.tableOutline(snapshot) else { return nil }
     let top = table.frame.minY + 44
     let bottom = table.frame.maxY - 88
     guard bottom > top else { return matches.first?.frame }
@@ -176,10 +166,16 @@ final class TransactionsDoubleClickUITests: XCTestCase {
     (matches(node) ? [node] : []) + node.children.flatMap { nodes(in: $0, where: matches) }
   }
 
-  private static func firstOutline(_ node: XCUIElementSnapshot) -> XCUIElementSnapshot? {
-    if node.elementType == .outline { return node }
+  /// The outline of the table: the sidebar of the main window is an outline too, without rows
+  /// of operations.
+  private static func tableOutline(_ node: XCUIElementSnapshot) -> XCUIElementSnapshot? {
+    if node.elementType == .outline,
+      !nodes(in: node, where: { $0.identifier.hasPrefix("transactions.row.") }).isEmpty
+    {
+      return node
+    }
     for child in node.children {
-      if let found = firstOutline(child) { return found }
+      if let found = tableOutline(child) { return found }
     }
     return nil
   }
@@ -204,7 +200,7 @@ final class TransactionsDoubleClickUITests: XCTestCase {
     XCTAssertEqual(app.state, .runningForeground, "the app died on the click")
   }
 
-  /// «Cancel», not «Save»: at the default size the inspector's last button can fall past the
+  /// «Cancel», not «Save»: at the default size the editor's last button can fall past the
   /// right edge of a small screen, and XCUITest then does not list it. By identifier, not by
   /// its caption: every confirmation of this window has a «Cancel» too.
   private func inspectorCancel(in window: XCUIElement) -> XCUIElement {

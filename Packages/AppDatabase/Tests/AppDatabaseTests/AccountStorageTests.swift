@@ -198,8 +198,9 @@ struct AccountSetupStorageTests {
     #expect(moved.transaction.updatedAt == stored.transaction.updatedAt)
   }
 
-  /// More than ten currencies needed: nothing of the setup is written.
-  @Test func aSetupThatNeedsMoreThanTenCurrenciesWritesNothing() throws {
+  /// More than ten currencies needed: there is no limit any more, the setup is written and
+  /// switches the new ones on after the ten.
+  @Test func aSetupThatNeedsMoreThanTenCurrenciesSwitchesThemOn() throws {
     let stack = try TestSupport.makeStack()
     let settings = SettingsRepository(writer: stack.writer)
     try settings.setEnabledCurrencies(CurrencyCode.defaultEnabled)
@@ -207,12 +208,12 @@ struct AccountSetupStorageTests {
       name: "Wide", currency: .rub, isDefault: true,
       otherCurrencies: [CurrencyCode("JPY"), CurrencyCode("GBP")])
     let plan = AccountSetupPlan(accounts: [wide], mainAccountId: wide.id, at: noon)
-    #expect(throws: AccountWriteError.tooManyCurrencies) {
-      try AccountRepository(writer: stack.writer).finishSetup(plan, calendar: .utc)
-    }
-    #expect(try AccountRepository(writer: stack.writer).accounts().isEmpty)
-    #expect(try settings.string(AccountSettings.setupKey) == nil)
-    #expect(try settings.enabledCurrencies() == CurrencyCode.defaultEnabled)
+    try AccountRepository(writer: stack.writer).finishSetup(plan, calendar: .utc)
+    #expect(try AccountRepository(writer: stack.writer).accounts().map(\.id) == [wide.id])
+    #expect(try settings.string(AccountSettings.setupKey) == "done")
+    #expect(
+      try settings.enabledCurrencies()
+        == CurrencyCode.defaultEnabled + [CurrencyCode("JPY"), CurrencyCode("GBP")])
   }
 
   /// «Позже» with no main account makes one in the default currency and gives it every
@@ -267,14 +268,14 @@ struct CurrencySettingsStorageTests {
     #expect(try settings.enabledCurrencies() == [.rub, .usd, CurrencyCode("KZT")])
   }
 
-  @Test func theDefaultCurrencyIsNotAnEleventh() throws {
+  /// The default currency may be an eleventh: there is no limit any more.
+  @Test func theDefaultCurrencyMayBeAnEleventh() throws {
     let stack = try TestSupport.makeStack()
     let settings = SettingsRepository(writer: stack.writer)
     try settings.setEnabledCurrencies(CurrencyCode.defaultEnabled)
-    #expect(throws: SettingsWriteError.tooManyCurrencies) {
-      try settings.setDefaultCurrency(CurrencyCode("JPY"))
-    }
-    #expect(try settings.defaultCurrency() == .rub)
+    try settings.setDefaultCurrency(CurrencyCode("JPY"))
+    #expect(try settings.defaultCurrency() == CurrencyCode("JPY"))
+    #expect(try settings.enabledCurrencies() == CurrencyCode.defaultEnabled + [CurrencyCode("JPY")])
   }
 
   /// The default currency, and one a live account holds, are not switched off; an archived
@@ -375,9 +376,9 @@ struct AccountDataTests {
 
     let export = ExportRepository(writer: stack.writer)
     let tables = try export.tables()
-    #expect(tables.count == 26)
+    #expect(tables.count == 31)
     #expect(
-      tables.dropLast(2).suffix(6).map(\.fileName) == [
+      tables.dropLast(7).suffix(6).map(\.fileName) == [
         "account_groups.csv", "transfers.csv", "reconciliation_balances.csv", "cards.csv",
         "cashback_rules.csv", "banks.csv",
       ])
@@ -387,7 +388,7 @@ struct AccountDataTests {
     #expect(counts["reconciliation_balances"] == 1)
     #expect(counts["cards"] == 0)
     #expect(counts["cashback_rules"] == 0)
-    for table in tables.dropLast(5).suffix(3) {
+    for table in tables.dropLast(10).suffix(3) {
       let rows = try CSVReader.dictionaries(from: table.data)
       #expect(rows.count == 1, "\(table.fileName)")
     }

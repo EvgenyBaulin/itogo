@@ -31,6 +31,10 @@ final class TransferEntry {
   /// The category of fees a new fee would bring back from the archive.
   var feeComingBack: FeeCategoryComingBack?
 
+  /// The fee the terms of a credit card laid into the form last; a fee the owner typed over it
+  /// is his and stays.
+  @ObservationIgnored private(set) var laidFee: AmountE4?
+
   /// The save under way: the actions it writes with and what is told once it wrote.
   @ObservationIgnored private var saving: (actions: TransferActions, written: () -> Void)?
 
@@ -59,6 +63,70 @@ final class TransferEntry {
   func load(_ actions: TransferActions) async {
     books = await actions.books()
     feeComingBack = actions.feeCategoryComingBack()
+  }
+
+  // MARK: The fee of a credit card
+
+  /// The fee the terms of the credit card the money leaves take for it — cash and transfers
+  /// from a credit card cost the percent and the fixed sum of its terms —, or `nil`: not from a
+  /// credit card, not in its main currency, nothing sent, or terms without a fee. Only a new
+  /// transfer is given one: it is laid into the field and written with the transfer as its fee
+  /// (`transfer:<id>:fee` in «Комиссии», one step of ⌘Z), unless the owner changed or removed
+  /// it first.
+  static func creditFee(for form: TransferForm, accounts: [PaymentMethod]) -> AmountE4? {
+    guard form.previous == nil, form.sent.raw > 0,
+      let from = accounts.first(where: { $0.id == form.fromAccountId }),
+      let terms = from.credit, form.fromCurrency == from.mainCurrency,
+      form.toAccountId != form.fromAccountId || form.toCurrency != form.fromCurrency
+    else { return nil }
+    let fee = CreditInterest.cashFee(amount: form.sent, terms: terms)
+    return fee.isZero ? nil : fee
+  }
+
+  /// Lays the fee of the credit card into the form as the amount or the accounts change: the
+  /// field follows the terms while it is empty and nothing was laid yet, or still holds what
+  /// they laid in last; a fee the owner typed stays as he typed it, and one he removed — the
+  /// field emptied after a fee was laid — stays removed.
+  func layCreditFee(accounts: [PaymentMethod]) {
+    let suggestion = Self.creditFee(for: form, accounts: accounts)
+    let followsTheTerms =
+      (form.fee.isZero && laidFee == nil) || laidFee.map { form.fee == $0 } == true
+    if followsTheTerms, form.fee != (suggestion ?? .zero) {
+      form.fee = suggestion ?? .zero
+    }
+    laidFee = suggestion
+  }
+
+  /// What the line under the fee says of the fee of the credit card: laid and to be written
+  /// with the transfer, or removed by the owner; `nil` when there is none or he typed his own.
+  enum CreditFeeState: Equatable {
+    case laid(AmountE4)
+    case removed(AmountE4)
+  }
+
+  var creditFeeState: CreditFeeState? {
+    guard let laid = laidFee else { return nil }
+    if form.fee == laid { return .laid(laid) }
+    if form.fee.isZero { return .removed(laid) }
+    return nil
+  }
+
+  /// «Убрать»: the fee of the credit card is not written.
+  func removeCreditFee() {
+    guard laidFee != nil else { return }
+    form.fee = .zero
+  }
+
+  /// «Вернуть»: the fee of the credit card is written after all.
+  func restoreCreditFee() {
+    guard let laidFee else { return }
+    form.fee = laidFee
+  }
+
+  /// The money leaves a credit card whose cash and transfers have no grace period.
+  func leavesACardWithoutGrace(accounts: [PaymentMethod]) -> Bool {
+    guard let from = accounts.first(where: { $0.id == form.fromAccountId }) else { return false }
+    return from.credit?.cashWithoutGrace == true && form.fromCurrency == from.mainCurrency
   }
 
   /// Whether saving writes a fee that is not there yet — the one that looks for its category.
@@ -93,6 +161,9 @@ final class TransferEntry {
         return
       }
       self.books = books
+      // A transfer written straight from the line never showed its fields: the fee of a credit
+      // card is laid here too, as the fields would have laid it.
+      layCreditFee(accounts: books.dataset.paymentMethods)
       let now = actions.environment.now()
       let occurredAt = form.occurredAt(now: now, calendar: actions.environment.calendar)
       // What is wrong is said before anything is asked.
@@ -216,8 +287,12 @@ struct TransferFields: View {
       case .wide, .column: panelBody
       }
     }
-    .task(id: ObjectIdentifier(entry)) { await entry.load(transfers) }
+    .task(id: ObjectIdentifier(entry)) {
+      await entry.load(transfers)
+      entry.layCreditFee(accounts: accounts)
+    }
     .onChange(of: entry.form) { _, _ in entry.refusal = nil }
+    .onChange(of: CreditFeeKey(entry.form)) { _, _ in entry.layCreditFee(accounts: accounts) }
   }
 
   // MARK: Layouts
@@ -336,14 +411,45 @@ struct TransferFields: View {
 
   private func label(_ key: String) -> some View {
     Text(verbatim: t(key))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .gridColumnAlignment(.leading)
   }
 
+  /// «Комиссия банка: 319.00 ₽ — запишется сама» with «Убрать», or, removed, «Комиссия банка
+  /// 319.00 ₽ не запишется» with «Вернуть».
+  private func creditFeeLine(_ state: TransferEntry.CreditFeeState) -> some View {
+    let currency = form.fromCurrency ?? .rub
+    return HStack(alignment: .firstTextBaseline, spacing: 6) {
+      switch state {
+      case .laid(let fee):
+        caption(
+          environment.format(
+            "transfer.sheet.creditFeeLaid", table: AccountText.table,
+            environment.money.exact(fee, currency: currency)))
+        Spacer(minLength: 4)
+        Button(t("transfer.sheet.creditFeeRemove")) { entry.removeCreditFee() }
+          .buttonStyle(.link)
+          .appFont(.caption)
+          .accessibilityIdentifier("transfer.creditFee.remove")
+      case .removed(let fee):
+        caption(
+          environment.format(
+            "transfer.sheet.creditFeeRemoved", table: AccountText.table,
+            environment.money.exact(fee, currency: currency)))
+        Spacer(minLength: 4)
+        Button(t("transfer.sheet.creditFeeRestore")) { entry.restoreCreditFee() }
+          .buttonStyle(.link)
+          .appFont(.caption)
+          .accessibilityIdentifier("transfer.creditFee.restore")
+      }
+    }
+    .accessibilityIdentifier("transfer.creditFee")
+  }
+
   private func caption(_ text: String) -> some View {
     Text(verbatim: text)
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
   }
@@ -432,9 +538,26 @@ struct TransferFields: View {
     form.isExchange ? rateLine ?? t("transfer.sheet.receivedHint") : t("transfer.sheet.sameAmount")
   }
 
+  /// Every account, for the terms of a credit card the money leaves.
+  private var accounts: [PaymentMethod] { entry.books?.dataset.paymentMethods ?? [] }
+
   @ViewBuilder
   private var feeCaptions: some View {
     caption(t("transfer.sheet.feeHint"))
+    if let state = entry.creditFeeState {
+      creditFeeLine(state)
+    }
+    if entry.leavesACardWithoutGrace(accounts: accounts) {
+      Label {
+        Text(verbatim: t("transfer.sheet.creditNoGrace"))
+          .fixedSize(horizontal: false, vertical: true)
+      } icon: {
+        Image(systemName: "percent")
+      }
+      .appFont(.caption)
+      .foregroundStyle(.secondary)
+      .accessibilityIdentifier("transfer.creditNoGrace")
+    }
     if let feeComingBack = entry.feeComingBack, entry.writesANewFee {
       Label {
         Text(verbatim: TransferText.feeComingBack(feeComingBack, environment))
@@ -442,7 +565,7 @@ struct TransferFields: View {
       } icon: {
         Image(systemName: "archivebox")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
     }
   }
@@ -494,7 +617,7 @@ struct TransferFields: View {
         Text(verbatim: TransferText.message(refusal, environment))
           .fixedSize(horizontal: false, vertical: true)
       }
-      .font(layout == .sheet ? .callout : .caption)
+      .appFont(layout == .sheet ? .callout : .caption)
       .accessibilityElement(children: .combine)
       .accessibilityIdentifier("transfer.refusal")
     }
@@ -617,5 +740,21 @@ private struct TransferQuestions: ViewModifier {
     } message: { _ in
       Text(verbatim: t("transfer.beforeCount.message"))
     }
+  }
+}
+
+/// What the fee of a credit card follows: the account and currency the money leaves and the
+/// amount sent.
+private struct CreditFeeKey: Equatable {
+  var from: UUID?
+  var currency: CurrencyCode?
+  var to: UUID?
+  var sent: AmountE4
+
+  init(_ form: TransferForm) {
+    from = form.fromAccountId
+    currency = form.fromCurrency
+    to = form.toAccountId
+    sent = form.sent
   }
 }

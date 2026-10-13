@@ -645,8 +645,8 @@ final class AccountsSettingsTests: XCTestCase {
 
   /// «Вернуть» switches the account's currencies on: every currency a live account holds is
   /// on, or the entry line would not know it and the bank's table would not be checked for it.
-  /// Tenge switched off meanwhile comes back with «Kaspi». Past ten currencies the account
-  /// stays in the archive and says which currency is not on.
+  /// Tenge switched off meanwhile comes back with «Kaspi». There is no limit of ten any more:
+  /// with ten currencies on, «Swiss» comes back and switches the eleventh on.
   func testAnAccountBroughtBackSwitchesItsCurrenciesOn() throws {
     let settings = try XCTUnwrap(environment.settings)
     let kzt = CurrencyCode("KZT")
@@ -665,9 +665,9 @@ final class AccountsSettingsTests: XCTestCase {
     swiss.archived = true
     try XCTUnwrap(environment.references).save(swiss)
     try settings.setEnabledCurrencies(CurrencyCode.defaultEnabled)
-    XCTAssertEqual(actions.restore(swiss.id), .refused(.currencyNotEnabled(chf)))
-    XCTAssertEqual(try stored().first { $0.id == swiss.id }?.archived, true)
-    XCTAssertEqual(try settings.enabledCurrencies(), CurrencyCode.defaultEnabled)
+    XCTAssertEqual(actions.restore(swiss.id), .done)
+    XCTAssertEqual(try stored().first { $0.id == swiss.id }?.archived, false)
+    XCTAssertEqual(try settings.enabledCurrencies(), CurrencyCode.defaultEnabled + [chf])
   }
 
   /// Archiving the main account passes the flag on in the same step: to the account named, the

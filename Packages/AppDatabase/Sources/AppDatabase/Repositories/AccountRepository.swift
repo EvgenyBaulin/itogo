@@ -62,7 +62,8 @@ public enum AccountWriteError: Error, Equatable, Sendable {
   /// The two accounts of a merge are under different banks — or one is under none, which makes
   /// it a bank of its own: money of one bank never lands on an account of another by a merge.
   case otherBank
-  /// The accounts would need more currencies switched on than the ten allowed.
+  /// No longer thrown: any number of currencies may be on. Kept for the callers that still
+  /// name it.
   case tooManyCurrencies
   /// An operation that moves money on an account that does not hold its currency, saved
   /// without what the account moved (`Transaction.accountCurrency`/`accountAmountE4`).
@@ -305,7 +306,9 @@ public struct AccountRepository: Sendable {
       if target.interest?.payoutAccountId == plan.sourceId {
         target.interest?.payoutAccountId = nil
       }
-      try ReferenceRepository.save(target, db: db)
+      // The target's main card is written only while it is a card of the target: a plan
+      // worked out before a card moved or was merged away must not stop the merge.
+      try ReferenceRepository.save(Self.keepingOwnMainCard(target, db: db), db: db)
       try db.execute(
         sql: "UPDATE payment_methods SET archived = 1, is_default = 0 WHERE id = ?",
         arguments: [plan.sourceId.uuidString])
@@ -330,8 +333,8 @@ public struct AccountRepository: Sendable {
   ///    and currency, or, for a key a reconciliation had already counted (`expected`), a count
   ///    compared with what was expected, whose difference is shown and never written as an
   ///    operation;
-  /// 5. every currency an account holds, and the default one, switched on — refused with
-  ///    `AccountWriteError.tooManyCurrencies` beyond ten;
+  /// 5. every currency an account holds, and the default one, switched on — any number of
+  ///    them;
   /// 6. the default currency, when the plan chose one;
   /// 7. the setup marked done;
   /// 8. every operation without an account given the main one.
@@ -364,11 +367,7 @@ public struct AccountRepository: Sendable {
         }
       }
       let defaultCurrency = try plan.defaultCurrency ?? SettingsRepository.defaultCurrency(db)
-      do {
-        try SettingsRepository.enableAlso(held + [defaultCurrency], db: db)
-      } catch SettingsWriteError.tooManyCurrencies {
-        throw AccountWriteError.tooManyCurrencies
-      }
+      try SettingsRepository.enableAlso(held + [defaultCurrency], db: db)
       if let chosen = plan.defaultCurrency {
         try SettingsRepository.set(AccountSettings.defaultCurrencyKey, to: chosen.code, in: db)
       }
@@ -498,6 +497,23 @@ public struct AccountRepository: Sendable {
 
   /// Refuses, with `AccountWriteError.otherBank`, a merge of two accounts that are not under one
   /// bank, as they are written now. An account under no bank is a bank of its own.
+  /// The account with its main card only while that card is a card of the account in the
+  /// database: the schema refuses any other main card (`main_card_of_account_*`), and an
+  /// account held on screen may name a card that moved to another account since — merged
+  /// accounts, merged cards. A main card that is not the account's is dropped, not refused.
+  static func keepingOwnMainCard(_ account: PaymentMethod, db: Database) throws -> PaymentMethod {
+    guard let card = account.mainCardId else { return account }
+    let owns =
+      try Bool.fetchOne(
+        db,
+        sql: "SELECT EXISTS (SELECT 1 FROM cards WHERE id = ? AND payment_method_id = ?)",
+        arguments: [card.uuidString, account.id.uuidString]) ?? false
+    guard !owns else { return account }
+    var kept = account
+    kept.mainCardId = nil
+    return kept
+  }
+
   static func refuseOtherBanks(_ source: UUID, _ target: UUID, db: Database) throws {
     let banks = try String.fetchAll(
       db,

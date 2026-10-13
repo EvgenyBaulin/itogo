@@ -24,14 +24,14 @@ struct CalendarDayCell: View {
         Spacer(minLength: 0)
         if let symbol = CalendarText.symbol(of: day.level) {
           Image(systemName: symbol)
-            .font(.caption2.weight(.semibold))
+            .appFont(.caption2.weight(.semibold))
             .foregroundStyle(.orange)
         }
       }
       if day.inScope || calendar.scope == .week {
         if let spent = day.spent, spent.raw > 0 {
           Text(verbatim: CalendarText.money(spent, of: calendar, environment))
-            .font((compact ? Font.caption : .callout).monospacedDigit())
+            .appFont((compact ? AppFont.caption : .callout).monospacedDigit())
             .lineLimit(1)
             .minimumScaleFactor(0.7)
         }
@@ -58,8 +58,9 @@ struct CalendarDayCell: View {
 
   private var number: some View {
     Text(verbatim: "\(day.day.day)")
-      .font(
-        (compact ? Font.caption : .callout).monospacedDigit().weight(day.isToday ? .bold : .regular)
+      .appFont(
+        (compact ? AppFont.caption : .callout).monospacedDigit().weight(
+          day.isToday ? .bold : .regular)
       )
       .foregroundStyle(day.isToday ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
       .padding(.horizontal, day.isToday ? 5 : 0)
@@ -79,12 +80,12 @@ struct CalendarDayCell: View {
           } icon: {
             Image(systemName: CalendarText.symbol(of: plan.kind))
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
         if day.plans.count > 4 {
           Text(verbatim: "+\(day.plans.count - 4)")
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
       } else {
@@ -108,7 +109,7 @@ struct CalendarDayCell: View {
             .minimumScaleFactor(0.7)
         }
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
     }
   }

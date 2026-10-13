@@ -9,6 +9,16 @@ enum PlanningText {
     environment.language(key, table: "Planning")
   }
 
+  /// A month inside a sentence: «за октябрь 2026», «for October 2026» — the title of the month
+  /// with a small first letter in Russian, where a month is not a name.
+  static func monthInSentence(_ month: MonthKey, _ environment: AppEnvironment) -> String {
+    let title = environment.dates.monthTitle(month)
+    guard environment.language.locale.identifier.hasPrefix("ru"), let first = title.first else {
+      return title
+    }
+    return first.lowercased() + title.dropFirst()
+  }
+
   // MARK: Limits
 
   /// A status is never told by colour alone.

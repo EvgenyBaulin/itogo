@@ -4,19 +4,20 @@ import Foundation
 public enum GuideEvent {
   /// The category of a saved operation was changed by hand.
   public static let categoryChanged = "category.changed"
-  /// The search of «Траты» or «Операции» was used.
+  /// The search of «Операции» was used.
   public static let searched = "transactions.searched"
   /// «Свободная сумма» of Planning was on the screen.
   public static let freeToSpendSeen = "planning.freeToSpend.seen"
-  /// «Траты» of the sidebar was opened.
-  public static let spendingOpened = "spending.opened"
+  /// «Операции» of the sidebar was opened. The value is the one it had when the screen was
+  /// called «Траты»: progress kept on this Mac already holds it.
+  public static let operationsOpened = "spending.opened"
   /// The tile «График валюты» was on the screen.
   public static let currencyChartSeen = "overview.currencyChart.seen"
   /// A transfer was written from the entry line («перевод 5000 сбер т-банк»).
   public static let transferFromLine = "entry.transferFromLine"
 
   public static let all: Set<String> = [
-    categoryChanged, searched, freeToSpendSeen, spendingOpened, currencyChartSeen,
+    categoryChanged, searched, freeToSpendSeen, operationsOpened, currencyChartSeen,
     transferFromLine,
   ]
 }

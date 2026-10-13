@@ -19,7 +19,7 @@ struct BudgetForm: View {
     let choices = PlanningChoices(compute, environment)
     let issue = PlanningActions.issue(of: normalized, compute: compute, environment: environment)
     VStack(alignment: .leading) {
-      Text(verbatim: t(original == nil ? "form.limit.new" : "form.limit.edit")).font(.headline)
+      Text(verbatim: t(original == nil ? "form.limit.new" : "form.limit.edit")).appFont(.headline)
       Form {
         Picker(t("form.limit.scope"), selection: $budget.scope) {
           Text(verbatim: t("form.limit.scope.category")).tag(BudgetScope.category)
@@ -55,7 +55,7 @@ struct BudgetForm: View {
           Text(verbatim: t("form.limit.rolloverHint"))
         }
         if let issue {
-          Text(verbatim: t("limit.issue.\(issue.rawValue)")).font(.caption).foregroundStyle(
+          Text(verbatim: t("limit.issue.\(issue.rawValue)")).appFont(.caption).foregroundStyle(
             .secondary)
         }
       }

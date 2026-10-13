@@ -157,7 +157,7 @@ private struct OverviewGroupHeader: View {
           .foregroundStyle(.secondary)
           .accessibilityHidden(true)
         Text(verbatim: name)
-          .font(.headline)
+          .appFont(.headline)
         Spacer()
       }
       .padding(.vertical, 2)
@@ -176,7 +176,7 @@ private struct OverviewGroupHeader: View {
         }
       }
       .draggable(OverviewTilesActions.payload(of: group)) {
-        Text(verbatim: name).font(.headline).padding(6)
+        Text(verbatim: name).appFont(.headline).padding(6)
       }
       .dropDestination(for: String.self) { payloads, _ in
         payloads.contains { OverviewTilesActions.drop(environment, $0, onto: group) }
@@ -190,12 +190,12 @@ private struct OverviewGroupHeader: View {
       } label: {
         HStack(spacing: 6) {
           Image(systemName: "chevron.right")
-            .font(.caption.weight(.semibold))
+            .appFont(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .rotationEffect(.degrees(collapsed ? 0 : 90))
             .accessibilityHidden(true)
           Text(verbatim: name)
-            .font(.headline)
+            .appFont(.headline)
           Spacer()
         }
         .contentShape(Rectangle())
@@ -223,7 +223,7 @@ private struct OverviewEmptyGroup: View {
 
   var body: some View {
     Text(verbatim: environment.language("overview.edit.dropHere", table: "Overview"))
-      .font(.callout)
+      .appFont(.callout)
       .foregroundStyle(.secondary)
       .frame(maxWidth: .infinity, minHeight: 64)
       .background {
@@ -279,7 +279,7 @@ private struct OverviewTileFrame: View {
           _ = withAnimation(.snappy) { OverviewTilesActions.hide(environment, tile) }
         } label: {
           Image(systemName: "minus.circle.fill")
-            .font(.title3)
+            .appFont(.title3)
             .symbolRenderingMode(.palette)
             .foregroundStyle(.white, canHide ? Color.red : Color.secondary)
         }

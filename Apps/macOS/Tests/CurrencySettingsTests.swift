@@ -6,7 +6,7 @@ import XCTest
 
 /// Settings → Валюты: «Валюта по умолчанию», the currency of everything new, and the currencies
 /// that cannot be switched off — the ruble, the default one and the ones live accounts hold.
-/// (The list itself — ten at most, the ruble always on — is `CurrencySettingsTests`.)
+/// (The list itself — no limit, the ruble always on — is `CurrencySettingsTests`.)
 @MainActor
 final class DefaultCurrencySettingsTests: XCTestCase {
   private var environment: AppEnvironment!
@@ -151,13 +151,15 @@ final class DefaultCurrencySettingsTests: XCTestCase {
     XCTAssertEqual(try enabled().count, 10)
     var another = NewRecordForm(kind: .paymentMethod, model: model, today: environment.today)
     another.name = "Kaspi"
-    XCTAssertEqual(
+    // There is no limit of ten any more: the account comes back and switches its currency on.
+    XCTAssertNil(
       another.commit(
-        into: model, today: environment.today, context: .app(environment, store: store)),
-      .accountNotBack("Kaspi", .currencyNotEnabled(CurrencyCode("UZS"))))
+        into: model, today: environment.today, context: .app(environment, store: store)))
     XCTAssertEqual(
       try references.paymentMethods(includeArchived: true).first { $0.id == kaspi.id }?.archived,
-      true, "the account came back with a currency that is off")
+      false, "the account came back")
+    XCTAssertTrue(try enabled().contains(CurrencyCode("UZS")))
+    XCTAssertEqual(try enabled().count, 11)
   }
 
   /// The ruble is always on; a currency that is off has nothing to keep it; one on that no
@@ -181,22 +183,39 @@ final class DefaultCurrencySettingsTests: XCTestCase {
       .held(["Freedom", "Kaspi"]))
   }
 
-  /// A new currency goes on last, and nothing is switched on past ten.
-  func testACurrencyIsSwitchedOnLastAndNoMoreThanTen() throws {
-    XCTAssertEqual(try enabled().count, CurrencyCode.maxEnabled, "ten are on from the start")
-    let gel = CurrencyCode("GEL")
+  /// A new currency goes on last, and there is no limit: an eleventh and more go on too —
+  /// fifteen currencies of the bank are on without a refusal.
+  func testACurrencyIsSwitchedOnLastWithoutALimit() throws {
+    XCTAssertEqual(try enabled().count, 10, "ten are on from the start")
     let gbp = CurrencyCode("GBP")
-    XCTAssertTrue(
-      CurrenciesSettingsView.switchCurrency(gel, on: false, enabled: try enabled(), in: environment)
-    )
     XCTAssertTrue(
       CurrenciesSettingsView.switchCurrency(gbp, on: true, enabled: try enabled(), in: environment))
     XCTAssertEqual(try enabled().last, gbp)
+    XCTAssertEqual(try enabled().count, 11, "an eleventh currency was refused")
 
-    _ = CurrenciesSettingsView.switchCurrency(
-      gel, on: true, enabled: try enabled(), in: environment)
-    XCTAssertEqual(try enabled().count, CurrencyCode.maxEnabled)
-    XCTAssertFalse(try enabled().contains(gel), "an eleventh currency was switched on")
+    for code in ["JPY", "CHF", "PLN", "HKD"] {
+      XCTAssertTrue(
+        CurrenciesSettingsView.switchCurrency(
+          CurrencyCode(code), on: true, enabled: try enabled(), in: environment))
+    }
+    XCTAssertEqual(try enabled().count, 15)
+    XCTAssertEqual(try enabled().suffix(5).map(\.code), ["GBP", "JPY", "CHF", "PLN", "HKD"])
+  }
+
+  /// The checkboxes offer every currency the bank publishes, the ones of a fresh install first,
+  /// a code of the bank switched on elsewhere too, and never a custom currency.
+  func testTheListOffersEveryCurrencyOfTheBankAndNoCustomOne() {
+    let tether = CustomCurrency(code: CurrencyCode("UST"), name: "Tether")
+    let offered = CurrenciesSettingsView.offered(
+      enabled: CurrencyCode.defaultEnabled + [CurrencyCode("MUR"), tether.code],
+      catalog: CurrencyCatalog(custom: [tether]))
+    XCTAssertEqual(Array(offered.prefix(10)), CurrencyCode.defaultEnabled)
+    for code in ["GBP", "HKD", "XDR", "MMK", "MUR"] {
+      XCTAssertTrue(offered.contains(CurrencyCode(code)), code)
+    }
+    XCTAssertFalse(offered.contains(tether.code))
+    XCTAssertEqual(Set(offered).count, offered.count, "a currency offered twice")
+    XCTAssertGreaterThanOrEqual(offered.count, 50)
   }
 
   // MARK: Words

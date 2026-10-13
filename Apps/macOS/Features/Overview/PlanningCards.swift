@@ -19,14 +19,14 @@ struct CanSaveCard: View {
     ) { canSave in
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: "≈ \(environment.money.rounded(canSave.p50 ?? .zero))")
-          .font(.title2.monospacedDigit())
+          .appFont(.title2.monospacedDigit())
         if let low = canSave.low, let high = canSave.high, low != high {
           Text(
             verbatim: String(
               format: t("overview.canSaveRange"), locale: environment.language.locale,
               environment.money.rounded(low), environment.money.rounded(high))
           )
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
         }
         PlanningFigure(label: t("overview.alreadySaved"), amount: canSave.alreadySaved)
@@ -37,7 +37,7 @@ struct CanSaveCard: View {
           } icon: {
             Image(systemName: "hourglass")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -99,7 +99,7 @@ struct UpcomingPaymentsCard: View {
                   environment)
                 {
                   Text(verbatim: approximate)
-                    .font(.caption.monospacedDigit())
+                    .appFont(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .help(
                       Text(
@@ -108,7 +108,7 @@ struct UpcomingPaymentsCard: View {
                 }
               }
             }
-            .font(.callout)
+            .appFont(.callout)
             .accessibilityElement(children: .combine)
           }
         }
@@ -163,7 +163,7 @@ struct ExpectedIncomeCard: View {
               )
               .monospacedDigit()
             }
-            .font(.callout)
+            .appFont(.callout)
           }
         }
       }
@@ -188,9 +188,9 @@ struct EventCard: View {
       let events = snapshot.planning.events
       if let plan = events.active.first ?? events.upcoming.first {
         VStack(alignment: .leading, spacing: 4) {
-          Text(verbatim: plan.event.name).font(.headline).lineLimit(1)
+          Text(verbatim: plan.event.name).appFont(.headline).lineLimit(1)
           Text(verbatim: PlanningText.eventWhen(plan, environment))
-            .font(.caption).foregroundStyle(.secondary)
+            .appFont(.caption).foregroundStyle(.secondary)
           if let budget = plan.budget {
             Text(
               verbatim: String(
@@ -223,7 +223,7 @@ struct PlanningFigure: View {
 
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
-      Text(verbatim: label).font(.callout)
+      Text(verbatim: label).appFont(.callout)
       Spacer(minLength: 8)
       Text(verbatim: environment.money.rounded(amount)).monospacedDigit()
     }

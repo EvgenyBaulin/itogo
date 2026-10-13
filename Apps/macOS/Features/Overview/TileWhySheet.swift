@@ -23,9 +23,9 @@ struct TileWhySheet: View {
     VStack(alignment: .leading, spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: OverviewTileText.name(of: tile, environment))
-          .font(.title3.weight(.semibold))
+          .appFont(.title3.weight(.semibold))
         Text(verbatim: t("why.sheet.subtitle"))
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
       .accessibilityElement(children: .combine)
@@ -131,15 +131,15 @@ struct TileWhyContent: View {
           } icon: {
             Image(systemName: "info.circle")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: t("why.sheet.rule"))
-          .font(.headline)
+          .appFont(.headline)
         Text(verbatim: TileWhy.text(explanation.rule, tree: tree, environment))
-          .font(.callout)
+          .appFont(.callout)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("overview.why.rule")
       }
@@ -160,7 +160,7 @@ private struct TileWhySectionView: View {
     VStack(alignment: .leading, spacing: 6) {
       if let title = section.title {
         Text(verbatim: TileWhy.text(title, tree: tree, environment))
-          .font(.headline)
+          .appFont(.headline)
       }
       ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
         TileWhyRowView(row: row, tree: tree, isTotal: false)
@@ -188,7 +188,7 @@ private struct TileWhyRowView: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Text(verbatim: TileWhy.sign(of: row, isTotal: isTotal))
-        .font(.callout.monospacedDigit())
+        .appFont(.callout.monospacedDigit())
         .foregroundStyle(.secondary)
         .frame(width: 12, alignment: .center)
         .accessibilityHidden(true)
@@ -203,7 +203,7 @@ private struct TileWhyRowView: View {
           .fixedSize(horizontal: false, vertical: true)
         if let note = row.note {
           Text(verbatim: TileWhy.text(note, tree: tree, environment))
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -220,7 +220,7 @@ private struct TileWhyRowView: View {
           .fixedSize()
       }
     }
-    .font(isTotal ? .callout.weight(.semibold) : .callout)
+    .appFont(isTotal ? .callout.weight(.semibold) : .callout)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
       Text(verbatim: TileWhy.spoken(row, isTotal: isTotal, tree: tree, environment)))
@@ -467,7 +467,7 @@ enum TileWhyNavigation {
 
   static func target(of destination: TileDestination) -> Target {
     switch destination {
-    case .spending: .section(.spending)
+    case .operations: .section(.operations)
     case .planning: .section(.planning)
     case .debts: .section(.debts)
     case .calendar: .section(.calendar)
@@ -482,7 +482,7 @@ enum TileWhyNavigation {
   /// The words of the button.
   static func openKey(_ destination: TileDestination) -> String {
     switch destination {
-    case .spending: "why.open.spending"
+    case .operations: "why.open.operations"
     case .planning: "why.open.planning"
     case .debts: "why.open.debts"
     case .calendar: "why.open.calendar"

@@ -20,7 +20,7 @@ struct AnalyticsSectionView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
         Text(verbatim: headerLine)
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         sectionBody
@@ -248,7 +248,7 @@ private struct ComparisonChart: View {
         change("analytics.change.expenses", model.expenses, money)
         change("analytics.change.income", model.income, money)
       }
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
     }
   }
@@ -370,9 +370,9 @@ private struct StreaksView: View {
   private func figure(_ key: String, _ days: Int) -> some View {
     VStack(alignment: .leading, spacing: 2) {
       Text(verbatim: environment.money.count(Int64(days)))
-        .font(.title2.monospacedDigit())
+        .appFont(.title2.monospacedDigit())
       Text(verbatim: AnalyticsText.format(key, environment, count: days))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
     }
     .accessibilityElement(children: .combine)
@@ -413,7 +413,7 @@ private struct GoalsSplitView: View {
         Text(verbatim: "\(goals.label): \(words(split.goals, split.goalsShare))")
         Text(verbatim: "\(rest.label): \(words(split.rest, split.restShare))")
       }
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
     }
   }
@@ -525,7 +525,7 @@ private struct OthersFiguresView: View {
       row("minus.circle", "analytics.others.shortfall", figures.shortfall)
       row("plus.circle", "analytics.others.surplus", figures.surplus)
     }
-    .font(.callout)
+    .appFont(.callout)
   }
 
   private func row(_ symbol: String, _ key: String, _ value: Int64) -> some View {
@@ -647,7 +647,7 @@ private struct PlacesSection: View {
               Text(verbatim: environment.dates.longDay(row.firstDay))
                 .foregroundStyle(.secondary)
             }
-            .font(.callout)
+            .appFont(.callout)
             .accessibilityElement(children: .combine)
           }
         }
@@ -683,7 +683,7 @@ private struct PlacesTableView: View {
                 .lineLimit(1)
               if row.isNew {
                 Text(verbatim: AnalyticsText.t("analytics.places.new", environment))
-                  .font(.caption)
+                  .appFont(.caption)
                   .foregroundStyle(.secondary)
               }
             }
@@ -699,13 +699,13 @@ private struct PlacesTableView: View {
           .accessibilityElement(children: .combine)
         }
       }
-      .font(.callout)
+      .appFont(.callout)
       if table.hidden > 0 {
         Text(
           verbatim: AnalyticsText.format(
             "analytics.places.more", environment, count: table.hidden)
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -713,7 +713,7 @@ private struct PlacesTableView: View {
 
   private func header(_ key: String) -> some View {
     Text(verbatim: AnalyticsText.t(key, environment))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
   }
 }
@@ -788,7 +788,7 @@ private struct EventsTableView: View {
         .accessibilityElement(children: .combine)
       }
     }
-    .font(.callout)
+    .appFont(.callout)
   }
 
   private func amount(_ value: Int64?, signed: Bool = false) -> some View {
@@ -801,7 +801,7 @@ private struct EventsTableView: View {
 
   private func header(_ key: String) -> some View {
     Text(verbatim: AnalyticsText.t(key, environment))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
   }
 }
@@ -927,13 +927,13 @@ private struct CashbackMonthsView: View {
           }
         }
       }
-      .font(.callout)
+      .appFont(.callout)
     }
   }
 
   private func header(_ key: String) -> some View {
     Text(verbatim: AnalyticsText.t(key, environment))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
   }
 }
@@ -988,7 +988,7 @@ private struct MethodsTableView: View {
         }
       }
     }
-    .font(.callout)
+    .appFont(.callout)
   }
 
   /// The figures of a line, silent: its first cell says them.
@@ -1002,7 +1002,7 @@ private struct MethodsTableView: View {
 
   private func header(_ key: String) -> some View {
     Text(verbatim: AnalyticsText.t(key, environment))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
   }
 }
@@ -1057,7 +1057,7 @@ struct AccountBalancesForecastView: View {
               "analytics.accounts.end", environment,
               environment.dates.dayAndMonth(forecast.through))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .gridColumnAlignment(.trailing)
           header("analytics.accounts.range").gridColumnAlignment(.trailing)
@@ -1091,7 +1091,7 @@ struct AccountBalancesForecastView: View {
             }
           case .title(let text):
             Text(verbatim: text)
-              .font(.callout.weight(.semibold))
+              .appFont(.callout.weight(.semibold))
               .padding(.top, 6)
               .gridCellColumns(4)
           case .total(let text):
@@ -1101,14 +1101,14 @@ struct AccountBalancesForecastView: View {
           }
         }
       }
-      .font(.callout)
+      .appFont(.callout)
       ForEach(AccountBalancesForecastText.notes(forecast, environment), id: \.text) { note in
         Label {
           Text(verbatim: note.text)
         } icon: {
           Image(systemName: note.symbol)
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -1116,7 +1116,7 @@ struct AccountBalancesForecastView: View {
 
   private func header(_ key: String) -> some View {
     Text(verbatim: AnalyticsText.t(key, environment))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
   }
 }
@@ -1296,7 +1296,7 @@ private struct ForecastView: View {
           "analytics.forecast.summary", environment, money.rubles(plot.spent),
           money.rubles(plot.planned))
       )
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
       if plot.lowData {
         Label {
@@ -1304,7 +1304,7 @@ private struct ForecastView: View {
         } icon: {
           Image(systemName: "hourglass")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -1352,7 +1352,7 @@ private struct AnomaliesSection: View {
         } icon: {
           Image(systemName: "exclamationmark.triangle.fill")
         }
-        .font(.callout)
+        .appFont(.callout)
         .foregroundStyle(.red)
         .fixedSize(horizontal: false, vertical: true)
       }
@@ -1370,7 +1370,7 @@ private struct AnomaliesSection: View {
       if let hidden = state.value?.anomalies?.hidden, !hidden.isEmpty {
         VStack(alignment: .leading, spacing: 8) {
           Text(verbatim: t("analytics.anomaly.hidden"))
-            .font(.headline)
+            .appFont(.headline)
             .accessibilityAddTraits(.isHeader)
           ForEach(hidden, id: \.id) { anomaly in
             AnomalyRow(anomaly: anomaly, names: names, isHidden: true) { show(anomaly) }
@@ -1410,13 +1410,13 @@ private struct AnomalyRow: View {
       VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 6) {
           Text(verbatim: AnalyticsText.t("analytics.anomaly.\(anomaly.rule.rawValue)", environment))
-            .font(.subheadline.weight(.semibold))
+            .appFont(.subheadline.weight(.semibold))
           Text(verbatim: environment.dates.dayAndMonth(anomaly.day))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
         Text(verbatim: AnalyticsText.anomalyDetail(anomaly, names: names, environment))
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -1476,16 +1476,16 @@ private struct ForecastQualityTable: View {
         verbatim: "\(t("analytics.forecast.origins")): "
           + money.count(Int64(backtest.metrics(of: backtest.chosen)?.origins ?? 0))
       )
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       ForEach(backtest.lines, id: \.method) { line in
         VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 6) {
             Text(verbatim: t("analytics.forecast.method.\(line.method.rawValue)"))
-              .font(.subheadline.weight(line.method == backtest.chosen ? .semibold : .regular))
+              .appFont(.subheadline.weight(line.method == backtest.chosen ? .semibold : .regular))
             if line.method == backtest.chosen {
               Text(verbatim: t("analytics.forecast.inUse"))
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             }
           }
@@ -1498,7 +1498,7 @@ private struct ForecastQualityTable: View {
               + "\(t("analytics.forecast.coverage")) "
               + "\(environment.money.percent(basisPoints: line.metrics.coverageBp))"
           )
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         }
@@ -1584,7 +1584,7 @@ struct MeasuredTable: View {
           Text(verbatim: row.value)
             .monospacedDigit()
         }
-        .font(.callout)
+        .appFont(.callout)
         .accessibilityElement(children: .combine)
       }
     }

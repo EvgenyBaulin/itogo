@@ -257,6 +257,9 @@ struct TransactionRowItem: Identifiable, Hashable, Sendable {
   /// A transfer between the owner's accounts: where the money went from and to. `nil` for an
   /// operation and its parts.
   var transfer: TransferRowText? = nil
+  /// The cashback the owner wrote for the operation, in the currency it came in; `nil` for a
+  /// part, a transfer and an operation without one.
+  var cashback: Money? = nil
 
   var isPart: Bool {
     if case .part = id { return true }
@@ -583,7 +586,7 @@ struct TransactionListing: Sendable {
       filter.personId == nil, filter.placeId == nil, filter.eventId == nil,
       filter.reimbursementStatus == nil
     else { return [] }
-    let words = filter.text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+    let words = NameKey.fold(filter.text).split(whereSeparator: \.isWhitespace).map(String.init)
     let names = Names(ledger.dataset).paymentMethods
     return ledger.dataset.transfers.filter { transfer in
       if let period = filter.period,
@@ -597,11 +600,12 @@ struct TransactionListing: Sendable {
         return false
       }
       guard !words.isEmpty else { return true }
-      let key = [
+      let fields = [
         transfer.note ?? "", names[transfer.fromAccountId] ?? "",
         names[transfer.toAccountId] ?? "", CSVValue.string(amount: transfer.fromAmountE4),
         CSVValue.string(amount: transfer.toAmountE4),
-      ].joined(separator: "\n").lowercased()
+      ]
+      let key = NameKey.fold(fields.joined(separator: "\n"))
       return words.allSatisfy { key.contains($0) }
     }
     .sorted(by: TransactionsStore.newestFirst)
@@ -663,7 +667,8 @@ struct TransactionListing: Sendable {
       quality: RowCell.of(cells.map(\.quality)),
       amount: transaction.amountE4, currency: transaction.currency,
       amountRub: transaction.amountRubE4, partCount: entry.parts.count,
-      owedMark: owedMark(of: entry), parts: parts, refund: RefundMark.of(entry, ledger: ledger))
+      owedMark: owedMark(of: entry), parts: parts, refund: RefundMark.of(entry, ledger: ledger),
+      cashback: transaction.cashback.flatMap { $0.amount.isZero ? nil : $0 })
   }
 
   /// The quality of an operation as a row of the list of days shows it, the way the table

@@ -192,7 +192,7 @@ struct AccountCashbackBlock: View {
           verbatim: line.rules.map { CardText.ruleLine($0, categories: names, environment) }
             .joined(separator: " · ")
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -211,7 +211,7 @@ struct AccountCashbackBlock: View {
           key, table: CardText.table, environment.money.exact(model.expectedRub),
           environment.money.exact(model.unconfirmedRub))
       )
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .accessibilityIdentifier("account.cashback.approximate")
     }
@@ -248,7 +248,7 @@ struct AccountCashbackBlock: View {
           tint: .orange)
       }
     }
-    .font(.caption)
+    .appFont(.caption)
   }
 
   private func note(_ symbol: String, _ text: String, tint: Color = .secondary) -> some View {

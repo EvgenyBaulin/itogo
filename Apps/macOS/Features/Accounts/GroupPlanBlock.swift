@@ -144,10 +144,10 @@ struct GroupPlanBlock: View {
     let showsAccount = accountIds.count > 1
     VStack(alignment: .leading, spacing: 8) {
       Text(verbatim: t("group.screen.plan"))
-        .font(.headline)
+        .appFont(.headline)
         .accessibilityAddTraits(.isHeader)
       Text(verbatim: t("group.screen.payments"))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .accessibilityAddTraits(.isHeader)
       if let model, model.payments.isEmpty {
@@ -164,7 +164,7 @@ struct GroupPlanBlock: View {
       }
       Divider()
       Text(verbatim: t("group.screen.incomes"))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .accessibilityAddTraits(.isHeader)
       if let model, model.incomes.isEmpty {
@@ -197,7 +197,7 @@ struct GroupPlanBlock: View {
         } icon: {
           Image(systemName: "exclamationmark.circle")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Text(verbatim: due.map(dayText) ?? "—")
@@ -208,7 +208,7 @@ struct GroupPlanBlock: View {
         Text(verbatim: name).lineLimit(1)
         if let account {
           Text(verbatim: account)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
@@ -255,7 +255,7 @@ struct LastRecordCaption: View {
       } icon: {
         Image(systemName: "clock")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .accessibilityIdentifier("account.lastRecord")
     }

@@ -366,7 +366,8 @@ private struct SearchNames {
   }
 
   /// Description, part notes, place, payment method and card, categories with their parents,
-  /// people, events and the amount as typed in a CSV («1234.5»), lower-cased and joined.
+  /// people, events and the amount as typed in a CSV («1234.5»), joined and folded as names are
+  /// (`NameKey.fold`: lower case, «ё» as «е»).
   func key(for entry: TransactionEntry, tree: CategoryTree) -> String {
     let transaction = entry.transaction
     var fields: [String] = []
@@ -389,6 +390,7 @@ private struct SearchNames {
       }
       if let id = part.eventId, let name = events[id] { fields.append(name) }
     }
-    return fields.joined(separator: "\n").lowercased()
+    // The case and «ё» against «е» do not count, as names are compared everywhere.
+    return NameKey.fold(fields.joined(separator: "\n"))
   }
 }

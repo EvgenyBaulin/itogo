@@ -68,8 +68,9 @@ public enum BudgetIssue: String, Hashable, Sendable, CaseIterable {
   case duplicate
   /// The amount is zero or below.
   case nonPositive
-  /// «Сверка» or its income twin — the categories the differences of counts are written in —
-  /// or a category under one of them: a limit there would count money that never was spent.
+  /// «Сверка» or its income twin — the categories the differences of counts are written in —,
+  /// the self-employed tax category, or a category under one of them: a limit on a count would
+  /// count money that never was spent, and the tax is owed, not chosen.
   case reconciliationCategory
 }
 
@@ -465,11 +466,16 @@ public enum LimitRules {
   /// Whether the row of a category offers a field for its limit: a limit could be saved on
   /// it — an expense category, not a system one nor under one — and the category is in use,
   /// neither archived nor under an archived one, where its limit would be hidden.
+  ///
+  /// The category the tax of self-employment is paid in (`taxCategoryId`) and everything under
+  /// it take no limit either: the tax is not spending one could plan less of.
   public static func offersLimit(
-    on categoryId: UUID, tree: CategoryTree, limitless: Set<UUID> = []
+    on categoryId: UUID, tree: CategoryTree, limitless: Set<UUID> = [],
+    taxCategoryId: UUID? = nil
   ) -> Bool {
     guard let category = tree.category(categoryId), tree.acceptsLimit(categoryId),
-      !isLimitless(categoryId, tree: tree, limitless: limitless)
+      !isLimitless(categoryId, tree: tree, limitless: limitless),
+      !isLimitless(categoryId, tree: tree, limitless: taxCategoryId.map { [$0] } ?? [])
     else {
       return false
     }

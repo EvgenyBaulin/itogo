@@ -97,10 +97,10 @@ struct ReportsWindow: View {
     VStack(alignment: .leading, spacing: 10) {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: ReportsText.title(of: request.kind, environment))
-          .font(.headline)
+          .appFont(.headline)
           .accessibilityAddTraits(.isHeader)
         Text(verbatim: ReportsText.subtitle(request, environment))
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
       .padding(.horizontal, 20)
@@ -159,7 +159,7 @@ struct ReportsWindow: View {
       } footer: {
         if !selection.isGroupable {
           Text(verbatim: t("reports.grouping.spendingOnly"))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
       }
@@ -390,7 +390,7 @@ private struct ReportNameCell: View {
         } icon: {
           Image(systemName: mark.symbol)
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }

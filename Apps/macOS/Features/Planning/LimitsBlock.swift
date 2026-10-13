@@ -115,18 +115,18 @@ struct LimitRow: View {
       LimitStatusLine(line: line, tree: tree, editing: editing)
       LimitBar(line: line)
       Text(verbatim: detail)
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
       if isEditing, let note = Self.carryNote(line, environment) {
         Text(verbatim: note)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("limits.amount.carryRestart")
       }
       if let refusal, isEditing {
         Text(verbatim: refusal)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -331,14 +331,16 @@ enum LimitWrites {
     (try? environment.planning?.budgets()) ?? snapshot?.dataset.planning.budgets ?? []
   }
 
-  /// «Сверка» and its income twin, as the reconciliation remembers them — read from the
-  /// database now, like the limits, or from the screen when the database cannot be read: no
-  /// limit on them or on anything under them (`LimitRules.isLimitless`).
+  /// «Сверка» and its income twin, as the reconciliation remembers them, and the category the
+  /// tax of self-employment is paid in — read from the database now, like the limits, or from
+  /// the screen when the database cannot be read: no limit on them or on anything under them
+  /// (`LimitRules.isLimitless`, `LimitRules.offersLimit(taxCategoryId:)`): the tax is not
+  /// spending one could plan less of.
   static func limitless(_ environment: AppEnvironment, _ snapshot: DataSnapshot?) -> Set<UUID> {
-    guard let settings = environment.settings else {
-      return snapshot?.dataset.planning.settings.limitlessCategoryIds ?? []
-    }
+    let onScreen = onScreen(snapshot)
+    guard let settings = environment.settings else { return onScreen }
     var read = PlanningSettings()
+    let tax: UUID?
     do {
       read.reconcileExpenseCategoryId = try settings.string(
         PlanningSettings.reconcileExpenseCategoryKey
@@ -346,10 +348,18 @@ enum LimitWrites {
       read.reconcileIncomeCategoryId = try settings.string(
         PlanningSettings.reconcileIncomeCategoryKey
       ).flatMap(Self.id)
+      tax = try settings.string(SelfEmploymentSettings.taxCategoryKey).flatMap(Self.id)
     } catch {
-      return snapshot?.dataset.planning.settings.limitlessCategoryIds ?? []
+      return onScreen
     }
-    return read.limitlessCategoryIds
+    return read.limitlessCategoryIds.union(tax.map { [$0] } ?? [])
+  }
+
+  /// The same from the data on screen.
+  static func onScreen(_ snapshot: DataSnapshot?) -> Set<UUID> {
+    var ids = snapshot?.dataset.planning.settings.limitlessCategoryIds ?? []
+    if let tax = snapshot?.dataset.selfEmployment.taxCategoryId { ids.insert(tax) }
+    return ids
   }
 
   private static func id(_ text: String) -> UUID? {

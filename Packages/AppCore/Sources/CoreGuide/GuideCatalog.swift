@@ -216,10 +216,10 @@ public enum GuideCatalog {
         title: GuideText("Поменяйте категорию операции", "Change the category of an operation"),
         hints: [
           open(
-            GuideTarget.sidebarSpending, "Траты", "Spending", keys: "⌘4",
+            GuideTarget.sidebarOperations, "Операции", "Transactions", keys: "⌘4",
             why: GuideText("Здесь все операции, новые сверху.", "Every operation, newest first.")),
           GuideHint(
-            target: GuideTarget.spendingList,
+            target: GuideTarget.operationsList,
             text: GuideText(
               "Дважды щёлкните операцию и выберите другую категорию",
               "Click an operation twice and pick another category"),
@@ -234,10 +234,10 @@ public enum GuideCatalog {
         title: GuideText("Найдите трату за прошлую неделю", "Find an expense from last week"),
         hints: [
           open(
-            GuideTarget.sidebarSpending, "Траты", "Spending", keys: "⌘4",
+            GuideTarget.sidebarOperations, "Операции", "Transactions", keys: "⌘4",
             why: GuideText("Поиск — вверху списка.", "The search is at the top of the list.")),
           GuideHint(
-            target: GuideTarget.spendingSearch,
+            target: GuideTarget.operationsSearch,
             text: GuideText("Наберите слово в поиске", "Type a word into the search"),
             why: GuideText(
               "Поиск ищет по всей истории: слова, категорию и место.",
@@ -378,19 +378,19 @@ public enum GuideCatalog {
         audience: .only(.cashback)),
       GuideTask(
         id: "task.spending",
-        title: GuideText("Откройте список «Траты»", "Open the Spending list"),
+        title: GuideText("Откройте список «Операции»", "Open the Transactions list"),
         hints: [
           GuideHint(
-            target: GuideTarget.sidebarSpending,
+            target: GuideTarget.sidebarOperations,
             text: GuideText(
-              "Пункт «Траты» в боковой панели или ↓ в пустой строке",
-              "Spending in the sidebar, or ↓ in the empty line"),
+              "Пункт «Операции» в боковой панели или ↓ в пустой строке",
+              "Transactions in the sidebar, or ↓ in the empty line"),
             why: GuideText(
               "Все операции одним списком, поиск — по всей истории.",
               "Every operation in one list, and a search through the whole history."),
             keys: "↓")
         ],
-        done: .event(GuideEvent.spendingOpened)),
+        done: .event(GuideEvent.operationsOpened)),
       GuideTask(
         id: "task.currencyChart",
         title: GuideText("Посмотрите график валюты", "Look at a currency chart"),
@@ -439,7 +439,7 @@ public enum GuideCatalog {
       why: GuideText("Кому должны вы и кто должен вам.", "Whom you owe and who owes you."),
       keys: "⌘3"),
     GuideHint(
-      target: GuideTarget.sidebarSpending, text: GuideText("Траты", "Spending"),
+      target: GuideTarget.sidebarOperations, text: GuideText("Операции", "Transactions"),
       why: GuideText(
         "Все операции списком и поиск по истории.",
         "Every operation in a list and a search through the history."),
@@ -480,7 +480,7 @@ public enum GuideCatalog {
   // MARK: What is new
 
   public static let whatsNew: [GuideScenario] = [
-    whatsNew14, whatsNew15, whatsNew16, whatsNew17, whatsNew18,
+    whatsNew14, whatsNew15, whatsNew16, whatsNew17, whatsNew18, whatsNew19,
   ]
 
   public static let whatsNew14 = GuideScenario(
@@ -506,7 +506,7 @@ public enum GuideCatalog {
         body: GuideText(
           "Все операции — отдельным списком. ↓ в пустой строке переходит к самой новой.",
           "Every operation in a list of its own. ↓ in the empty line goes to the latest."),
-        symbol: "list.bullet", target: GuideTarget.sidebarSpending),
+        symbol: "list.bullet", target: GuideTarget.sidebarOperations),
       GuideCard(
         id: "new14.approx",
         title: GuideText("Серое «≈» для чужой валюты", "A grey «≈» for other currencies"),
@@ -718,5 +718,58 @@ public enum GuideCatalog {
           "Closing the main window quits the app. Analytics, Transactions and Reports are separate windows with no tabs, over a full-screen window. The tutorial lights up where to click."
         ),
         symbol: "macwindow"),
+    ])
+
+  public static let whatsNew19 = GuideScenario(
+    kind: .whatsNew(version: GuideVersion(major: 1, minor: 9)),
+    cards: [
+      GuideCard(
+        id: "new19.instalments",
+        title: GuideText("Рассрочки и честная стоимость", "Instalments and the true cost"),
+        body: GuideText(
+          "Рассрочка частями — например, 4 платежа раз в две недели, переплата видна в каждом платеже, а плитка «Рассрочки» — сколько висит. У кредита — комиссии и страховка и настоящая ставка.",
+          "An instalment plan in parts — say 4 payments every two weeks —, the markup seen in every payment, and the «Instalments» tile says how much is still owed. A loan has its fees, insurance and its real rate."
+        ),
+        symbol: "creditcard.and.123", target: GuideTarget.sidebarDebts),
+      GuideCard(
+        id: "new19.creditCard",
+        title: GuideText("Кредитка как в банке", "A credit card as the bank keeps it"),
+        body: GuideText(
+          "Лимит, выписка и 25 дней: «Внести до … без процентов» и минимальный платёж. Не успели — проценты ≈. Снятие наличных — без льготного периода и с комиссией.",
+          "A limit, a statement and 25 days: «Pay by … with no interest» and the minimum payment. Missed it — interest ≈. Cash comes with a fee and no grace period."
+        ),
+        symbol: "creditcard"),
+      GuideCard(
+        id: "new19.prepay",
+        title: GuideText("Досрочка и лестница", "Early repayment and the ladder"),
+        body: GuideText(
+          "Платёж сверх срока спрашивает: уменьшить срок, платёж или это платёж вперёд. Плановая досрочка напомнит подать заявление. «Лестница погашения» — лавиной или снежным комом.",
+          "A payment above the due asks: a shorter term, a smaller payment, or a payment ahead. A planned early repayment reminds you to file the application. «Payoff ladder» — avalanche or snowball."
+        ),
+        symbol: "arrow.down.right.circle"),
+      GuideCard(
+        id: "new19.allocation",
+        title: GuideText("Распределение зарплаты", "Allocating the salary"),
+        body: GuideText(
+          "Правила вроде «10 % в цель» — и после зарплаты «Распределить…»: взносы и переводы одним шагом, «Нераспределено» видно. «До 25-го» — на половину месяца, остаток месяца — в подушку.",
+          "Rules like «10 % to a goal», and after the salary «Allocate…»: contributions and transfers in one step, «Unallocated» in sight. «Until the 25th» for half a month, and the rest of the month into the cushion."
+        ),
+        symbol: "chart.pie"),
+      GuideCard(
+        id: "new19.selfEmployed",
+        title: GuideText("Самозанятость", "Self-employment"),
+        body: GuideText(
+          "«Я самозанятый» — в «Настройки → Планирование». Налог считается сам: «≈ не ваши деньги», заплатить до 28-го, остаток вычета и лимит года.",
+          "«I am self-employed» is in Settings → Planning. The tax counts itself: «≈ not your money», pay by the 28th, the deduction left and the limit of the year."
+        ),
+        symbol: "person.text.rectangle"),
+      GuideCard(
+        id: "new19.easier",
+        title: GuideText("Удобнее", "Easier"),
+        body: GuideText(
+          "«Операции» вместо «Трат». Настройки с поиском, размер шрифта и вид валюты — код, значок или название. Свои валюты с курсом, основная карта счёта, свёрнутые группы «Капитала».",
+          "«Transactions» instead of «Spending». Settings with a search, the text size and how a currency looks — a code, a symbol or a name. Your own currencies with a rate, the main card of an account, folded groups in Capital."
+        ),
+        symbol: "slider.horizontal.3", target: GuideTarget.sidebarOperations),
     ])
 }

@@ -10,8 +10,9 @@ import Foundation
 /// in their order, each with its tiles in theirs, a hidden tile marked by «-». Whatever the text
 /// says — written by another build, carried from another Mac, edited by hand — it reads as a
 /// layout the screen can show: unknown groups and tiles go, a group or a tile named twice keeps
-/// its first place, a group not named comes after the named ones, a tile not named is shown at
-/// the end of its default group, and a text that hides every tile shows the first one.
+/// its first place, a group not named comes after the named ones, a tile not named is put at
+/// the end of its default group — shown, unless it waits to be added (`isShownUnnamed`) —, and a
+/// text that hides every tile shows the first one.
 public struct OverviewLayout: Hashable, Sendable {
   /// One group and its tiles, the hidden ones among them.
   public struct Section: Hashable, Sendable {
@@ -38,7 +39,8 @@ public struct OverviewLayout: Hashable, Sendable {
 
   /// The layout of a flat list of tiles — the setting of the builds before groups, or none: the
   /// tiles of the list keep their order, the tiles the list lacks follow in the order of the
-  /// catalog, every tile in its default group, and all of them shown.
+  /// catalog, every tile in its default group, and all of them shown but the ones that wait to
+  /// be added (`isShownUnnamed`).
   public init(tiles: [OverviewTile]) {
     var ordered: [OverviewTile] = []
     for tile in tiles + OverviewTile.allCases where !ordered.contains(tile) {
@@ -47,7 +49,8 @@ public struct OverviewLayout: Hashable, Sendable {
     self.init(
       sections: OverviewTileGroup.allCases.map { group in
         Section(group: group, tiles: ordered.filter { $0.defaultGroup == group })
-      })
+      },
+      hidden: Set(OverviewTile.allCases.filter { !$0.isShownUnnamed && !tiles.contains($0) }))
   }
 
   /// The layout of an owner who never chose: the twelve cards of the first Overview first, in
@@ -275,7 +278,8 @@ public struct OverviewLayout: Hashable, Sendable {
   }
 
   /// Makes the layout whole: every group once, the named ones first; every tile once, at its first
-  /// place; a tile not placed shown at the end of its default group; hidden only what is placed;
+  /// place; a tile not placed at the end of its default group, shown unless it waits to be added;
+  /// hidden only what is placed;
   /// at least one tile shown — the first one when all were hidden.
   private mutating func normalize() {
     var seenGroups: Set<OverviewTileGroup> = []
@@ -302,6 +306,7 @@ public struct OverviewLayout: Hashable, Sendable {
     }
     sections = whole
     hidden = hidden.intersection(seenTiles).subtracting(placedLate)
+      .union(placedLate.filter { !$0.isShownUnnamed })
     if shown.isEmpty, let first = sections.lazy.flatMap(\.tiles).first {
       hidden.remove(first)
     }

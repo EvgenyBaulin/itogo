@@ -22,7 +22,7 @@ struct LimitSuggestionsSheet: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(verbatim: t("limits.suggest.title")).font(.headline)
+      Text(verbatim: t("limits.suggest.title")).appFont(.headline)
       Text(verbatim: t("limits.suggest.subtitle"))
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -90,7 +90,7 @@ struct LimitSuggestionsSheet: View {
               "limits.suggest.usualMonth", table: "Planning",
               environment.money.rounded(suggestion.median))
           )
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
         }
       }

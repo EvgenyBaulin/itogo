@@ -2,10 +2,10 @@ import AppCore
 import AppKit
 import SwiftUI
 
-/// The table of the Transactions window: a section for each side of each day, newest day
-/// first, with what that side comes to in its header; a split is one row with a disclosure
-/// triangle and its parts under it. The transfers of a day between the owner's accounts come
-/// last, a section of their own with ⇄ rows that adds up to nothing.
+/// The table of «Операции»: a section for each side of each day, newest day first, with what
+/// that side comes to in its header; a split is one row with a disclosure triangle and its parts
+/// under it. The transfers of a day between the owner's accounts come last, a section of their
+/// own with ⇄ rows that adds up to nothing.
 ///
 /// Selection is the table's own — click, ⌘-click, ⇧-click, ⌘A — and holds operations and
 /// transfers only: parts cannot be selected (`selectionDisabled`), since a part is changed and
@@ -13,9 +13,10 @@ import SwiftUI
 /// the context menu go through `contextMenu(forSelectionType:)`; on a part they act on its
 /// operation.
 ///
-/// Columns are hidden and moved with the system menu of the header, and the set is kept in
-/// `UserDefaults` by the window (`transactions.columns`): a setting of the window, never in
-/// the database or an archive. The description and the amount cannot be hidden.
+/// The columns, their order and their widths are `layout` (`OperationColumnLayout`), which
+/// «Настроить столбцы…» edits: a setting of this Mac, never in the database or an archive. The
+/// table is built again when the layout changes, so a width chosen there is the one it lays out.
+/// The description and the amount cannot be hidden.
 struct TransactionsTable<MenuItems: View>: View {
   @Dependency(\.environment) private var environment
 
@@ -28,23 +29,52 @@ struct TransactionsTable<MenuItems: View>: View {
   let deps: AppDependencies
   let listing: TransactionListing
   @Binding var selection: Set<UUID>
-  @Binding var columns: TableColumnCustomization<TransactionRowItem>
+  var layout: OperationColumnLayout = .standard
   @ViewBuilder var menu: (Set<UUID>) -> MenuItems
   var primaryAction: (Set<UUID>) -> Void
   var deleteAction: (Set<UUID>) -> Void
 
+  /// The layout the table now on screen was made for, once it has appeared. Until then it is
+  /// made with no rows (`filled`).
+  @State private var madeFor: OperationColumnLayout?
+
+  /// Whether the table on screen has its rows. A table is always made empty and filled on the
+  /// next update: made with rows, SwiftUI expands its sections while it builds the
+  /// `NSOutlineView`, and AppKit, measuring the rows from inside that expansion, measures
+  /// them again from inside its own measuring — «reentrant operation in its NSTableView
+  /// delegate», which AppKit promises to turn into an assert. Rows that come into a table
+  /// already on screen take the ordinary way of an update.
+  private var filled: Bool { madeFor == layout }
+
   var body: some View {
-    Table(of: TransactionRowItem.self, selection: rowSelection, columnCustomization: $columns) {
-      allColumns
+    let rows = filled ? listing : .empty
+    return Table(of: TransactionRowItem.self, selection: rowSelection(rows)) {
+      TableColumnForEach(layout.visible) { column in
+        TableColumn(title(column)) { item in
+          // A refund leads to its purchase: the click opens the purchase as a double click
+          // would.
+          OperationCell(column: column, item: item, openPurchase: { primaryAction([$0]) })
+            .appDependencies(deps)
+        }
+        .width(
+          min: CGFloat(column.minimumWidth), ideal: CGFloat(layout.width(of: column)),
+          max: CGFloat(column.maximumWidth)
+        )
+        .alignment(column.isNumeric ? .trailing : .leading)
+      }
     } rows: {
-      allRows
+      allRows(rows)
     }
+    // Inside the identity of the table: a table made again for another layout appears again,
+    // empty, and is filled again.
+    .onAppear { madeFor = layout }
+    // The widths are the ideal ones of the columns, which a table reads when it is made.
+    .id(layout)
     .contextMenu(forSelectionType: RowID.self) { rows in
       menu(listing.owners(of: rows))
     } primaryAction: { rows in
       primaryAction(listing.owners(of: rows))
     }
-    .onExitCommand { selection = [] }
     // ⌘A is the system «Select All», and a focused table answers it by itself. This is the
     // way back when it does not reach the table: every operation listed, no part.
     .onCommand(#selector(NSResponder.selectAll(_:))) { selection = listing.visibleIds }
@@ -57,17 +87,21 @@ struct TransactionsTable<MenuItems: View>: View {
   /// The table selects rows; the window keeps operations and transfers. A part never gets
   /// in: it cannot be selected anyway, and the selection bar, the menu and ⌘A count
   /// operations and transfers.
-  private var rowSelection: Binding<Set<RowID>> {
-    Binding(
-      get: { Set(selection.map(listing.row(of:))) },
+  ///
+  /// The empty table, before it is filled, selects nothing and changes nothing: the window's
+  /// selection waits for the rows it names.
+  private func rowSelection(_ rows: TransactionListing) -> Binding<Set<RowID>> {
+    guard filled else { return .constant([]) }
+    return Binding(
+      get: { Set(selection.map(rows.row(of:))) },
       set: { selection = TransactionListing.operations(in: $0) })
   }
 
   // MARK: Rows
 
   @TableRowBuilder<TransactionRowItem>
-  private var allRows: some TableRowContent<TransactionRowItem> {
-    ForEach(listing.sections) { section in
+  private func allRows(_ rows: TransactionListing) -> some TableRowContent<TransactionRowItem> {
+    ForEach(rows.sections) { section in
       Section {
         OutlineGroup(section.rows, children: \.parts) { item in
           TableRow(item)
@@ -80,105 +114,57 @@ struct TransactionsTable<MenuItems: View>: View {
     }
   }
 
-  // MARK: Columns
-  //
-  // Three groups rather than one list of nine: the type checker gives up on a single builder
-  // of nine customised columns.
-  //
-  // The amount stands right after the description. A `Table` spreads spare
-  // room over its columns, but short of room it does not always squeeze them: with the old
-  // widths a window of 1120 pt kept every column at its ideal width and pushed the amount past
-  // the edge, while a window opened at 820 pt squeezed them to their minimums. What does not
-  // fit scrolls sideways. At the end of the row the amount was the first thing to go (the live
-  // run of 19 September); after the description it stays on screen at the smallest window,
-  // with the inspector open too. The ideal widths add up to the table of the default window,
-  // 1120 pt with the filters at their ideal width, so there every column shows.
-
-  @TableColumnBuilder<TransactionRowItem, Never>
-  private var allColumns: some TableColumnContent<TransactionRowItem, Never> {
-    leadingColumns
-    middleColumns
-    trailingColumns
+  private func title(_ column: OperationColumn) -> Text {
+    Text(verbatim: environment.language(column.titleKey, table: "Transactions"))
   }
+}
 
-  @TableColumnBuilder<TransactionRowItem, Never>
-  private var leadingColumns: some TableColumnContent<TransactionRowItem, Never> {
-    TableColumn(title("time")) { item in
-      Group {
-        if !item.isPart {
-          Text(verbatim: environment.dates.time(item.occurredAt))
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
-        }
+/// The cell of one column of a row.
+private struct OperationCell: View {
+  @Dependency(\.environment) private var environment
+  let column: OperationColumn
+  let item: TransactionRowItem
+  var openPurchase: ((UUID) -> Void)? = nil
+
+  var body: some View {
+    switch column {
+    case .time:
+      if !item.isPart {
+        Text(verbatim: environment.dates.time(item.occurredAt))
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
       }
-      .appDependencies(deps)
+    case .description:
+      DescriptionCell(item: item, openPurchase: openPurchase)
+    case .amount:
+      AmountCell(item: item)
+    case .category:
+      CategoryCell(item: item)
+    case .account:
+      Text(verbatim: item.paymentMethod ?? "").lineLimit(1)
+    case .place:
+      Text(verbatim: item.place ?? "").lineLimit(1)
+    case .forWhom:
+      ForWhomCell(cell: item.forWhom, kind: item.kind)
+    case .quality:
+      QualityCell(cell: item.quality)
+    case .cashback:
+      if let cashback = item.cashback {
+        Text(verbatim: environment.money.exact(cashback.amount, currency: cashback.currency))
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
+      }
+    case .note:
+      // The comment on one line; the whole of it is in the editor and in the tooltip.
+      if let note = item.note, !note.isEmpty {
+        Text(verbatim: note.replacingOccurrences(of: "\n", with: " "))
+          .lineLimit(1)
+          .truncationMode(.tail)
+          .help(Text(verbatim: note))
+      }
+    case .event:
+      NameCell(cell: item.event)
     }
-    .width(min: TransactionColumnWidths.time, ideal: TransactionColumnWidths.time, max: 96)
-    .customizationID("time")
-
-    TableColumn(title("description")) { item in
-      // A refund leads to its purchase: the click opens the purchase as a double click would.
-      DescriptionCell(item: item, openPurchase: { primaryAction([$0]) }).appDependencies(deps)
-    }
-    .width(min: 120, ideal: 160)
-    .customizationID("description")
-    .disabledCustomizationBehavior(.visibility)
-
-    TableColumn(title("amount")) { item in
-      AmountCell(item: item).appDependencies(deps)
-    }
-    .width(min: TransactionColumnWidths.amount, ideal: TransactionColumnWidths.amount)
-    .alignment(.trailing)
-    .customizationID("amount")
-    .disabledCustomizationBehavior(.visibility)
-  }
-
-  @TableColumnBuilder<TransactionRowItem, Never>
-  private var middleColumns: some TableColumnContent<TransactionRowItem, Never> {
-    TableColumn(title("place")) { item in
-      Text(verbatim: item.place ?? "").appDependencies(deps)
-    }
-    .width(min: 60, ideal: 80)
-    .customizationID("place")
-
-    TableColumn(title("category")) { item in
-      CategoryCell(item: item).appDependencies(deps)
-    }
-    .width(min: 80, ideal: 120)
-    .customizationID("category")
-
-    TableColumn(title("forWhom")) { item in
-      ForWhomCell(cell: item.forWhom, kind: item.kind).appDependencies(deps)
-    }
-    .width(min: 60, ideal: 76)
-    .customizationID("forWhom")
-  }
-
-  @TableColumnBuilder<TransactionRowItem, Never>
-  private var trailingColumns: some TableColumnContent<TransactionRowItem, Never> {
-    TableColumn(title("event")) { item in
-      NameCell(cell: item.event).appDependencies(deps)
-    }
-    .width(min: 60, ideal: 90)
-    .customizationID("event")
-    .defaultVisibility(.hidden)
-
-    TableColumn(title("paymentMethod")) { item in
-      Text(verbatim: item.paymentMethod ?? "").appDependencies(deps)
-    }
-    .width(min: 60, ideal: 90)
-    .customizationID("paymentMethod")
-    .defaultVisibility(.hidden)
-
-    TableColumn(title("quality")) { item in
-      QualityCell(cell: item.quality).appDependencies(deps)
-    }
-    .width(min: 60, ideal: 76)
-    .customizationID("quality")
-  }
-
-  private func title(_ column: String) -> Text {
-    Text(verbatim: environment.language("transactions.column.\(column)", table: "Transactions"))
   }
 }
 
@@ -236,7 +222,7 @@ private struct DescriptionCell: View {
       }
       if let note = transfer.note, !note.isEmpty {
         Text(verbatim: note)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
@@ -256,7 +242,7 @@ private struct DescriptionCell: View {
           } icon: {
             Image(systemName: "square.split.2x1")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
         if let mark = item.owedMark {
@@ -277,13 +263,13 @@ private struct DescriptionCell: View {
             verbatim: environment.language(
               "transactions.moneyBackNotIncome", table: "Transactions")
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
       if let expression = item.expression {
         Text(verbatim: expression)
-          .font(.caption.monospaced())
+          .appFont(.caption.monospaced())
           .foregroundStyle(.secondary)
       }
       // «вернули 500 ₽» on a purchase, «к покупке «Кроссовки», 12 сентября» on its refund.
@@ -423,13 +409,13 @@ private struct AmountCell: View {
         if transfer.isExchange {
           let received = environment.money.exact(transfer.received, currency: transfer.toCurrency)
           Text(verbatim: "→ \(received)")
-            .font(.caption)
+            .appFont(.caption)
             .monospacedDigit()
             .foregroundStyle(.secondary)
         }
       } else if item.currency != .rub {
         Text(verbatim: "≈ \(environment.money.rounded(item.amountRub))")
-          .font(.caption)
+          .appFont(.caption)
           .monospacedDigit()
           .foregroundStyle(.secondary)
       }

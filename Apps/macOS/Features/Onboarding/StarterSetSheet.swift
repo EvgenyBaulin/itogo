@@ -26,7 +26,7 @@ struct StarterSetSheet: View {
   var body: some View {
     let plan = additions
     VStack(alignment: .leading, spacing: 14) {
-      Text(verbatim: t("starter.title")).font(.title2.weight(.semibold))
+      Text(verbatim: t("starter.title")).appFont(.title2.weight(.semibold))
       Text(verbatim: t("starter.subtitle"))
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -76,7 +76,7 @@ struct StarterSetSheet: View {
   @ViewBuilder
   private func preview(_ plan: StarterAdditions) -> some View {
     VStack(alignment: .leading, spacing: 6) {
-      Text(verbatim: t("starter.willAdd")).font(.headline)
+      Text(verbatim: t("starter.willAdd")).appFont(.headline)
       if plan.isEmpty {
         Text(verbatim: t("starter.nothingToAdd")).foregroundStyle(.secondary)
       } else {

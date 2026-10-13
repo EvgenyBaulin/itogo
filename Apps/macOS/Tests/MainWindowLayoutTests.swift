@@ -133,7 +133,7 @@ final class MainWindowLayoutTests: XCTestCase {
         // «Траты» lists the operations the selection bar and the room under it are about.
         MainWindow(
           deps: deps, actions: actions, opensDetails: opensDetails,
-          selection: .section(.spending))
+          selection: .section(.operations))
       }
       .environment(\.windowWidth, width)
       .defaultAppStorage(defaults)
@@ -335,6 +335,58 @@ final class MainWindowLayoutTests: XCTestCase {
     assertSettled(records, window, "on opening")
     probe.assertQuiet(about: loopMessages, comparedWith: before, "on opening")
     XCTAssertEqual(AppDependencies.missingReaders, [])
+  }
+
+  /// The table of «Операции» is filled without being changed from inside its own delegate.
+  /// AppKit says «reentrant operation in its NSTableView delegate» when it is, and promises an
+  /// assert for it; it was said once on every opening, before the probes of the other tests
+  /// started counting, so they caught it only when it came a little late. Counted here from
+  /// before the window exists.
+  func testOpeningTheOperationsTouchesNoTableFromItsOwnDelegate() throws {
+    let probe = LogProbe()
+    let before = probe.counts(of: loopMessages)
+    let window = makeWindow()
+    try waitForList(window)
+    settle(window, "opening «Операции»")
+    probe.assertQuiet(about: loopMessages, comparedWith: before, "opening «Операции»")
+  }
+
+  func testOpeningTheOperationsBesideTheFormTouchesNoTableFromItsOwnDelegate() throws {
+    environment.entryStyle = .form
+    let probe = LogProbe()
+    let before = probe.counts(of: loopMessages)
+    let window = makeWindow(width: 820, height: 480)
+    try waitForList(window)
+    settle(window, "opening «Операции» beside the form")
+    probe.assertQuiet(
+      about: loopMessages, comparedWith: before, "opening «Операции» beside the form")
+  }
+
+  /// «Настроить столбцы…» makes the table again for the new columns: made again, it is filled
+  /// the same way, from outside its delegate, and the selection is still there after it.
+  func testOtherColumnsMakeTheTableAgainWithoutTouchingItFromItsDelegate() throws {
+    let window = makeWindow()
+    try waitForList(window)
+    actions.selection = [first.transaction.id]
+    settle(window, passes: 10, "before the columns change")
+
+    let probe = LogProbe()
+    let before = probe.counts(of: loopMessages)
+    var layout = OperationColumnLayout.standard
+    layout.setShown(true, .event)
+    layout.setWidth(260, of: .description)
+    defaults.set(layout.storage, forKey: OperationColumnLayout.storageKey)
+    for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    let records = settle(window, "with other columns")
+
+    assertSettled(records, window, "with other columns")
+    probe.assertQuiet(about: loopMessages, comparedWith: before, "with other columns")
+    XCTAssertEqual(actions.selection, [first.transaction.id])
+    var tables: [NSTableView] = []
+    Self.allSubviews(of: window.contentView!, into: &tables)
+    XCTAssertTrue(
+      tables.contains { $0.tableColumns.count == layout.visible.count && $0.numberOfRows > 0 },
+      "the table of the new columns never filled")
   }
 
   func testTheMainWindowSettlesWithTheSelectionBarShown() throws {

@@ -22,18 +22,18 @@ struct OwedCard: View {
         VStack(alignment: .leading, spacing: 8) {
           HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(verbatim: environment.money.rounded(owed.amount))
-              .font(.title2.monospacedDigit())
+              .appFont(.title2.monospacedDigit())
             Text(
               verbatim: environment.language.format(
                 "owed.count", table: "Entry", counts: owed.count)
             )
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
           }
           .accessibilityElement(children: .combine)
           if let partly = partlyReturned(under: owed) {
             Text(verbatim: partly)
-              .font(.caption)
+              .appFont(.caption)
               .monospacedDigit()
               .foregroundStyle(.secondary)
           }

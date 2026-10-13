@@ -41,6 +41,11 @@ import Foundation
 ///   paid of its tied payments. Off, no budget is held back and the dues tied to an event are
 ///   ordinary dues.
 ///
+/// * **Self-employment** — the tax accrued and unpaid (`NPDTax`), from the day of the income on;
+///   the computed row of the planning («Налог НПД за октябрь») is not a scheduled payment, so it
+///   is never taken twice.
+/// * **Credit cards out of the summary** — their statements due by D (`CreditCardDues`).
+///
 /// A foreign amount without a rate today is left out and its currency listed in
 /// `withoutRate`, never guessed.
 public struct CashPlan: Hashable, Sendable {
@@ -65,13 +70,23 @@ public struct CashPlan: Hashable, Sendable {
   /// a rate today, left out of the sum, is left out of the count too.
   public var scheduledDueCount: Int
   public var debtDueCount: Int
+  /// The tax of self-employment accrued and unpaid, every month of it through today
+  /// (`NPDState.accruedUnpaidE4`): money on the accounts that is not the owner's. Zero while
+  /// self-employment is off.
+  public var npdTax: AmountE4
+  /// What the credit cards out of the summary ask to be paid by D, without interest
+  /// (`CreditCardDues.outOfSummary`): a card in the summary has its minus in the money already.
+  public var creditCards: AmountE4
 
   public init(
     scheduled: AmountE4 = .zero, debts: AmountE4 = .zero, goalSavings: AmountE4 = .zero,
     goalPlans: AmountE4 = .zero, events: AmountE4 = .zero, subtractsGoalSavings: Bool = true,
     reservesGoalPlans: Bool = true, withoutRate: [CurrencyCode] = [], overdue: AmountE4 = .zero,
-    reservesEventBudgets: Bool = true, scheduledDueCount: Int = 0, debtDueCount: Int = 0
+    reservesEventBudgets: Bool = true, scheduledDueCount: Int = 0, debtDueCount: Int = 0,
+    npdTax: AmountE4 = .zero, creditCards: AmountE4 = .zero
   ) {
+    self.npdTax = npdTax
+    self.creditCards = creditCards
     self.scheduledDueCount = scheduledDueCount
     self.debtDueCount = debtDueCount
     self.scheduled = scheduled
@@ -88,7 +103,7 @@ public struct CashPlan: Hashable, Sendable {
 
   /// Everything the grey line takes away from what can be spent now. The goal savings are not
   /// in it: they are taken off the money now itself (`FreeMoney.main`).
-  public var total: AmountE4 { scheduled + debts + goalPlans + events }
+  public var total: AmountE4 { scheduled + debts + goalPlans + events + npdTax + creditCards }
 
   /// The plan from `today` through `until` (D, as `FreeMoney.window` clips it).
   ///
@@ -104,7 +119,8 @@ public struct CashPlan: Hashable, Sendable {
     until d: DateOnly, rubPerUnit: [CurrencyCode: Decimal], matches: ScheduledMatches,
     goals: [GoalStatus], debts: DebtsOverview, events: [EventPlan], reserveGoalPlan: Bool,
     subtractGoalSavings: Bool, dayRates: DayRates = .empty,
-    goalSavingsValuation: GoalSavingsValuation = .today, reserveEventBudgets: Bool = true
+    goalSavingsValuation: GoalSavingsValuation = .today, reserveEventBudgets: Bool = true,
+    npd: NPDState? = nil, creditStatements: [UUID: [CreditStatement]] = [:]
   ) -> CashPlan {
     var missing: Set<CurrencyCode> = []
     func rubles(_ amount: AmountE4, in currency: CurrencyCode) -> AmountE4 {
@@ -237,7 +253,11 @@ public struct CashPlan: Hashable, Sendable {
       reservesGoalPlans: reserveGoalPlan,
       withoutRate: missing.sorted { $0.code < $1.code }, overdue: overdue,
       reservesEventBudgets: reserveEventBudgets, scheduledDueCount: scheduledCount,
-      debtDueCount: debtCount)
+      debtDueCount: debtCount, npdTax: npd?.accruedUnpaidE4 ?? .zero,
+      creditCards: creditStatements.isEmpty
+        ? .zero
+        : CreditCardDues.outOfSummary(
+          accounts: accounts, statements: creditStatements, today: today, until: d))
   }
 
   /// What the operations of each counted event dated after today add to its «потрачено», as my

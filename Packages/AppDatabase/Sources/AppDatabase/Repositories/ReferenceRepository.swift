@@ -283,7 +283,8 @@ public struct ReferenceRepository: Sendable {
   /// The columns move in the order given. The cards of an account move first: a row that names
   /// a card must name the card's own account (the schema's `card_of_account_*` triggers), so the
   /// card is on the target before any operation or payment naming it is. The cashback rules
-  /// and the accounts expected income is to come to move too. An event a scheduled payment
+  /// and the accounts expected income is to come to move too, and so do the goals kept on an
+  /// account and the rules of allocation that send money to it. An event a scheduled payment
   /// belongs to is used by it: it is archived or merged, not deleted, in the reference books.
   static let mergedColumns: [String: [(table: String, column: String)]] = [
     "people": [
@@ -299,7 +300,8 @@ public struct ReferenceRepository: Sendable {
       ("transfers", "from_payment_method_id"), ("transfers", "to_payment_method_id"),
       ("debt_entries", "payment_method_id"), ("cashback_rules", "payment_method_id"),
       ("expected_income", "payment_method_id"), ("payment_methods", "cashback_points_account_id"),
-      ("payment_methods", "interest_account_id"),
+      ("payment_methods", "interest_account_id"), ("goals", "account_id"),
+      ("allocation_rules", "payment_method_id"),
     ],
     "events": [
       ("transaction_parts", "event_id"), ("import_mappings", "target_event_id"),

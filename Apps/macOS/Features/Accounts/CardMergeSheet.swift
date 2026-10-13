@@ -26,7 +26,7 @@ struct CardMergeSheet: View {
     let usage = actions.mergeUsage(card.id)
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: environment.format("card.merge.title", table: CardText.table, card.name))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         Picker(selection: Binding(get: { selected }, set: { target = $0 })) {
           ForEach(targets) { card in

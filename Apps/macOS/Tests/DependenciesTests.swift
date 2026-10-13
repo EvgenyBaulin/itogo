@@ -55,10 +55,10 @@ final class DependenciesTests: XCTestCase {
         AnyView(AppScenes.root(deps, window: .main, launches: false) { MainWindow(deps: $0) })
       ),
       (
-        "Transactions",
+        "Operations",
         AnyView(
-          AppScenes.root(deps, window: .transactions, launches: false) {
-            TransactionsRootView(deps: $0)
+          AppScenes.root(deps, window: .main, launches: false) {
+            MainWindow(deps: $0, selection: .section(.operations))
           })
       ),
       (

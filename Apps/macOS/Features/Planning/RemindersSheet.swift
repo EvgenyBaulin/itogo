@@ -70,7 +70,7 @@ struct RemindersSheet: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(verbatim: t("reminders.title")).font(.headline)
+      Text(verbatim: t("reminders.title")).appFont(.headline)
       ScrollView {
         VStack(alignment: .leading, spacing: 10) {
           if !overdue.isEmpty {
@@ -132,9 +132,9 @@ struct RemindersSheet: View {
       } icon: {
         Image(systemName: "exclamationmark.circle")
       }
-      .font(.subheadline.weight(.semibold))
+      .appFont(.subheadline.weight(.semibold))
       Text(verbatim: t("reminders.overdue.explain"))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       ForEach(overdue) { due in
@@ -147,7 +147,7 @@ struct RemindersSheet: View {
     VStack(alignment: .leading, spacing: 4) {
       Text(verbatim: overdueText(due))
       Text(verbatim: overdueCaption(due))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       HStack(spacing: 8) {
         ForEach(Self.overdueActions(for: due), id: \.self) { action in
@@ -156,7 +156,7 @@ struct RemindersSheet: View {
       }
       if let reason = failed[due.id] {
         Text(verbatim: reason)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -401,11 +401,11 @@ struct RemindersSheet: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: text(reminder))
         Text(verbatim: t("reminders.urgency.\(reminder.urgency)"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         if let reason = failed[reminder.id] {
           Text(verbatim: reason)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.red)
             .fixedSize(horizontal: false, vertical: true)
         }

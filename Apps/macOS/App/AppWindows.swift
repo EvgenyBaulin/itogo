@@ -156,6 +156,24 @@ enum AppWindows {
     return window
   }
 
+  /// Does what shows itself in the main window — the guide's cards, «Показать, куда нажимать» —
+  /// with the main window brought forward first: asked while the settings or another window
+  /// stood in front, it happened behind them, out of sight. The windows in front stay open,
+  /// behind the main one.
+  static func intoMain(_ action: () -> Void) {
+    bringForward(.main)
+    action()
+  }
+
+  /// Whether `window` stands in front of `other` among the app's windows on screen (the list of
+  /// `NSApp.orderedWindows` goes from the front). False when either is not on screen.
+  static func isInFront(_ window: NSWindow, of other: NSWindow) -> Bool {
+    let ordered = NSApp.orderedWindows
+    guard let front = ordered.firstIndex(of: window), let back = ordered.firstIndex(of: other)
+    else { return false }
+    return front < back
+  }
+
   /// Shrinks and moves a window into the screen it opens on: the screen of a main window in
   /// full screen, else its own.
   private static func fitOnScreen(_ window: NSWindow) {

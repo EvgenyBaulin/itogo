@@ -20,7 +20,7 @@ struct LastRecordLine: View {
       } icon: {
         Image(systemName: "square.and.pencil")
       }
-      .font(.callout)
+      .appFont(.callout)
       .foregroundStyle(.secondary)
       .accessibilityElement(children: .combine)
       .accessibilityIdentifier("overview.lastRecord")

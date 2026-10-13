@@ -51,6 +51,10 @@ public final class EntryDraftModel {
   /// Every debt, the closed and the deleted ones too: a saved payment of one of them keeps it in
   /// the menu (`debtChoices`).
   private var allDebts: [Debt] = []
+  /// Every debt by its id, the closed and the deleted ones too.
+  var allDebtsById: [UUID: Debt] {
+    Dictionary(allDebts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+  }
   /// Every card, archived ones too: the account picker offers the live cards of the live
   /// accounts, and a saved operation keeps the card it names whatever became of it.
   public private(set) var cards: [PaymentCard] = []
@@ -68,11 +72,25 @@ public final class EntryDraftModel {
     public var debtId: UUID?
     public var payments: Int
     public var monthlyAmount: AmountE4
+    /// «Рассрочка частями»: the new debt is an instalment plan of `payments` equal parts — the
+    /// price and the markup together —, the first on the day of the purchase (`InstalmentPlan`).
+    public var instalments: Bool
+    /// The days between two parts; `nil` — a part on the day of the purchase of every month.
+    public var everyDays: Int?
+    /// What the plan costs above the price, all of it; spent part by part with the payments.
+    public var markup: AmountE4
 
-    public init(debtId: UUID? = nil, payments: Int = 12, monthlyAmount: AmountE4 = .zero) {
+    public init(
+      debtId: UUID? = nil, payments: Int = 12, monthlyAmount: AmountE4 = .zero,
+      instalments: Bool = false, everyDays: Int? = InstalmentPlan.defaultEveryDays,
+      markup: AmountE4 = .zero
+    ) {
       self.debtId = debtId
       self.payments = payments
       self.monthlyAmount = monthlyAmount
+      self.instalments = instalments
+      self.everyDays = everyDays
+      self.markup = markup
     }
   }
 
@@ -170,6 +188,20 @@ public final class EntryDraftModel {
   /// defaults lay another; a value the line named or the owner chose stays, and so does the one
   /// a saved operation was recorded with — nil in the editor.
   private var forWhomFromDefaults: ForWhomChoice?
+
+  /// «Карта · Счёт» at «Счёт», or «со счёта» in the line: the purchase names no card, and no
+  /// default lays one (`layTheCard`). Off — the default — a purchase is made with the card the
+  /// line named, else the card that paid at the place last, else the main card of the account.
+  public internal(set) var paysFromAccount = false
+  /// `paysFromAccount` is what the line said: the next reading that no longer says it takes it
+  /// back, as a half-typed word is taken back (`TypedFills`).
+  var paysFromAccountByTheLine = false
+  /// The card the defaults laid. While the draft still holds it, the defaults lay another; a card
+  /// the line named or the owner picked stays.
+  var cardFromDefaults: UUID?
+  /// The line said «смз»: income of the self-employed (`InputLineReading.selfEmployed`). Kept
+  /// until the draft starts over, so the bar can offer to count the tax once it is written.
+  public internal(set) var lineSaysSelfEmployed = false
 
   /// A value of «for whom» and the person it names, as one choice.
   private struct ForWhomChoice: Equatable {
@@ -353,7 +385,7 @@ public final class EntryDraftModel {
   // MARK: Cards and cashback
 
   /// The live cards, the only ones anything new may name.
-  private var liveCards: [PaymentCard] { cards.filter { !$0.archived } }
+  var liveCards: [PaymentCard] { cards.filter { !$0.archived } }
 
   /// A choice of the account picker: an account, or a card under it.
   public struct AccountChoice: Hashable, Sendable {
@@ -407,6 +439,15 @@ public final class EntryDraftModel {
     let resolved = CardRules.resolve(selection: id, cards: cards)
     setPaymentMethod(resolved.accountId)
     draft.cardId = has(.card) ? resolved.cardId : nil
+    cardFromDefaults = nil
+    if resolved.cardId != nil {
+      // A card picked: «Карта».
+      paysFromAccount = false
+      paysFromAccountByTheLine = false
+    } else {
+      // An account picked: its main card, unless «Счёт» was chosen.
+      layTheCard(placeCard: nil, force: true)
+    }
   }
 
   /// What the owner typed in «Кэшбэк»: an amount, a percent, or nothing. The operation keeps
@@ -560,6 +601,7 @@ public final class EntryDraftModel {
     defer { timeOfTheLine = nil }
     apply(reading.parsed, amount: amount, today: today, text: text, whileTyping: whileTyping)
     takeTheCashback(of: reading)
+    takeTheSelfEmployment(of: reading)
   }
 
   /// The time of day the line being applied names («в 18:09»): the moment is that time of the
@@ -634,6 +676,17 @@ public final class EntryDraftModel {
     unmatchedPersonPhrase = parsed.unknownPersonName == nil ? nil : parsed.unknownPersonPhrase
     unmatchedPlacePhrase = parsed.unknownPlaceName == nil ? nil : parsed.unknownPlacePhrase
     draft.placeId = parsed.placeId ?? draft.placeId
+    // «со счёта»: no card; a line that no longer says it gives the card back. A card the line
+    // names is a card all the same.
+    if parsed.withoutCard, parsed.cardId == nil {
+      paysFromAccount = true
+      paysFromAccountByTheLine = true
+      draft.cardId = nil
+      cardFromDefaults = nil
+    } else if paysFromAccountByTheLine || parsed.cardId != nil {
+      paysFromAccount = false
+      paysFromAccountByTheLine = false
+    }
     if let named = parsed.paymentMethodId {
       draft.paymentMethodId = named
       paymentMethodFromDefaults = nil
@@ -642,6 +695,7 @@ public final class EntryDraftModel {
       // of its own the panel had chosen.
       draft.cardId =
         parsed.cardId ?? CardRules.cardAfterAccountChange(draft.cardId, to: named, cards: liveCards)
+      if parsed.cardId != nil { cardFromDefaults = nil }
     }
     draft.debtId = parsed.debtId ?? draft.debtId
     if parsed.date != nil || timeOfTheLine != nil || draft.occurredAt == dateFromTheLine {
@@ -945,12 +999,17 @@ public final class EntryDraftModel {
       let lastAtPlace = place.flatMap { place in
         history.first { $0.transaction.placeId == place }
       }.map { (accountId: $0.transaction.paymentMethodId, cardId: $0.transaction.cardId) }
-      draft.cardId =
+      let placeCard =
         has(.card)
         ? CardRules.cardForNewOperation(
           chosenAccount: chosen, lastAtPlace: lastAtPlace, cards: cards)
         : nil
+      draft.cardId = placeCard
+      cardFromDefaults = placeCard
     }
+    // A purchase is made with a card unless it says «со счёта»: the main card of its account,
+    // the one account the line named or the owner picked too (`CardRules.operationCard`).
+    layTheCard(placeCard: draft.cardId == cardFromDefaults ? draft.cardId : nil)
     layTheCurrency()
 
     // An event covering the date of the operation is offered; it is applied only when
@@ -1047,7 +1106,7 @@ public final class EntryDraftModel {
   }
 
   /// The whole dictionary, archived categories included, for the rules of `CoreAccounting`.
-  private var categoryTree: CategoryTree { CategoryTree(categories + archivedCategories) }
+  var categoryTree: CategoryTree { CategoryTree(categories + archivedCategories) }
 
   /// Any category the operation may point at, archived ones included.
   private func category(withId id: UUID) -> CoreKit.Category? {
@@ -1321,7 +1380,7 @@ public final class EntryDraftModel {
     var rubles: (AmountE4) throws -> AmountE4
   }
 
-  private func conversion(of draft: TransactionDraft) -> Conversion? {
+  func conversion(of draft: TransactionDraft) -> Conversion? {
     if let converting { return converting(draft) }
     // Made without the app: rubles are rubles, and nothing else can be converted.
     return draft.currency == .rub ? Conversion(draft: draft, rubles: { $0 }) : nil
@@ -1563,7 +1622,7 @@ public final class EntryDraftModel {
     return account(withId: id)
   }
 
-  private var mainAccount: PaymentMethod? { paymentMethods.first(where: \.isDefault) }
+  var mainAccount: PaymentMethod? { paymentMethods.first(where: \.isDefault) }
 
   /// What the account picker offers, the main account first and the rest in the owner's order.
   /// There is no «none»: every operation has an account. An operation saved on an account
@@ -2459,6 +2518,10 @@ public final class EntryDraftModel {
   /// Kept until the operation is saved, and cleared with the draft (`reset`).
   var closesDebtTerm = false
 
+  /// The answer to «Сверх платежа X — уменьшить срок или платёж?» of a payment of a loan above
+  /// its due (`DebtPrepayment.question`); `nil` until it is given. Cleared with the draft.
+  public var prepayChoice: PrepayChoice?
+
   /// The debt the operation as it stands pays: an expense that names a debt I owe, still open.
   var debtBeingPaid: Debt? {
     guard draft.kind == .expense, let id = draft.debtId else { return nil }
@@ -2723,8 +2786,9 @@ public final class EntryDraftModel {
   /// The count chosen with the stepper: the instalment is the amount split into that many.
   public func setCreditPayments(_ payments: Int) {
     guard var plan = creditPlan else { return }
-    plan.payments = Self.withinRange(payments)
-    plan.monthlyAmount = Self.instalment(of: draft.amount, over: plan.payments)
+    plan.payments =
+      plan.instalments ? Self.withinParts(payments) : Self.withinRange(payments)
+    plan.monthlyAmount = instalment(of: plan)
     creditPlan = plan
   }
 
@@ -2785,7 +2849,7 @@ public final class EntryDraftModel {
   /// The count stands and the instalment follows a new amount.
   private func followTheAmountInTheCreditPlan() {
     guard var plan = creditPlan else { return }
-    let monthly = Self.instalment(of: draft.amount, over: plan.payments)
+    let monthly = instalment(of: plan)
     guard plan.monthlyAmount != monthly else { return }
     plan.monthlyAmount = monthly
     creditPlan = plan
@@ -2796,7 +2860,7 @@ public final class EntryDraftModel {
   }
 
   /// The largest share of `amount` split into `payments`: that many of it pay the amount off.
-  private static func instalment(of amount: AmountE4, over payments: Int) -> AmountE4 {
+  static func instalment(of amount: AmountE4, over payments: Int) -> AmountE4 {
     guard amount.raw > 0 else { return .zero }
     return amount.split(into: payments).first ?? .zero
   }
@@ -2877,6 +2941,11 @@ public final class EntryDraftModel {
     repeatConfirmed = false
     aheadAnswered = false
     closesDebtTerm = false
+    paysFromAccount = false
+    paysFromAccountByTheLine = false
+    cardFromDefaults = nil
+    lineSaysSelfEmployed = false
+    prepayChoice = nil
   }
 
   // MARK: Refund of a purchase
@@ -3165,8 +3234,12 @@ public final class EntryDraftModel {
         accountFromTheScreen: accountFromTheScreen)
     let accountChosen =
       base.draft.paymentMethodId != nil && base.paymentMethodFromDefaults == nil
+    // A thing bought in instalments is refunded as any purchase is: the plan it was bought on
+    // is asked about when the refund is written (`InstalmentReturnSheet`).
+    var purchase = candidate.purchase
+    if instalmentPlan(of: purchase) != nil { purchase.transaction.creditDebtId = nil }
     let refund = try? RefundRules.draft(
-      refunding: candidate.part, of: candidate.purchase, amount: amount ?? candidate.remaining,
+      refunding: candidate.part, of: purchase, amount: amount ?? candidate.remaining,
       occurredAt: draft.occurredAt,
       accountId: accountChosen ? base.draft.paymentMethodId : nil,
       index: RefundIndex.empty, tree: categoryTree)
@@ -3283,7 +3356,10 @@ public final class EntryDraftModel {
   /// saving. Refused when the amount is more than what is left.
   public func refundRubles(index: RefundIndex) throws -> (AmountE4) throws -> AmountE4 {
     guard let target = refundTarget else { throw RefundError.notRefundable }
-    guard RefundRules.isRefundable(part: target.part, in: target.purchase, tree: categoryTree)
+    guard
+      RefundRules.isRefundable(
+        part: target.part, in: target.purchase, tree: categoryTree,
+        creditDebt: instalmentPlan(of: target.purchase))
     else { throw RefundError.notRefundable }
     let left = RefundRules.remaining(part: target.part, index: index)
     guard draft.amount.raw > 0 else { throw RefundError.notPositive }

@@ -23,7 +23,7 @@ struct CalendarTileCard: View {
           ForEach(calendar.weeks.first ?? []) { day in
             VStack(spacing: 2) {
               Text(verbatim: environment.dates.shortWeekday(day.day.weekday))
-                .font(.caption2)
+                .appFont(.caption2)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
               CalendarDayCell(day: day, calendar: calendar, compact: true)
@@ -36,7 +36,7 @@ struct CalendarTileCard: View {
               "calendar.total", table: CalendarText.table,
               CalendarText.money(calendar.spent, of: calendar, environment))
           )
-          .font(.callout.monospacedDigit())
+          .appFont(.callout.monospacedDigit())
           Spacer(minLength: 6)
           Button(CalendarText.t("calendar.open", environment)) {
             NotificationCenter.default.post(

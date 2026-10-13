@@ -437,6 +437,13 @@ public struct AccountBalances: Hashable, Sendable {
     guard !transaction.isDeleted else { return false }
     if OperationLink(externalId: transaction.externalId)?.isBookkeeping == true { return false }
     if transaction.kind == .expense, transaction.creditDebtId != nil { return false }
+    // The part of a returned thing bought in instalments that the bank took off the debt: it
+    // lowered the debt (a line of its journal), no money came back.
+    if transaction.kind == .refund,
+      RefundRules.instalmentReturnKey(ofKey: transaction.externalId) != nil
+    {
+      return false
+    }
     if (transaction.kind == .expense || transaction.kind == .refund),
       KindFields.isGoalOnly(entry, tree: tree)
     {

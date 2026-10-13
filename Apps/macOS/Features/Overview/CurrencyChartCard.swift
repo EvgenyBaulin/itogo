@@ -32,7 +32,7 @@ struct CurrencyChartCard: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(verbatim: OverviewTileText.name(of: .currencyChart, environment))
-          .font(.headline)
+          .appFont(.headline)
         Spacer(minLength: 8)
         Picker(selection: $pair) {
           ForEach(pairs, id: \.self) { pair in Text(verbatim: pair.description).tag(pair) }
@@ -56,7 +56,7 @@ struct CurrencyChartCard: View {
       if let summary = CurrencyChart.summary(points) {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(verbatim: rate(summary.current))
-            .font(.title2.monospacedDigit())
+            .appFont(.title2.monospacedDigit())
           let arrow =
             summary.change > 0
             ? "arrow.up.right" : summary.change < 0 ? "arrow.down.right" : "arrow.right"
@@ -67,7 +67,7 @@ struct CurrencyChartCard: View {
           } icon: {
             Image(systemName: arrow)
           }
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
         }
         RateLineChart(points: points, calendar: environment.calendar) { point in
@@ -76,7 +76,7 @@ struct CurrencyChartCard: View {
         .frame(height: 70)
       } else {
         Text(verbatim: loading ? t("currencyChart.loading") : t("currencyChart.noRates"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
       }

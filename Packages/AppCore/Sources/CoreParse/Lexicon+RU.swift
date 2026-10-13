@@ -167,6 +167,13 @@ extension Lexicon {
   static let russianTransferFromMarkers: Set<String> = ["с", "со"]
   static let russianTransferToMarkers: Set<String> = ["на", "в", "во"]
   static let russianGoalMarkers: Set<String> = ["цель", "цели", "целей", "накопление"]
+  /// «кофе 250 со счёта»: the money leaves the account itself, not its card. Normalised, so
+  /// «счёта» and «счета» alike.
+  static let russianWithoutCardPhrases: [[String]] = [
+    ["со", "счета"], ["с", "счета"], ["со", "своего", "счета"], ["счетом"],
+  ]
+  /// «смз 15000»: income of the self-employed, from individuals.
+  static let russianSelfEmployedWords: Set<String> = ["смз"]
   static let russianDebtMarkers: Set<String> = [
     "кредит", "кредиту", "кредита", "долг", "долгу", "долга", "займ", "займу", "ипотека",
   ]

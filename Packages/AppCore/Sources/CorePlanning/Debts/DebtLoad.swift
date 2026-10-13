@@ -1,3 +1,4 @@
+import CoreAccounting
 import CoreAnalytics
 import CoreKit
 import Foundation
@@ -124,7 +125,9 @@ public struct DebtLoad: Hashable, Sendable {
   /// their own (a grace period, a main payment over `repayMonths`), what its next unpaid due asks
   /// for, as `dues` know it; the monthly payment when they know none.
   public static func payment(of debt: Debt, dues: DebtDueState?) -> AmountE4? {
-    guard debt.grace != nil || debt.repayMonths != nil, let dues,
+    guard
+      debt.grace != nil || debt.repayMonths != nil || debt.steps != nil
+        || debt.isInstalmentPlan, let dues,
       let index = dues.firstUnpaidIndex
     else { return debt.monthlyPaymentE4 }
     let amount = dues.amount(ofDue: index)
@@ -155,8 +158,218 @@ enum DebtRubles {
     return try? AmountE4(decimal: amount.decimal * rate)
   }
 
+  /// A sum of rubles worked out in `Decimal`, rounded once to stored units; values beyond any
+  /// real money clamp instead of trapping.
+  static func round(_ value: Decimal) -> AmountE4 {
+    (try? AmountE4(decimal: value)) ?? (value < 0 ? AmountE4(raw: .min) : AmountE4(raw: .max))
+  }
+
   /// Ids in a stable order, so a list never depends on hashing.
   static func sorted(_ ids: some Sequence<UUID>) -> [UUID] {
     ids.sorted { $0.uuidString < $1.uuidString }
+  }
+}
+
+/// The debt load of one month, for its history.
+public struct DebtLoadMonth: Hashable, Sendable {
+  public var month: MonthKey
+  public var load: DebtLoad
+
+  public init(month: MonthKey, load: DebtLoad) {
+    self.month = month
+    self.load = load
+  }
+}
+
+extension DebtLoad {
+  /// «ЦБ считает высокой от 50 %».
+  public static let highBp = 5_000
+  /// «…очень высокой от 80 %».
+  public static let veryHighBp = 8_000
+
+  /// The share of the debt on credit cards a month of the load counts: 5 %.
+  public static let creditCardShare = Decimal(5) / 100
+
+  /// The load of `month`: what the schedules of every open debt I owe ask for in the month — the
+  /// sums of all its dues that fall in it, paid or not; dues every few days count each — plus 5 %
+  /// of the debt on credit cards (`creditDebtRub`, in rubles), over the median income of
+  /// «Заработок» of the six full months before it (`earningsMedianRub`). A debt in a currency
+  /// without a rate is listed and left out, one without dues adds nothing. No earnings — no
+  /// figure, «not enough data».
+  public static func month(
+    _ month: MonthKey, debts: [Debt], states: [UUID: DebtDueState], creditDebtRub: AmountE4,
+    earningsMedianRub: AmountE4?, rubPerUnit: [CurrencyCode: Decimal]
+  ) -> DebtLoad {
+    var total = Decimal(0)
+    var withoutRate: [UUID] = []
+    var withoutPayment: [UUID] = []
+    for debt in debts where !debt.closed && !debt.isDeleted && debt.direction == .iOwe {
+      guard let state = states[debt.id]?.knowing(debt), state.owes, state.firstDue != nil,
+        !state.instalments.isEmpty
+      else {
+        withoutPayment.append(debt.id)
+        continue
+      }
+      var dues = AmountE4.zero
+      if var index = state.firstIndex(onOrAfter: month.firstDay) {
+        while index < 1_200, state.due(index) <= month.lastDay {
+          dues += state.amount(ofDue: index)
+          index += 1
+        }
+      }
+      guard !dues.isZero else { continue }
+      guard let rubles = DebtRubles.convert(dues, from: debt.currency, rubPerUnit: rubPerUnit)
+      else {
+        withoutRate.append(debt.id)
+        continue
+      }
+      total += rubles.decimal
+    }
+    total += creditDebtRub.magnitude.decimal * creditCardShare
+    let payments = DebtRubles.round(total)
+    return figure(
+      payments: payments, income: earningsMedianRub, withoutRate: withoutRate,
+      withoutPayment: withoutPayment)
+  }
+
+  /// The load of payments over an income: basis points, rounded half away from zero; no income
+  /// above zero — none.
+  static func figure(
+    payments: AmountE4, income: AmountE4?, withoutRate: [UUID], withoutPayment: [UUID]
+  ) -> DebtLoad {
+    guard let income, income.raw > 0 else {
+      return DebtLoad(
+        monthlyPaymentsRub: payments, incomeRub: income, incomeSource: .none, loadBp: nil,
+        withoutRate: DebtRubles.sorted(withoutRate),
+        withoutPayment: DebtRubles.sorted(withoutPayment),
+        status: .notEnoughData(reasonKey: noIncomeKey))
+    }
+    let exact = payments.decimal * 10_000 / income.decimal
+    let bp = (try? DecimalMath.int64(rounding: exact)).map { Int(clamping: $0) } ?? Int.max
+    return DebtLoad(
+      monthlyPaymentsRub: payments, incomeRub: income, incomeSource: .given, loadBp: bp,
+      withoutRate: DebtRubles.sorted(withoutRate),
+      withoutPayment: DebtRubles.sorted(withoutPayment),
+      status: .ready)
+  }
+
+  /// The load of each of the last `months` months, the current one last. A month before the
+  /// current one counts what was paid in it — the payment lines of the journals of the debts I
+  /// owe, dated in it —; the current month counts what the schedules ask (`month(_:…)`). Each
+  /// adds 5 % of the debt on credit cards at the end of the month (today for the current one):
+  /// the accounts with credit terms in the minus, and the debts kept as a credit card. The income
+  /// is the median of «Заработок» (`Allocation.isEarnings`) over the six full months before the
+  /// month, of those the ledger has; none — «not enough data».
+  public static func history(
+    months: Int = 12, ledger: Ledger, debts: [Debt], journal: [DebtEntry],
+    accounts: AccountBalances, tree: CategoryTree, allocation: AllocationSettings,
+    rubPerUnit: [CurrencyCode: Decimal], today: DateOnly
+  ) -> [DebtLoadMonth] {
+    history(
+      months: months, ledger: ledger, debts: debts, journal: journal, accounts: accounts,
+      rubPerUnit: rubPerUnit, today: today,
+      earnings: { categoryId in
+        Allocation.isEarnings(categoryId: categoryId, tree: tree, settings: allocation)
+      })
+  }
+
+  /// `history` with the rule of what is earnings given.
+  static func history(
+    months: Int, ledger: Ledger, debts: [Debt], journal: [DebtEntry], accounts: AccountBalances,
+    rubPerUnit: [CurrencyCode: Decimal], today: DateOnly, earnings: (UUID?) -> Bool
+  ) -> [DebtLoadMonth] {
+    guard months >= 1 else { return [] }
+    let calendar = ledger.calendar
+    let current = today.monthKey
+    let owing = debts.filter { !$0.isDeleted && $0.direction == .iOwe }
+    let owingIds = Set(owing.map(\.id))
+    let byId = Dictionary(owing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let firstMonth = ledger.rows.first?.month
+
+    // Earnings by the month they are for.
+    var earned: [MonthKey: Decimal] = [:]
+    for row in ledger.rows where row.kind == .income && earnings(row.categoryId) {
+      earned[row.month, default: 0] += row.amountRubE4.decimal
+    }
+    func median(before month: MonthKey) -> AmountE4? {
+      let window = (1...6).map { month.adding(months: -$0) }.filter { candidate in
+        guard let firstMonth else { return false }
+        return candidate >= firstMonth
+      }
+      let values = window.map { earned[$0] ?? 0 }.sorted()
+      guard !values.isEmpty, values.contains(where: { $0 > 0 }) else { return nil }
+      let middle = values.count / 2
+      let value = values.count % 2 == 1 ? values[middle] : (values[middle - 1] + values[middle]) / 2
+      return DebtRubles.round(value)
+    }
+    func dayOf(_ line: DebtEntry) -> DateOnly? {
+      line.date ?? line.occurredAt.map(calendar.day(of:))
+    }
+    let cardAccounts = ledger.dataset.paymentMethods.filter { $0.credit != nil }
+    let cardDebts = owing.filter { $0.type == .creditCard }
+    func creditDebt(at day: DateOnly) -> AmountE4 {
+      var total = Decimal(0)
+      let end = calendar.endOfDay(day)
+      for account in cardAccounts {
+        let key = BalanceKey(accountId: account.id, currency: account.mainCurrency)
+        guard let balance = accounts.balance(key, at: end), balance.isNegative,
+          let rubles = DebtRubles.convert(
+            balance.magnitude, from: account.mainCurrency, rubPerUnit: rubPerUnit)
+        else { continue }
+        total += rubles.decimal
+      }
+      for debt in cardDebts {
+        let left = DebtRules.balance(
+          entries: journal.filter { line in
+            line.debtId == debt.id && (dayOf(line).map { $0 <= day } ?? true)
+          })
+        guard left.raw > 0,
+          let rubles = DebtRubles.convert(left, from: debt.currency, rubPerUnit: rubPerUnit)
+        else { continue }
+        total += rubles.decimal
+      }
+      return DebtRubles.round(total)
+    }
+
+    var result: [DebtLoadMonth] = []
+    for offset in stride(from: months - 1, through: 0, by: -1) {
+      let month = current.adding(months: -offset)
+      let income = median(before: month)
+      if month == current {
+        let states = DebtDues.states(
+          debts: owing, ledger: ledger, journal: journal, today: today)
+        result.append(
+          DebtLoadMonth(
+            month: month,
+            load: self.month(
+              month, debts: owing, states: states, creditDebtRub: creditDebt(at: today),
+              earningsMedianRub: income, rubPerUnit: rubPerUnit)))
+        continue
+      }
+      var paid = Decimal(0)
+      var withoutRate: Set<UUID> = []
+      for line in journal
+      where owingIds.contains(line.debtId) && line.kind == .payment && line.amountE4.isNegative {
+        guard let day = dayOf(line), day.monthKey == month, let debt = byId[line.debtId] else {
+          continue
+        }
+        guard
+          let rubles = DebtRubles.convert(
+            line.amountE4.magnitude, from: debt.currency, rubPerUnit: rubPerUnit)
+        else {
+          withoutRate.insert(debt.id)
+          continue
+        }
+        paid += rubles.decimal
+      }
+      paid += creditDebt(at: month.lastDay).decimal * creditCardShare
+      result.append(
+        DebtLoadMonth(
+          month: month,
+          load: figure(
+            payments: DebtRubles.round(paid), income: income, withoutRate: Array(withoutRate),
+            withoutPayment: [])))
+    }
+    return result
   }
 }

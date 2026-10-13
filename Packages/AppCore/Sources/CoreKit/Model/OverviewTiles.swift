@@ -48,6 +48,11 @@ public enum OverviewTile: String, CaseIterable, Sendable, Hashable, Codable {
   case capital
   /// «Подушка безопасности»: how many months the cushion money lasts without income.
   case cushion
+  /// «Рассрочки»: what the instalment plans and purchases on credit still ask, and the next
+  /// payments.
+  case installments
+  /// «Самозанятость»: the income of the month, the tax to pay and the limit of the year.
+  case selfEmployment
 }
 
 extension OverviewTile: Identifiable {
@@ -62,11 +67,24 @@ extension OverviewTile {
     case .monthToDate, .canSave, .balanceForecast, .owedToMe, .iOwe, .lastCount, .lastRecord,
       .lastCountAndRecord, .freeMoney, .capital, .cushion:
       return .money
-    case .limits, .upcoming, .expectedIncome, .event, .spendingCalendar:
+    case .limits, .upcoming, .expectedIncome, .event, .spendingCalendar, .installments,
+      .selfEmployment:
       return .plan
     case .topCategories, .qualities, .spendingForecast, .incomeForecast, .worthALook,
       .currencyChart:
       return .analysis
+    }
+  }
+}
+
+extension OverviewTile {
+  /// Whether the tile is shown where a layout does not name it — an owner who never chose, a
+  /// layout kept before the tile existed. The tiles that came with the credits and the
+  /// self-employment wait hidden until the owner adds them.
+  public var isShownUnnamed: Bool {
+    switch self {
+    case .installments, .selfEmployment: false
+    default: true
     }
   }
 }

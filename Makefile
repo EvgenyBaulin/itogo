@@ -77,7 +77,7 @@ PYENV_PYTHON := $(PYENV)/bin/python
 PYENV_MARKER := $(PYENV)/pandas.ok
 
 .PHONY: all generate build-dir build run test test-core test-db test-ui fmt lint verify test-one eval-model migration-dry-run \
-	    check-core-purity check-toolchain check-warnings check-scripts check-chart-double check-privacy check-environment check-geometry check-stale check-attribution check-native check-glass check-ci check-log-names check-strings ci-checks hooks clean install \
+	    check-core-purity check-toolchain check-warnings check-scripts check-chart-double check-privacy check-environment check-geometry check-stale check-attribution check-native check-glass check-fonts check-ci check-log-names check-strings ci-checks hooks clean install \
 	    archive-appstore build-appstore check-appstore-clean release-local release-check sample sample-large demo \
 	    bench bench-app pyenv
 
@@ -567,6 +567,13 @@ check-glass:
 	fi
 	@echo "glass: only in the surfaces of the navigation layer"
 
+# Every font grows with the size of the text the owner chose: a view sets its font with
+# `.appFont(_:)` (Shared/DesignSystem/AppFont.swift), never `.font(_:)`; a size held on purpose
+# says so in a `// font-fixed:` comment. The check proves itself on two small samples first.
+check-fonts:
+	@scripts/check-fonts.sh --self-test > /dev/null || scripts/check-fonts.sh --self-test
+	@scripts/check-fonts.sh
+
 # The history of this repository carries one name — the author's. No commit message may carry
 # a co-authorship trailer, a reference to a tool's session or a «Generated with» line (the hook
 # of `make hooks` strips them before a commit is made), and every commit but a merge has one
@@ -619,8 +626,8 @@ check-strings:
 # The checks of `make verify` that read what the builds and tests left behind and change
 # nothing. CI runs them after its own builds and tests (.github/workflows/build.yml).
 ci-checks: lint check-warnings check-stale check-core-purity check-environment check-geometry \
-	    check-scripts check-privacy check-attribution check-native check-glass check-ci check-log-names \
-	    check-strings
+	    check-scripts check-privacy check-attribution check-native check-glass check-fonts check-ci \
+	    check-log-names check-strings
 
 # `check-appstore-clean` comes before `check-warnings` on purpose: it is what builds the store
 # configuration, and `check-warnings` reads that build's log with the others.

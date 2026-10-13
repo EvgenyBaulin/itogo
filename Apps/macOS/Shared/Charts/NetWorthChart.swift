@@ -118,7 +118,7 @@ struct NetWorthChart: View {
           AxisValueLabel {
             if let x = value.as(Int.self), let point = model.points.first(where: { $0.x == x }) {
               Text(verbatim: label(point))
-                .font(.caption.monospacedDigit())
+                .appFont(.caption.monospacedDigit())
             }
           }
         }
@@ -128,7 +128,7 @@ struct NetWorthChart: View {
           AxisGridLine()
           AxisValueLabel {
             Text(verbatim: ChartAxis.money(value, money))
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
           }
         }
       }

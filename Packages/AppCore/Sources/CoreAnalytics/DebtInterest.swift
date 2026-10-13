@@ -130,9 +130,14 @@ public enum DebtInterest {
     var principal = AmountE4.zero
     var byDay: [DateOnly: [DebtEntry]] = [:]
     for line in journal where line.debtId == debt.id {
-      guard let day = line.date ?? line.occurredAt.map(calendar.day(of:)) else {
+      guard var day = line.date ?? line.occurredAt.map(calendar.day(of:)) else {
         principal += line.amountE4
         continue
+      }
+      // An early repayment to a bank that takes one only on a payment day lowers the debt on
+      // the next due, not on the day the money was paid.
+      if line.prepay?.isEarlyRepayment == true, line.kind == .payment, !debt.prepayAnyDay {
+        day = DebtPrepay.effectiveDay(debt: debt, paidOn: day)
       }
       guard day <= through else { continue }
       byDay[day, default: []].append(line)

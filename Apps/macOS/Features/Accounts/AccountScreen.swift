@@ -286,7 +286,7 @@ struct AccountTransferRow: View {
           .lineLimit(1)
         if let caption {
           Text(verbatim: caption)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
@@ -374,7 +374,7 @@ struct AccountBalancesCard: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(verbatim: t("account.screen.balances"))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .accessibilityAddTraits(.isHeader)
       ForEach(line.keys, id: \.key) { key in
@@ -385,7 +385,7 @@ struct AccountBalancesCard: View {
           VStack(alignment: .leading, spacing: 2) {
             if let balance = key.balance {
               Text(verbatim: environment.money.exact(balance, currency: key.key.currency))
-                .font(.title3.monospacedDigit())
+                .appFont(.title3.monospacedDigit())
             } else {
               Label {
                 Text(verbatim: t("account.screen.notCounted"))
@@ -396,7 +396,7 @@ struct AccountBalancesCard: View {
             }
             if let caption = caption(key) {
               Text(verbatim: caption)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             }
           }
@@ -506,7 +506,7 @@ struct AccountScreen: View {
             .foregroundStyle(.secondary)
             .accessibilityHidden(true)
           Text(verbatim: account.name)
-            .font(.title2.weight(.semibold))
+            .appFont(.title2.weight(.semibold))
           if account.isDefault {
             Label {
               Text(verbatim: t("accounts.main"))
@@ -514,7 +514,7 @@ struct AccountScreen: View {
               Image(systemName: "star.fill")
             }
             .labelStyle(.titleAndIcon)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
           }
           if account.cushion {
@@ -524,7 +524,7 @@ struct AccountScreen: View {
               Image(systemName: CushionText.symbol)
             }
             .labelStyle(.titleAndIcon)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .accessibilityIdentifier("account.screen.cushion")
           }
@@ -535,7 +535,7 @@ struct AccountScreen: View {
       LastRecordCaption(history: history)
       if let caption = groupCaption {
         Text(verbatim: caption)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       if let line {
@@ -550,6 +550,7 @@ struct AccountScreen: View {
       // the interest of a deposit or a savings account, and the payments and subscriptions
       // paid from it.
       if account != nil {
+        AccountCreditBlock(accountId: accountId)
         AccountCardsBlock(accountId: accountId)
         AccountCashbackBlock(accountId: accountId)
         AccountInterestBlock(accountId: accountId)
@@ -560,7 +561,7 @@ struct AccountScreen: View {
       } icon: {
         Image(systemName: "text.cursor")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
     }
     .padding(.vertical, 8)

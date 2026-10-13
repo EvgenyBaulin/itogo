@@ -71,7 +71,9 @@ struct PlanningView: View {
 
   /// The cards in their columns, each column taking the blocks in turn.
   private func cards(columns: Int, snapshot: DataSnapshot?, free: FreeMoney?) -> some View {
-    let laid = PlanningBlocks.columns(layout.order, count: columns)
+    let laid = PlanningBlocks.columns(
+      PlanningBlockText.shown(layout.order, selfEmployed: snapshot?.planning.npd != nil),
+      count: columns)
     return HStack(alignment: .top, spacing: 16) {
       ForEach(Array(laid.enumerated()), id: \.offset) { _, blocks in
         VStack(alignment: .leading, spacing: 16) {
@@ -122,6 +124,7 @@ struct PlanningView: View {
     case .goals: GoalsBlock(sheet: $sheet, length: layout.length(of: .goals))
     case .events: EventsBlock()
     case .advice: AdviceBlock()
+    case .selfEmployment: SelfEmploymentBlockView()
     }
   }
 
@@ -196,7 +199,7 @@ struct PlanningTopBar: View {
     HStack(alignment: .firstTextBaseline, spacing: 12) {
       if let summary {
         Text(verbatim: PlanningBlockText.sentence(summary, environment))
-          .font(.title3)
+          .appFont(.title3)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("planning.summary")
       }
@@ -329,7 +332,7 @@ struct FormulaLines: View {
         .accessibilityElement(children: .combine)
       }
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
   }
 }

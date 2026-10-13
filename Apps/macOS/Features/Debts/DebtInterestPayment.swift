@@ -104,7 +104,8 @@ enum DebtInterestPayment {
     return parted
   }
 
-  /// The live interest operations of the payments `ids`, among `entries`.
+  /// The live interest operations of the payments `ids`, among `entries` — and the markup
+  /// operations of payments of instalment plans (`DebtMarkupPayment`), which go the same way.
   static func companions(
     ofPayments ids: some Collection<UUID>, among entries: [TransactionEntry]
   ) -> [UUID] {
@@ -112,7 +113,9 @@ enum DebtInterestPayment {
     guard !payments.isEmpty else { return [] }
     return entries.compactMap { entry in
       guard !entry.transaction.isDeleted,
-        let paid = payment(ofKey: entry.transaction.externalId), payments.contains(paid)
+        let paid = payment(ofKey: entry.transaction.externalId)
+          ?? DebtMarkup.payment(ofKey: entry.transaction.externalId),
+        payments.contains(paid)
       else { return nil }
       return entry.id
     }
@@ -218,14 +221,27 @@ extension DebtInterestPayment {
     _ change: PlanningChange, paying debt: Debt?, environment: AppEnvironment,
     snapshot: DataSnapshot? = nil
   ) -> PlanningChange {
-    guard let debt, applies(to: debt) else { return change }
+    guard let debt, applies(to: debt) || DebtMarkupPayment.applies(to: debt) else {
+      return change
+    }
     let journal =
       (try? environment.references?.debtEntries(debtId: debt.id))
       ?? snapshot?.dataset.planning.debtEntries.filter { $0.debtId == debt.id } ?? []
+    let category = categoryId(of: debt, environment: environment, snapshot: snapshot)
+    if DebtMarkupPayment.applies(to: debt) {
+      // The dues before the payment, from the journal as the database has it: every payment of
+      // a plan is a line of it.
+      let dues = DebtMarkupPayment.dues(
+        of: debt, journal: journal,
+        typed: snapshot?.dataset.debtInstalments.filter { $0.debtId == debt.id } ?? [],
+        calendar: environment.calendar, today: environment.today)
+      return DebtMarkupPayment.parting(
+        change, paying: debt, journal: journal, dues: dues, categoryId: category,
+        note: DebtMarkupPayment.note(of: debt, language: environment.language))
+    }
     return parting(
       change, paying: debt, journal: journal, calendar: environment.calendar,
-      categoryId: categoryId(of: debt, environment: environment, snapshot: snapshot),
-      note: note(of: debt, language: environment.language))
+      categoryId: category, note: note(of: debt, language: environment.language))
   }
 
   /// The category of the interest of `debt` (`categoryId(of:tree:)`), «Кредиты» read from the
@@ -246,7 +262,14 @@ extension DebtInterestPayment {
   )
     -> String
   {
-    let words = (key: "interest.note", table: "Debts")
+    storedWords("interest.note", of: debt, defaults)
+  }
+
+  /// A text of the table «Debts» with the debt's name, in the language stored right now.
+  nonisolated static func storedWords(
+    _ key: String, of debt: Debt, _ defaults: UserDefaults = .standard
+  ) -> String {
+    let words = (key: key, table: "Debts")
     let code = AppLanguage.storedCode(in: defaults)
     let bundle =
       Bundle.main.path(forResource: code, ofType: "lproj").flatMap(Bundle.init(path:)) ?? .main
@@ -268,6 +291,13 @@ extension TransactionsStore {
       let debt = listing.dataset.debts.first(where: { $0.id == debtId })
     else { return nil }
     let dataset = listing.dataset
+    if DebtMarkupPayment.applies(to: debt) {
+      return DebtMarkupPayment.editChange(
+        edited, before: before, debt: debt, dataset: dataset, calendar: calendar,
+        today: calendar.day(of: Date()),
+        categoryId: DebtInterestPayment.categoryId(of: debt, tree: listing.tree),
+        note: DebtMarkupPayment.storedNote(of: debt), now: edited.transaction.updatedAt)
+    }
     return DebtInterestPayment.editChange(
       edited, before: before, debts: dataset.debts, entries: dataset.entries,
       journal: dataset.planning.debtEntries.filter { $0.debtId == debtId }, calendar: calendar,

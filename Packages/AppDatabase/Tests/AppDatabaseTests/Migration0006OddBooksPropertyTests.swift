@@ -234,11 +234,13 @@ struct Migration0006OddBooksPropertyTests {
       }
     }
 
-    // Every other value of 1.2 is where it was; the accounts, the categories, the debts and the
-    // journal in the columns 1.2 had (the later updates add columns to them).
+    // Every other value of 1.2 is where it was; the accounts, the categories, the debts, the
+    // journal, the goals and the transfers in the columns 1.2 had (the later updates add columns
+    // to them).
     for (table, contents) in before
     where ![
       "banks", "cashback_rules", "payment_methods", "debt_entries", "debts", "categories",
+      "goals", "transfers",
     ].contains(table) {
       #expect(afterUpdate[table] == contents, "seed \(seed): \(table) changed")
     }
@@ -250,11 +252,15 @@ struct Migration0006OddBooksPropertyTests {
           "debt_entries": before["debt_entries"]?.columns ?? [],
           "debts": before["debts"]?.columns ?? [],
           "categories": before["categories"]?.columns ?? [],
+          "goals": before["goals"]?.columns ?? [],
+          "transfers": before["transfers"]?.columns ?? [],
         ])
     }
     #expect(oldColumns["payment_methods"] == before["payment_methods"], "seed \(seed)")
     #expect(oldColumns["debt_entries"] == before["debt_entries"], "seed \(seed)")
     #expect(oldColumns["debts"] == before["debts"], "seed \(seed)")
     #expect(oldColumns["categories"] == before["categories"], "seed \(seed)")
+    #expect(oldColumns["goals"] == before["goals"], "seed \(seed)")
+    #expect(oldColumns["transfers"] == before["transfers"], "seed \(seed)")
   }
 }

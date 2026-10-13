@@ -61,17 +61,22 @@ import Foundation
 public struct InputLineParser: Sendable {
   private let vocabulary: ParserVocabulary
   private let calendar: CalendarContext
+  /// The owner's own currencies (`custom_currencies`): their codes and symbols are read too.
+  private let catalog: CurrencyCatalog
 
-  public init(vocabulary: ParserVocabulary, calendar: CalendarContext) {
+  public init(
+    vocabulary: ParserVocabulary, calendar: CalendarContext, catalog: CurrencyCatalog = .empty
+  ) {
     self.vocabulary = vocabulary
     self.calendar = calendar
+    self.catalog = catalog
   }
 
   /// `kind` is the kind the operation already has — chosen in the ↓ panel — for a line that
   /// names none: money back chosen there reads «от Ани» as whom it came from.
   public func parse(_ text: String, today: DateOnly, kind: TransactionKind? = nil) -> ParsedInput {
     var session = ParseSession(
-      text: text, vocabulary: vocabulary, calendar: calendar, today: today)
+      text: text, vocabulary: vocabulary, calendar: calendar, today: today, catalog: catalog)
     session.panelKind = kind
     session.run(readingTimeAndCashback: false)
     return session.finish()
@@ -100,13 +105,13 @@ public struct InputLineParser: Sendable {
     _ text: String, today: DateOnly, kind: TransactionKind? = nil
   ) -> InputLineReading {
     var session = ParseSession(
-      text: text, vocabulary: vocabulary, calendar: calendar, today: today)
+      text: text, vocabulary: vocabulary, calendar: calendar, today: today, catalog: catalog)
     session.panelKind = kind
     session.run(readingTimeAndCashback: true)
     return InputLineReading(
       parsed: session.finish(), timeOfDay: session.timeOfDay, timeProblem: session.timeProblem,
       timePhrase: session.timePhrase, cashback: session.cashback,
-      cashbackPhrase: session.cashbackPhrase)
+      cashbackPhrase: session.cashbackPhrase, selfEmployed: session.selfEmployed)
   }
 }
 
@@ -132,12 +137,19 @@ private struct ParseSession {
   var timePhrase: String?
   var cashback: CashbackReading?
   var cashbackPhrase: String?
+  let catalog: CurrencyCatalog
+  /// «смз» was read.
+  var selfEmployed = false
 
-  init(text: String, vocabulary: ParserVocabulary, calendar: CalendarContext, today: DateOnly) {
+  init(
+    text: String, vocabulary: ParserVocabulary, calendar: CalendarContext, today: DateOnly,
+    catalog: CurrencyCatalog = .empty
+  ) {
     self.words = InputWord.split(text)
     self.vocabulary = vocabulary
     self.calendar = calendar
     self.today = today
+    self.catalog = catalog
   }
 
   /// Every pass in its order. The time and the cashback are read only for `read`, after the
@@ -145,10 +157,12 @@ private struct ParseSession {
   /// date and the amount, which must not take their numbers.
   mutating func run(readingTimeAndCashback: Bool) {
     readKind()
+    readSelfEmployed()
     readGoalAndDebt()
     readPeople()
     readMarkedPlace()
     readTransfer()
+    readWithoutCard()
     readPayingFor()
     readKnownNames()
     if readingTimeAndCashback {
@@ -240,6 +254,38 @@ private struct ParseSession {
         if isInsideALongerName(index..<(index + phrase.words.count)) { continue }
         result.kind = phrase.meaning
         claim(index..<(index + phrase.words.count), as: .kind)
+        return
+      }
+    }
+  }
+
+  /// «смз 15000»: income of the self-employed. Read after the kind, and only while the line names
+  /// income or no kind at all: «возврат смз 500» is a refund, and «смз» stays in its note. A word
+  /// inside a longer known name belongs to the name.
+  mutating func readSelfEmployed() {
+    guard result.kind == .expense || result.kind == .income else { return }
+    if result.kind == .expense, claims.contains(where: { $0.role == .kind }) { return }
+    guard
+      let index = words.indices.first(where: {
+        !words[$0].claimed && Lexicon.selfEmployedWords.contains(words[$0].normalized)
+      }), !isInsideALongerName(index..<(index + 1))
+    else { return }
+    result.kind = .income
+    selfEmployed = true
+    claim(index, as: .kind)
+  }
+
+  /// «со счёта», «счётом», "from account": the money leaves the account itself, not its card
+  /// (`ParsedInput.withoutCard`). Not in a transfer, which names its accounts by itself, and not
+  /// inside a longer name the dictionaries know.
+  mutating func readWithoutCard() {
+    guard result.transfer == nil else { return }
+    for phrase in Lexicon.withoutCardPhrases {
+      for index in words.indices where matches(phrase, at: index, loose: false) {
+        let range = index..<(index + phrase.count)
+        if isInsideALongerName(range) { continue }
+        result.withoutCard = true
+        claim(range, as: .paymentMethod)
         return
       }
     }
@@ -625,6 +671,7 @@ private struct ParseSession {
         && sides[0].marker != candidate
         && !markers.contains(words[candidate].normalized) && !isAmountish(words[candidate])
         && currencyAffix(in: words[candidate].amountText) == nil
+        && customCurrency(at: candidate) == nil
         && Lexicon.forWhomWords[words[candidate].normalized] == nil
         && !Lexicon.datePhrases.contains(where: { matches($0.words, at: candidate, loose: false) })
       {
@@ -926,6 +973,16 @@ private struct ParseSession {
   mutating func readCurrency() {
     guard result.currency == nil else { return }
     for index in words.indices where !words[index].claimed {
+      if let custom = customCurrency(at: index) {
+        result.currency = custom.code
+        if custom.residual.isEmpty {
+          claim(index, as: .currency, text: words[index].original)
+        } else {
+          words[index].amountText = custom.residual
+          claims.append(Claim(role: .currency, text: custom.text, start: words[index].start))
+        }
+        return
+      }
       guard let affix = currencyAffix(in: words[index].amountText) else { continue }
       guard
         vocabulary.enabledCurrencies.isEmpty
@@ -949,6 +1006,67 @@ private struct ParseSession {
       }
       return
     }
+  }
+
+  /// A currency of the owner's own (`CurrencyCatalog`, not archived) — a currency of the bank
+  /// is never one. Its code reads in capitals wherever it stands («ZZT 100», «100 ZZT»), in any
+  /// case glued to the number or right after it («100zzt», «100 zzt»); its symbol only glued to
+  /// the number, in front or behind («★100», «100★»), like the symbols of the bank's currencies.
+  /// `residual` is what is left of the word for the amount.
+  private func customCurrency(
+    at index: Int
+  ) -> (code: CurrencyCode, residual: String, text: String)? {
+    let currencies = catalog.active
+    guard !currencies.isEmpty else { return nil }
+    let raw = words[index].amountText.trimmingCharacters(in: .whitespaces)
+    guard !raw.isEmpty else { return nil }
+    let written = TextNormalizer.trimmingEdgePunctuation(words[index].original)
+    func code(_ letters: String) -> CurrencyCode? {
+      guard letters.count == 3 else { return nil }
+      return currencies.first { $0.code.code == letters.uppercased() }?.code
+    }
+    if let found = code(written) {
+      let capitals = written == written.uppercased()
+      return capitals || followsANumber(index) ? (found, "", written) : nil
+    }
+    let characters = Array(raw)
+    // Glued: letters behind the number or in front of it.
+    var cut = characters.count
+    while cut > 0, characters[cut - 1].isLetter { cut -= 1 }
+    if cut > 0, cut < characters.count, let found = code(String(characters[cut...])),
+      characters[..<cut].contains(where: ExpressionLexer.isDigit)
+    {
+      return (found, String(characters[..<cut]), String(characters[cut...]))
+    }
+    var start = 0
+    while start < characters.count, characters[start].isLetter { start += 1 }
+    if start > 0, start < characters.count, let found = code(String(characters[..<start])),
+      characters[start...].contains(where: ExpressionLexer.isDigit)
+    {
+      return (found, String(characters[start...]), String(characters[..<start]))
+    }
+    for currency in currencies {
+      guard let symbol = catalog.symbol(currency.code), !symbol.isEmpty else { continue }
+      let lowered = raw.lowercased()
+      let mark = symbol.lowercased()
+      if lowered.hasPrefix(mark), lowered.count > mark.count {
+        let residual = String(raw.dropFirst(symbol.count))
+        if residual.contains(where: ExpressionLexer.isDigit),
+          !residual.contains(where: \.isLetter)
+        {
+          return (currency.code, residual, String(raw.prefix(symbol.count)))
+        }
+      }
+      if lowered.hasSuffix(mark), lowered.count > mark.count {
+        let residual = String(raw.dropLast(symbol.count))
+        if residual.contains(where: ExpressionLexer.isDigit),
+          !residual.contains(where: \.isLetter)
+        {
+          return (currency.code, residual, String(raw.suffix(symbol.count)))
+        }
+      }
+    }
+    return nil
   }
 
   /// A code that is also an everyday word ("try", "gel", "amd") stands for its currency only

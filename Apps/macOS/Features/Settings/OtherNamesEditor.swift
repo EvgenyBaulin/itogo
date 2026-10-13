@@ -29,6 +29,7 @@ struct OtherNamesEditor: View {
             names.remove(at: index)
           } label: {
             Image(systemName: "xmark.circle.fill")
+              .appFont(.callout)
               .foregroundStyle(.secondary)
               .accessibilityLabel(
                 Text(verbatim: environment.format("names.other.remove", table: "Settings", name)))
@@ -52,13 +53,14 @@ struct OtherNamesEditor: View {
         } icon: {
           Image(systemName: "exclamationmark.circle")
         }
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
     } header: {
       Text(verbatim: t("names.other.title"))
     } footer: {
       Text(verbatim: t("names.other.hint"))
+        .appFont(.callout)
         .foregroundStyle(.secondary)
     }
     .onChange(of: typed) { _, _ in refusal = nil }

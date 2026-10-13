@@ -38,6 +38,9 @@ public struct DatasetRepository: Sendable {
   ///   owner's order, and the settings of the accounts.
   /// - And the assets in the owner's order, disposed ones included, with every valuation by
   ///   asset and day, and the settings of the cushion.
+  /// - And the sums of dues typed from a bank's app, the costs of the loans, the rules of the
+  ///   allocation of income, the custom currencies, and the settings of self-employment, of the
+  ///   allocation and of the debts.
   ///
   /// `version` is the caller's mark for the snapshot (the pipeline's count of writes taken
   /// before the read), so a result can be told apart from one built on older data.
@@ -95,6 +98,18 @@ public struct DatasetRepository: Sendable {
     let valuations = try AssetValuation.order(Column("asset_id"), Column("day")).fetchAll(db)
     let capitalSettings = CapitalSettings(
       storedValues: try SettingsRepository.values(of: CapitalSettings.storageKeys, db: db))
+    let instalments = try DebtInstalmentStep.order(Column("debt_id"), Column("from_index"))
+      .fetchAll(db)
+    let costs = try DebtCost.order(Column("debt_id"), Column("sort"), Column.rowID).fetchAll(db)
+    let rules = try AllocationRule.order(Column("sort"), Column.rowID).fetchAll(db)
+    let customCurrencies = try SettingsRepository.customCurrencies(db)
+    let selfEmployment = SelfEmploymentSettings(
+      storedValues: try SettingsRepository.values(
+        of: SelfEmploymentSettings.storageKeys, db: db))
+    let allocationSettings = AllocationSettings(
+      storedValues: try SettingsRepository.values(of: AllocationSettings.storageKeys, db: db))
+    let debtSettings = DebtSettings(
+      storedValues: try SettingsRepository.values(of: DebtSettings.storageKeys, db: db))
     try Task.checkCancellation()
     return Dataset(
       entries: entries,
@@ -122,6 +137,13 @@ public struct DatasetRepository: Sendable {
       banks: banks,
       assets: assets,
       assetValuations: valuations,
-      capitalSettings: capitalSettings)
+      capitalSettings: capitalSettings,
+      debtInstalments: instalments,
+      debtCosts: costs,
+      allocationRules: rules,
+      customCurrencies: customCurrencies,
+      selfEmployment: selfEmployment,
+      allocationSettings: allocationSettings,
+      debtSettings: debtSettings)
   }
 }

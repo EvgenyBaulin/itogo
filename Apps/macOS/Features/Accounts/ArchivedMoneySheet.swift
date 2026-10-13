@@ -193,7 +193,7 @@ struct ArchivedMoneySheet: View {
           verbatim: environment.format(
             "archived.archive.title", table: AccountText.table, archived.name)
         )
-        .font(.headline)
+        .appFont(.headline)
       }
       if let form {
         Form {
@@ -269,7 +269,7 @@ struct ArchivedMoneySheet: View {
             .monospacedDigit()
         }
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
     } header: {

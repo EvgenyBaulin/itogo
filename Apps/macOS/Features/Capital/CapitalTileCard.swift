@@ -23,18 +23,18 @@ struct CapitalTileCard: View {
       } label: {
         VStack(alignment: .leading, spacing: 4) {
           Text(verbatim: lines.net)
-            .font(.title2.monospacedDigit())
+            .appFont(.title2.monospacedDigit())
           if let change = lines.change {
             Label {
               Text(verbatim: change)
             } icon: {
               Image(systemName: lines.arrow)
             }
-            .font(.callout.monospacedDigit())
+            .appFont(.callout.monospacedDigit())
             .foregroundStyle(.secondary)
           }
           Text(verbatim: lines.haveAndOwe)
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }

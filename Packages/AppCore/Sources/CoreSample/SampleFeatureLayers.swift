@@ -10,7 +10,11 @@ extension SampleDataSet {
   /// follows the books (`withCountsLayer`), and an education loan with its tranches and grace
   /// payments beside a savings account that earns interest (`withLoanAndSavingsLayer`), and a car
   /// and a brokerage account valued by hand, the savings kept as the safety cushion and the
-  /// essential spending marked (`withCapitalLayer`) — what `make sample` and `make demo` open on.
+  /// essential spending marked (`withCapitalLayer`), a credit card of «Т-Банк» with a statement
+  /// paid in full, an instalment plan, an early repayment and a pledge (`withCreditLayer`), and
+  /// the rules of allocation with one income allocated, self-employment with its tax paid and a
+  /// currency of the owner's own (`withAllocationLayer`) — what `make sample` and `make demo`
+  /// open on.
   ///
   /// Each layer draws from random streams of its own (`seed` mixed with the layer's tag, then
   /// with what the row is and its day), so the history and the accounts under them keep every
@@ -32,10 +36,23 @@ extension SampleDataSet {
     guard accounts.cards.isEmpty else { return accounts }
     return
       accounts
-      .withLayersThroughTheLoanAndSavings(
+      .withLayersThroughTheCapital(
         seed: seed, calendar: calendar, language: language, now: now, demo: demo
       )
-      .withCapitalLayer(seed: seed, calendar: calendar, language: language, now: now)
+      .withCreditLayer(seed: seed, calendar: calendar, language: language, now: now)
+      .withAllocationLayer(seed: seed, calendar: calendar, language: language, now: now)
+  }
+
+  /// The layers from the cards through the capital, on a set that has its accounts: what the
+  /// layers of credit and allocation are written on — the sample as it was before them, with no
+  /// debt of the kinds they bring.
+  public func withLayersThroughTheCapital(
+    seed: UInt64, calendar: CalendarContext, language: String, now: Date?, demo: Bool
+  ) -> SampleDataSet {
+    withLayersThroughTheLoanAndSavings(
+      seed: seed, calendar: calendar, language: language, now: now, demo: demo
+    )
+    .withCapitalLayer(seed: seed, calendar: calendar, language: language, now: now)
   }
 
   /// The layers from the cards through the education loan and the savings account, on a set that

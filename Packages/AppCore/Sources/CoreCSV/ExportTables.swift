@@ -22,7 +22,7 @@ public struct ExportTable: Hashable, Sendable {
   }
 }
 
-/// The 26 files of Export, always in the same order.
+/// The 31 files of Export, always in the same order.
 public enum ExportTables {
   /// `account_currency` and `account_amount` came with `Schema/0004_accounts.sql`: what the
   /// account moved when it does not hold the operation's currency. `card_id`,
@@ -65,7 +65,10 @@ public enum ExportTables {
   /// columns came with `Schema/0007_debts_and_deposits.sql`: the yearly rate in percent, how
   /// often and on what day it is paid, the account it is paid to, and the term of a deposit.
   /// `cushion` came with `Schema/0008_capital.sql`: the money of the account is the safety
-  /// cushion.
+  /// cushion. The terms of a credit card and `main_card_id` came with
+  /// `Schema/0009_credit_and_allocation.sql`: the limit, the grace period (`statement` — the
+  /// statement day and the days to pay it, `purchase` — the days from a purchase), the rates, the
+  /// minimum payment, the fee for cash and transfers, and the card a purchase is made with.
   public static let paymentMethods = ExportTable(
     fileName: "payment_methods.csv",
     columns: [
@@ -73,7 +76,10 @@ public enum ExportTables {
       "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
       "cashback_payout", "cashback_payout_day", "cashback_points_account_id", "interest_rate",
       "interest_period", "interest_day", "interest_account_id", "deposit_opened_on",
-      "deposit_ends_on", "cushion",
+      "deposit_ends_on", "cushion", "credit_limit", "credit_grace", "credit_statement_day",
+      "credit_pay_days", "credit_grace_days", "credit_purchase_rate", "credit_cash_rate",
+      "credit_min_percent", "credit_min_floor", "credit_cash_fee_percent", "credit_cash_fee_fixed",
+      "credit_cash_no_grace", "main_card_id",
     ])
 
   public static let places = ExportTable(
@@ -88,12 +94,14 @@ public enum ExportTables {
     ])
 
   /// `essential` came with `Schema/0008_capital.sql`: `true` or `false` as the owner marked
-  /// it, empty — a subcategory follows its parent, a category is not essential.
+  /// it, empty — a subcategory follows its parent, a category is not essential. `tax_rate` and
+  /// `tax_npd` came with `Schema/0009_credit_and_allocation.sql`: the tax an income in the
+  /// category owes, in percent, and whether it is the tax on professional income.
   public static let categories = ExportTable(
     fileName: "categories.csv",
     columns: [
       "id", "parent_id", "kind", "name", "sort", "archived", "quality", "system_role",
-      "essential",
+      "essential", "tax_rate", "tax_npd",
     ])
 
   /// `archived` came with `Schema/0004_accounts.sql`.
@@ -139,25 +147,32 @@ public enum ExportTables {
 
   /// `currency` came with `Schema/0004_accounts.sql`: the target, the plan and the progress
   /// are in it. `plan_start_month` came with `Schema/0005_cards.sql`: the month the monthly
-  /// plan counts from.
+  /// plan counts from. `account_id` and `transfer_on_contribution` came with
+  /// `Schema/0009_credit_and_allocation.sql`: the account the money of the goal is kept on.
   public static let goals = ExportTable(
     fileName: "goals.csv",
     columns: [
       "id", "name", "target", "target_date", "monthly_plan", "subcategory_id",
-      "archived", "currency", "plan_start_month",
+      "archived", "currency", "plan_start_month", "account_id", "transfer_on_contribution",
     ])
 
   /// `deleted_at` came with `Schema/0005_cards.sql`: the instant the debt was deleted. The
   /// terms of a loan came with `Schema/0007_debts_and_deposits.sql`: whether the bank charges
   /// interest day by day, the grace period (the first day of the main schedule, `interest` or
-  /// `fixed`, and the fixed sum) and the months the main payment is worked out over.
+  /// `fixed`, and the fixed sum) and the months the main payment is worked out over. The rest
+  /// came with `Schema/0009_credit_and_allocation.sql`: dues every few days, the parts and the
+  /// markup of an instalment plan, the full cost of credit from the contract, the rules of
+  /// early repayment and the one planned, the payoff ladder, a pledge and its day, and whether
+  /// the owner has seen these terms.
   public static let debts = ExportTable(
     fileName: "debts.csv",
     columns: [
       "id", "direction", "type", "name", "person_id", "currency", "interest_rate",
       "monthly_payment", "payment_day", "remind_days_before", "payments_are_expenses",
       "origin", "note", "closed", "loans_subcategory_id", "deleted_at", "accrues_interest",
-      "main_from", "grace_kind", "grace_payment", "repay_months",
+      "main_from", "grace_kind", "grace_payment", "repay_months", "step_days", "first_due_on",
+      "parts", "markup", "psk", "prepay_any_day", "prepay_notice_days", "planned_prepay_on",
+      "planned_prepay", "in_ladder", "pledge", "return_by", "terms_reviewed",
     ])
 
   /// `payment_method_id`, `occurred_at`, `account_currency` and `account_amount` came with
@@ -165,12 +180,14 @@ public enum ExportTables {
   /// went into or out of, when, and what moved on it. `closes_term` came with
   /// `Schema/0006_banks.sql`: the payment that says no more money comes toward its due.
   /// `tranche` came with `Schema/0007_debts_and_deposits.sql`: a part of the loan drawn later.
+  /// `prepay` came with `Schema/0009_credit_and_allocation.sql`: an early repayment, `term` or
+  /// `payment` as the owner chose.
   public static let debtEntries = ExportTable(
     fileName: "debt_entries.csv",
     columns: [
       "id", "debt_id", "group_name", "date", "description", "full_amount", "share",
       "amount", "kind", "transaction_id", "note", "payment_method_id", "occurred_at",
-      "account_currency", "account_amount", "closes_term", "tranche",
+      "account_currency", "account_amount", "closes_term", "tranche", "prepay",
     ])
 
   /// Columns match `Schema/0001_initial.sql`; `reconciled_at` and `breakdown` came with
@@ -197,12 +214,14 @@ public enum ExportTables {
     fileName: "account_groups.csv",
     columns: ["id", "name", "in_summary", "sort", "archived"])
 
-  /// Columns match `Schema/0004_accounts.sql`.
+  /// Columns match `Schema/0004_accounts.sql`; `external_id` came with
+  /// `Schema/0009_credit_and_allocation.sql`: what wrote the transfer, when the app did.
   public static let transfers = ExportTable(
     fileName: "transfers.csv",
     columns: [
       "id", "occurred_at", "from_payment_method_id", "from_currency", "from_amount",
       "to_payment_method_id", "to_currency", "to_amount", "note", "created_at", "updated_at",
+      "external_id",
     ])
 
   /// Columns match `Schema/0004_accounts.sql`. Amounts are in the row's currency; an empty
@@ -245,14 +264,53 @@ public enum ExportTables {
     fileName: "asset_valuations.csv",
     columns: ["id", "asset_id", "day", "value", "note"])
 
-  /// All 26 tables, in the fixed order of the export: the 18 of the first schema, then the
+  /// Columns match `Schema/0009_credit_and_allocation.sql`: what a due asks for, typed from a
+  /// bank's app, from due `from_index` (0 the first) on.
+  public static let debtInstalments = ExportTable(
+    fileName: "debt_instalments.csv",
+    columns: ["id", "debt_id", "from_index", "amount"])
+
+  /// Columns match `Schema/0009_credit_and_allocation.sql`: what else a loan costs — `fee`,
+  /// `insurance` or `other`, paid `once`, `monthly` or `yearly` from `day`.
+  public static let debtCosts = ExportTable(
+    fileName: "debt_costs.csv",
+    columns: [
+      "id", "debt_id", "kind", "name", "amount", "every", "day", "in_loan", "transaction_id",
+      "sort",
+    ])
+
+  /// Columns match `Schema/0009_credit_and_allocation.sql`: how the owner usually allocates an
+  /// income — `percent` of it or a `fixed` sum in `currency`, into a goal, to an account or to
+  /// the cushion.
+  public static let allocationRules = ExportTable(
+    fileName: "allocation_rules.csv",
+    columns: [
+      "id", "target", "goal_id", "payment_method_id", "mode", "percent", "amount", "currency",
+      "sort", "active",
+    ])
+
+  /// No `id` column: the schema's primary key is `code`, as for the rates. Columns match
+  /// `Schema/0009_credit_and_allocation.sql`.
+  public static let customCurrencies = ExportTable(
+    fileName: "custom_currencies.csv",
+    columns: ["code", "name", "symbol", "fraction_digits", "archived", "sort"])
+
+  /// The whole `settings` table, by key: the settings that belong to the data — the default
+  /// currency, self-employment, the allocation, the debts — as the database keeps them.
+  public static let settings = ExportTable(
+    fileName: "settings.csv",
+    columns: ["key", "value"])
+
+  /// All 31 tables, in the fixed order of the export: the 18 of the first schema, then the
   /// three the accounts brought, then the two of the cards, then the banks, then the assets
-  /// and their valuations.
+  /// and their valuations, then the instalments and costs of the debts, the allocation rules,
+  /// the custom currencies and the settings.
   public static let all: [ExportTable] = [
     transactions, transactionParts, reimbursementLinks, people, paymentMethods, places,
     events, categories, templates, scheduledPayments, subscriptionPrices, expectedIncome,
     budgets, goals, debts, debtEntries, reconciliations, rates, accountGroups, transfers,
     reconciliationBalances, cards, cashbackRules, banks, assets, assetValuations,
+    debtInstalments, debtCosts, allocationRules, customCurrencies, settings,
   ]
 }
 
@@ -358,7 +416,35 @@ extension ExportTables {
       CSVValue.string(day: method.interest?.openedOn),
       CSVValue.string(day: method.interest?.endsOn),
       CSVValue.string(bool: method.cushion),
+      CSVValue.string(amount: method.credit?.limitE4),
+      CSVValue.string(method.credit?.grace.storedKind),
+      CSVValue.string(statementDay(method.credit?.grace)),
+      CSVValue.string(payDays(method.credit?.grace)),
+      CSVValue.string(graceDays(method.credit?.grace)),
+      CSVValue.string(decimal: method.credit?.purchaseRate),
+      CSVValue.string(decimal: method.credit?.cashRate),
+      CSVValue.string(decimal: method.credit?.minPercent),
+      CSVValue.string(amount: method.credit?.minFloorE4),
+      CSVValue.string(decimal: method.credit?.cashFeePercent),
+      CSVValue.string(amount: method.credit?.cashFeeFixedE4),
+      CSVValue.string(bool: method.credit?.cashWithoutGrace ?? false),
+      CSVValue.string(method.mainCardId),
     ]
+  }
+
+  private static func statementDay(_ grace: CreditGrace?) -> Int? {
+    if case .statement(let day, _) = grace { return day }
+    return nil
+  }
+
+  private static func payDays(_ grace: CreditGrace?) -> Int? {
+    if case .statement(_, let payDays) = grace { return payDays }
+    return nil
+  }
+
+  private static func graceDays(_ grace: CreditGrace?) -> Int? {
+    if case .fromPurchase(let days) = grace { return days }
+    return nil
   }
 
   public static func row(_ place: Place) -> [String] {
@@ -395,6 +481,8 @@ extension ExportTables {
       CSVValue.string(category.quality?.rawValue),
       CSVValue.string(category.systemRole?.rawValue),
       CSVValue.string(bool: category.essential),
+      CSVValue.string(decimal: category.tax?.rate),
+      CSVValue.string(bool: category.tax?.npd ?? false),
     ]
   }
 
@@ -422,6 +510,8 @@ extension ExportTables {
       CSVValue.string(bool: goal.archived),
       goal.currency.code,
       CSVValue.string(month: goal.planStartMonth),
+      CSVValue.string(goal.accountId),
+      CSVValue.string(bool: goal.transfersOnContribution),
     ]
   }
 
@@ -448,6 +538,19 @@ extension ExportTables {
       CSVValue.string(debt.grace?.payment.storedKind),
       CSVValue.string(amount: debt.grace?.payment.fixedAmount),
       CSVValue.string(debt.repayMonths),
+      CSVValue.string(debt.steps?.everyDays),
+      CSVValue.string(day: debt.steps?.firstDue),
+      CSVValue.string(debt.parts),
+      CSVValue.string(amount: debt.markupE4),
+      CSVValue.string(decimal: debt.psk),
+      CSVValue.string(bool: debt.prepayAnyDay),
+      CSVValue.string(debt.prepayNoticeDays),
+      CSVValue.string(day: debt.plannedPrepay?.day),
+      CSVValue.string(amount: debt.plannedPrepay?.amountE4),
+      CSVValue.string(bool: debt.inLadder),
+      CSVValue.string(bool: debt.pledge),
+      CSVValue.string(day: debt.returnBy),
+      CSVValue.string(bool: debt.termsReviewed),
     ]
   }
 
@@ -470,6 +573,7 @@ extension ExportTables {
       CSVValue.string(amount: entry.accountAmountE4),
       CSVValue.string(bool: entry.closesTerm),
       CSVValue.string(bool: entry.tranche),
+      CSVValue.string(entry.prepay?.rawValue),
     ]
   }
 
@@ -591,6 +695,7 @@ extension ExportTables {
       CSVValue.string(transfer.note),
       CSVValue.string(instant: transfer.createdAt),
       CSVValue.string(instant: transfer.updatedAt),
+      CSVValue.string(transfer.externalId),
     ]
   }
 
@@ -659,6 +764,77 @@ extension ExportTables {
       CSVValue.string(amount: valuation.valueE4),
       CSVValue.string(valuation.note),
     ]
+  }
+
+  public static func row(_ step: DebtInstalmentStep) -> [String] {
+    [
+      step.id.uuidString,
+      step.debtId.uuidString,
+      String(step.fromIndex),
+      CSVValue.string(amount: step.amountE4),
+    ]
+  }
+
+  public static func row(_ cost: DebtCost) -> [String] {
+    [
+      cost.id.uuidString,
+      cost.debtId.uuidString,
+      cost.kind.rawValue,
+      CSVValue.string(cost.name),
+      CSVValue.string(amount: cost.amountE4),
+      cost.every.rawValue,
+      CSVValue.string(day: cost.day),
+      CSVValue.string(bool: cost.inLoan),
+      CSVValue.string(cost.transactionId),
+      String(cost.sort),
+    ]
+  }
+
+  public static func row(_ rule: AllocationRule) -> [String] {
+    var goal: UUID?
+    var account: UUID?
+    switch rule.target {
+    case .goal(let id): goal = id
+    case .account(let id): account = id
+    case .cushion(let id): account = id
+    }
+    var percent: Decimal?
+    var amount: AmountE4?
+    var currency: CurrencyCode?
+    switch rule.amount {
+    case .percent(let value): percent = value
+    case .fixed(let value, let code):
+      amount = value
+      currency = code
+    }
+    return [
+      rule.id.uuidString,
+      rule.target.storedKind,
+      CSVValue.string(goal),
+      CSVValue.string(account),
+      percent == nil ? "fixed" : "percent",
+      CSVValue.string(decimal: percent),
+      CSVValue.string(amount: amount),
+      CSVValue.string(currency?.code),
+      String(rule.sort),
+      CSVValue.string(bool: rule.active),
+    ]
+  }
+
+  public static func row(_ currency: CustomCurrency) -> [String] {
+    [
+      currency.code.code,
+      currency.name,
+      CSVValue.string(currency.symbol),
+      String(currency.fractionDigits),
+      CSVValue.string(bool: currency.archived),
+      String(currency.sort),
+    ]
+  }
+
+  /// One row of the `settings` table, its value as the database keeps it.
+  public static func settingRow(key: String, value: String) -> [String] {
+    [key, value]
   }
 }
 

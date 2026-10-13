@@ -352,7 +352,8 @@ struct Schema0005CheckTests {
         == .taken)
   }
 
-  /// The six triggers are in the schema, by name.
+  /// The six triggers of the cards are in the schema, by name, and the three of the main card
+  /// of an account that came later.
   @Test func theSixTriggersAreThere() throws {
     let stack = try TestSupport.makeStack()
     let triggers = try stack.writer.read { db in
@@ -363,6 +364,7 @@ struct Schema0005CheckTests {
         "card_of_account_transactions_insert", "card_of_account_transactions_update",
         "card_of_account_scheduled_insert", "card_of_account_scheduled_update",
         "card_of_account_cashback_insert", "card_of_account_cashback_update",
+        "main_card_of_account_insert", "main_card_of_account_update", "main_card_follows_card",
       ])
   }
 

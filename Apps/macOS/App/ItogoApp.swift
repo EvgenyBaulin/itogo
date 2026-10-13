@@ -52,22 +52,6 @@ struct ItogoApp: App {
       #endif
     }
 
-    Window(environment.language("window.transactions"), id: "transactions") {
-      AppScenes.root(deps, window: .transactions) { deps in
-        SecondaryWindow(
-          titleKey: "window.transactions", scene: "transactions",
-          minWidth: TransactionsRootView.minimumWidth
-        ) {
-          TransactionsRootView(deps: deps)
-        }
-      }
-      .privacyCurtain(environment)
-    }
-    .defaultSize(width: 1120, height: 720)
-    // The item of the Window menu is `AppCommands`' own: a `Window` scene given
-    // `.keyboardShortcut` listed itself there without the key (MenuTests).
-    .commandsRemoved()
-
     Window(environment.language("window.analytics"), id: "analytics") {
       AppScenes.root(deps, window: .analytics) { deps in
         SecondaryWindow(
@@ -183,19 +167,21 @@ struct AppCommands: Commands {
 
     CommandGroup(after: .textEditing) {
       Button(environment.language("transactions.search", table: "Transactions")) {
-        // Search lives in the Transactions window, so ⌘F opens it when it is closed. The
-        // flag waits for the window: a notification posted now would reach nobody while the
-        // window is still being made, and the first ⌘F would be lost.
+        // The search lives in «Операции» of the main window, so ⌘F opens it. The flag waits
+        // for the screen: a notification posted now would reach nobody while the screen is
+        // still being made, and the first ⌘F would be lost.
         environment.pendingSearchFocus = true
-        AppWindows.open("transactions", with: openWindow)
+        OperationsScreenOpening.open(with: openWindow)
       }
       .keyboardShortcut("f", modifiers: .command)
     }
 
-    // The secondary windows, each with its shortcut: ⌘⇧T, ⌘⇧A, ⌘⇧R.
+    // «Операции» of the main window and the secondary windows, each with its shortcut: ⌘⇧T,
+    // ⌘⇧A, ⌘⇧R. Transactions is a screen of the main window now; the shortcut the owner has
+    // used since 1.0 brings it forward.
     CommandGroup(before: .windowList) {
       Button(environment.language("window.transactions")) {
-        AppWindows.open("transactions", with: openWindow)
+        OperationsScreenOpening.open(with: openWindow)
       }
       .keyboardShortcut("t", modifiers: [.command, .shift])
       Button(environment.language("window.analytics")) {
@@ -226,7 +212,7 @@ struct AppCommands: Commands {
       }
       .keyboardShortcut("3", modifiers: .command)
 
-      Button(environment.language("section.spending")) {
+      Button(environment.language("section.operations")) {
         NotificationCenter.default.post(name: .selectSection, object: 4)
       }
       .keyboardShortcut("4", modifiers: .command)
@@ -302,16 +288,19 @@ struct MainWindow: View {
 
   /// The window makes its own `OperationActions`; a test hands in the one it holds, so it can
   /// show the selection bar the way a selection does (`MainWindowLayoutTests`). `opensDetails`
-  /// is the same idea for the ↓ panel, which a key press cannot reach without a key window, and
-  /// `selection` for the screen the window opens on, which a click in the sidebar chooses.
+  /// is the same idea for the ↓ panel, which a key press cannot reach without a key window,
+  /// `selection` for the screen the window opens on, which a click in the sidebar chooses, and
+  /// `operations` for what «Операции» holds — the operation in its editor, say.
   init(
     deps: AppDependencies, actions: OperationActions = OperationActions(),
-    opensDetails: Bool = false, selection: SidebarItem = .section(.overview)
+    opensDetails: Bool = false, selection: SidebarItem = .section(.overview),
+    operations: OperationsScreenState = OperationsScreenState()
   ) {
     self.deps = deps
     self.opensDetails = opensDetails
     _overviewActions = State(initialValue: actions)
     _selection = State(initialValue: selection)
+    _operations = State(initialValue: operations)
   }
 
   private let opensDetails: Bool
@@ -333,6 +322,8 @@ struct MainWindow: View {
   /// The selection of the Overview list and everything opened from it. It lives here
   /// because its bar floats in the entry bar and its sheets hang on the window's root.
   @State private var overviewActions: OperationActions
+  /// The filters, the search and the editor of «Операции», kept while another screen is shown.
+  @State private var operations: OperationsScreenState
   /// The reminders of the day, shown once, and the due dates passed and unpaid, asked about
   /// once a launch.
   @State private var remindersShown: RemindersShown?
@@ -409,14 +400,20 @@ struct MainWindow: View {
   }
 
   enum Section: String, CaseIterable, Identifiable {
-    case overview, spending, planning, debts, calendar, capital
+    case overview, operations, planning, debts, calendar, capital
 
     var id: String { rawValue }
+
+    /// `--section` names a section by its raw value; «spending», the name of «Операции» when it
+    /// was «Траты», still finds it.
+    static func named(_ name: String) -> Section? {
+      name == "spending" ? .operations : Section(rawValue: name)
+    }
 
     var titleKey: String {
       switch self {
       case .overview: "section.overview"
-      case .spending: "section.spending"
+      case .operations: "section.operations"
       case .planning: "section.planning"
       case .debts: "section.debts"
       case .calendar: "section.calendar"
@@ -427,7 +424,7 @@ struct MainWindow: View {
     var symbol: String {
       switch self {
       case .overview: "chart.pie"
-      case .spending: "list.bullet.rectangle"
+      case .operations: "list.bullet.rectangle"
       case .planning: "calendar"
       case .debts: "creditcard"
       case .calendar: "calendar.circle"
@@ -435,14 +432,14 @@ struct MainWindow: View {
       }
     }
 
-    /// ⌘1 / ⌘2 / ⌘3, as the specification's table of shortcuts lists them; «Траты», added
+    /// ⌘1 / ⌘2 / ⌘3, as the specification's table of shortcuts lists them; «Операции», added
     /// after them, is ⌘4, «Календарь» ⌘5 and «Капитал» ⌘6.
     var shortcutIndex: Int {
       switch self {
       case .overview: 1
       case .planning: 2
       case .debts: 3
-      case .spending: 4
+      case .operations: 4
       case .calendar: 5
       case .capital: 6
       }
@@ -525,10 +522,10 @@ struct MainWindow: View {
     .onChange(of: compute.generation, initial: true) { _, _ in
       if let dataset = compute.snapshot?.dataset { guide.check(dataset) }
     }
-    // ↓ in the entry line over a screen without a list: «Траты» opens and takes it.
+    // ↓ in the entry line over a screen without a list: «Операции» opens and takes it.
     .onReceive(NotificationCenter.default.publisher(for: .walkOperationsList)) { _ in
       guard environment.state == .ready, !selection.listsOperations else { return }
-      selection = .section(.spending)
+      selection = .section(.operations)
       Task { @MainActor in
         try? await Task.sleep(for: .milliseconds(150))
         NotificationCenter.default.post(name: .walkOperationsList, object: nil)
@@ -536,7 +533,11 @@ struct MainWindow: View {
     }
     .task {
       LaunchWindows.open(with: openWindow, today: environment.today)
-      if let name = LaunchOptions.current.section, let chosen = Section(rawValue: name) {
+      // `--open transactions` opened a window of its own once; it is a screen of this one now.
+      if LaunchOptions.current.windows.contains(.transactions) {
+        selection = .section(.operations)
+      }
+      if let name = LaunchOptions.current.section, let chosen = Section.named(name) {
         selection = .section(chosen)
       }
     }
@@ -567,6 +568,13 @@ struct MainWindow: View {
       }
       .appDependencies(deps)
     }
+    // After the reminders, one at a time: the debts made before 1.9, the offer of
+    // self-employment.
+    .launchQuestions(
+      deps,
+      waits: remindersShown != nil || compute.states.reminders.phase == .calculating || asksSetup
+        || environment.offersProblemReport || !environment.currenciesMissingAtBank.isEmpty
+    )
     .onChange(of: environment.showsOverdue) { _, _ in showOverdue() }
     // A restore or an import this launch could not put in place: said once, with the way on,
     // instead of tried again in silence at every launch. This alert and the two after it wait
@@ -706,7 +714,8 @@ struct MainWindow: View {
     case .ready:
       switch selection {
       case .section(.overview): OverviewView(actions: overviewActions)
-      case .section(.spending): SpendingView(actions: overviewActions)
+      case .section(.operations):
+        OperationsScreen(deps: deps, actions: overviewActions, state: operations)
       case .section(.planning): PlanningView()
       case .section(.debts): DebtsView()
       case .section(.calendar): CalendarView(actions: overviewActions)
@@ -810,7 +819,7 @@ struct MainWindow: View {
       .help(environment.language("reconcile.help", table: "Planning"))
 
       Button {
-        AppWindows.open("transactions", with: openWindow)
+        selection = .section(.operations)
       } label: {
         Label {
           Text(verbatim: environment.language("window.transactions"))

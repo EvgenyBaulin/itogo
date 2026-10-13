@@ -30,12 +30,20 @@ public enum RefundError: Error, Hashable, Sendable {
 public enum RefundRules {
   /// A live purchase of my own: not paid for somebody else, not bought on credit, not a
   /// payment on a debt, not a contribution to a goal, not a line the app wrote for its books.
+  ///
+  /// A purchase made on an instalment plan (`creditDebt`, the debt it was bought on) is one too:
+  /// a thing bought in instalments can be returned (`instalmentReturn`). The other operations on
+  /// a debt the app writes — interest, markup, a tranche, a loss — never are.
   public static func isRefundable(
-    part: TransactionPart, in entry: TransactionEntry, tree: CategoryTree
+    part: TransactionPart, in entry: TransactionEntry, tree: CategoryTree,
+    creditDebt: Debt? = nil
   ) -> Bool {
     let transaction = entry.transaction
+    let onAPlan =
+      transaction.creditDebtId != nil && transaction.creditDebtId == creditDebt?.id
+      && creditDebt?.isInstalmentPlan == true && transaction.externalId == nil
     guard !transaction.isDeleted, transaction.kind == .expense,
-      transaction.creditDebtId == nil, transaction.debtId == nil,
+      transaction.creditDebtId == nil || onAPlan, transaction.debtId == nil,
       entry.parts.contains(where: { $0.id == part.id })
     else { return false }
     guard !part.reimbursable else { return false }
@@ -199,5 +207,56 @@ public enum RefundRules {
           eventId: part.eventId,
           refundOfPartId: part.id)
       ])
+  }
+}
+
+/// What a returned thing bought in instalments does to the money: the bank lowers the debt, or
+/// gives the money back to the card.
+public enum InstalmentReturnChoice: String, Hashable, Sendable, CaseIterable {
+  case reducesDebt
+  case toCard
+}
+
+/// The money of a returned thing bought in instalments: what goes to the account, what lowers
+/// the debt.
+public struct InstalmentReturnSplit: Hashable, Sendable {
+  public var toDebtE4: AmountE4
+  public var toAccountE4: AmountE4
+
+  public init(toDebtE4: AmountE4, toAccountE4: AmountE4) {
+    self.toDebtE4 = toDebtE4
+    self.toAccountE4 = toAccountE4
+  }
+}
+
+extension RefundRules {
+  /// How the money of a returned thing bought in instalments splits. When the bank lowers the
+  /// debt (`.reducesDebt`), what was already paid off the price comes back to the account — never
+  /// more than the refund —, the rest closes the debt, never more than is left on it; what the
+  /// debt cannot hold comes back to the account too. When the money comes back to the card
+  /// (`.toCard`), all of it goes to the account and the debt is left alone.
+  public static func instalmentReturn(
+    refund: AmountE4, debt: Debt, balance: AmountE4, paidPrincipal: AmountE4,
+    choice: InstalmentReturnChoice
+  ) -> InstalmentReturnSplit {
+    let money = refund.magnitude
+    guard choice == .reducesDebt, debt.direction == .iOwe, !debt.closed else {
+      return InstalmentReturnSplit(toDebtE4: .zero, toAccountE4: money)
+    }
+    let back = min(money, max(paidPrincipal, .zero))
+    let toDebt = min(money - back, max(balance, .zero))
+    return InstalmentReturnSplit(toDebtE4: toDebt, toAccountE4: money - toDebt)
+  }
+
+  /// The key of the part of an instalment return that lowers the debt: `instreturn:<return>:debt`.
+  public static func instalmentReturnKey(of refundId: UUID) -> String {
+    "instreturn:" + refundId.uuidString.lowercased() + ":debt"
+  }
+
+  /// `key` when it is the key of the part of an instalment return that lowers the debt, else
+  /// `nil`.
+  public static func instalmentReturnKey(ofKey key: String?) -> String? {
+    guard let key, key.hasPrefix("instreturn:"), key.hasSuffix(":debt") else { return nil }
+    return key
   }
 }

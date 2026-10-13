@@ -114,7 +114,7 @@ struct AccountsSidebarSection: View {
               "sidebar.withoutRate", table: AccountText.table,
               missing.map(\.code).joined(separator: ", "))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -134,7 +134,7 @@ struct AccountsSidebarSection: View {
           if !section.inSummary {
             // Left out of the summary: said in words, with its own symbol, never by colour.
             Text(verbatim: t("sidebar.excluded"))
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.secondary)
           }
         }
@@ -149,7 +149,7 @@ struct AccountsSidebarSection: View {
         if section.totalRub != nil, !section.withoutRate.isEmpty {
           // Money the total leaves out for want of a rate is named, not dropped in silence.
           Text(verbatim: withoutRate(section.withoutRate.map(\.code).joined(separator: ", ")))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
@@ -174,7 +174,7 @@ struct AccountsSidebarSection: View {
           if line.account.isDefault {
             // The main account is told by a symbol with a spoken word, never by colour.
             Image(systemName: "star.fill")
-              .font(.caption2)
+              .appFont(.caption2)
               .foregroundStyle(.secondary)
               .accessibilityLabel(Text(verbatim: t("accounts.main")))
           }
@@ -188,7 +188,7 @@ struct AccountsSidebarSection: View {
           .monospacedDigit()
         if let caption = figure.caption {
           Text(verbatim: caption)
-            .font(.caption)
+            .appFont(.caption)
             .monospacedDigit()
             .foregroundStyle(.secondary)
             .lineLimit(1)

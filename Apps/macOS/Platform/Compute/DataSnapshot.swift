@@ -40,6 +40,9 @@ struct SnapshotContext: Hashable, Sendable {
   var dayRates: DayRates = .empty
   /// The language the names of the accounts are ordered in (`AccountsSnapshot`).
   var localeIdentifier = "en"
+  /// What this Mac remembers of the reminders of the debts: the ones put away, and the
+  /// reminder of the credit history (`DebtReminders.list`).
+  var debtReminders = DebtReminderMarks()
 
   /// Rates of those currencies as the table gives them for `today`.
   init(
@@ -91,6 +94,16 @@ struct SnapshotContext: Hashable, Sendable {
   }
 }
 
+/// What this Mac remembers of the reminders of the debts and the credit cards — kept out of the
+/// database, so the snapshot is told.
+struct DebtReminderMarks: Hashable, Sendable {
+  /// The keys of the reminders put away with «Готово» (`DebtReminder.id`).
+  var dismissed: Set<String> = []
+  var creditHistoryEnabled = true
+  /// The half of the year the credit history was last checked in.
+  var creditHistoryDone: HalfYear?
+}
+
 /// «Owed to me»: parts I paid for somebody else that are still expected back — the figure of
 /// step 3. Expected income is counted with the rest of the planning (`PlanningSnapshot`).
 struct OwedSummary: Hashable, Sendable {
@@ -135,6 +148,9 @@ struct DataSnapshot: Sendable {
   let context: SnapshotContext
   let today: DateOnly
   let version: DataVersion
+  /// The hint about burnout (`Burnout.check`): a rule of the insights, so not a part of the
+  /// planning.
+  var burnout: BurnoutCheck = .quiet
 
   var dataset: Dataset { ledger.dataset }
 
@@ -166,10 +182,11 @@ struct DataSnapshot: Sendable {
     let groups = TransactionsStore.group(
       ids.compactMap { ledger.entry($0) }, calendar: calendar, debts: dataset.debtsById,
       transfers: transfers, refunds: ledger.refundIndex)
-    let planning = PlanningSnapshot.build(
+    var planning = PlanningSnapshot.build(
       ledger: ledger, today: today, now: now, rubPerUnit: context.rubPerUnit,
       dayRates: context.dayRates, localeIdentifier: context.localeIdentifier)
-    return DataSnapshot(
+    addCreditsAndAllocation(to: &planning, ledger: ledger, today: today, context: context)
+    var snapshot = DataSnapshot(
       ledger: ledger,
       summary: summary,
       planning: planning,
@@ -180,6 +197,77 @@ struct DataSnapshot: Sendable {
       context: context,
       today: today,
       version: version)
+    snapshot.burnout = Burnout.check(ledger: ledger, tree: ledger.tree, today: today)
+    return snapshot
+  }
+
+  /// The figures of the credits, the credit cards, the allocation of income and
+  /// self-employment, each from its own rule over the same ledger and planning.
+  private static func addCreditsAndAllocation(
+    to planning: inout PlanningSnapshot, ledger: Ledger, today: DateOnly,
+    context: SnapshotContext
+  ) {
+    let dataset = ledger.dataset
+    let book = dataset.planning
+    let rubPerUnit = context.rubPerUnit
+    let lines =
+      planning.debts.iOwe + planning.debts.owedToMe.flatMap(\.debts)
+      + planning.debts.closed
+    var states: [UUID: DebtDueState] = [:]
+    var balances: [UUID: AmountE4] = [:]
+    for line in lines {
+      states[line.debt.id] = line.dues
+      balances[line.debt.id] = line.balance
+    }
+    planning.instalments = InstalmentsSummary.build(
+      debts: dataset.debts, states: states, journalBalances: balances, rubPerUnit: rubPerUnit,
+      today: today)
+    let candidates = DebtLadder.candidates(
+      debts: dataset.debts, states: states, balances: balances, accounts: planning.accounts,
+      settings: dataset.debtSettings, rubPerUnit: rubPerUnit)
+    planning.ladder =
+      candidates.isEmpty
+      ? nil
+      : DebtLadder.compare(
+        candidates, extraRub: dataset.debtSettings.ladderExtraE4 ?? .zero,
+        start: today.monthKey)
+    planning.debtLoadHistory = DebtLoad.history(
+      ledger: ledger, debts: dataset.debts, journal: book.debtEntries,
+      accounts: planning.accounts.balances, tree: ledger.tree,
+      allocation: dataset.allocationSettings, rubPerUnit: rubPerUnit, today: today)
+    var cards: [UUID: CreditCardNow] = [:]
+    for account in dataset.paymentMethods where !account.archived {
+      guard let terms = account.credit else { continue }
+      let movements = CreditStatements.movements(
+        account: account, ledger: ledger, transfers: dataset.transfers)
+      let statements = CreditStatements.statements(
+        account: account, terms: terms, movements: movements,
+        balances: planning.accounts.balances, through: today, calendar: ledger.calendar)
+      cards[account.id] = CreditStatements.now(
+        account: account, terms: terms, statements: statements, movements: movements,
+        balances: planning.accounts.balances, today: today, calendar: ledger.calendar)
+    }
+    planning.creditCards = cards
+    planning.debtReminders = DebtReminders.list(
+      debts: dataset.debts, costs: dataset.debtCosts, cards: cards, today: today,
+      dismissed: context.debtReminders.dismissed,
+      creditHistoryEnabled: context.debtReminders.creditHistoryEnabled,
+      creditHistoryDone: context.debtReminders.creditHistoryDone)
+    planning.debtReview = DebtReview.toReview(debts: dataset.debts)
+    planning.npd =
+      dataset.selfEmployment.enabled
+      ? NPDTax.state(
+        ledger: ledger, tree: ledger.tree, settings: dataset.selfEmployment,
+        dayRates: context.dayRates, today: today)
+      : nil
+    planning.payHalf = PayHalves.current(
+      today: today, expected: book.expected, links: book.expectedLinks, ledger: ledger)
+    planning.monthRest = MonthRest.offer(
+      today: today, free: planning.freeMoney, settings: dataset.allocationSettings,
+      cushion: planning.cushion, goals: planning.goals)
+    // Of the last 30 days and not allocated in full yet: `offers` alone would hold every
+    // income in «Заработок» ever written.
+    planning.allocationOffers = Allocation.offered(ledger: ledger, today: today)
   }
 }
 

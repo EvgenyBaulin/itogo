@@ -220,7 +220,7 @@ struct DebtScheduleSection: View {
         } icon: {
           Image(systemName: "exclamationmark.circle")
         }
-        .font(.caption).foregroundStyle(.secondary)
+        .appFont(.caption).foregroundStyle(.secondary)
       }
     } header: {
       Text(verbatim: t("schedule.title"))
@@ -252,7 +252,7 @@ struct DebtScheduleSection: View {
 
   private func caption(_ text: String) -> some View {
     Text(verbatim: text)
-      .font(.caption).foregroundStyle(.secondary)
+      .appFont(.caption).foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
   }
 

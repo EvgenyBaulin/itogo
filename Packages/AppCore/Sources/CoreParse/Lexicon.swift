@@ -75,6 +75,10 @@ enum Lexicon {
   static let cashbackPhrases: [[String]] = englishCashbackPhrases
   static let percentWords: Set<String> = englishPercentWords.union(russianPercentWords)
   static let timeMarkers: Set<String> = englishTimeMarkers.union(russianTimeMarkers)
+  /// Longest first, so «со своего счёта» is tried before «со счёта».
+  static let withoutCardPhrases: [[String]] =
+    (englishWithoutCardPhrases + russianWithoutCardPhrases).sorted { $0.count > $1.count }
+  static let selfEmployedWords: Set<String> = russianSelfEmployedWords
   static let goalMarkers: Set<String> = englishGoalMarkers.union(russianGoalMarkers)
   static let debtMarkers: Set<String> = englishDebtMarkers.union(russianDebtMarkers)
 

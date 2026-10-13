@@ -62,7 +62,7 @@ struct TransferSheet: View {
         verbatim: t(
           entry.form.previous == nil ? "transfer.sheet.title" : "transfer.sheet.editTitle")
       )
-      .font(.headline)
+      .appFont(.headline)
       TransferFields(entry: entry, layout: .sheet)
       HStack {
         Spacer()

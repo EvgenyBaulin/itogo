@@ -32,7 +32,7 @@ struct ScheduledPaymentForm: View {
     let choices = PlanningChoices(compute, environment)
     VStack(alignment: .leading) {
       Text(verbatim: t(original == nil ? "form.payment.new" : "form.payment.edit"))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         TextField(t("form.name"), text: $draft.payment.name)
         Picker(t("form.kind"), selection: $draft.payment.kind) {
@@ -73,7 +73,7 @@ struct ScheduledPaymentForm: View {
           } icon: {
             Image(systemName: "archivebox")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         }
@@ -87,7 +87,7 @@ struct ScheduledPaymentForm: View {
         }
         if draft.payment.eventId != nil {
           Text(verbatim: t("form.event.hint"))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -167,7 +167,7 @@ struct ScheduledPaymentForm: View {
                 verbatim: environment.format(
                   "form.returns.rub", table: "Planning", environment.money.rounded(rubles))
               )
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.secondary)
             }
           }
@@ -202,7 +202,7 @@ struct ScheduledPaymentForm: View {
               "form.remind", table: "Planning", draft.payment.remindDaysBefore ?? 3))
         }
         if let issue = issue(choices) {
-          Text(verbatim: t(issue.key)).font(.caption).foregroundStyle(.secondary)
+          Text(verbatim: t(issue.key)).appFont(.caption).foregroundStyle(.secondary)
         }
       }
       .formStyle(.grouped)
@@ -493,13 +493,13 @@ struct MarkAsPaidForm: View {
     let payment = status.payment
     VStack(alignment: .leading) {
       Text(verbatim: environment.format("form.markAsPaid.title", table: "Planning", payment.name))
-        .font(.headline)
+        .appFont(.headline)
       Text(
         verbatim: environment.format(
           "form.markAsPaid.due", table: "Planning",
           environment.dates.longDay(status.nextDue))
       )
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       Form {
         LabeledContent(t("form.amount")) {
@@ -536,7 +536,7 @@ struct MarkAsPaidForm: View {
               choices.people.first { $0.id == payment.debtorPersonId }?.name ?? "—",
               environment.money.exact(back.amount, currency: back.currency))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -1110,7 +1110,7 @@ struct ChargeRow: View {
     } icon: {
       Image(systemName: symbol)
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
     .fixedSize(horizontal: false, vertical: true)
   }
@@ -1162,7 +1162,7 @@ struct CountingFormButtons: View {
     VStack(alignment: .trailing, spacing: 6) {
       if let failed {
         Text(verbatim: failed)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }

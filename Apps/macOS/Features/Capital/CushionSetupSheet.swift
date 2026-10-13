@@ -143,7 +143,7 @@ struct CushionSetupSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t("cushion.setup.title"))
-        .font(.headline)
+        .appFont(.headline)
       if let setup {
         form(setup)
       } else {

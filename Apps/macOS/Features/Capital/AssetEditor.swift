@@ -27,7 +27,7 @@ struct AssetEditor: View {
         verbatim: CapitalText.t(
           original == nil ? "capital.editor.new" : "capital.editor.edit", environment)
       )
-      .font(.headline)
+      .appFont(.headline)
       Form {
         TextField(text: $asset.name) {
           Text(verbatim: CapitalText.t("capital.editor.name", environment))
@@ -67,7 +67,7 @@ struct AssetEditor: View {
             displayedComponents: .date)
         } else {
           Text(verbatim: CapitalText.t("capital.editor.valueHint", environment))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }

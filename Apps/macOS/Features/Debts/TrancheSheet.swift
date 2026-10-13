@@ -23,7 +23,7 @@ struct TrancheSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text(verbatim: environment.format("tranche.title", table: "Debts", debt.name))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         LabeledContent(t("form.amount")) {
           HStack {
@@ -38,20 +38,20 @@ struct TrancheSheet: View {
           } icon: {
             Image(systemName: "calendar.badge.clock")
           }
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
         }
         AccountPicker(
           title: environment.language("entry.account.from", table: "Entry"), accounts: accounts,
           selection: $account)
         TextField(t("form.description"), text: $note)
         Text(verbatim: t("tranche.hint"))
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
       .formStyle(.grouped)
       if failed {
         Text(verbatim: environment.language("form.notSaved", table: "Planning"))
-          .font(.caption).foregroundStyle(.red)
+          .appFont(.caption).foregroundStyle(.red)
       }
       HStack {
         Spacer()

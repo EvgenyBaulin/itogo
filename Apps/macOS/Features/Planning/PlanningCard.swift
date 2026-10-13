@@ -38,7 +38,7 @@ struct PlanningCard<Content: View>: View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Label {
         Text(verbatim: PlanningBlockText.name(of: block, environment))
-          .font(.headline)
+          .appFont(.headline)
           .lineLimit(2)
       } icon: {
         Image(systemName: PlanningBlockText.symbol(of: block))
@@ -48,7 +48,7 @@ struct PlanningCard<Content: View>: View {
       Spacer(minLength: 8)
       if let total {
         Text(verbatim: total)
-          .font(.callout.monospacedDigit())
+          .appFont(.callout.monospacedDigit())
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .minimumScaleFactor(0.8)
@@ -164,7 +164,7 @@ struct PlanningShowAllButton: View {
             : environment.format("layout.showAll", table: "Planning", counts: total))
       }
       .buttonStyle(.link)
-      .font(.callout)
+      .appFont(.callout)
       .accessibilityIdentifier("planning.showAll.\(block.rawValue)")
     }
   }

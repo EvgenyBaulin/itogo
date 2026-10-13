@@ -23,9 +23,11 @@ extension LineInterpreter {
 struct CoreLineInterpreter: LineInterpreter {
   let vocabulary: ParserVocabulary
   let calendar: CalendarContext
+  /// The owner's own currencies: their codes and symbols are read too.
+  var catalog: CurrencyCatalog = .empty
 
   func read(_ text: String, today: DateOnly, kind: TransactionKind?) -> InputLineReading {
-    InputLineParser(vocabulary: vocabulary, calendar: calendar).read(
+    InputLineParser(vocabulary: vocabulary, calendar: calendar, catalog: catalog).read(
       text, today: today, kind: kind)
   }
 }

@@ -84,7 +84,7 @@ struct GuideWalkthroughTests {
     #expect(
       walk.steps.map(\.target) == [
         GuideTarget.entryLine, GuideTarget.entryDetails, GuideTarget.sidebarOverview,
-        GuideTarget.sidebarPlanning, GuideTarget.sidebarDebts, GuideTarget.sidebarSpending,
+        GuideTarget.sidebarPlanning, GuideTarget.sidebarDebts, GuideTarget.sidebarOperations,
         GuideTarget.sidebarCalendar, GuideTarget.sidebarCapital, GuideTarget.toolbarTransactions,
         GuideTarget.toolbarReconcile, GuideTarget.toolbarSettings,
       ])
@@ -122,8 +122,8 @@ struct GuideWalkthroughTests {
     let known = Set([
       GuideTarget.entryLine, GuideTarget.entryDetails, GuideTarget.entryForWhom,
       GuideTarget.entryQuick, GuideTarget.sidebarOverview, GuideTarget.sidebarPlanning,
-      GuideTarget.sidebarDebts, GuideTarget.sidebarSpending, GuideTarget.sidebarCalendar,
-      GuideTarget.sidebarCapital, GuideTarget.spendingSearch, GuideTarget.spendingList,
+      GuideTarget.sidebarDebts, GuideTarget.sidebarOperations, GuideTarget.sidebarCalendar,
+      GuideTarget.sidebarCapital, GuideTarget.operationsSearch, GuideTarget.operationsList,
       GuideTarget.planningAddPayment, GuideTarget.planningAddGoal,
       GuideTarget.planningFreeToSpend, GuideTarget.debtsAdd,
     ]).union(GuideTarget.outsideTheContent)

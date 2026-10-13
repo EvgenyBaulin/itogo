@@ -6,7 +6,11 @@ import XCTest
 
 @testable import Itogo
 
-/// The window of Transactions must settle after a double click.
+/// «Операции» of the main window must settle after a double click. The table was the window of
+/// Transactions until 1.9 — a split view of its own with the filters in a sidebar and the editor in
+/// an inspector — and every loop below happened there; the screen keeps the editor in a column of
+/// a fixed width in its own row now, but the gestures that looped are still played here, in the
+/// main window, beside its sidebar, its entry line and the selection bar in it.
 ///
 /// On 19.09 it did not: the owner double-clicked a row, the window hung for eight seconds and
 /// the app died on an `NSGenericException` — «has already had more Update Constraints in
@@ -36,6 +40,8 @@ final class TransactionsLayoutTests: XCTestCase {
   private var suiteName: String!
   private var defaults: UserDefaults!
   private var windows: [NSWindow] = []
+  private var screen: OperationsScreenState!
+  private var entryStyleBefore: EntryStyle?
   private var missingReadersBefore: Set<String> = []
   private var dataDirectoryBefore: String?
 
@@ -71,6 +77,9 @@ final class TransactionsLayoutTests: XCTestCase {
     // The columns of the table are a setting of the window; the owner's own must not move.
     suiteName = "itogo-layout-\(UUID().uuidString)"
     defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    // The editor beside the table belongs to the entry line; the form at the side edits itself.
+    entryStyleBefore = environment.entryStyle
+    environment.entryStyle = .line
     seed()
   }
 
@@ -81,6 +90,7 @@ final class TransactionsLayoutTests: XCTestCase {
     }
     windows = []
     defaults?.removePersistentDomain(forName: suiteName)
+    if let entryStyleBefore { environment?.entryStyle = entryStyleBefore }
     if let dataDirectoryBefore {
       setenv("ITOGO_DATA_DIR", dataDirectoryBefore, 1)
     } else {
@@ -145,14 +155,16 @@ final class TransactionsLayoutTests: XCTestCase {
     let deps = AppDependencies(environment: environment, store: store, compute: compute)
     let actions = OperationActions()
     self.actions = actions
+    let screen = OperationsScreenState(editing: editing)
+    self.screen = screen
+    // `measuresWindowWidth()` belongs to the scene in `ItogoApp`: the width the entry bar takes
+    // its column from is handed over directly.
     let root =
-      AppScenes.root(deps, window: .transactions, launches: false) { deps in
-        SecondaryWindow(
-          titleKey: "window.transactions", minWidth: TransactionsRootView.minimumWidth
-        ) {
-          TransactionsRootView(deps: deps, actions: actions, editing: editing)
-        }
+      AppScenes.root(deps, window: .main, launches: false) { deps in
+        MainWindow(
+          deps: deps, actions: actions, selection: .section(.operations), operations: screen)
       }
+      .environment(\.windowWidth, width)
       .defaultAppStorage(defaults)
     let controller = NSHostingController(rootView: root)
     controller.sceneBridgingOptions = [.toolbars]
@@ -183,9 +195,13 @@ final class TransactionsLayoutTests: XCTestCase {
     throw XCTSkip("no table, nothing to click")
   }
 
+  /// The table of «Операции»: of the tables of the window — the sidebar is one too — the one
+  /// with columns.
   private static func table(in window: NSWindow) -> NSTableView? {
     guard let root = window.contentView else { return nil }
-    return firstSubview(of: root)
+    var tables: [NSTableView] = []
+    allSubviews(of: root, into: &tables)
+    return tables.first { $0.tableColumns.count > 1 }
   }
 
   private static func firstSubview<V: NSView>(of view: NSView) -> V? {
@@ -468,9 +484,8 @@ final class TransactionsLayoutTests: XCTestCase {
       about: loopMessages, comparedWith: before, "after the app lost and regained activity")
   }
 
-  /// A small window — 820 pt, the narrowest that holds the filters at their usual width beside
-  /// the table: with the inspector open the sidebar, the table and the inspector all want
-  /// their minimum at once.
+  /// A small window — 820 pt: the screen has no room for the editor beside the table, and the
+  /// double click edits in the sheet; the window settles all the same.
   func testADoubleClickInTheSmallestWindowLeavesItSettled() throws {
     let window = makeWindow(width: 820, height: 480)
     try waitForTable(window)
@@ -483,14 +498,14 @@ final class TransactionsLayoutTests: XCTestCase {
 
     assertSettled(records, window, "after a double click at 820 pt")
     probe.assertQuiet(about: loopMessages, comparedWith: before, "after a double click at 820 pt")
+    XCTAssertEqual(actions.editing?.id, plain.id, "the edit sheet, with no room beside the table")
   }
 
-  /// At 820 pt the inspector has to fit without the window growing. Before this
-  /// the root asked for 1100 pt while the inspector was open, so the window grew — and AppKit
-  /// never shrinks a window back, so one double click left Transactions at least 1100 pt wide
-  /// for the rest of its life. On a screen that cannot give 1100 pt, SwiftUI folded the
-  /// inspector away again right after opening it.
-  func testTheInspectorFitsTheSmallestWindowWithoutWideningIt() throws {
+  /// At 820 pt the screen is narrower than the editor and a table beside it
+  /// (`OperationsScreen.widthForEditorColumn`): the operation opens in the edit sheet, the window
+  /// keeps its width and the sidebar its place. In the window of Transactions the inspector made
+  /// room by folding the filters away, or the window grew for good.
+  func testTheSmallestWindowEditsInTheSheetWithoutWideningIt() throws {
     let window = makeWindow(width: 820, height: 480)
     try waitForTable(window)
     settle(window, passes: 5, "before the click, 820 pt")
@@ -499,50 +514,16 @@ final class TransactionsLayoutTests: XCTestCase {
     let probe = LogProbe()
     let before = probe.counts(of: loopMessages)
     doubleClick(plain, "plain operation in a narrow window")
-    let records = settle(window, passes: 40, "with the inspector at 820 pt")
+    let records = settle(window, passes: 40, "with the sheet at 820 pt")
 
-    XCTAssertTrue(inspectorIsOpen(window), "the inspector folded away in the smallest window")
-    XCTAssertEqual(
-      window.frame.width, 820, accuracy: 1,
-      "the window grew to make room for the inspector and will never shrink back")
-    XCTAssertTrue(
-      sidebarIsCollapsed(window), "the sidebar kept its room and the window had to grow")
-    assertSettled(records, window, "with the inspector at 820 pt")
-    probe.assertQuiet(about: loopMessages, comparedWith: before, "with the inspector at 820 pt")
+    XCTAssertFalse(inspectorIsOpen(window), "the editor squeezed in beside the table")
+    XCTAssertNil(screen.editor)
+    XCTAssertEqual(actions.editing?.id, plain.id, "the edit sheet did not open")
+    XCTAssertEqual(window.frame.width, 820, accuracy: 1, "the window grew")
+    XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar gave way")
+    assertSettled(records, window, "with the sheet at 820 pt")
+    probe.assertQuiet(about: loopMessages, comparedWith: before, "with the sheet at 820 pt")
     XCTAssertEqual(AppDependencies.missingReaders, [])
-  }
-
-  /// The narrowest the window goes (`TransactionsRootView.minimumWidth`): the inspector opens
-  /// with a row selected — the bar and the inspector at once — and closes again, and the window
-  /// keeps its width through both, settling quietly.
-  func testTheInspectorOpensAndClosesInTheNarrowestWindowWithoutWideningIt() throws {
-    try TestEnvironment.requireSwiftUIAccessibility()
-    let width = TransactionsRootView.minimumWidth
-    let window = makeWindow(width: width, height: 480)
-    try waitForTable(window)
-    settle(window, passes: 5, "before the click, \(width) pt")
-    XCTAssertEqual(window.frame.width, width, accuracy: 1)
-
-    let probe = LogProbe()
-    let before = probe.counts(of: loopMessages)
-    actions.selection = [plain.id]
-    doubleClick(plain, "plain operation in the narrowest window")
-    let opened = settle(window, passes: 40, "with the inspector at \(width) pt")
-    XCTAssertTrue(inspectorIsOpen(window), "the inspector folded away in the narrowest window")
-    XCTAssertEqual(window.frame.width, width, accuracy: 1, "the window grew for the inspector")
-    assertSettled(opened, window, "with the inspector at \(width) pt")
-
-    let cancel = try XCTUnwrap(element(identified: "editor.cancel", in: window))
-    watched(30, "cancel at \(width) pt") {
-      _ = cancel.perform(NSSelectorFromString("accessibilityPerformPress"))
-      for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-    }
-    let closed = settle(window, passes: 40, "after cancel, \(width) pt")
-    XCTAssertFalse(inspectorIsOpen(window))
-    XCTAssertEqual(window.frame.width, width, accuracy: 1, "the window grew for the sidebar")
-    assertSettled(closed, window, "after cancel, \(width) pt")
-    probe.assertQuiet(
-      about: loopMessages, comparedWith: before, "the inspector in the narrowest window")
   }
 
   /// What a double click really is: the table selects the row **and** asks for the edit. The
@@ -607,7 +588,8 @@ final class TransactionsLayoutTests: XCTestCase {
       "after a double click that selected the row, in Russian")
   }
 
-  /// The same gesture where the sidebar has to give way at the very moment the bar slides in.
+  /// The same gesture in a window too narrow for the editor beside the table: the bar slides in
+  /// and the edit sheet comes down at the same moment.
   func testADoubleClickThatAlsoSelectsTheRowInANarrowWindowSettles() throws {
     let window = makeWindow(width: 900, height: 600)
     try waitForTable(window)
@@ -629,9 +611,9 @@ final class TransactionsLayoutTests: XCTestCase {
     probe.assertQuiet(
       about: loopMessages, comparedWith: before,
       "after a double click that selected the row, 900 pt")
-    // The sidebar folded away for the inspector: every column is a host of its own, and each
-    // must still have been handed the dependencies. The red badge of 23.09 stood on exactly
-    // this window, naming DayList, TransactionEditor and TransactionsTable.
+    // Every column and every sheet is a host of its own, and each must still have been handed
+    // the dependencies. The red badge of 23.09 stood on exactly this gesture, naming DayList,
+    // TransactionEditor and TransactionsTable.
     XCTAssertEqual(AppDependencies.missingReaders, [])
   }
 
@@ -666,12 +648,10 @@ final class TransactionsLayoutTests: XCTestCase {
     }
   }
 
-  /// The band between the two widths above, where AppKit meets the rule that the sidebar, not
-  /// the window, makes room for the inspector: the sidebar is folded away because the window
-  /// is under `widthWithInspector`, which frees room, which could let the sidebar back, which
-  /// takes the room again. 820 pt and 1120 pt are both far from that line; 1050 pt is just
-  /// under it, and the crash the owner hit on 21.09 — the same «Update Constraints in Window
-  /// passes» abort as 19.09 — was a window somewhere in this band.
+  /// 1050 pt: the band where the window of Transactions crashed on 21.09 — the same «Update
+  /// Constraints in Window passes» abort as 19.09 — when its sidebar and its inspector handed
+  /// the room to each other. The main window's sidebar never gives way now: the editor beside
+  /// the table takes its room from the table alone.
   func testAWindowJustUnderTheInspectorWidthDoesNotGrowOrLoop() throws {
     try TestEnvironment.requireScreen(width: 1_050)
     let window = makeWindow(width: 1_050, height: 720)
@@ -688,14 +668,13 @@ final class TransactionsLayoutTests: XCTestCase {
     XCTAssertEqual(
       window.frame.width, 1_050, accuracy: 1,
       "the window grew to make room for the inspector and will never shrink back")
-    XCTAssertTrue(sidebarIsCollapsed(window), "the sidebar kept its room at 1050 pt")
+    XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar gave way at 1050 pt")
     assertSettled(records, window, "with the inspector at 1050 pt")
     probe.assertQuiet(about: loopMessages, comparedWith: before, "with the inspector at 1050 pt")
   }
 
-  /// One operation after another in the same band: every switch replaces the whole inspector
-  /// (`.id(ObjectIdentifier(editor))`), so the column is rebuilt and reports its minimum
-  /// again. Five in a row is what would show the two rules handing the room to each other.
+  /// One operation after another in the same band: every switch replaces the whole editor
+  /// (`.id(editor.id)`), so the column is rebuilt. Five in a row is what would show the two rules handing the room to each other.
   func testOneOperationAfterAnotherInTheBandSettlesEveryTime() throws {
     try TestEnvironment.requireScreen(width: 1_050)
     let window = makeWindow(width: 1_050, height: 720)
@@ -716,8 +695,7 @@ final class TransactionsLayoutTests: XCTestCase {
     probe.assertQuiet(about: loopMessages, comparedWith: before, "after five operations at 1050 pt")
   }
 
-  /// The sidebar gives way only when it has to. In a window with room for all three columns
-  /// it stays where it is, and opening the inspector changes nothing about it.
+  /// The sidebar stays where it is, and opening the editor changes nothing about it.
   func testAWindowWithRoomForThreeColumnsKeepsItsSidebar() throws {
     try TestEnvironment.requireScreen(width: 1_120)
     let window = makeWindow()
@@ -733,8 +711,8 @@ final class TransactionsLayoutTests: XCTestCase {
     assertSettled(records, window, "with the inspector at 1120 pt")
   }
 
-  /// The window keeps its sidebar at 1120 pt, so the inspector gets its ideal and no more —
-  /// and everything in it has to be inside the column. On 24.09 it was not: the editor wanted
+  /// The editor gets its column and no more — and everything in it has to be inside the
+  /// column. On 24.09 it was not: the editor wanted
   /// about 400 pt, the column gave 360, and the column showed the middle of it — «mount»,
   /// «ategory», the buttons cut at the right edge (seen live in English, with a split open).
   func testTheEditorFitsTheInspectorBesideTheSidebar() throws {
@@ -774,31 +752,45 @@ final class TransactionsLayoutTests: XCTestCase {
     XCTAssertTrue(inspectorIsOpen(window), language)
     XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar gave way, \(language)")
     guard let column = inspectorColumn(window) else {
-      return XCTFail("no inspector column, \(language)")
+      return XCTFail("no editor column, \(language)")
     }
-    var controls: [NSControl] = []
-    Self.allSubviews(of: column, into: &controls)
-    XCTAssertFalse(controls.isEmpty, "the inspector shows no controls, \(language)")
+    XCTAssertFalse(
+      Self.controls(in: column, of: window).isEmpty, "the editor shows no controls, \(language)")
     XCTAssertEqual(
-      Self.controlsOutside(column), [],
-      "controls reach past the inspector column of \(Int(column.bounds.width)) pt, "
+      Self.controlsOutside(column, of: window), [],
+      "controls reach past the editor column of \(Int(column.width)) pt, "
         + "\(entry.transaction.note ?? "") \(language)")
   }
 
-  /// The controls of a column that reach past either of its edges, with where they are.
-  private static func controlsOutside(_ column: NSView) -> [String] {
+  /// The controls of the window that belong to the column: most of their height inside its
+  /// height, their middle inside its width. The entry line below, and the table and the sidebar
+  /// to the left, are not.
+  private static func controls(in column: CGRect, of window: NSWindow) -> [CGRect] {
+    guard let content = window.contentView else { return [] }
     var controls: [NSControl] = []
-    allSubviews(of: column, into: &controls)
-    return controls.compactMap { control -> String? in
-      let frame = control.convert(control.bounds, to: column)
-      guard frame.width > 0, frame.minX < -0.5 || frame.maxX > column.bounds.width + 0.5
+    allSubviews(of: content, into: &controls)
+    return controls.compactMap { control -> CGRect? in
+      let frame = control.convert(control.bounds, to: content)
+      let height = frame.intersection(
+        CGRect(x: frame.minX, y: column.minY, width: frame.width, height: column.height)
+      ).height
+      guard frame.width > 0, frame.height > 0, height > frame.height / 2,
+        frame.midX > column.minX
       else { return nil }
-      return "\(type(of: control)) \(Int(frame.minX))…\(Int(frame.maxX))"
+      return frame
     }
   }
 
-  /// The editor must fit the narrowest column the inspector can be, whatever scroll bars the Mac
-  /// shows. On 11.10 it did not: with «Show scroll bars: Automatically» and a mouse connected,
+  /// The controls of the column that reach past either of its edges, with where they are.
+  private static func controlsOutside(_ column: CGRect, of window: NSWindow) -> [String] {
+    controls(in: column, of: window).compactMap { frame -> String? in
+      guard frame.minX < column.minX - 0.5 || frame.maxX > column.maxX + 0.5 else { return nil }
+      return "\(Int(frame.minX))…\(Int(frame.maxX)) of \(Int(column.minX))…\(Int(column.maxX))"
+    }
+  }
+
+  /// The editor must fit its column, whatever scroll bars the Mac shows — and the column keeps its
+  /// own width, whatever the editor would like. On 11.10 it did not: with «Show scroll bars: Automatically» and a mouse connected,
   /// macOS gives legacy scroll bars, which take 17 pt from the content; the editor, whose kinds
   /// and «За кого» were segments wider than the column (390 and 356 pt in English, 524 and 370
   /// in Russian), then asked for 354 pt in English — a drag could no longer narrow it, and the
@@ -840,61 +832,53 @@ final class TransactionsLayoutTests: XCTestCase {
     let before = probe.counts(of: loopMessages)
     let records = settle(window, passes: 40, "with the inspector, \(what)")
     assertSettled(records, window, "with the inspector, \(what)")
-    XCTAssertTrue(inspectorIsOpen(window), "the inspector folded away, \(what)")
+    XCTAssertTrue(inspectorIsOpen(window), "the editor column is not there, \(what)")
     XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar gave way, \(what)")
     XCTAssertEqual(window.frame.width, 1120, accuracy: 1, "the window grew, \(what)")
     guard let column = inspectorColumn(window) else {
-      return XCTFail("no inspector column, \(what)")
+      return XCTFail("no editor column, \(what)")
     }
-    // What the content asks of the split, settled: never more than the column's own minimum.
-    XCTAssertLessThanOrEqual(
-      column.fittingSize.width, TransactionInspector.minimumWidth + 0.5,
-      "the editor asks for more than the narrowest inspector, \(what)")
-    XCTAssertEqual(Self.controlsOutside(column), [], "controls past the column, \(what)")
+    // The column is as wide as it was made, a divider aside: nothing the editor asks for
+    // reaches the layout of the window.
+    XCTAssertEqual(
+      column.width, TransactionInspector.idealWidth, accuracy: 2,
+      "the editor column changed its width, \(what)")
+    XCTAssertEqual(
+      Self.controlsOutside(column, of: window), [], "controls past the column, \(what)")
     probe.assertQuiet(about: loopMessages, comparedWith: before, what)
   }
 
-  /// The view of the inspector column, asked of AppKit.
-  private func inspectorColumn(_ window: NSWindow) -> NSView? {
-    guard let frame = window.contentView?.superview ?? window.contentView else { return nil }
-    var splits: [NSSplitView] = []
-    Self.allSubviews(of: frame, into: &splits)
-    for split in splits {
-      guard let controller = split.delegate as? NSSplitViewController else { continue }
-      if let item = controller.splitViewItems.first(where: {
-        $0.behavior == .inspector && !$0.isCollapsed
-      }) {
-        return item.viewController.view
-      }
-    }
-    return nil
+  /// The column of the editor beside the table, in the coordinates of the window's content: from
+  /// the right edge of the table's scroll view to the right edge of the window — with the entry
+  /// line, nothing else stands there. `nil` while the screen holds no editor.
+  private func inspectorColumn(_ window: NSWindow) -> CGRect? {
+    guard screen?.editor != nil, let table = Self.table(in: window),
+      let scroll = table.enclosingScrollView, let content = window.contentView
+    else { return nil }
+    let frame = scroll.convert(scroll.bounds, to: content)
+    let width = content.bounds.width - frame.maxX
+    guard width >= TransactionInspector.minimumWidth else { return nil }
+    return CGRect(x: frame.maxX, y: frame.minY, width: width, height: frame.height)
   }
 
-  /// Whether the column of filters is collapsed, asked of AppKit rather than of our state.
-  /// The filters keep the widths their column asks for, 230–340 pt: a modifier laid over the
-  /// column after its width once hid the request, and AppKit gave the column its own 140 pt
-  /// minimum and no maximum — and, with the inspector open, a column of nothing that looped.
-  func testTheFiltersKeepTheWidthsTheirColumnAsksFor() throws {
+  /// The filters are a popover and the editor a column of the screen's own row: the window's
+  /// split keeps its sidebar and its content and nothing more — no column of filters, no
+  /// inspector, nothing that reports a minimum to the split — with the editor open too.
+  func testTheScreenAddsNoColumnToTheSplitOfTheWindow() throws {
     try TestEnvironment.requireScreen(width: 1_120)
     let window = makeWindow()
     try waitForTable(window)
-    settle(window, passes: 5, "the filters' widths")
-    let sidebar = try XCTUnwrap(sidebarItem(window), "no sidebar column")
-    XCTAssertEqual(sidebar.minimumThickness, TransactionsRootView.sidebarMinWidth, accuracy: 1)
-    XCTAssertEqual(sidebar.maximumThickness, TransactionsRootView.sidebarMaxWidth, accuracy: 1)
-  }
-
-  private func sidebarItem(_ window: NSWindow) -> NSSplitViewItem? {
-    guard let root = window.contentView else { return nil }
+    doubleClick(plain, "plain")
+    settle(window, passes: 20, "with the editor open")
+    XCTAssertTrue(inspectorIsOpen(window))
+    guard let root = window.contentView else { return XCTFail("no content view") }
     var splits: [NSSplitView] = []
     Self.allSubviews(of: root, into: &splits)
-    for split in splits {
-      guard let controller = split.delegate as? NSSplitViewController else { continue }
-      if let item = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {
-        return item
-      }
-    }
-    return nil
+    let items = splits.compactMap { $0.delegate as? NSSplitViewController }
+      .flatMap(\.splitViewItems)
+    XCTAssertEqual(items.filter { $0.behavior == .sidebar }.count, 1, "one sidebar, the window's")
+    XCTAssertFalse(items.contains { $0.behavior == .inspector }, "an inspector column")
+    XCTAssertEqual(items.count, 2, "the sidebar and the content: \(items.map(\.behavior))")
   }
 
   private func sidebarIsCollapsed(_ window: NSWindow) -> Bool {
@@ -908,34 +892,6 @@ final class TransactionsLayoutTests: XCTestCase {
       }
     }
     return false
-  }
-
-  /// SwiftUI folds the inspector away and the edit in it is not saved. The window asks — once
-  /// — and the inspector does not come straight back up.
-  ///
-  /// It used to. The binding answered «no» to the fold-away: it armed the question but left
-  /// the editor in place, so the next read said the inspector was shown and SwiftUI put it
-  /// back. With the reason for folding still there that repeated, and if the other dialog of
-  /// this window was already up, one of the two was dropped in silence with its flag left set
-  /// to fire later.
-  func testAnInspectorFoldedAwayWithAnUnsavedEditAsksOnceAndStaysAway() throws {
-    let model = TransactionEditorModel(entry: plain, environment: environment)
-    model.draft.draft.note = "changed, not saved"
-    XCTAssertTrue(model.hasChanges, "the test did not manage to make an unsaved change")
-
-    let window = makeWindow(editing: model)
-    try waitForTable(window)
-    settle(window, passes: 10, "with the inspector open")
-    XCTAssertTrue(inspectorIsOpen(window), "the seeded editor did not reach the inspector")
-
-    foldTheInspectorAway(window)
-    let records = settle(window, passes: 30, "after the inspector was folded away")
-
-    XCTAssertNotNil(
-      window.attachedSheet, "the unsaved edit went away without a question being asked")
-    XCTAssertFalse(
-      inspectorIsOpen(window), "the inspector came back up behind the question it just raised")
-    assertSettled(records, window, "after the inspector was folded away")
   }
 
   /// The operation in the inspector is deleted elsewhere — ⌘Z of its creation in the main
@@ -1047,22 +1003,6 @@ final class TransactionsLayoutTests: XCTestCase {
     probe.assertQuiet(about: loopMessages, comparedWith: before, "the messages, \(language)")
   }
 
-  /// What SwiftUI does when it runs out of room, done by hand: the inspector column of the
-  /// split view is collapsed, and SwiftUI writes `false` into the binding that presents it.
-  private func foldTheInspectorAway(_ window: NSWindow) {
-    guard let root = window.contentView else { return XCTFail("no content view") }
-    var splits: [NSSplitView] = []
-    Self.allSubviews(of: root, into: &splits)
-    for split in splits {
-      guard let controller = split.delegate as? NSSplitViewController else { continue }
-      for item in controller.splitViewItems where item.behavior == .inspector {
-        item.isCollapsed = true
-        return
-      }
-    }
-    XCTFail("the inspector column was not found")
-  }
-
   /// The same operation, changed elsewhere: `followData` swaps the editor and the inspector
   /// subtree is rebuilt under a new `.id`.
   private func changedPlain() -> [TransactionEntry] {
@@ -1143,8 +1083,8 @@ final class TransactionsLayoutTests: XCTestCase {
   }
 
   /// The gesture of 05.10: an operation opened by a double click, its edit written, «Save»
-  /// pressed — the inspector closes, the sidebar comes back if it had stepped aside — and the
-  /// data read again a moment later. Every step must settle quietly.
+  /// pressed — the editor closes — and the data read again a moment later. Every step must
+  /// settle quietly.
   private func assertSavingSettles(
     width: CGFloat, height: CGFloat = 720, selecting: Bool, _ what: String,
     file: StaticString = #filePath, line: UInt = #line
@@ -1181,12 +1121,11 @@ final class TransactionsLayoutTests: XCTestCase {
     XCTAssertEqual(writes.first, 1, "the save wrote nothing, \(what)")
     XCTAssertFalse(inspectorIsOpen(window), "the inspector stayed open after the save, \(what)")
     assertSettled(saved, window, "after the save, \(what)", file: file, line: line)
-    // The sidebar coming back takes its room from the table, never from the window.
+    // The column going gives its room to the table, never to the window.
     XCTAssertEqual(
       window.frame.width, width, accuracy: 1, "the window changed its width, \(what)",
       file: file, line: line)
-    XCTAssertFalse(
-      sidebarIsCollapsed(window), "the sidebar did not come back after the save, \(what)")
+    XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar gave way, \(what)")
 
     // The database is read again a moment after any write, and the window refilters 150 ms
     // after the data changes.
@@ -1212,23 +1151,9 @@ final class TransactionsLayoutTests: XCTestCase {
     try assertSavingSettles(width: 1_120, selecting: false, "1120 pt, nothing selected")
   }
 
-  /// The sidebar was folded away for the inspector; the save closes the inspector and the
-  /// sidebar comes back in the same pass, with the bar standing at the bottom of the table.
-  func testSavingFromTheInspectorInANarrowWindowWithTheBarLeavesItSettled() throws {
-    try assertSavingSettles(width: 900, height: 600, selecting: true, "900 pt, a row selected")
-  }
-
-  func testSavingFromTheInspectorInANarrowWindowLeavesItSettled() throws {
-    try assertSavingSettles(width: 900, height: 600, selecting: false, "900 pt, nothing selected")
-  }
-
   func testSavingFromTheInspectorJustUnderTheInspectorWidthLeavesItSettled() throws {
     try TestEnvironment.requireScreen(width: 1_050)
     try assertSavingSettles(width: 1_050, selecting: true, "1050 pt, a row selected")
-  }
-
-  func testSavingFromTheInspectorInTheSmallestWindowLeavesItSettled() throws {
-    try assertSavingSettles(width: 820, height: 480, selecting: true, "820 pt, a row selected")
   }
 
   func testSavingFromTheInspectorInRussianLeavesTheWindowSettled() throws {
@@ -1237,74 +1162,42 @@ final class TransactionsLayoutTests: XCTestCase {
     try assertSavingSettles(width: 1_120, selecting: true, "1120 pt, a row selected, in Russian")
   }
 
-  /// The sidebar steps aside for the inspector in a narrow window and comes back when the
-  /// inspector goes — inside the window. AppKit shows a sidebar beside the rest only while the
-  /// window stays at least its minimum width without it; otherwise it widens the window by the
-  /// sidebar and never shrinks it back (900 → 1160).
-  func testClosingTheInspectorInANarrowWindowKeepsItsWidth() throws {
+  /// «Cancel» closes the editor: its column goes, the table takes the room back, and the window
+  /// and the sidebar stay as they were.
+  func testClosingTheEditorKeepsTheWindowAndTheSidebar() throws {
+    try TestEnvironment.requireScreen(width: 1_120)
     try TestEnvironment.requireSwiftUIAccessibility()
-    let window = makeWindow(width: 900, height: 600)
+    let window = makeWindow()
     try waitForTable(window)
-    settle(window, passes: 5, "before the click, 900 pt")
-    doubleClick(plain, "plain, 900 pt")
-    settle(window, passes: 20, "with the inspector open, 900 pt")
-    XCTAssertTrue(sidebarIsCollapsed(window), "the sidebar kept its room at 900 pt")
-
-    let cancel = try XCTUnwrap(element(identified: "editor.cancel", in: window))
-    watched(30, "cancel at 900 pt") {
-      _ = cancel.perform(NSSelectorFromString("accessibilityPerformPress"))
-      for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-    }
-    let records = settle(window, passes: 40, "after cancel, 900 pt")
-    assertSettled(records, window, "after cancel, 900 pt")
-    XCTAssertFalse(inspectorIsOpen(window))
-    XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar did not come back")
-    XCTAssertEqual(window.frame.width, 900, accuracy: 1, "the window grew")
-  }
-
-  /// A window too narrow to show the sidebar inside itself keeps it folded when the inspector
-  /// goes — showing it would make AppKit widen the window — and the sidebar comes back once the
-  /// window is widened enough to hold it.
-  func testClosingTheInspectorInAWindowTooNarrowForTheSidebarKeepsItFolded() throws {
-    try TestEnvironment.requireSwiftUIAccessibility()
-    let width = TransactionsRootView.minimumWidth + 100
-    let window = makeWindow(width: width, height: 600)
-    try waitForTable(window)
-    settle(window, passes: 5, "before the click, \(width) pt")
-    doubleClick(plain, "plain, \(width) pt")
-    settle(window, passes: 20, "with the inspector open, \(width) pt")
+    settle(window, passes: 5, "before the click")
+    doubleClick(plain, "plain")
+    settle(window, passes: 20, "with the editor open")
     XCTAssertTrue(inspectorIsOpen(window))
-    XCTAssertTrue(sidebarIsCollapsed(window), "the sidebar kept its room at \(width) pt")
 
     let cancel = try XCTUnwrap(element(identified: "editor.cancel", in: window))
-    watched(30, "cancel at \(width) pt") {
+    watched(30, "cancel") {
       _ = cancel.perform(NSSelectorFromString("accessibilityPerformPress"))
       for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
     }
-    let records = settle(window, passes: 40, "after cancel, \(width) pt")
-    assertSettled(records, window, "after cancel, \(width) pt")
+    let records = settle(window, passes: 40, "after cancel")
+    assertSettled(records, window, "after cancel")
     XCTAssertFalse(inspectorIsOpen(window))
-    XCTAssertEqual(window.frame.width, width, accuracy: 1, "the window grew")
-    XCTAssertTrue(sidebarIsCollapsed(window), "the sidebar came back with no room for it")
-
-    // The owner widens the window: now there is room, and the filters come back.
-    window.setContentSize(CGSize(width: 1_000, height: 600))
-    let widened = settle(window, passes: 40, "widened to 1000 pt")
-    assertSettled(widened, window, "widened to 1000 pt")
-    XCTAssertEqual(window.frame.width, 1_000, accuracy: 1, "the window did not keep its width")
-    XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar did not come back at 1000 pt")
+    XCTAssertNil(screen.editor)
+    XCTAssertFalse(sidebarIsCollapsed(window), "the sidebar gave way")
+    XCTAssertEqual(window.frame.width, 1_120, accuracy: 1, "the window changed its width")
   }
 
   /// «Save» in the question asked when another operation is opened writes without closing the
   /// inspector: the write lands, and the data that follows it, while the inspector is still
   /// there — `followData` hands it a fresh model of the saved operation.
   func testAWriteLandingWhileTheInspectorStaysOpenLeavesTheWindowSettled() throws {
+    try TestEnvironment.requireScreen(width: 1_120)
     try keepTheHistoryInTheDatabase()
-    let window = makeWindow(width: 900, height: 600)
+    let window = makeWindow(height: 600)
     try waitForTable(window)
-    settle(window, passes: 5, "before the click, 900 pt")
+    settle(window, passes: 5, "before the click")
     actions.selection = [plain.id]
-    doubleClick(plain, "plain, 900 pt")
+    doubleClick(plain, "plain")
     settle(window, passes: 20, "with the inspector and the bar open")
     XCTAssertTrue(inspectorIsOpen(window))
 
@@ -1344,11 +1237,12 @@ final class TransactionsLayoutTests: XCTestCase {
       draft.normalizeSinglePart()
       return try draft.materialize()
     }
-    let window = makeWindow(width: 900, height: 600)
+    try TestEnvironment.requireScreen(width: 1_120)
+    let window = makeWindow(height: 600)
     try waitForTable(window)
-    settle(window, passes: 5, "before the click, 900 pt")
+    settle(window, passes: 5, "before the click")
     try repository.insert(many)
-    doubleClick(plain, "plain, 900 pt")
+    doubleClick(plain, "plain")
     settle(window, passes: 20, "with the inspector open, nothing selected")
     XCTAssertTrue(inspectorIsOpen(window))
 
@@ -1463,68 +1357,6 @@ final class TransactionsLayoutTests: XCTestCase {
       about: loopMessages, comparedWith: before, "a selection beside the inspector it opened with")
   }
 
-  /// The owner can drag the inspector wider or narrower than its ideal; a row selected then
-  /// brings the bar in beside an inspector of that width.
-  func testASelectionBesideAnInspectorDraggedWiderLeavesTheWindowSettled() throws {
-    try assertSelectionBesideADraggedInspectorSettles(width: 418)
-  }
-
-  func testASelectionBesideAnInspectorDraggedNarrowerLeavesTheWindowSettled() throws {
-    try assertSelectionBesideADraggedInspectorSettles(width: 320)
-  }
-
-  private func assertSelectionBesideADraggedInspectorSettles(
-    width inspector: CGFloat, file: StaticString = #filePath, line: UInt = #line
-  ) throws {
-    try TestEnvironment.requireScreen(width: 1_120)
-    try TestEnvironment.requireUnlockedScreen()
-    let window = makeWindow()
-    try waitForTable(window)
-    settle(window, passes: 5, "before the click")
-    doubleClick(plain, "plain")
-    settle(window, passes: 20, "with the inspector open")
-    watched(30, "dragging the inspector to \(Int(inspector)) pt") {
-      dragTheInspector(window, to: inspector)
-    }
-    settle(window, passes: 20, "with the inspector dragged to \(Int(inspector)) pt")
-    // The column keeps to its content's minimum, so a drag below it stops there; what counts
-    // is that the inspector is no longer at its ideal width.
-    XCTAssertGreaterThan(
-      abs(
-        (inspectorColumn(window)?.frame.width ?? TransactionInspector.idealWidth)
-          - TransactionInspector.idealWidth), 10,
-      "the drag left the inspector at its ideal width", file: file, line: line)
-
-    let probe = LogProbe()
-    let before = probe.counts(of: loopMessages)
-    watched(30, "a selection beside an inspector of \(Int(inspector)) pt") {
-      actions.selection = [plain.id]
-      for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-    }
-    let records = settle(
-      window, passes: 60, "a selection beside an inspector of \(Int(inspector)) pt")
-    assertSettled(records, window, "a selection beside a dragged inspector", file: file, line: line)
-    probe.assertQuiet(
-      about: loopMessages, comparedWith: before, "a selection beside a dragged inspector")
-  }
-
-  /// The divider before the inspector moved the way a drag moves it.
-  private func dragTheInspector(_ window: NSWindow, to width: CGFloat) {
-    guard let root = window.contentView?.superview ?? window.contentView else { return }
-    var splits: [NSSplitView] = []
-    Self.allSubviews(of: root, into: &splits)
-    for split in splits {
-      guard let controller = split.delegate as? NSSplitViewController,
-        let index = controller.splitViewItems.firstIndex(where: { $0.behavior == .inspector }),
-        index > 0
-      else { continue }
-      split.setPosition(
-        split.bounds.width - width - split.dividerThickness, ofDividerAt: index - 1)
-      return
-    }
-    XCTFail("the inspector column was not found")
-  }
-
   // MARK: - Coming back to the app
   //
   // The loop of 19.09 started about twelve seconds after the last click, with nothing but
@@ -1607,19 +1439,9 @@ final class TransactionsLayoutTests: XCTestCase {
     XCTAssertTrue(inspectorIsOpen(window), "the inspector never opened")
   }
 
-  /// Whether the inspector column is there and not collapsed.
+  /// Whether the editor's column stands beside the table.
   private func inspectorIsOpen(_ window: NSWindow) -> Bool {
-    guard let frame = window.contentView?.superview ?? window.contentView else { return false }
-    var splits: [NSSplitView] = []
-    Self.allSubviews(of: frame, into: &splits)
-    for split in splits {
-      guard let controller = split.delegate as? NSSplitViewController else { continue }
-      if controller.splitViewItems.contains(where: { $0.behavior == .inspector && !$0.isCollapsed })
-      {
-        return true
-      }
-    }
-    return false
+    inspectorColumn(window) != nil
   }
 }
 

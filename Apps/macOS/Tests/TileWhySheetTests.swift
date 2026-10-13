@@ -134,7 +134,7 @@ final class TileWhySheetTests: XCTestCase {
       "why.sheet.equals", "why.sheet.plus", "why.sheet.minus",
     ]
     let destinations: [TileDestination] =
-      [.spending, .planning, .debts, .calendar, .capital, .allAccounts, .reconciliation]
+      [.operations, .planning, .debts, .calendar, .capital, .allAccounts, .reconciliation]
       + TileAnalyticsSection.allCases.map { .analytics($0) }
     keys += destinations.map(TileWhyNavigation.openKey)
     keys += MonthIncomeEstimate.Source.allCases.map { "why.income.source.\($0.rawValue)" }
@@ -217,11 +217,12 @@ final class TileWhySheetTests: XCTestCase {
       .balanceForecast: .sidebar(.allAccounts), .limits: .section(.planning),
       .upcoming: .section(.planning), .expectedIncome: .section(.planning),
       .owedToMe: .analytics(.others), .iOwe: .section(.debts), .event: .section(.planning),
-      .lastCount: .reconciliation, .lastRecord: .section(.spending),
-      .lastCountAndRecord: .section(.spending), .worthALook: .analytics(.anomalies),
+      .lastCount: .reconciliation, .lastRecord: .section(.operations),
+      .lastCountAndRecord: .section(.operations), .worthALook: .analytics(.anomalies),
       .freeMoney: .section(.planning), .currencyChart: nil,
       .spendingCalendar: .section(.calendar), .capital: .section(.capital),
-      .cushion: .section(.capital),
+      .cushion: .section(.capital), .installments: .section(.debts),
+      .selfEmployment: .section(.planning),
     ]
     XCTAssertEqual(Set(expected.keys), Set(OverviewTile.allCases))
     for (tile, target) in expected {

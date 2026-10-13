@@ -8,7 +8,7 @@ import XCTest
 
 /// The main window with the form at the side (`EntryStyle.form`): an operation selected in a list
 /// is edited in the form — «Правка операции», «Отмена», «Сохранить» — through the save of the
-/// edit sheet; and in «Траты» the arrows move the selection, the form following it.
+/// edit sheet; and in «Операции» the arrows move the selection, the form following it.
 @MainActor
 final class EntryFormEditingTests: XCTestCase {
   private var environment: AppEnvironment!
@@ -88,7 +88,7 @@ final class EntryFormEditingTests: XCTestCase {
   }
 
   private func mainWindow(
-    actions: OperationActions, on section: SidebarItem = .section(.spending),
+    actions: OperationActions, on section: SidebarItem = .section(.operations),
     style: EntryStyle = .form
   ) async throws -> NSWindow {
     environment.entryStyle = style
@@ -203,27 +203,27 @@ final class EntryFormEditingTests: XCTestCase {
     XCTAssertNil(EntryFormSelection.operation([UUID()], find: find), "a transfer, not an operation")
   }
 
-  // MARK: The arrows in «Траты»
+  // MARK: The arrows in «Операции»
 
   /// The rule of the arrows, without a window.
   func testTheArrowsStepThroughTheRowsInTheirOrder() {
     let rows = [UUID(), UUID(), UUID()]
-    XCTAssertEqual(SpendingArrows.next(from: [rows[0]], rows: rows, down: true), rows[1])
-    XCTAssertEqual(SpendingArrows.next(from: [rows[1]], rows: rows, down: false), rows[0])
-    XCTAssertEqual(SpendingArrows.next(from: [rows[2]], rows: rows, down: true), rows[2])
-    XCTAssertEqual(SpendingArrows.next(from: [], rows: rows, down: true), rows[0])
-    XCTAssertNil(SpendingArrows.next(from: [], rows: rows, down: false))
-    XCTAssertNil(SpendingArrows.next(from: [rows[0], rows[1]], rows: rows, down: true))
-    XCTAssertNil(SpendingArrows.next(from: [rows[0]], rows: [], down: true))
+    XCTAssertEqual(OperationsArrows.next(from: [rows[0]], rows: rows, down: true), rows[1])
+    XCTAssertEqual(OperationsArrows.next(from: [rows[1]], rows: rows, down: false), rows[0])
+    XCTAssertEqual(OperationsArrows.next(from: [rows[2]], rows: rows, down: true), rows[2])
+    XCTAssertEqual(OperationsArrows.next(from: [], rows: rows, down: true), rows[0])
+    XCTAssertNil(OperationsArrows.next(from: [], rows: rows, down: false))
+    XCTAssertNil(OperationsArrows.next(from: [rows[0], rows[1]], rows: rows, down: true))
+    XCTAssertNil(OperationsArrows.next(from: [rows[0]], rows: [], down: true))
   }
 
-  /// A row of «Траты» selected with the keyboard in the list: ↓ selects the next row, ↑ the one
+  /// A row of «Операции» selected with the keyboard in the table: ↓ selects the next row, ↑ the one
   /// before.
-  func testTheArrowsMoveTheSelectionInSpending() async throws {
+  func testTheArrowsMoveTheSelectionInOperations() async throws {
     try await arrowsMoveTheSelection(style: .form)
   }
 
-  func testTheArrowsMoveTheSelectionInSpendingUnderTheLine() async throws {
+  func testTheArrowsMoveTheSelectionInOperationsUnderTheLine() async throws {
     try await arrowsMoveTheSelection(style: .line)
   }
 
@@ -234,7 +234,8 @@ final class EntryFormEditingTests: XCTestCase {
     let actions = OperationActions()
     let window = try await mainWindow(actions: actions, style: .line)
     let table = try XCTUnwrap(
-      tables(in: window.contentView).first { $0.numberOfRows >= 3 }, "the list of «Траты»")
+      tables(in: window.contentView).first { $0.tableColumns.count > 1 && $0.numberOfRows >= 3 },
+      "the table of «Операции»")
     XCTAssertTrue(window.makeFirstResponder(table))
     actions.selection = [written[1].id]
     try await wait(1.5)
@@ -258,14 +259,16 @@ final class EntryFormEditingTests: XCTestCase {
     let actions = OperationActions()
     let window = try await mainWindow(actions: actions, style: style)
     let table = try XCTUnwrap(
-      tables(in: window.contentView).first { $0.numberOfRows >= 3 }, "the list of «Траты»")
+      tables(in: window.contentView).first { $0.tableColumns.count > 1 && $0.numberOfRows >= 3 },
+      "the table of «Операции»")
     XCTAssertTrue(window.makeFirstResponder(table))
-    let first = try XCTUnwrap(
-      (0..<table.numberOfRows).first {
-        table.delegate?.tableView?(table, shouldSelectRow: $0) ?? true && $0 > 1
-      })
-    table.selectRowIndexes([first], byExtendingSelection: false)
-    try await wait()
+    // The first row the table selects an operation on: the header of the day stands above it,
+    // and the table's delegate does not say which rows are headers.
+    for row in 0..<table.numberOfRows where actions.selection.isEmpty {
+      table.selectRowIndexes([row], byExtendingSelection: false)
+      try await wait()
+    }
+    XCTAssertEqual(actions.selection, [written[0].id], "the newest row is the first one")
     func arrow(_ code: UInt16, _ scalar: Int) {
       let characters = String(UnicodeScalar(UInt16(scalar))!)
       window.sendEvent(

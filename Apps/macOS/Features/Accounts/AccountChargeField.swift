@@ -45,7 +45,7 @@ struct AccountChargeField: View {
         } icon: {
           Image(systemName: "hourglass")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .help(t("entry.accountCharge.provisionalHelp"))
       }
@@ -56,7 +56,7 @@ struct AccountChargeField: View {
         } icon: {
           Image(systemName: "exclamationmark.triangle")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .accessibilityIdentifier("entry.accountCharge.check")
       }

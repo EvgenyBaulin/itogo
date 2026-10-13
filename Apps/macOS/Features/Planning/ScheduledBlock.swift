@@ -37,7 +37,7 @@ struct ScheduledBlock: View {
               environment.money.rounded(planning.subscriptionsMonthly),
               environment.money.rounded(planning.subscriptionsYearly))
           )
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
         }
         if statuses.isEmpty, hosted, kind == .bill {
@@ -64,6 +64,12 @@ struct ScheduledBlock: View {
             sheet: $sheet)
           Divider()
         }
+        if kind != .subscription {
+          NPDPaymentRows(
+            months: NPDPaymentRows.rows(
+              npd: planning.npd, categories: snapshot.dataset.categories, today: snapshot.today),
+            quarters: NPDPaymentRows.quarterRows(npd: planning.npd))
+        }
         PlanningShowAllButton(
           block: kind == .subscription ? .subscriptions : .payments, total: statuses.count,
           hidden: shown.hidden, expanded: $showsAll)
@@ -85,7 +91,7 @@ struct ScheduledBlock: View {
               }
               .buttonStyle(.link)
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
           }
         }
@@ -160,7 +166,7 @@ struct ScheduledRow: View {
           } icon: {
             Image(systemName: "exclamationmark.circle")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
         // The first due date nothing paid: an ordinary operation that matches a due date pays
@@ -332,7 +338,7 @@ struct ScheduledRow: View {
     ].compactMap { $0 }
     if !pieces.isEmpty {
       Text(verbatim: pieces.joined(separator: " · "))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .padding(.leading, 60)
     }
@@ -343,7 +349,7 @@ struct ScheduledRow: View {
       } icon: {
         Image(systemName: "creditcard")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .padding(.leading, 60)
     }
@@ -354,7 +360,7 @@ struct ScheduledRow: View {
       } icon: {
         Image(systemName: "archivebox")
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .padding(.leading, 60)
     }
@@ -386,7 +392,7 @@ struct ScheduledRow: View {
         Link(t("scheduled.cancelLink"), destination: link)
       }
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
     .padding(.leading, 60)
   }
@@ -409,7 +415,7 @@ private struct FundingLines: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 3) {
       Text(verbatim: environment.language("funding.title", table: "Planning"))
-        .font(.caption.weight(.semibold))
+        .appFont(.caption.weight(.semibold))
       ForEach(Self.byAccount(lines), id: \.account) { group in
         Text(
           verbatim: "\(name(group.account)) — "
@@ -422,7 +428,7 @@ private struct FundingLines: View {
         .monospacedDigit()
       }
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
   }
 
@@ -481,7 +487,7 @@ private struct MatchedDues: View {
             verbatim: environment.language.format(
               "scheduled.matchedMore", table: "Planning", dues.count - Self.shown)
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.tertiary)
         }
       }
@@ -517,7 +523,7 @@ private struct MatchedDues: View {
       .accessibilityLabel(Text(verbatim: "\(t("scheduled.notThis")): \(context)"))
     }
     .buttonStyle(.link)
-    .font(.caption)
+    .appFont(.caption)
   }
 
   private func text(due: DateOnly, entry: TransactionEntry?) -> String {
@@ -553,5 +559,133 @@ extension ScheduledPayment {
     }
     if text.contains("://") { return nil }
     return URL(string: "https://" + text).flatMap { $0.host?.isEmpty == false ? $0 : nil }
+  }
+}
+
+// MARK: - The tax of self-employment
+
+/// «Налог НПД за октябрь ≈ X до 28 ноября» and «Налог УСН за III квартал 2026 ≈ X до 28
+/// октября» with «Заплатить…»: lines worked out from the tax of self-employment, not scheduled
+/// payments — their money is already in the line «Налог самозанятого» of the free sum, so it is
+/// never held back twice. The tax on professional income by the month, a tax at another rate by
+/// the quarter (`TaxQuarter`): each one over and unpaid, then the one under way while it has a
+/// tax; only that one cannot be paid yet.
+struct NPDPaymentRows: View {
+  @Dependency(\.environment) private var environment
+  @Environment(\.dependencies) private var dependencies
+  let months: [NPDMonth]
+  var quarters: [TaxQuarter] = []
+  @State private var paying: PayingMonth?
+  @State private var payingQuarter: PayingQuarter?
+
+  var body: some View {
+    ForEach(quarters, id: \.paymentKey) { quarter in
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Image(systemName: quarter.state == .overdue ? "exclamationmark.circle" : "doc.text")
+          .accessibilityLabel(
+            Text(
+              verbatim: environment.language(
+                quarter.state == .overdue ? "planning.overdue" : "scheduled.npd.symbol",
+                table: "Planning")))
+        Text(verbatim: Self.text(quarter, environment))
+          .monospacedDigit()
+          .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 6)
+        if quarter.state != .accruing {
+          Button(environment.language("npd.pay.open", table: "Allocation")) {
+            payingQuarter = PayingQuarter(quarter: quarter)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .accessibilityIdentifier("scheduled.tax.pay")
+        }
+      }
+      .appFont(.callout)
+      .accessibilityIdentifier("scheduled.tax")
+      Divider()
+    }
+    .sheet(item: $payingQuarter) { paying in
+      NPDPaymentSheet(quarter: paying.quarter)
+        .handingOver(dependencies)
+    }
+    ForEach(months, id: \.month) { month in
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Image(systemName: month.state == .overdue ? "exclamationmark.circle" : "doc.text")
+          .accessibilityLabel(
+            Text(
+              verbatim: environment.language(
+                month.state == .overdue ? "planning.overdue" : "scheduled.npd.symbol",
+                table: "Planning")))
+        Text(verbatim: Self.text(month, environment))
+          .monospacedDigit()
+          .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 6)
+        if month.state != .accruing {
+          Button(environment.language("npd.pay.open", table: "Allocation")) {
+            paying = PayingMonth(month: month)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .accessibilityIdentifier("scheduled.npd.pay")
+        }
+      }
+      .appFont(.callout)
+      .accessibilityIdentifier("scheduled.npd")
+      Divider()
+    }
+    .sheet(item: $paying) { paying in
+      NPDPaymentSheet(month: paying.month)
+        .handingOver(dependencies)
+    }
+  }
+
+  /// «Налог НПД за октябрь ≈ 4,800 ₽ до 28 ноября»; the month under way «≈ … пока».
+  static func text(_ month: NPDMonth, _ environment: AppEnvironment) -> String {
+    environment.format(
+      month.state == .accruing ? "scheduled.npd.accruing" : "scheduled.npd",
+      table: "Planning", PlanningText.monthInSentence(month.month, environment),
+      environment.money.rounded(month.toPayE4), environment.dates.dayAndMonth(month.due))
+  }
+
+  /// «Налог УСН за III квартал 2026 ≈ 10,200 ₽ до 28 октября»; the quarter under way «≈ … пока».
+  static func text(_ quarter: TaxQuarter, _ environment: AppEnvironment) -> String {
+    environment.format(
+      quarter.state == .accruing ? "scheduled.tax.accruing" : "scheduled.tax",
+      table: "Planning", quarterName(quarter, environment),
+      environment.money.rounded(quarter.toPayE4), environment.dates.dayAndMonth(quarter.due))
+  }
+
+  /// «III квартал 2026», «Q3 2026».
+  static func quarterName(_ quarter: TaxQuarter, _ environment: AppEnvironment) -> String {
+    environment.format(
+      "scheduled.tax.quarter.\(quarter.quarter)", table: "Planning", String(quarter.year))
+  }
+
+  /// The quarters of a tax at another rate the block lists: over and unpaid with something to
+  /// pay, then the quarter under way while it has a tax. None while self-employment is off.
+  static func quarterRows(npd: NPDState?) -> [TaxQuarter] {
+    guard let npd else { return [] }
+    return npd.quarters.filter { quarter in
+      guard quarter.toPayE4.raw > 0 else { return false }
+      switch quarter.state {
+      case .due, .overdue, .accruing: return true
+      case .paid: return false
+      }
+    }
+  }
+
+  /// The months the block lists: over and unpaid with something to pay, then today's month
+  /// while it has a tax. None while self-employment is off. The tax of the other rates is not
+  /// in them: it is paid by the quarter (`quarterRows`).
+  static func rows(npd: NPDState?, categories: [CoreKit.Category], today: DateOnly) -> [NPDMonth] {
+    guard let npd else { return [] }
+    return npd.months.filter { month in
+      guard month.toPayE4.raw > 0 else { return false }
+      switch month.state {
+      case .due, .overdue: return true
+      case .accruing: return month.month == today.monthKey
+      case .carried, .paid: return false
+      }
+    }
   }
 }

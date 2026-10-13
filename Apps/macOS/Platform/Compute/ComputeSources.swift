@@ -37,9 +37,12 @@ struct ComputeSources: Sendable {
       loadData: { mark, today, now in
         let dataset = try await datasets.load(version: mark)
         // Rates for one unit, the nominal applied, both for today and by day.
-        let context = SnapshotContext(
+        var context = SnapshotContext(
           dataset: dataset, rates: RateTable(rates: try rates.allRates()), today: today,
           also: enabledCurrencies(settings), localeIdentifier: language())
+        // What this Mac remembers of the reminders of the debts, read at every load: a
+        // reminder put away disappears at the next read.
+        context.debtReminders = DebtReminderMarks.read(from: .standard)
         try Task.checkCancellation()
         return DataSnapshot.build(
           dataset: dataset, calendar: calendar, today: today, context: context,
@@ -337,5 +340,60 @@ final class LatestSnapshot: Sendable {
       guard let shown, shown.version > snapshot.version else { return snapshot }
       return shown
     }
+  }
+}
+
+extension DebtReminderMarks {
+  /// The reminders put away with «Готово» (`DebtReminder.id`), one key per line.
+  static let dismissedKey = "reminders.dismissed"
+  /// «Напоминать о кредитной истории»: on until the owner turns it off.
+  static let creditHistoryEnabledKey = "reminders.creditHistory.enabled"
+  /// The half of the year the credit history was last checked in, `YYYY-H1|H2`.
+  static let creditHistoryDoneKey = "reminders.creditHistory.done"
+
+  /// The key of `name` for the data the app runs on: a set of synthetic data keeps its own
+  /// marks, so «Готово» on a sample never puts away a reminder of the owner's data.
+  static func key(_ name: String, dataSet: String? = AppPaths.dataSet?.rawValue) -> String {
+    name + (dataSet.map { ".\($0)" } ?? "")
+  }
+
+  /// What `defaults` remembers. The switch of the credit history is a choice of this Mac, the
+  /// same for every set of data; the marks are kept per set.
+  static func read(
+    from defaults: UserDefaults, dataSet: String? = AppPaths.dataSet?.rawValue
+  )
+    -> DebtReminderMarks
+  {
+    var marks = DebtReminderMarks()
+    let dismissed = defaults.string(forKey: key(dismissedKey, dataSet: dataSet)) ?? ""
+    marks.dismissed = Set(
+      dismissed.split(whereSeparator: \.isNewline).map {
+        $0.trimmingCharacters(in: .whitespaces)
+      }.filter { !$0.isEmpty })
+    if defaults.object(forKey: creditHistoryEnabledKey) != nil {
+      marks.creditHistoryEnabled = defaults.bool(forKey: creditHistoryEnabledKey)
+    }
+    marks.creditHistoryDone = defaults.string(
+      forKey: key(creditHistoryDoneKey, dataSet: dataSet)
+    ).flatMap(HalfYear.init(iso:))
+    return marks
+  }
+
+  /// «Готово» of a reminder: its key is added to those put away.
+  static func dismiss(
+    _ id: String, in defaults: UserDefaults, dataSet: String? = AppPaths.dataSet?.rawValue
+  ) {
+    var marks = read(from: defaults, dataSet: dataSet)
+    marks.dismissed.insert(id)
+    defaults.set(
+      marks.dismissed.sorted().joined(separator: "\n"),
+      forKey: key(dismissedKey, dataSet: dataSet))
+  }
+
+  /// «Готово» of the credit history: checked in this half of the year.
+  static func creditHistoryDone(
+    _ half: HalfYear, in defaults: UserDefaults, dataSet: String? = AppPaths.dataSet?.rawValue
+  ) {
+    defaults.set(half.iso, forKey: key(creditHistoryDoneKey, dataSet: dataSet))
   }
 }

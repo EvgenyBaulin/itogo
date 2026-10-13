@@ -211,7 +211,8 @@ public struct TileSection: Hashable, Sendable {
 
 /// Where «Открыть …» of the breakdown goes.
 public enum TileDestination: Hashable, Sendable {
-  case spending
+  /// «Операции» of the sidebar: the table of every operation.
+  case operations
   case planning
   case debts
   case calendar
@@ -235,9 +236,11 @@ public enum TileDestination: Hashable, Sendable {
     case .balanceForecast: .allAccounts
     case .iOwe: .debts
     case .lastCount: .reconciliation
-    case .lastRecord, .lastCountAndRecord: .spending
+    case .lastRecord, .lastCountAndRecord: .operations
     case .spendingCalendar: .calendar
     case .capital, .cushion: .capital
+    case .installments: .debts
+    case .selfEmployment: .planning
     case .currencyChart: nil
     }
   }

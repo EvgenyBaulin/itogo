@@ -21,7 +21,7 @@ struct EntryFormColumn<Caption: View>: View {
     VStack(spacing: 0) {
       HStack(alignment: .firstTextBaseline) {
         Text(verbatim: environment.language("entry.form.title", table: "Entry"))
-          .font(.headline)
+          .appFont(.headline)
         Spacer(minLength: 8)
         Button(environment.language("entry.form.clear", table: "Entry"), action: clear)
           .buttonStyle(.borderless)

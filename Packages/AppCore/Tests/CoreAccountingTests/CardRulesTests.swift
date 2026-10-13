@@ -153,3 +153,61 @@ struct CardRulesTests {
     #expect(CardRules.cardAfterAccountChange(nil, to: id(1), cards: cards) == nil)
   }
 }
+
+/// The card a purchase on an account is made with unless it says otherwise.
+@Suite("The main card of an account")
+struct MainCardTests {
+  let account = PaymentMethod(id: id(1), name: "Сбер")
+  var cards: [PaymentCard] {
+    [
+      PaymentCard(id: id(11), accountId: id(1), name: "Мир"),
+      PaymentCard(id: id(12), accountId: id(1), name: "Visa"),
+      PaymentCard(id: id(13), accountId: id(1), name: "Старая", archived: true),
+      PaymentCard(id: id(21), accountId: id(2), name: "Чужая"),
+    ]
+  }
+
+  /// The main card while it is a live card of the account; else the one live card; else none.
+  @Test func theDefaultCard() {
+    var main = account
+    main.mainCardId = id(12)
+    #expect(CardRules.defaultCard(account: main, cards: cards) == id(12))
+    #expect(CardRules.defaultCard(account: account, cards: cards) == nil)
+    main.mainCardId = id(13)
+    #expect(CardRules.defaultCard(account: main, cards: cards) == nil)
+    main.mainCardId = id(21)
+    #expect(CardRules.defaultCard(account: main, cards: cards) == nil)
+    let single = cards.filter { $0.id != id(12) }
+    #expect(CardRules.defaultCard(account: account, cards: single) == id(11))
+  }
+
+  /// The order: the card the line named → «со счёта» → the card of the place → the main card.
+  @Test func theOrderOfTheChoice() {
+    var main = account
+    main.mainCardId = id(12)
+    func card(_ named: UUID?, _ without: Bool, _ place: UUID?) -> UUID? {
+      CardRules.operationCard(
+        named: named, withoutCard: without, placeCard: place, account: main, cards: cards)
+    }
+    #expect(card(id(11), true, id(12)) == id(11))
+    #expect(card(nil, true, id(11)) == nil)
+    #expect(card(nil, false, id(11)) == id(11))
+    #expect(card(nil, false, nil) == id(12))
+  }
+
+  /// The main card into the archive: the account loses it in the same write; merged away: the
+  /// kept card is main.
+  @Test func archivingAndMergingTheMainCard() throws {
+    var main = account
+    main.mainCardId = id(11)
+    #expect(CardRules.account(main, afterArchiving: id(11))?.mainCardId == nil)
+    #expect(CardRules.account(main, afterArchiving: id(12)) == nil)
+    let plan = try CardMerge.plan(
+      merging: id(11), into: id(12), cards: cards, rules: [], accounts: [main]
+    ).get()
+    #expect(CardMerge.account(main, after: plan)?.mainCardId == id(12))
+    #expect(CardRules.validMainCard(of: main, cards: cards) == id(11))
+    main.mainCardId = id(21)
+    #expect(CardRules.validMainCard(of: main, cards: cards) == nil)
+  }
+}

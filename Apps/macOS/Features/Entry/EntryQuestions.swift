@@ -34,3 +34,57 @@ struct AheadQuestion: Identifiable {
     plan == .payment ? "entry.ahead.planPayment" : "entry.ahead.planIncome"
   }
 }
+
+/// «Сверх платежа X — уменьшить срок, платёж или это платёж вперёд?»: asked before a payment of a
+/// loan above what its due asks for is written (`DebtPrepayment`). The answer given for the debt
+/// the last time comes first, «Это платёж вперёд» too.
+struct PrepayQuestion: Identifiable, Equatable {
+  let excess: AmountE4
+  let currency: CurrencyCode
+  let suggested: PrepayChoice
+  var id: String { "\(excess.raw)-\(suggested.rawValue)" }
+
+  @MainActor func title(_ environment: AppEnvironment) -> String {
+    environment.language.format(
+      "entry.prepay.title", table: "Entry", environment.money.exact(excess, currency: currency))
+  }
+
+  /// The three answers, the suggested one first.
+  var choices: [PrepayChoice] {
+    [suggested] + PrepayChoice.allCases.filter { $0 != suggested }
+  }
+
+  static func key(of choice: PrepayChoice) -> String {
+    switch choice {
+    case .term: "entry.prepay.term"
+    case .payment: "entry.prepay.payment"
+    case .forward: "entry.prepay.forward"
+    }
+  }
+}
+
+/// A refund of a thing bought in instalments, waiting for `InstalmentReturnSheet` to write it.
+struct InstalmentReturnRequest: Identifiable {
+  let refund: TransactionEntry
+  let debt: Debt
+  var id: UUID { refund.id }
+}
+
+/// What the line says under itself once an operation is written: an offer to allocate an income
+/// in «Заработок» (`Allocation.offers`), or — after «смз» with self-employment off and never
+/// offered — the one offer to count its tax.
+enum EntryAfterSaving {
+  @MainActor static func notice(
+    for entry: TransactionEntry, saidSelfEmployed: Bool, tree: CategoryTree,
+    selfEmployment: SelfEmploymentSettings, allocation: AllocationSettings,
+    money: MoneyFormatter
+  ) -> EntryLineMessage? {
+    guard entry.transaction.kind == .income else { return nil }
+    if saidSelfEmployed, !selfEmployment.enabled, !selfEmployment.offered {
+      return .offerSelfEmployment
+    }
+    guard Allocation.offers(entry: entry, tree: tree, settings: allocation) else { return nil }
+    return .allocate(
+      entry.id, money.rounded(entry.transaction.amountE4, currency: entry.transaction.currency))
+  }
+}

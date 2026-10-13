@@ -63,7 +63,7 @@ struct ComputedBlock<Value: Sendable, Content: View>: View {
     VStack(alignment: .leading, spacing: 8) {
       if let title {
         Text(verbatim: title)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .accessibilityAddTraits(.isHeader)
       }
@@ -111,7 +111,7 @@ struct ComputedBlock<Value: Sendable, Content: View>: View {
         }
         if let emptyReason {
           Text(verbatim: emptyReason)
-            .font(.caption)
+            .appFont(.caption)
             .fixedSize(horizontal: false, vertical: true)
         }
       }

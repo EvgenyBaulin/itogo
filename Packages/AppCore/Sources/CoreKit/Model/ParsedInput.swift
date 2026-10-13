@@ -203,6 +203,9 @@ public struct ParsedInput: Hashable, Sendable {
   public var transfer: TransferReading?
   /// «за машу», «пополам с машей», «угостил машу»: whom the expense was paid for, and how.
   public var payingFor: PayingForReading?
+  /// «со счёта», «from account»: the line asks for no card — the money leaves the account
+  /// itself, not its main card.
+  public var withoutCard = false
 
   public init(
     kind: TransactionKind = .expense,

@@ -40,7 +40,7 @@ struct BudgetChart: View {
           overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
         ) {
           Text(verbatim: bar.text)
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
             .fixedSize()
         }
@@ -56,7 +56,7 @@ struct BudgetChart: View {
             overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
           ) {
             Text(verbatim: budget.label)
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.primary)
               .fixedSize()
           }
@@ -69,7 +69,7 @@ struct BudgetChart: View {
         AxisValueLabel {
           if let id = value.as(String.self), let bar = byId[id] {
             Text(verbatim: bar.label)
-              .font(bar.isMain ? .callout : .caption)
+              .appFont(bar.isMain ? .callout : .caption)
               .foregroundStyle(bar.isMain ? .primary : .secondary)
           }
         }
@@ -80,7 +80,7 @@ struct BudgetChart: View {
         AxisGridLine()
         AxisValueLabel {
           Text(verbatim: ChartAxis.money(value, money))
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
         }
       }
     }

@@ -39,7 +39,7 @@ struct LimitsCard: View {
               } icon: {
                 Image(systemName: PlanningText.statusSymbol(.ok))
               }
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.secondary)
             } else {
               // Some of the ones not shown are running out too: said as a count, with the way
@@ -50,7 +50,7 @@ struct LimitsCard: View {
                 action: openPlanning
               )
               .buttonStyle(.link)
-              .font(.caption)
+              .appFont(.caption)
             }
           }
         }
@@ -112,7 +112,7 @@ struct LimitStatusLine: View {
       }
       .fixedSize()
     }
-    .font(.callout)
+    .appFont(.callout)
     // Read as one line, unless there is a button in it to reach.
     .accessibilityElement(children: editing == nil ? .combine : .contain)
   }
@@ -142,7 +142,7 @@ private struct LimitAmountField: View {
         }
         .labelsHidden()
         .textFieldStyle(.roundedBorder)
-        .font(.callout.monospacedDigit())
+        .appFont(.callout.monospacedDigit())
         .frame(width: 104)
         .focused($focused)
         .accessibilityIdentifier("limits.amount.field")

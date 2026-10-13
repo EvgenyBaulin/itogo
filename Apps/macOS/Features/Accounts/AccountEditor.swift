@@ -25,6 +25,11 @@ struct AccountDraft: Equatable {
   /// «Деньги подушки безопасности»: the money of the account, every currency of it, is the
   /// owner's safety cushion.
   var cushion = false
+  /// «Кредитная карта»: the terms of a credit card, as typed.
+  var credit = CreditDraft(nil)
+  /// «Основная карта»: the card a purchase on the account is made with unless it says
+  /// otherwise; `nil` — none chosen.
+  var mainCardId: UUID?
 
   /// The fields of an account there is.
   init(_ account: PaymentMethod) {
@@ -38,6 +43,8 @@ struct AccountDraft: Equatable {
     aliases = account.aliases
     interest = InterestDraft(account.interest)
     cushion = account.cushion
+    credit = CreditDraft(account.credit)
+    mainCardId = account.mainCardId
   }
 
   /// A new account: a bank account in the default currency, in no group, under a bank — `bank`
@@ -68,6 +75,7 @@ struct AccountDraft: Equatable {
     account.isDefault = isMain
     account.aliases = aliases
     account.cushion = cushion
+    account.mainCardId = mainCardId
     return account
   }
 
@@ -145,6 +153,8 @@ struct AccountEditor: View {
   /// Every account, for «Куда» of the interest.
   @State private var accounts: [PaymentMethod] = []
   @State private var enabled: [CurrencyCode] = []
+  /// The live cards of the account, for «Основная карта».
+  @State private var cards: [PaymentCard] = []
   @State private var refusal: AccountRefusal?
   @State private var failed = false
 
@@ -167,7 +177,7 @@ struct AccountEditor: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t(previous == nil ? "account.editor.newTitle" : "account.editor.title"))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         NameField(
           title: t("account.editor.name"), text: $draft.name, identifier: "account.editor.name")
@@ -197,6 +207,11 @@ struct AccountEditor: View {
           Text(verbatim: t(wasMain ? "account.editor.mainStays" : "account.editor.mainHint"))
             .foregroundStyle(.secondary)
         }
+        if !cards.isEmpty {
+          AccountMainCardPicker(selection: $draft.mainCardId, cards: cards)
+        }
+        AccountCreditSection(
+          draft: $draft.credit, currency: draft.currencies.first ?? .rub)
         AccountInterestSection(draft: $draft.interest, payoutChoices: payoutChoices)
         Section {
           Toggle(isOn: $draft.cushion) {
@@ -242,6 +257,11 @@ struct AccountEditor: View {
       banks = actions.banks
       accounts = actions.all
       enabled = actions.enabledCurrencies
+      cards = CardRules.ordered(
+        actions.cards.filter { !$0.archived }, of: draft.id, locale: environment.language.locale)
+      if draft.mainCardId != nil, !cards.contains(where: { $0.id == draft.mainCardId }) {
+        draft.mainCardId = nil
+      }
       books = await actions.books()
       // Without the books nothing can be checked or saved: said, not a greyed button alone.
       if books == nil { failed = true }
@@ -302,7 +322,7 @@ struct AccountEditor: View {
               // Empty means not counted — no starting point —, which is not a zero balance.
               Text(verbatim: t("account.editor.notCounted"))
             }
-            .font(.body.monospacedDigit())
+            .appFont(.body.monospacedDigit())
             .multilineTextAlignment(.trailing)
             .frame(width: 140)
             .onSubmit { draft.settleOpening(currency) }
@@ -316,7 +336,7 @@ struct AccountEditor: View {
       // A balance may be below zero: a credit card owes the bank.
       if draft.currencies.contains(where: countsOpening) {
         Text(verbatim: t("account.balance.creditHint"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -345,12 +365,12 @@ struct AccountEditor: View {
     let unknown = locked && books?.isUnknown(key(currency)) == true
     return HStack(spacing: 8) {
       Text(verbatim: currency.code)
-        .font(.body.monospaced())
+        .appFont(.body.monospaced())
       Text(verbatim: environment.money.symbol(for: currency))
         .foregroundStyle(.secondary)
       if isMain {
         Text(verbatim: t("account.editor.mainCurrency"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       Spacer()
@@ -365,7 +385,7 @@ struct AccountEditor: View {
         } icon: {
           Image(systemName: "lock")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Menu {
@@ -449,6 +469,12 @@ struct AccountEditor: View {
     case .success(let terms): account.interest = terms
     case .failure(let issue):
       refusal = .interest(issue)
+      return
+    }
+    switch draft.credit.terms() {
+    case .success(let terms): account.credit = terms
+    case .failure(let issue):
+      refusal = .credit(issue)
       return
     }
     switch actions.save(

@@ -729,12 +729,18 @@ struct AdviceTests: SavingsFixtures {
       ledger: ledger, book: ledger.dataset.planning, today: today, rubPerUnit: usdRate)
   }
 
-  /// Payments 10 000 + 100 $ × 90 + 1 900 + 1 500 = 22 400 against 100 000 of income: 22.4 %.
-  /// Balances 120 000 + 90 000 + 100 000 + 100 000 + 5 000 = 415 000; E has no payment.
+  /// Payments of the month 10 000 + 100 $ × 90 + 1 900 + 1 500 = 22 400 against the median
+  /// 100 000 of «Заработок» of the six months before: 22.4 %. Balances 120 000 + 90 000 +
+  /// 100 000 + 100 000 + 5 000 = 415 000; E has no payment.
   @Test func debtLoadIsPaymentsOverIncome() {
-    let data = debtBook()
+    var data = debtBook()
+    for month in ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"] {
+      data.add(.income, "\(month)-10", [AdvicePart(amount: "100000", category: data.salary)])
+    }
+    let salary = data.salary
     let items = AdviceRules.debtLoad(
-      data.context(today), debts: overview(data), income: rub("100000"), rubPerUnit: usdRate)
+      data.context(today), debts: overview(data), accounts: .empty, rubPerUnit: usdRate,
+      earnings: { $0 == salary })
     #expect(items.count == 1)
     #expect(
       items[0].terms == [
@@ -749,12 +755,13 @@ struct AdviceTests: SavingsFixtures {
   @Test func debtLoadWithoutIncomeOrWithoutDebts() {
     let data = debtBook()
     let items = AdviceRules.debtLoad(
-      data.context(today), debts: overview(data), income: nil, rubPerUnit: usdRate)
+      data.context(today), debts: overview(data), accounts: .empty, rubPerUnit: usdRate,
+      earnings: { _ in true })
     #expect(items.map(\.status) == [.notEnoughData(reasonKey: "advice.reason.noIncome")])
     let none = AdviceData()
     #expect(
       AdviceRules.debtLoad(
-        none.context(today), debts: overview(none), income: rub("100000"), rubPerUnit: [:]
+        none.context(today), debts: overview(none), accounts: .empty, rubPerUnit: [:]
       ).isEmpty)
   }
 

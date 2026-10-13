@@ -35,6 +35,12 @@ public final class AppEnvironment {
   public private(set) var references: ReferenceRepository?
   public private(set) var settings: SettingsRepository?
   public private(set) var rates: RateRepository?
+  /// The custom currencies and their rates typed by hand; every write of them is a change of
+  /// the planning the caller applies through the store, one step of ⌘Z.
+  public private(set) var currencies: CurrencyRepository?
+  /// Names, symbols and digits of the custom currencies, read at every open; a screen that
+  /// changes them reads them again (`refreshCurrencyCatalog()`). `money` writes with it.
+  public private(set) var currencyCatalog = CurrencyCatalog.empty
   /// Scheduled payments, limits, goals, expectations, reconciliations and debt journals.
   public private(set) var planning: PlanningRepository?
   /// «Это нормально» on an anomaly.
@@ -245,7 +251,9 @@ public final class AppEnvironment {
   var lock: PrivacyLock
 
   public var money: MoneyFormatter {
-    MoneyFormatter(locale: language.locale, hidesAmounts: amounts.hidesAmounts)
+    MoneyFormatter(
+      locale: language.locale, hidesAmounts: amounts.hidesAmounts,
+      currencyStyle: theme.currencyStyle, catalog: currencyCatalog)
   }
   public var dates: DateFormatting { DateFormatting(locale: language.locale, calendar: calendar) }
 
@@ -801,6 +809,8 @@ public final class AppEnvironment {
     references = nil
     settings = nil
     rates = nil
+    currencies = nil
+    currencyCatalog = .empty
     planning = nil
     anomalies = nil
     accounts = nil
@@ -871,6 +881,7 @@ public final class AppEnvironment {
     self.references = ReferenceRepository(writer: stack.writer)
     self.settings = SettingsRepository(writer: stack.writer)
     self.rates = RateRepository(writer: stack.writer)
+    self.currencies = CurrencyRepository(writer: stack.writer)
     self.planning = PlanningRepository(writer: stack.writer, liveCounts: liveCounts)
     self.anomalies = AnomalyRepository(writer: stack.writer)
     self.accounts = AccountRepository(writer: stack.writer)
@@ -907,6 +918,7 @@ public final class AppEnvironment {
     ensureMainAccount()
     ensureBanks()
     refreshAccountSettings()
+    refreshCurrencyCatalog()
     dropFormulasThatNoLongerAddUp()
     chooseCashbackCategoryIfMissing()
     rolloverYearlyEvents()
@@ -977,6 +989,11 @@ public final class AppEnvironment {
 
   /// The default currency and the state of the setup of the accounts, read from the database
   /// again: at every open, and by a screen that has just changed one of them.
+  /// Reads the custom currencies again; nothing is kept when they cannot be read.
+  public func refreshCurrencyCatalog() {
+    currencyCatalog = (try? currencies?.catalog()) ?? .empty
+  }
+
   public func refreshAccountSettings() {
     guard let settings else { return }
     defaultCurrency = (try? settings.defaultCurrency()) ?? .rub

@@ -21,7 +21,7 @@ struct EntryFormEditor: View {
     VStack(spacing: 0) {
       HStack(alignment: .firstTextBaseline) {
         Text(verbatim: environment.language("entry.form.editTitle", table: "Entry"))
-          .font(.headline)
+          .appFont(.headline)
           .accessibilityIdentifier("entry.form.editTitle")
         Spacer(minLength: 8)
       }
@@ -43,7 +43,7 @@ struct EntryFormEditor: View {
             verbatim: environment.language(
               errorKey, table: TransactionEditorModel.table(ofErrorKey: errorKey))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)

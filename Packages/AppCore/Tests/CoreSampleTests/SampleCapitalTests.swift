@@ -14,8 +14,12 @@ import Testing
 struct SampleCapitalTests {
   static let seed = SampleFeatureLayersTests.seed
 
+  /// The layers through the capital, without the ones written after it.
   static func layered(language: String = "en") -> SampleDataSet {
-    SampleFeatureLayersTests.layered(language: language)
+    SampleFeatureLayersTests.history(language: language)
+      .withAccounts(seed: seed, calendar: .moscow, language: language)
+      .withLayersThroughTheCapital(
+        seed: seed, calendar: .moscow, language: language, now: nil, demo: false)
   }
 
   static func earlier(language: String = "en") -> SampleDataSet {

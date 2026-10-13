@@ -44,7 +44,7 @@ struct ColumnChart: View {
           .annotation(position: column.value < 0 ? .bottom : .top, spacing: 2) {
             if direct {
               Text(verbatim: column.valueText)
-                .font(.caption2.monospacedDigit())
+                .appFont(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .fixedSize()
             }
@@ -58,7 +58,7 @@ struct ColumnChart: View {
           .foregroundStyle(.secondary)
           .annotation(position: .top, alignment: .trailing, spacing: 2) {
             Text(verbatim: average.label)
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
           }
           .accessibilityLabel(Text(verbatim: average.label))
@@ -81,7 +81,7 @@ struct ColumnChart: View {
         AxisValueLabel {
           if let id = value.as(String.self), let text = xLabels?[id] ?? byId[id]?.axisLabel {
             Text(verbatim: text)
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
           }
         }
       }
@@ -91,7 +91,7 @@ struct ColumnChart: View {
         AxisGridLine()
         AxisValueLabel {
           Text(verbatim: ChartAxis.money(value, money))
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
         }
       }
     }
@@ -163,7 +163,7 @@ struct PairedColumnChart: View {
           AxisValueLabel {
             if let id = value.as(String.self), let pair = byId[id] {
               Text(verbatim: pair.axisLabel)
-                .font(.caption)
+                .appFont(.caption)
             }
           }
         }
@@ -173,7 +173,7 @@ struct PairedColumnChart: View {
           AxisGridLine()
           AxisValueLabel {
             Text(verbatim: ChartAxis.money(value, money))
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
           }
         }
       }
@@ -192,7 +192,7 @@ struct PairedColumnChart: View {
       .annotation(position: value < 0 ? .bottom : .top, spacing: 2) {
         if direct {
           Text(verbatim: text)
-            .font(.caption2.monospacedDigit())
+            .appFont(.caption2.monospacedDigit())
             .foregroundStyle(.secondary)
             .fixedSize()
         }

@@ -5,11 +5,16 @@ import SwiftUI
 /// narrow window —, in blocks, every row with its share of its column. A row that adds nothing
 /// says why in words and a symbol: «Не сверен», «Нет курса», «Нет оценки». A click on a row
 /// opens what it is: the account's screen, the debt in «Долги», the editor of the asset.
+/// Every block is folded into one row — its name, share and total, with a chevron — until the
+/// owner opens it; what is open is kept on this Mac (`CapitalExpansion`).
 struct CapitalBreakdownSection: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let model: CapitalViewModel
   let open: (CapitalLine.Source) -> Void
+  @State private var expansion = CapitalExpansion()
+  @State private var restored = false
 
   var body: some View {
     ComputedBlock(
@@ -36,6 +41,11 @@ struct CapitalBreakdownSection: View {
         }
       }
     }
+    .onAppear {
+      guard !restored else { return }
+      restored = true
+      expansion = CapitalExpansion.stored()
+    }
   }
 
   @ViewBuilder
@@ -49,20 +59,40 @@ struct CapitalBreakdownSection: View {
       } icon: {
         Image(systemName: Self.issueSymbol(warning.issue))
       }
-      .font(.callout)
+      .appFont(.callout)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
     }
     ForEach(model.countedTwice, id: \.self) { name in
-      Label {
-        Text(verbatim: CapitalText.format("capital.countedTwice", environment, name))
-      } icon: {
-        Image(systemName: "exclamationmark.triangle")
+      HStack(alignment: .firstTextBaseline) {
+        Label {
+          Text(verbatim: CapitalText.format("capital.countedTwice", environment, name))
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+        }
+        .appFont(.callout)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        // «Оставить только счёт» lives on the card of the debt: the button opens it there.
+        if let debt = Self.debt(named: name, in: model) {
+          Button(environment.language("keepOnlyAccount.action", table: "Debts")) {
+            open(.debt(debt))
+          }
+          .controlSize(.small)
+          .accessibilityIdentifier("capital.keepOnlyAccount")
+        }
       }
-      .font(.callout)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
     }
+  }
+
+  /// The debt of «Что должен» called `name`.
+  static func debt(named name: String, in model: CapitalViewModel) -> UUID? {
+    for group in model.oweGroups {
+      for row in group.rows where NameKey.fold(row.line.name) == NameKey.fold(name) {
+        if case .debt(let id) = row.line.source { return id }
+      }
+    }
+    return nil
   }
 
   private func column(
@@ -71,41 +101,99 @@ struct CapitalBreakdownSection: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline) {
         Text(verbatim: CapitalText.t(titleKey, environment))
-          .font(.headline)
+          .appFont(.headline)
         Spacer(minLength: 8)
         Text(verbatim: environment.money.rounded(total))
-          .font(.headline.monospacedDigit())
+          .appFont(.headline.monospacedDigit())
       }
       .accessibilityElement(children: .combine)
       .accessibilityAddTraits(.isHeader)
       if groups.isEmpty {
         Text(verbatim: CapitalText.t("capital.nothing", environment))
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
       ForEach(groups) { group in
+        let isOpen = expansion.isOpen(group.id)
         VStack(alignment: .leading, spacing: 4) {
-          HStack(alignment: .firstTextBaseline) {
-            Text(verbatim: title(of: group))
-              .font(.subheadline.weight(.semibold))
-            Spacer(minLength: 8)
-            Text(verbatim: environment.money.rounded(group.totalRub))
-              .font(.subheadline.monospacedDigit())
-              .foregroundStyle(.secondary)
-          }
-          .accessibilityElement(children: .combine)
-          ForEach(group.rows) { row in
-            Button {
-              open(row.line.source)
-            } label: {
-              rowView(row)
+          groupRow(group, isOpen: isOpen)
+          if isOpen {
+            ForEach(group.rows) { row in
+              Button {
+                open(row.line.source)
+              } label: {
+                rowView(row)
+              }
+              .buttonStyle(.plain)
+              .padding(.leading, 20)
+              .accessibilityIdentifier("capital.row.\(row.id)")
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("capital.row.\(row.id)")
           }
         }
       }
     }
+  }
+
+  /// The folded row of a block: «▸ Счета в сводке  31 %  1,234,567 ₽». A button: a click opens
+  /// or folds the block; VoiceOver hears the name, the total and the share, whether it is open,
+  /// and what a press does.
+  private func groupRow(_ group: CapitalViewModel.Group, isOpen: Bool) -> some View {
+    let name = title(of: group)
+    let total = environment.money.rounded(group.totalRub)
+    let share = group.shareBp.map { environment.money.percent(basisPoints: $0) }
+    return Button {
+      toggle(group.id)
+    } label: {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Image(systemName: "chevron.right")
+          .appFont(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .rotationEffect(.degrees(isOpen ? 90 : 0))
+          .frame(width: 12)
+        Text(verbatim: name)
+          .appFont(.subheadline.weight(.semibold))
+          .lineLimit(1)
+        Spacer(minLength: 8)
+        if let share {
+          Text(verbatim: share)
+            .appFont(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        Text(verbatim: total)
+          .appFont(.subheadline.monospacedDigit())
+      }
+      .padding(.vertical, 2)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(
+      Text(verbatim: ([name, total] + [share].compactMap { $0 }).joined(separator: ", "))
+    )
+    .accessibilityValue(Text(verbatim: CapitalText.t(Self.stateKey(isOpen: isOpen), environment)))
+    .accessibilityHint(Text(verbatim: CapitalText.t(Self.actionKey(isOpen: isOpen), environment)))
+    .help(CapitalText.t(Self.actionKey(isOpen: isOpen), environment))
+    .accessibilityIdentifier("capital.group.\(group.id)")
+  }
+
+  /// What VoiceOver says of a block: «свёрнуто» or «развёрнуто».
+  static func stateKey(isOpen: Bool) -> String {
+    isOpen ? "capital.group.expanded" : "capital.group.collapsed"
+  }
+
+  /// What a press on a block does: «Развернуть» or «Свернуть».
+  static func actionKey(isOpen: Bool) -> String {
+    isOpen ? "capital.group.collapse" : "capital.group.expand"
+  }
+
+  private func toggle(_ id: String) {
+    var next = expansion
+    next.toggle(id)
+    if reduceMotion {
+      expansion = next
+    } else {
+      withAnimation(.snappy(duration: 0.2)) { expansion = next }
+    }
+    next.store()
   }
 
   private func rowView(_ row: CapitalViewModel.Row) -> some View {
@@ -120,13 +208,13 @@ struct CapitalBreakdownSection: View {
           } icon: {
             Image(systemName: Self.issueSymbol(issue))
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
         Spacer(minLength: 8)
         if let share = row.shareBp {
           Text(verbatim: environment.money.percent(basisPoints: share))
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
         Text(verbatim: amountText(line))
@@ -137,7 +225,7 @@ struct CapitalBreakdownSection: View {
           verbatim: CapitalText.format(
             "capital.interest", environment, environment.money.rounded(interest))
         )
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
       }
       if let accrued = line.accruedNotCountedRub, !accrued.isZero {
@@ -145,7 +233,7 @@ struct CapitalBreakdownSection: View {
           verbatim: CapitalText.format(
             "capital.accrued", environment, environment.money.rounded(accrued))
         )
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
       }
     }

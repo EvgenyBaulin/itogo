@@ -39,7 +39,7 @@ struct MigrationDryRunPathTests {
   /// Every line the tool may print, each of its own shape.
   static var allowedLine: Regex<AnyRegexOutput> {
     try! Regex(
-      #"^(migration dry run on a copy; the original was not opened|schema: \d+ -> \d+ \(applied \d+\)|tables, rows before -> after:|  [a-z_]+ +(\d+|-) -> (\d+|-)(   differ)?|data step: (none|([a-zA-Z]+=\d+ ?)+)|accounts after: operations without an account \d+, live main \d+(   differ)?|accounts without a bank after: \d+(   differ)?|sums:|  [a-z ]+: (equal|differ)|month totals by kind: (equal|differ) \(\d+ rows\)|foreign_key_check: \d+ before, \d+ after|operations on an account that is not there: \d+ before, \d+ after|loads: (ok|failed)|result: (equal|differ)|migration: failed, stopped at [0-9a-z_?]+ \((SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)\)|migration dry run: the (file could not be copied|copy could not be read): (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|after the update: the copy could not be read, (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|hint: (macOS privacy protection kept this program out of another app's data\. .+|the file's permissions do not let this user read it\.))$"#
+      #"^(migration dry run on a copy; the original was not opened|schema: \d+ -> \d+ \(applied \d+\)|tables, rows before -> after:|  [a-z_]+ +(\d+|-) -> (\d+|-)(   differ)?|data step: (none|([a-zA-Z]+=\d+ ?)+)|accounts after: operations without an account \d+, live main \d+(   differ)?|accounts without a bank after: \d+(   differ)?|debts to review after: \d+|credit cards after: \d+(   differ)?|sums:|  [a-z ]+: (equal|differ)|month totals by kind: (equal|differ) \(\d+ rows\)|foreign_key_check: \d+ before, \d+ after|operations on an account that is not there: \d+ before, \d+ after|loads: (ok|failed)|result: (equal|differ)|migration: failed, stopped at [0-9a-z_?]+ \((SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)\)|migration dry run: the (file could not be copied|copy could not be read): (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|after the update: the copy could not be read, (SQLite \d+|[A-Za-z0-9_.]+ -?\d+( \([A-Za-z0-9_.]+ -?\d+\))?)|hint: (macOS privacy protection kept this program out of another app's data\. .+|the file's permissions do not let this user read it\.))$"#
     )
   }
 
@@ -169,6 +169,7 @@ struct MigrationDryRunPathTests {
       try DatabaseStack.pendingMigrations(fileAt: book.url, schema: TestSupport.schemaSource)
         == [
           "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+          "0009_credit_and_allocation",
         ])
   }
 
@@ -186,7 +187,7 @@ struct MigrationDryRunPathTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 5 -> 8 (applied 3)"), "\(output)")
+    #expect(output.contains("schema: 5 -> 9 (applied 4)"), "\(output)")
     #expect(output.contains(" cashbackRulesMoved=4"), "\(output)")
     #expect(output.contains(" cashbackRulesDropped=3"), "\(output)")
     #expect(output.contains(" cashbackRulesVoided=1"), "\(output)")
@@ -210,7 +211,7 @@ struct MigrationDryRunPathTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 4 -> 8 (applied 4)"), "\(output)")
+    #expect(output.contains("schema: 4 -> 9 (applied 5)"), "\(output)")
     let name = "cards".padding(toLength: 26, withPad: " ", startingAt: 0)
     let lines = output.split(separator: "\n").map(String.init)
     #expect(lines.contains("  \(name) - -> \(cards)"), "\(output)")

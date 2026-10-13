@@ -29,11 +29,16 @@ public struct InputLineReading: Hashable, Sendable {
   /// The words that named the cashback, as typed, for an operation that has no cashback to
   /// give back to its note.
   public var cashbackPhrase: String?
+  /// «смз 15000»: income of the self-employed — `parsed.kind` is `.income` —, which the app
+  /// files under the category taxed as professional income from individuals.
+  public var selfEmployed: Bool
 
   public init(
     parsed: ParsedInput, timeOfDay: TimeOfDay? = nil, timeProblem: String? = nil,
-    timePhrase: String? = nil, cashback: CashbackReading? = nil, cashbackPhrase: String? = nil
+    timePhrase: String? = nil, cashback: CashbackReading? = nil, cashbackPhrase: String? = nil,
+    selfEmployed: Bool = false
   ) {
+    self.selfEmployed = selfEmployed
     self.parsed = parsed
     self.timeOfDay = timeOfDay
     self.timeProblem = timeProblem

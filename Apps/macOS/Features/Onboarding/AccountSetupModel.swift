@@ -64,8 +64,6 @@ struct AccountSetupModel: Equatable {
     /// The money of the main account always counts: it cannot sit in a group out of the
     /// summary.
     case mainInExcludedGroup
-    /// More than ten currencies would have to be switched on.
-    case tooManyCurrencies
 
     var messageKey: String {
       switch self {
@@ -80,7 +78,6 @@ struct AccountSetupModel: Equatable {
       case .groupNameArchived: "onboarding.issue.groupNameArchived"
       case .noMain: "onboarding.issue.noMain"
       case .mainInExcludedGroup: "onboarding.issue.mainInExcludedGroup"
-      case .tooManyCurrencies: "onboarding.issue.tooManyCurrencies"
       }
     }
   }
@@ -412,9 +409,6 @@ struct AccountSetupModel: Equatable {
     if !accounts.isEmpty, !accounts.contains(where: { $0.id == mainId }) {
       result.append(.noMain)
     }
-    var distinct: [CurrencyCode] = []
-    for currency in switchedOn where !distinct.contains(currency) { distinct.append(currency) }
-    if distinct.count > CurrencyCode.maxEnabled { result.append(.tooManyCurrencies) }
     return result
   }
 
@@ -716,7 +710,6 @@ enum AccountSetupExpectations {
 enum AccountSetupWrites {
   enum Outcome: Equatable {
     case written
-    case tooManyCurrencies
     case failed
   }
 
@@ -727,8 +720,6 @@ enum AccountSetupWrites {
     guard let repository = environment.accounts else { return .failed }
     do {
       try repository.finishSetup(plan, calendar: environment.calendar)
-    } catch AccountWriteError.tooManyCurrencies {
-      return .tooManyCurrencies
     } catch {
       AppLog.error(
         "accounts.setupFailed", .db, "the setup of the accounts was not written",

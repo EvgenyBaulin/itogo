@@ -33,7 +33,7 @@ struct DepositPayoutRows: View {
         if Self.offersRecording(payout, today: today) {
           Button(t("deposits.record")) { recording = DepositIncomePrefill(payout) }
             .buttonStyle(.link)
-            .font(.caption)
+            .appFont(.caption)
             .accessibilityIdentifier("deposits.record")
         }
       }

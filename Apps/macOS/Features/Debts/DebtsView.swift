@@ -12,6 +12,10 @@ struct DebtsView: View {
   @State private var selection: DebtsSelection?
   @State private var sheet: DebtSheet?
   @State private var recordingReimbursement = false
+  /// «Новый долг» step by step (`DebtWizard`).
+  @State private var creating = false
+  /// A sheet of the debts this version brought (`DebtCreditSheet`).
+  @State private var creditSheet: DebtCreditSheet?
   /// The debt «Удалить…» asks about.
   @State private var deleting: DebtLine?
   @State private var deleteFailed = false
@@ -32,7 +36,8 @@ struct DebtsView: View {
         HStack(spacing: 0) {
           DebtsList(
             overview: overview, people: snapshot.dataset.people, selection: $selection,
-            deleting: $deleting
+            deleting: $deleting, instalments: snapshot.planning.instalments,
+            hasLadder: !LadderSection.candidates(snapshot).isEmpty
           )
           .frame(width: 300)
           Divider()
@@ -67,6 +72,12 @@ struct DebtsView: View {
       } else {
         DebtSheetView(sheet: sheet).handingOver(dependencies)
       }
+    }
+    .sheet(isPresented: $creating) {
+      DebtWizard().handingOver(dependencies)
+    }
+    .sheet(item: $creditSheet) { sheet in
+      creditSheetView(sheet).handingOver(dependencies)
     }
     .sheet(isPresented: $recordingReimbursement) {
       ReimbursementSheet().handingOver(dependencies)
@@ -111,6 +122,32 @@ struct DebtsView: View {
     deleting = nil
   }
 
+  @ViewBuilder
+  private func creditSheetView(_ sheet: DebtCreditSheet) -> some View {
+    switch sheet {
+    case .costs(let debt): DebtCostsSheet(debt: debt)
+    case .prepay(let debt): PrepaySheet(debt: debt)
+    case .typeInstalment(let debt): InstalmentEditSheet(debt: debt)
+    case .nudge(let debt, let balance): NudgeSheet(debt: debt, balance: balance)
+    case .writeOffPledge(let debt): PledgeWriteOffSheet(debt: debt)
+    case .review(let items): DebtReviewSheet(items: items)
+    case .cardTerms(let debt, let account):
+      AccountEditor(previous: account, defaultCurrency: environment.defaultCurrency) { _ in
+        creditSheet = nil
+        keepOnlyAccount(debt, accountId: account.id)
+      }
+    }
+  }
+
+  /// «Оставить только счёт» once the account has its terms: read again from the data on screen.
+  private func keepOnlyAccount(_ debt: Debt, accountId: UUID) {
+    guard let dependencies,
+      let account = compute.snapshot?.dataset.paymentMethods.first(where: { $0.id == accountId }),
+      account.credit != nil
+    else { return }
+    DebtActions(dependencies).keepOnlyAccount(debt, account: account)
+  }
+
   private func totals(_ overview: DebtsOverview) -> some View {
     HStack(spacing: 24) {
       figure(t("debts.iOwe"), overview.totalIOweRub)
@@ -121,11 +158,17 @@ struct DebtsView: View {
           verbatim: environment.language.format(
             "debts.withoutRateCount", table: "Debts", counts: overview.withoutRate.count)
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Spacer()
-      Button(t("debts.add")) { sheet = .create }
+      if let review = compute.snapshot?.planning.debtReview, !review.isEmpty {
+        Button(
+          environment.language.format("review.banner", table: "Debts", counts: review.count)
+        ) { creditSheet = .review(review) }
+        .accessibilityIdentifier("debts.review.open")
+      }
+      Button(t("debts.add")) { creating = true }
         .buttonStyle(.bordered)
         .guideTarget(GuideTarget.debtsAdd)
     }
@@ -133,8 +176,8 @@ struct DebtsView: View {
 
   private func figure(_ label: String, _ amount: AmountE4) -> some View {
     VStack(alignment: .leading, spacing: 2) {
-      Text(verbatim: label).font(.caption).foregroundStyle(.secondary)
-      Text(verbatim: environment.money.rounded(amount)).font(.headline.monospacedDigit())
+      Text(verbatim: label).appFont(.caption).foregroundStyle(.secondary)
+      Text(verbatim: environment.money.rounded(amount)).appFont(.headline.monospacedDigit())
     }
     .accessibilityElement(children: .combine)
   }
@@ -148,7 +191,7 @@ struct DebtsView: View {
       {
         DebtDetail(
           line: line, all: overview.iOwe + overview.owedToMe.flatMap(\.debts), sheet: $sheet,
-          deleting: $deleting)
+          creditSheet: $creditSheet, deleting: $deleting)
       } else {
         placeholder
       }
@@ -161,6 +204,8 @@ struct DebtsView: View {
       } else {
         placeholder
       }
+    case .ladder:
+      LadderSection()
     case nil:
       placeholder
     }
@@ -178,6 +223,8 @@ struct DebtsView: View {
 enum DebtsSelection: Hashable {
   case debt(UUID)
   case person(UUID?)
+  /// The payoff ladder (`LadderSection`).
+  case ladder
 }
 
 /// A row of «Owed to me»: a person with everything they owe, and under them each personal
@@ -376,11 +423,25 @@ private struct DebtsList: View {
   let people: [Person]
   @Binding var selection: DebtsSelection?
   @Binding var deleting: DebtLine?
+  /// «В рассрочках …» above «Я должен».
+  var instalments: InstalmentsSummary = .empty
+  /// The ladder has debts on it.
+  var hasLadder = false
   @State private var showsClosed = false
 
   var body: some View {
     List(selection: $selection) {
       Section {
+        if instalments.count > 0 {
+          Text(verbatim: instalmentsLine)
+            .appFont(.caption).foregroundStyle(.secondary)
+            .accessibilityIdentifier("debts.instalments")
+        }
+        if hasLadder {
+          Label(t("ladder.title"), systemImage: "chart.line.downtrend.xyaxis")
+            .tag(DebtsSelection.ladder)
+            .accessibilityIdentifier("debts.ladder")
+        }
         if overview.iOwe.isEmpty {
           Text(verbatim: t("debts.none")).foregroundStyle(.secondary)
         }
@@ -461,7 +522,7 @@ private struct DebtsList: View {
       Spacer(minLength: 6)
       if withoutRate {
         // Not in the totals: there is no rate to count it in rubles.
-        Text(verbatim: t("debts.withoutRate")).font(.caption).foregroundStyle(.secondary)
+        Text(verbatim: t("debts.withoutRate")).appFont(.caption).foregroundStyle(.secondary)
       }
       Text(verbatim: environment.money.rounded(amount, currency: currency)).monospacedDigit()
     }
@@ -469,6 +530,13 @@ private struct DebtsList: View {
 
   private func name(_ id: UUID?) -> String {
     people.first { $0.id == id }?.name ?? t("debts.noPerson")
+  }
+
+  /// «В рассрочках 34,000 ₽ · ближайшее 2,500 ₽ 14 ноября».
+  private var instalmentsLine: String {
+    DebtsInstalmentsText.line(
+      instalments, language: environment.language, money: environment.money,
+      dates: environment.dates)
   }
 
   private func deleteButton(_ line: DebtLine) -> some View {
@@ -486,6 +554,7 @@ private struct DebtDetail: View {
   let line: DebtLine
   let all: [DebtLine]
   @Binding var sheet: DebtSheet?
+  @Binding var creditSheet: DebtCreditSheet?
   @Binding var deleting: DebtLine?
   @State private var confirmsToggle = false
   @State private var reopenFailed = false
@@ -494,12 +563,12 @@ private struct DebtDetail: View {
     let debt = line.debt
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
-        Text(verbatim: debt.name).font(.title2)
+        Text(verbatim: debt.name).appFont(.title2)
         Text(verbatim: facts).foregroundStyle(.secondary)
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(verbatim: t("debts.balance"))
           Text(verbatim: environment.money.exact(line.balance, currency: debt.currency))
-            .font(.title3.monospacedDigit())
+            .appFont(.title3.monospacedDigit())
           if let next = line.nextPayment {
             Text(
               verbatim: environment.format(
@@ -522,11 +591,11 @@ private struct DebtDetail: View {
               environment.money.exact(partial.due, currency: debt.currency),
               environment.money.exact(partial.left, currency: debt.currency))
           )
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
           .accessibilityIdentifier("debts.partialDue")
         }
         ForEach(scheduleLines, id: \.self) { text in
-          Text(verbatim: text).font(.callout).foregroundStyle(.secondary)
+          Text(verbatim: text).appFont(.callout).foregroundStyle(.secondary)
         }
         if debt.direction == .iOwe {
           Toggle(
@@ -548,9 +617,10 @@ private struct DebtDetail: View {
             Text(verbatim: t("debts.toggleMessage"))
           }
           if let payoff = payoff {
-            Text(verbatim: payoff).font(.caption).foregroundStyle(.secondary)
+            Text(verbatim: payoff).appFont(.caption).foregroundStyle(.secondary)
           }
         }
+        DebtCardExtras(line: line, sheet: $creditSheet)
         actions
         Divider()
         journal
@@ -605,7 +675,7 @@ private struct DebtDetail: View {
   @ViewBuilder
   private var actions: some View {
     if line.debt.closed {
-      Text(verbatim: t("debts.closedCaption")).font(.caption).foregroundStyle(.secondary)
+      Text(verbatim: t("debts.closedCaption")).appFont(.caption).foregroundStyle(.secondary)
     }
     HStack(spacing: 8) {
       ForEach(DebtCardAction.offered(for: line.debt), id: \.self) { action in
@@ -660,14 +730,14 @@ private struct DebtDetail: View {
   private var journal: some View {
     let byGroup = Dictionary(grouping: line.entries, by: \.groupName)
     return VStack(alignment: .leading, spacing: 10) {
-      Text(verbatim: t("debts.journal")).font(.headline)
+      Text(verbatim: t("debts.journal")).appFont(.headline)
       if line.entries.isEmpty {
         Text(verbatim: t("debts.journalEmpty")).foregroundStyle(.secondary)
       }
       ForEach(line.groups, id: \.groupName) { group in
         VStack(alignment: .leading, spacing: 4) {
           HStack {
-            Text(verbatim: group.groupName ?? t("debts.noGroup")).font(
+            Text(verbatim: group.groupName ?? t("debts.noGroup")).appFont(
               .subheadline.weight(.semibold))
             Spacer()
             Text(
@@ -675,7 +745,7 @@ private struct DebtDetail: View {
                 "debts.groupTotal", table: "Debts",
                 environment.money.exact(group.totalE4, currency: line.debt.currency))
             )
-            .font(.subheadline.monospacedDigit())
+            .appFont(.subheadline.monospacedDigit())
           }
           ForEach(byGroup[group.groupName] ?? [], id: \.id) { entry in
             VStack(alignment: .trailing, spacing: 1) {
@@ -694,8 +764,17 @@ private struct DebtDetail: View {
                   } icon: {
                     Image(systemName: "checkmark.circle")
                   }
-                  .font(.caption).foregroundStyle(.secondary)
+                  .appFont(.caption).foregroundStyle(.secondary)
                   .help(t("debts.journal.closesTermHelp"))
+                }
+                // An early repayment, by what the owner chose for it.
+                if let prepay = entry.prepay {
+                  Label {
+                    Text(verbatim: t("debts.journal.prepay.\(prepay.rawValue)"))
+                  } icon: {
+                    Image(systemName: "forward.end.circle")
+                  }
+                  .appFont(.caption).foregroundStyle(.secondary)
                 }
                 // A tranche: a part of the loan drawn, a planned one while its day is ahead.
                 if entry.tranche {
@@ -704,14 +783,14 @@ private struct DebtDetail: View {
                   } icon: {
                     Image(systemName: "graduationcap")
                   }
-                  .font(.caption).foregroundStyle(.secondary)
+                  .appFont(.caption).foregroundStyle(.secondary)
                 }
                 if let full = entry.fullAmountE4, let share = entry.share {
                   Text(
                     verbatim: environment.money.rounded(full, currency: line.debt.currency) + " × "
                       + environment.money.number(share)
                   )
-                  .font(.caption).foregroundStyle(.secondary)
+                  .appFont(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text(
@@ -729,10 +808,10 @@ private struct DebtDetail: View {
                     "debts.journal.interest", table: "Debts",
                     environment.money.exact(interest, currency: line.debt.currency))
                 )
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                .appFont(.caption.monospacedDigit()).foregroundStyle(.secondary)
               }
             }
-            .font(.callout)
+            .appFont(.callout)
           }
         }
       }
@@ -769,12 +848,12 @@ private struct PersonDetail: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 10) {
         Text(verbatim: people.first { $0.id == group.personId }?.name ?? t("debts.noPerson"))
-          .font(.title2)
-        Text(verbatim: environment.money.rounded(group.totalRub)).font(.title3.monospacedDigit())
+          .appFont(.title2)
+        Text(verbatim: environment.money.rounded(group.totalRub)).appFont(.title3.monospacedDigit())
         if !group.parts.isEmpty {
           Button(environment.language("reimbursement.title", table: "Entry"), action: record)
             .buttonStyle(.bordered)
-          Text(verbatim: t("debts.parts")).font(.headline)
+          Text(verbatim: t("debts.parts")).appFont(.headline)
           ForEach(group.parts) { part in
             HStack {
               Text(verbatim: environment.dates.dayAndMonth(part.day)).monospacedDigit()
@@ -783,7 +862,7 @@ private struct PersonDetail: View {
               Spacer()
               Text(verbatim: environment.money.exact(part.amountRub)).monospacedDigit()
             }
-            .font(.callout)
+            .appFont(.callout)
           }
         }
         ForEach(group.debts) { line in
@@ -803,4 +882,21 @@ private struct PersonDetail: View {
   }
 
   private func t(_ key: String) -> String { environment.language(key, table: "Debts") }
+}
+
+/// The line above «Я должен»: what hangs in instalments and the next payment of them.
+@MainActor
+enum DebtsInstalmentsText {
+  static func line(
+    _ summary: InstalmentsSummary, language: AppLanguage, money: MoneyFormatter,
+    dates: DateFormatting
+  ) -> String {
+    let total = language.format(
+      "instalments.total", table: "Debts", money.rounded(summary.totalRub))
+    guard let next = summary.next.first else { return total }
+    return total + " · "
+      + language.format(
+        "instalments.next", table: "Debts", money.exact(next.amountE4, currency: next.currency),
+        dates.longDay(next.due))
+  }
 }

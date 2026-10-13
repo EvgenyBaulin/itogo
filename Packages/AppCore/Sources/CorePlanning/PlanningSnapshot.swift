@@ -132,6 +132,32 @@ public struct PlanningSnapshot: Hashable, Sendable {
   /// The safety cushion (`CushionRules`).
   public var cushion: CushionStatus
 
+  // The figures below start empty: the caller fills them after `build`, each from its own rule.
+
+  /// «Сколько висит в рассрочках» (`InstalmentsSummary`).
+  public var instalments: InstalmentsSummary = .empty
+  /// The payoff ladder of the debts I owe and the credit cards in debt (`DebtLadder`).
+  public var ladder: LadderComparison? = nil
+  /// The debt load of the last months (`DebtLoad.history`).
+  public var debtLoadHistory: [DebtLoadMonth] = []
+  /// The reminders of the debts and credit cards (`DebtReminders`).
+  public var debtReminders: [DebtReminder] = []
+  /// The debts made before this version, to ask about once (`DebtReview`).
+  public var debtReview: [DebtReviewItem] = []
+  /// Every credit card today, by account (`CreditStatements.now`).
+  public var creditCards: [UUID: CreditCardNow] = [:]
+  /// Self-employment and its tax; `nil` while it is off (`NPDTax`).
+  public var npd: NPDState? = nil
+  /// The half of a month paid twice (`PayHalves`).
+  public var payHalf: PayHalf? = nil
+  /// The rest of the month just past (`MonthRest`).
+  public var monthRest: MonthRestOffer? = nil
+  /// The incomes offered for allocation (`Allocation.offers`).
+  public var allocationOffers: [UUID] = []
+  /// The statements of every credit card, by account: what the free sum of another day asks of
+  /// the cards out of the summary (`CreditCardDues`).
+  public var creditStatements: [UUID: [CreditStatement]] = [:]
+
   public init(
     today: DateOnly, now: Date, rubPerUnit: [CurrencyCode: Decimal], book: PlanningBook,
     scheduled: [ScheduledStatus], funding: [FundingLine], candidates: [SubscriptionCandidate],
@@ -266,6 +292,14 @@ public struct PlanningSnapshot: Hashable, Sendable {
         subscriptionsMonthly: subscriptions.monthly, settings: capitalSettings, today: today),
       accounts: accounts, settings: capitalSettings, today: today)
 
+    let npd =
+      ledger.dataset.selfEmployment.enabled
+      ? NPDTax.state(
+        ledger: ledger, tree: ledger.tree, settings: ledger.dataset.selfEmployment,
+        dayRates: dayRates, today: today)
+      : nil
+    let creditStatements = statements(ledger: ledger, accounts: accounts, today: today)
+
     // My expenses of the month to date in one pass; goal contributions set apart the way
     // `CanSaveInputs(ledger:)` sets them apart.
     var spent = AmountE4.zero
@@ -275,7 +309,7 @@ public struct PlanningSnapshot: Hashable, Sendable {
       if row.isGoalContribution { spentOnGoals += row.contribution }
     }
 
-    return PlanningSnapshot(
+    var snapshot = PlanningSnapshot(
       today: today, now: now, rubPerUnit: rubPerUnit, book: book, scheduled: scheduled,
       funding: Funding.month(
         month, book: book, ledger: ledger, today: today, accounts: ledger.dataset.paymentMethods,
@@ -314,7 +348,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
       freeMoney: freeMoney(
         until: nil, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
         matches: matches, goals: goals, debts: debts, events: budgetedEvents,
-        expected: expected, dayRates: dayRates, cushion: cushion),
+        expected: expected, dayRates: dayRates, cushion: cushion, npd: npd,
+        creditStatements: creditStatements),
       overdue: OverdueDues.build(
         ledger: ledger, book: book, matches: matches, debts: debts, accounts: accounts,
         today: today),
@@ -324,6 +359,26 @@ public struct PlanningSnapshot: Hashable, Sendable {
         through: month.lastDay),
       capital: capital,
       cushion: cushion)
+    snapshot.npd = npd
+    snapshot.creditStatements = creditStatements
+    return snapshot
+  }
+
+  /// The statements of every live credit card (`CreditStatements`), by account.
+  private static func statements(
+    ledger: Ledger, accounts: AccountsSnapshot, today: DateOnly
+  ) -> [UUID: [CreditStatement]] {
+    var result: [UUID: [CreditStatement]] = [:]
+    for account in ledger.dataset.paymentMethods where !account.archived {
+      guard let terms = account.credit else { continue }
+      let movements = CreditStatements.movements(
+        account: account, ledger: ledger, transfers: ledger.dataset.transfers)
+      let statements = CreditStatements.statements(
+        account: account, terms: terms, movements: movements, balances: accounts.balances,
+        through: today, calendar: ledger.calendar)
+      if !statements.isEmpty { result[account.id] = statements }
+    }
+    return result
   }
 
   /// What the goals' monthly plans still ask this month, in rubles at today's rate: each
@@ -358,14 +413,16 @@ public struct PlanningSnapshot: Hashable, Sendable {
     return Self.freeMoney(
       until: end, ledger: ledger, today: today, rubPerUnit: rubPerUnit, accounts: accounts,
       matches: matches, goals: goals, debts: debts, events: budgetedEvents,
-      expected: expected, dayRates: dayRates, cushion: cushion)
+      expected: expected, dayRates: dayRates, cushion: cushion, npd: npd,
+      creditStatements: creditStatements)
   }
 
   private static func freeMoney(
     until: DateOnly?, ledger: Ledger, today: DateOnly, rubPerUnit: [CurrencyCode: Decimal],
     accounts: AccountsSnapshot, matches: ScheduledMatches, goals: [GoalStatus],
     debts: DebtsOverview, events: [EventPlan], expected: [ExpectedIncomeStatus],
-    dayRates: DayRates, cushion: CushionStatus
+    dayRates: DayRates, cushion: CushionStatus, npd: NPDState? = nil,
+    creditStatements: [UUID: [CreditStatement]] = [:]
   ) -> FreeMoney {
     let book = ledger.dataset.planning
     let end = FreeMoney.window(today: today, until: until).end
@@ -375,7 +432,8 @@ public struct PlanningSnapshot: Hashable, Sendable {
       reserveGoalPlan: book.settings.reserveGoalPlan,
       subtractGoalSavings: book.settings.reconcileIncludesGoalSavings, dayRates: dayRates,
       goalSavingsValuation: book.settings.goalSavingsValuation,
-      reserveEventBudgets: book.settings.reserveEventBudgets)
+      reserveEventBudgets: book.settings.reserveEventBudgets, npd: npd,
+      creditStatements: creditStatements)
     let still = IncomeEstimate.stillExpected(
       statuses: expected, today: today, through: end, ledger: ledger)
     return FreeMoney(

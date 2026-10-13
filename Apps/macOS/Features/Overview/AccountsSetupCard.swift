@@ -21,7 +21,7 @@ struct AccountsSetupCard: View {
     if Self.shows(setup: environment.accountSetup) {
       VStack(alignment: .leading, spacing: 8) {
         Text(verbatim: t("onboarding.card.title"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .accessibilityAddTraits(.isHeader)
         Text(verbatim: t("onboarding.card.message"))

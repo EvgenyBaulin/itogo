@@ -68,7 +68,7 @@ struct SeriesLineChart: View {
               .annotation(position: .trailing, alignment: .leading, spacing: 4) {
                 if let text = line.endText {
                   Text(verbatim: text)
-                    .font(.caption.monospacedDigit())
+                    .appFont(.caption.monospacedDigit())
                     .foregroundStyle(.primary)
                     .fixedSize()
                 }
@@ -97,7 +97,7 @@ struct SeriesLineChart: View {
           AxisValueLabel {
             if let x = value.as(Int.self), let text = xLabels[x] {
               Text(verbatim: text)
-                .font(.caption.monospacedDigit())
+                .appFont(.caption.monospacedDigit())
             }
           }
         }
@@ -107,7 +107,7 @@ struct SeriesLineChart: View {
           AxisGridLine()
           AxisValueLabel {
             Text(verbatim: ChartAxis.money(value, money))
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
           }
         }
       }

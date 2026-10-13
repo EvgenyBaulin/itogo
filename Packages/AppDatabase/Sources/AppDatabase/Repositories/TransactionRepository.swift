@@ -201,7 +201,13 @@ public struct TransactionRepository: Sendable {
       else { throw RefundError.notRefundable }
       if before[target] == nil {
         if tree == nil { tree = CategoryTree(try CoreKit.Category.fetchAll(db)) }
-        guard RefundRules.isRefundable(part: part, in: purchase, tree: tree ?? CategoryTree())
+        // A purchase on an instalment plan can be returned: the debt it was bought on says so.
+        let plan = try purchase.transaction.creditDebtId.flatMap { id in
+          try Debt.fetchOne(db, key: id.uuidString)
+        }
+        guard
+          RefundRules.isRefundable(
+            part: part, in: purchase, tree: tree ?? CategoryTree(), creditDebt: plan)
         else { throw RefundError.notRefundable }
       }
       guard purchase.transaction.currency == entry.transaction.currency else {

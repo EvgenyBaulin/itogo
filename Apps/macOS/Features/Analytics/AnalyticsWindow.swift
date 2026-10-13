@@ -320,7 +320,7 @@ struct PeriodChooser: View {
           .accessibilityLabel(Text(verbatim: t("analytics.period.previous")))
           Spacer()
           Text(verbatim: String(year))
-            .font(.headline.monospacedDigit())
+            .appFont(.headline.monospacedDigit())
           Spacer()
           Button {
             year += 1

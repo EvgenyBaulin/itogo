@@ -99,12 +99,37 @@ struct CardActions {
     return outcome
   }
 
-  /// «В архив»: the card leaves the pickers and the entry line; its operations keep it.
+  /// «В архив»: the card leaves the pickers and the entry line; its operations keep it. The
+  /// main card of its account stops being main in the same step.
   func archive(_ id: UUID) -> CardActionOutcome {
     guard var card = cards.first(where: { $0.id == id }) else { return refuse(.notFound) }
     guard !card.archived else { return .done }
     card.archived = true
-    return apply(PlanningChange(upsert: PlanningRows(cards: [card]), at: environment.now()))
+    var rows = PlanningRows(cards: [card])
+    if let account = accounts.first(where: { $0.id == card.accountId }),
+      let changed = CardRules.account(account, afterArchiving: card.id)
+    {
+      rows.paymentMethods = [changed]
+    }
+    return apply(PlanningChange(upsert: rows, at: environment.now()))
+  }
+
+  /// «Сделать основной»: purchases on the account are made with this card unless they say
+  /// otherwise. One step of ⌘Z.
+  func makeMain(_ id: UUID) -> CardActionOutcome {
+    guard let card = cards.first(where: { $0.id == id }), !card.archived,
+      var account = accounts.first(where: { $0.id == card.accountId })
+    else { return refuse(.notFound) }
+    guard account.mainCardId != card.id else { return .done }
+    account.mainCardId = card.id
+    let outcome = apply(
+      PlanningChange(upsert: PlanningRows(paymentMethods: [account]), at: environment.now()))
+    if outcome == .done {
+      AppLog.info(
+        "cards.mainCard.set", .db, "the main card of an account changed",
+        [LogPair("account", .id(account.id)), LogPair("chosen", .flag(true))])
+    }
+    return outcome
   }
 
   /// «Вернуть»: refused while another account or live card has taken the name, or while the
@@ -164,9 +189,16 @@ struct CardActions {
     case .success(let worked): plan = worked
     }
     let usage = try? repository?.usage(of: id)
+    var upsert = PlanningRows(cards: [plan.kept], cashbackRules: plan.movedRules)
+    // The main card merged away: the kept card is main, in the same step.
+    if let account = accounts.first(where: { $0.id == plan.kept.accountId }),
+      let changed = CardMerge.account(account, after: plan)
+    {
+      upsert.paymentMethods = [changed]
+    }
     let outcome = apply(
       PlanningChange(
-        upsert: PlanningRows(cards: [plan.kept], cashbackRules: plan.movedRules),
+        upsert: upsert,
         delete: PlanningRowIDs(
           cards: [plan.merged.id], cashbackRules: plan.droppedRules.map(\.id)),
         at: environment.now(), movingCards: [plan.merged.id: plan.kept.id]))

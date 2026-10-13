@@ -49,9 +49,17 @@ struct MigrationDryRunPropertyTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "seed \(seed): \(output)")
-    #expect(output.contains("schema: 3 -> 8 (applied 5)"), "seed \(seed)")
+    #expect(output.contains("schema: 3 -> 9 (applied 6)"), "seed \(seed)")
     #expect(output.contains("result: equal"), "seed \(seed)")
     #expect(output.contains("loads: ok"), "seed \(seed)")
+    // The update gives no account the terms of a credit card, and every open debt it finds is
+    // one to review.
+    #expect(output.contains("\ncredit cards after: 0\n"), "seed \(seed)")
+    let review = try book.read { db in
+      try Int.fetchOne(
+        db, sql: "SELECT COUNT(*) FROM debts WHERE closed = 0") ?? -1
+    }
+    #expect(output.contains("\ndebts to review after: \(review)\n"), "seed \(seed)")
     #expect(!output.contains(book.marker), "seed \(seed): the output names a row")
     let known = Set(book.accounts.map(\.id))
     let missing = book.operationAccounts.filter { $0.account.map { !known.contains($0) } ?? false }
@@ -78,7 +86,7 @@ struct MigrationDryRunPropertyTests {
     let (status, output) = try run([book.url.path, TestSupport.schemaDirectory.path])
 
     #expect(status == 0, "\(output)")
-    #expect(output.contains("schema: 8 -> 8 (applied 0)"))
+    #expect(output.contains("schema: 9 -> 9 (applied 0)"))
     #expect(output.contains("data step: none"))
     #expect(output.contains("result: equal"))
   }

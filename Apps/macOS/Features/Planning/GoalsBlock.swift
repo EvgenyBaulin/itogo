@@ -79,7 +79,7 @@ struct GoalsBlock: View {
                 environment.money.rounded(status.saved, currency: status.currency),
                 environment.money.rounded(status.goal.targetE4, currency: status.currency))
             )
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
             if status.withoutRate > 0 {
               Label {
@@ -89,11 +89,11 @@ struct GoalsBlock: View {
               } icon: {
                 Image(systemName: "hourglass")
               }
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.secondary)
             }
             Text(verbatim: realism(status))
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
             if let ahead = Self.paidAhead(of: status.goal, snapshot), ahead.raw > 0 {
@@ -102,7 +102,7 @@ struct GoalsBlock: View {
                   "goals.ahead", table: "Planning",
                   environment.money.rounded(ahead, currency: status.currency))
               )
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
@@ -183,7 +183,7 @@ struct GoalsBlock: View {
             }
             if let note = deletionNotes[goal.id] {
               Text(verbatim: t(note))
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }

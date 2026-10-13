@@ -55,11 +55,11 @@ struct LockCover: View {
       Rectangle().fill(.background)
       VStack(spacing: 14) {
         Image(systemName: "lock.fill")
-          .font(.system(size: 44))
+          .font(.system(size: 44))  // font-fixed: the symbol of the curtain, not text
           .foregroundStyle(.secondary)
           .accessibilityHidden(true)
         Text(verbatim: language("privacy.locked.title"))
-          .font(.title2.weight(.semibold))
+          .appFont(.title2.weight(.semibold))
         if lock.isChoosingNewPassword {
           newPassword
         } else if lock.hasPassword {
@@ -76,7 +76,7 @@ struct LockCover: View {
             Image(systemName: "exclamationmark.octagon")
           }
           .foregroundStyle(.red)
-          .font(.callout)
+          .appFont(.callout)
         }
       }
       .padding(24)
@@ -121,7 +121,7 @@ struct LockCover: View {
               Image(systemName: "hourglass")
             }
             .foregroundStyle(.secondary)
-            .font(.callout)
+            .appFont(.callout)
             .accessibilityIdentifier("privacy.password.pause")
           } else if let key = PrivacyCurtain.problemKey(lock.passwordProblem) {
             Label {
@@ -130,7 +130,7 @@ struct LockCover: View {
               Image(systemName: "exclamationmark.octagon")
             }
             .foregroundStyle(.red)
-            .font(.callout)
+            .appFont(.callout)
           }
         }
       }
@@ -363,7 +363,7 @@ enum PrivacySheetCovers {
     var body: some View {
       VStack(spacing: 8) {
         Image(systemName: "lock.fill")
-          .font(.system(size: 18))
+          .font(.system(size: 18))  // font-fixed: the symbol of the curtain, not text
           .foregroundStyle(.secondary)
           .accessibilityHidden(true)
         if lock.hasPassword, !lock.isChoosingNewPassword {
@@ -416,7 +416,7 @@ enum PrivacySheetCovers {
 
     private func caption(_ text: String, problem: Bool = true) -> some View {
       Text(verbatim: text)
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(problem ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
         .lineLimit(2)
         .fixedSize(horizontal: false, vertical: true)

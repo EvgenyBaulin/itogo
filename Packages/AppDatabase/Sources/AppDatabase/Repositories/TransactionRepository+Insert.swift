@@ -47,6 +47,14 @@ public struct HistoryBatch: Sendable {
   /// The things valued by hand, and their valuations.
   public var assets: [Asset]
   public var assetValuations: [AssetValuation]
+  /// What else the loans among `debts` cost, and the sums of their dues typed from a bank's app.
+  public var debtCosts: [DebtCost]
+  public var debtInstalments: [DebtInstalmentStep]
+  /// How an income is allocated, to the goals and accounts of the batch.
+  public var allocationRules: [AllocationRule]
+  /// Currencies outside the Bank of Russia list, and rates — their own, typed by hand.
+  public var customCurrencies: [CustomCurrency]
+  public var rates: [Rate]
 
   public init(
     categories: [CoreKit.Category] = [],
@@ -74,8 +82,18 @@ public struct HistoryBatch: Sendable {
     cashbackRules: [CashbackRule] = [],
     banks: [Bank] = [],
     assets: [Asset] = [],
-    assetValuations: [AssetValuation] = []
+    assetValuations: [AssetValuation] = [],
+    debtCosts: [DebtCost] = [],
+    debtInstalments: [DebtInstalmentStep] = [],
+    allocationRules: [AllocationRule] = [],
+    customCurrencies: [CustomCurrency] = [],
+    rates: [Rate] = []
   ) {
+    self.debtCosts = debtCosts
+    self.debtInstalments = debtInstalments
+    self.allocationRules = allocationRules
+    self.customCurrencies = customCurrencies
+    self.rates = rates
     self.banks = banks
     self.assets = assets
     self.assetValuations = assetValuations
@@ -107,7 +125,8 @@ public struct HistoryBatch: Sendable {
   /// A generated sample whole: the history, every row it points at, the planning built on it
   /// (`SampleDataSet.planning`), its cashback category, and what its accounts add — groups,
   /// transfers, counts and their settings, cards and cashback rules — when it has them
-  /// (`withAccounts`), and the things valued by hand with their valuations.
+  /// (`withAccounts`), the things valued by hand with their valuations, the costs of its loans,
+  /// its rules of allocation, and its own currencies with their rates.
   ///
   /// A history without its accounts is written the way accounts keep it
   /// (`SampleDataSet.assigningAccounts`): every operation on an account, and a charge wherever
@@ -129,7 +148,9 @@ public struct HistoryBatch: Sendable {
       transfers: set.transfers, reconciliations: set.reconciliations,
       reconciledBalances: set.reconciledBalances, cards: set.cards,
       cashbackRules: set.cashbackRules, banks: set.banks, assets: set.assets,
-      assetValuations: set.assetValuations)
+      assetValuations: set.assetValuations, debtCosts: set.debtCosts,
+      debtInstalments: set.debtInstalments, allocationRules: set.allocationRules,
+      customCurrencies: set.customCurrencies, rates: set.rates)
   }
 }
 
@@ -167,13 +188,16 @@ extension TransactionRepository {
   }
 
   /// Rows go in the order their foreign keys need: the groups of the accounts and the banks
-  /// before the accounts, the cards after their accounts, the reference books (parents before their
-  /// subcategories, since the table refers to itself), debts after the people and categories
-  /// they name, the things valued by hand before their valuations, the planning after the
-  /// categories, people, accounts and cards it names, the cashback rules after the limits,
-  /// operations after everything they point at, the journals and links after the operations they
-  /// point at, then the transfers, the reconciliations and the balances they counted, and the
-  /// settings last.
+  /// before the accounts, the cards after their accounts — and the main card of an account set
+  /// once its cards are there, since the schema refuses a main card that is not one of the
+  /// account's yet —, the reference books (parents before their subcategories, since the table
+  /// refers to itself), debts after the people and categories they name, the sums of their dues
+  /// after them, the things valued by hand before their valuations, the planning after the
+  /// categories, people, accounts and cards it names, the rules of allocation after the goals and
+  /// accounts, the cashback rules after the limits, operations after everything they point at,
+  /// the journals, the costs of the loans and the links after the operations they point at, then
+  /// the transfers, the reconciliations and the balances they counted, the currencies of the
+  /// owner's own and the rates, and the settings last.
   ///
   /// A limit is unique to its target (`idx_budgets_target`), and a cashback rule to its holder,
   /// month and category (`idx_cashback_rules_key`). Written over existing rows, a limit or a
@@ -199,17 +223,29 @@ extension TransactionRepository {
       for category in batch.categories where category.parentId != nil { try put(category) }
       for person in batch.people { try put(person) }
       for place in batch.places { try put(place) }
-      for method in batch.paymentMethods { try put(method) }
+      for method in batch.paymentMethods {
+        var written = method
+        written.mainCardId = nil
+        try put(written)
+      }
       for card in batch.cards { try put(card) }
+      for method in batch.paymentMethods {
+        guard let card = method.mainCardId else { continue }
+        try db.execute(
+          sql: "UPDATE payment_methods SET main_card_id = ? WHERE id = ?",
+          arguments: [card.uuidString, method.id.uuidString])
+      }
       for event in batch.events { try put(event) }
       for template in batch.templates { try put(template) }
       for goal in batch.goals { try put(goal) }
       for debt in batch.debts { try put(debt) }
+      for step in batch.debtInstalments { try put(step) }
       for asset in batch.assets { try put(asset) }
       for valuation in batch.assetValuations { try put(valuation) }
       for payment in batch.scheduled { try put(payment) }
       for price in batch.prices { try put(price) }
       for income in batch.expected { try put(income) }
+      for rule in batch.allocationRules { try put(rule) }
       for budget in batch.budgets {
         if overExistingRows, try Self.isTargetTaken(of: budget, db: db) { continue }
         try put(budget)
@@ -231,11 +267,14 @@ extension TransactionRepository {
         }
       }
       for line in batch.debtEntries { try put(line) }
+      for cost in batch.debtCosts { try put(cost) }
       for link in batch.links { try put(link) }
       for link in batch.expectedLinks { try put(link) }
       for transfer in batch.transfers { try put(transfer) }
       for reconciliation in batch.reconciliations { try put(reconciliation) }
       for balance in batch.reconciledBalances { try put(balance) }
+      for currency in batch.customCurrencies { try put(currency) }
+      for rate in batch.rates { try put(rate) }
       for (key, value) in batch.settings.sorted(by: { $0.key < $1.key }) {
         try SettingsRepository.set(key, to: value, in: db)
       }

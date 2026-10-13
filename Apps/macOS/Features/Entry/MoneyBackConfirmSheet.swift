@@ -295,13 +295,13 @@ struct MoneyBackConfirmSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text(verbatim: t("moneyBack.title"))
-        .font(.headline)
+        .appFont(.headline)
       fields
       Divider()
       summary
       if let errorKey {
         Text(verbatim: t(errorKey))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
       }
       buttons
@@ -502,7 +502,7 @@ struct MoneyBackConfirmSheet: View {
         } icon: {
           Image(systemName: "hourglass")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -515,7 +515,7 @@ struct MoneyBackConfirmSheet: View {
         "moneyBack.surplus", table: "Entry",
         money.exact(confirmation.plan.surplus, currency: confirmation.plan.currency))
     )
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
   }
 
@@ -629,7 +629,7 @@ struct MoneyBackConfirmSheet: View {
       Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
         GridRow {
           Text(verbatim: environment.format("moneyBack.debtRate", table: "Entry", debt.name))
-            .font(.caption).foregroundStyle(.secondary)
+            .appFont(.caption).foregroundStyle(.secondary)
           HStack(spacing: 6) {
             Text(verbatim: "1 \(debt.currency.code) =").foregroundStyle(.secondary)
             RateTextField(
@@ -969,7 +969,7 @@ struct MoneyBackConfirmSheet: View {
 
   private func label(_ key: String) -> some View {
     Text(verbatim: t(key))
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .gridColumnAlignment(.leading)
   }
@@ -980,7 +980,7 @@ struct MoneyBackConfirmSheet: View {
 
   private func caption(text: String) -> some View {
     Text(verbatim: text)
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
   }

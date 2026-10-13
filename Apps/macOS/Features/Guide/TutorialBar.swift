@@ -59,10 +59,10 @@ struct TutorialBar: View {
                   HStack(spacing: 6) {
                     Text(verbatim: hint.text.text(russian: russian))
                     if let keys = hint.keys {
-                      Text(verbatim: keys).font(.caption.monospaced())
+                      Text(verbatim: keys).appFont(.caption.monospaced())
                     }
                   }
-                  .font(.caption)
+                  .appFont(.caption)
                   .foregroundStyle(.secondary)
                 }
               }

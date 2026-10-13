@@ -55,13 +55,13 @@ public struct SettingsRepository: Sendable {
     return codes.isEmpty ? CurrencyCode.defaultEnabled : codes.map(CurrencyCode.init)
   }
 
-  /// Enables at most ten currencies, as the specification requires.
+  /// Enables these currencies, as many as the owner likes, in their order.
   ///
   /// Refuses with `SettingsWriteError.currencyInUse` to switch off a currency that is on and
   /// is still needed: the default currency, which everything new is in, or one a live account
   /// holds. Nothing is written then.
   public func setEnabledCurrencies(_ currencies: [CurrencyCode]) throws {
-    let limited = Array(currencies.prefix(CurrencyCode.maxEnabled))
+    let limited = currencies
     _ = try writer.write { db in
       let kept = Set(limited)
       let dropped = try Self.enabledCurrencies(db).filter { !kept.contains($0) }
@@ -87,7 +87,7 @@ public struct SettingsRepository: Sendable {
   }
 
   /// Makes `currency` the default and switches it on, last among the enabled ones when it was
-  /// off. Refuses with `SettingsWriteError.tooManyCurrencies` when ten are on already.
+  /// off.
   public func setDefaultCurrency(_ currency: CurrencyCode) throws {
     try writer.write { db in try Self.setDefaultCurrency(currency, db: db) }
   }
@@ -97,17 +97,23 @@ public struct SettingsRepository: Sendable {
     try set(AccountSettings.defaultCurrencyKey, to: currency.code, in: db)
   }
 
-  /// Switches these currencies on, after the ones that are on, in their order; refuses with
-  /// `SettingsWriteError.tooManyCurrencies` when that makes more than ten.
+  /// Switches these currencies on, after the ones that are on, in their order.
   static func enableAlso(_ currencies: [CurrencyCode], db: Database) throws {
     let enabled = try enabledCurrencies(db)
     var all = enabled
     for currency in currencies where !all.contains(currency) { all.append(currency) }
     guard all != enabled else { return }
-    guard all.count <= CurrencyCode.maxEnabled else {
-      throw SettingsWriteError.tooManyCurrencies
-    }
     try enable(all, db: db)
+  }
+
+  /// The currencies outside the Bank of Russia list, archived ones included, in the owner's
+  /// order.
+  public func customCurrencies() throws -> [CustomCurrency] {
+    try writer.read { db in try Self.customCurrencies(db) }
+  }
+
+  static func customCurrencies(_ db: Database) throws -> [CustomCurrency] {
+    try CustomCurrency.order(Column("sort"), Column("code")).fetchAll(db)
   }
 
   /// The default currency and every currency a live account holds.
@@ -136,6 +142,7 @@ public struct SettingsRepository: Sendable {
 public enum SettingsWriteError: Error, Equatable, Sendable {
   /// The currency is the default one or a live account holds it, so it stays on.
   case currencyInUse(CurrencyCode)
-  /// No more than ten currencies are on at once.
+  /// No longer thrown: any number of currencies may be on. Kept for the callers that still
+  /// name it.
   case tooManyCurrencies
 }

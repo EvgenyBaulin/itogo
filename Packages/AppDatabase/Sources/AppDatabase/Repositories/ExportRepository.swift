@@ -135,6 +135,19 @@ public struct ExportRepository: Sendable {
       for row in try Asset.fetchAll(db) { csv.append(ExportTables.row(row)) }
     case ExportTables.assetValuations.fileName:
       for row in try AssetValuation.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.debtInstalments.fileName:
+      for row in try DebtInstalmentStep.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.debtCosts.fileName:
+      for row in try DebtCost.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.allocationRules.fileName:
+      for row in try AllocationRule.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.customCurrencies.fileName:
+      for row in try CustomCurrency.fetchAll(db) { csv.append(ExportTables.row(row)) }
+    case ExportTables.settings.fileName:
+      // Sorted by key, so the same settings are always the same file.
+      for row in try Row.fetchAll(db, sql: "SELECT key, value FROM settings ORDER BY key") {
+        csv.append(ExportTables.settingRow(key: row["key"] ?? "", value: row["value"] ?? ""))
+      }
     default:
       // A table the list gains before its rows are mapped still gets its header row.
       break

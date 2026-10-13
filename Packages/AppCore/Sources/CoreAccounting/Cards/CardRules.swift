@@ -156,3 +156,46 @@ public enum CardRules {
     return cardId
   }
 }
+
+extension CardRules {
+  /// The card a purchase on the account is made with unless it says otherwise: the main card
+  /// while it is a live card of the account, else the one live card of the account, else none.
+  public static func defaultCard(account: PaymentMethod, cards: [PaymentCard]) -> UUID? {
+    let live = cards.filter { $0.accountId == account.id && !$0.archived }
+    if let main = account.mainCardId, live.contains(where: { $0.id == main }) { return main }
+    return live.count == 1 ? live[0].id : nil
+  }
+
+  /// The card of an operation on `account`, in the order the entry asks: the card the line
+  /// named; none when it said «со счёта»; the card of the last purchase at the place
+  /// (`placeCard`); the default card of the account (`defaultCard`).
+  public static func operationCard(
+    named: UUID?, withoutCard: Bool, placeCard: UUID?, account: PaymentMethod,
+    cards: [PaymentCard]
+  ) -> UUID? {
+    if let named { return named }
+    if withoutCard { return nil }
+    if let placeCard { return placeCard }
+    return defaultCard(account: account, cards: cards)
+  }
+
+  /// The main card `account` may keep: its own live card, else none — a card that went to the
+  /// archive, was merged away or moved to another account is no main card.
+  public static func validMainCard(of account: PaymentMethod, cards: [PaymentCard]) -> UUID? {
+    guard let main = account.mainCardId,
+      cards.contains(where: { $0.id == main && $0.accountId == account.id && !$0.archived })
+    else { return nil }
+    return main
+  }
+
+  /// The account once `cardId` goes to the archive, when the card was its main one: without a
+  /// main card, written in the same step. `nil` — the account does not change.
+  public static func account(
+    _ account: PaymentMethod, afterArchiving cardId: UUID
+  ) -> PaymentMethod? {
+    guard account.mainCardId == cardId else { return nil }
+    var changed = account
+    changed.mainCardId = nil
+    return changed
+  }
+}

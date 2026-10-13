@@ -36,7 +36,7 @@ struct BalanceField: View {
       Text(verbatim: placeholder)
     }
     .labelsHidden()
-    .font(.body.monospacedDigit())
+    .appFont(.body.monospacedDigit())
     .focused($isFocused)
     .onAppear { show(amount) }
     .onChange(of: amount) { _, newValue in

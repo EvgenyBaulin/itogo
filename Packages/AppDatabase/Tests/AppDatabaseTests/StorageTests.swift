@@ -748,13 +748,14 @@ struct SettingsOrderTests {
     #expect(try settings.enabledCurrencies() == reordered)
   }
 
-  @Test func onlyTheFirstTenAreKeptAndTheRestAreTurnedOff() throws {
+  /// There is no limit any more: twelve currencies are twelve on, in their order.
+  @Test func everyCurrencyChosenIsKeptOn() throws {
     let stack = try TestSupport.makeStack()
     let settings = SettingsRepository(writer: stack.writer)
     // The ruble is the default currency, which stays on.
     let twelve = [CurrencyCode.rub] + (1...11).map { CurrencyCode("C\($0)") }
     try settings.setEnabledCurrencies(twelve)
-    #expect(try settings.enabledCurrencies() == Array(twelve.prefix(10)))
+    #expect(try settings.enabledCurrencies() == twelve)
   }
 }
 

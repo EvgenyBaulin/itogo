@@ -109,7 +109,7 @@ struct ReferenceBooksView: View {
         } icon: {
           Image(systemName: "info.circle")
         }
-        .font(.callout)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
 
@@ -123,7 +123,7 @@ struct ReferenceBooksView: View {
       }
       if isNewNameTaken {
         Text(verbatim: t("references.nameTaken"))
-          .font(.caption)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
     }
@@ -282,7 +282,7 @@ struct ReferenceBooksView: View {
           .lineLimit(1)
         if let days = row.days {
           Text(verbatim: days)
-            .font(.caption)
+            .appFont(.callout)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
@@ -398,6 +398,7 @@ struct ReferenceBooksView: View {
       }
     } else {
       Text(verbatim: t("references.pick"))
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.top, 40)
@@ -536,13 +537,13 @@ struct ReferenceBooksView: View {
         }
       }
       Text(verbatim: usageText(row.id))
-        .font(.callout)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       if !row.archived {
         HStack(alignment: .firstTextBaseline) {
           Text(verbatim: t(Self.archiveHintKey(book)))
-            .font(.caption)
+            .appFont(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
           Spacer(minLength: 8)
@@ -587,7 +588,7 @@ struct ReferenceBooksView: View {
       Text(
         verbatim: environment.format("references.selected", table: "Settings", counts: chosen.count)
       )
-      .font(.headline)
+      .appFont(.headline)
       if used > 0 {
         Label {
           Text(
@@ -598,6 +599,7 @@ struct ReferenceBooksView: View {
         } icon: {
           Image(systemName: "info.circle")
         }
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
       Button(
@@ -632,7 +634,7 @@ struct ReferenceBooksView: View {
         } icon: {
           Image(systemName: "exclamationmark.circle")
         }
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
       }
       Spacer()

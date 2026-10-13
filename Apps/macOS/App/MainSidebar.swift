@@ -31,11 +31,11 @@ enum SidebarItem: Hashable, Sendable {
     }
   }
 
-  /// A screen of operations: «Траты» and the screens of an account and of a group list them,
+  /// A screen of operations: «Операции» and the screens of an account and of a group list them,
   /// select them and float the selection bar.
   var listsOperations: Bool {
     switch self {
-    case .section(let section): section == .spending
+    case .section(let section): section == .operations
     case .account, .group, .allAccounts: true
     }
   }
@@ -100,4 +100,24 @@ struct MainSidebar: View {
 extension Notification.Name {
   /// Chooses an item of the sidebar of the main window; the object is the `SidebarItem`.
   static let openSidebarItem = Notification.Name("io.github.EvgenyBaulin.itogo.openSidebarItem")
+}
+
+/// The way into «Операции» from outside the sidebar: ⌘⇧T, ⌘F, the button of the toolbar and the
+/// reconciliation's «look for the missing operations». There is no window of Transactions any
+/// more: the main window comes forward on its screen of operations.
+@MainActor
+enum OperationsScreenOpening {
+  static func open(with openWindow: OpenWindowAction) {
+    // Closing the main window quits the app, so it is there; a test host may have none.
+    if !choose(), !AppEnvironment.isTestHost { openWindow(id: "main") }
+  }
+
+  /// Every main window shows «Операции», and the main window comes forward. Whether there was
+  /// one to bring.
+  @discardableResult
+  static func choose() -> Bool {
+    NotificationCenter.default.post(
+      name: .openSidebarItem, object: SidebarItem.section(.operations))
+    return AppWindows.bringForward(.main) != nil
+  }
 }

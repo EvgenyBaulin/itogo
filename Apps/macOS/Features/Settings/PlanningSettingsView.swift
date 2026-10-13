@@ -28,6 +28,12 @@ struct PlanningSettingsView: View {
     Form {
       screenSection
 
+      // Self-employment, the allocation of an income and the hints of 1.9: each its own
+      // section, written as steps of ⌘Z (the database) or switches of this Mac (the hints).
+      SelfEmploymentSettingsSection()
+      AllocationSettingsSection()
+      PlanningHintsSection()
+
       Section {
         Stepper(
           value: Binding(
@@ -124,6 +130,7 @@ struct PlanningSettingsView: View {
         Text(verbatim: t("settings.planning.cushion"))
       } footer: {
         Text(verbatim: t("settings.planning.cushionHint"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -143,6 +150,7 @@ struct PlanningSettingsView: View {
         Text(verbatim: t("settings.planning.limits"))
       } footer: {
         Text(verbatim: t("settings.planning.limitsHint"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -161,6 +169,7 @@ struct PlanningSettingsView: View {
         Text(verbatim: t("settings.anomalies"))
       } footer: {
         Text(verbatim: t("settings.anomalies.hint"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
     }
@@ -200,6 +209,7 @@ struct PlanningSettingsView: View {
         Button(t("settings.planning.blockOrderReset")) { layout.resetOrder() }
           .disabled(PlanningBlocks.isStandard(layout.order))
       }
+      .appFont(.callout)
       .foregroundStyle(.secondary)
     }
   }
@@ -285,5 +295,100 @@ struct PlanningSettingsView: View {
   /// The storage keys whose text differs between two readings.
   static func changedKeys(before: [String: String?], after: [String: String?]) -> [String] {
     after.keys.filter { before[$0] != after[$0] }.sorted()
+  }
+}
+
+/// Settings → Планирование, «Распределение дохода»: the rules an income is allocated by, on a
+/// sheet over the settings — the same sheet the allocation of an income opens.
+struct AllocationSettingsSection: View {
+  @Dependency(\.environment) private var environment
+  @Dependency(\.compute) private var compute
+  @Environment(\.dependencies) private var dependencies
+  @State private var showsRules = false
+
+  private func t(_ key: String) -> String { environment.language(key, table: "Settings") }
+
+  var body: some View {
+    Section {
+      LabeledContent {
+        Button(t("settings.allocation.rules.open")) { showsRules = true }
+          .accessibilityIdentifier("settings.allocation.rules.open")
+      } label: {
+        Text(verbatim: t("settings.allocation.rules"))
+        Text(
+          verbatim: Self.caption(
+            rules: compute.snapshot?.dataset.allocationRules ?? [], environment))
+      }
+    } header: {
+      Text(verbatim: t("settings.allocation"))
+    } footer: {
+      Text(verbatim: t("settings.allocation.hint"))
+        .appFont(.callout)
+        .foregroundStyle(.secondary)
+    }
+    .sheet(isPresented: $showsRules) {
+      AllocationRulesSheet().handingOver(dependencies)
+    }
+  }
+
+  /// «Правил: 3 · включено: 2», or «Правил нет».
+  @MainActor
+  static func caption(rules: [AllocationRule], _ environment: AppEnvironment) -> String {
+    guard !rules.isEmpty else {
+      return environment.language("settings.allocation.rules.none", table: "Settings")
+    }
+    return environment.format(
+      "settings.allocation.rules.count", table: "Settings", rules.count,
+      rules.filter(\.active).count)
+  }
+}
+
+/// Settings → Планирование, «Подсказки»: the hint about many small purchases and the reminder
+/// to ask for the credit history twice a year. Switches of this Mac, written at once, no step
+/// of ⌘Z; both are on until switched off.
+struct PlanningHintsSection: View {
+  @Dependency(\.environment) private var environment
+  @Dependency(\.compute) private var compute
+  @AppStorage(PlanningHintSettings.burnoutEnabledKey) private var burnout = true
+  @AppStorage(PlanningHintSettings.creditHistoryEnabledKey) private var creditHistory = true
+
+  private func t(_ key: String) -> String { environment.language(key, table: "Settings") }
+
+  var body: some View {
+    Section {
+      VStack(alignment: .leading, spacing: 4) {
+        Toggle(isOn: $burnout) {
+          Text(verbatim: t("settings.hints.burnout"))
+          Text(verbatim: t("settings.hints.burnoutHint"))
+        }
+        .accessibilityIdentifier("settings.hints.burnout")
+        if burnout, needsEssentials {
+          // Without a category marked necessary the hint would count groceries as treats:
+          // it stays silent, and says here why.
+          Label {
+            Text(verbatim: t("settings.hints.burnoutNeedsEssentials"))
+              .fixedSize(horizontal: false, vertical: true)
+          } icon: {
+            Image(systemName: "info.circle")
+          }
+          .appFont(.callout)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("settings.hints.burnoutNeedsEssentials")
+        }
+      }
+      Toggle(isOn: $creditHistory) {
+        Text(verbatim: t("settings.hints.creditHistory"))
+        Text(verbatim: t("settings.hints.creditHistoryHint"))
+      }
+      .accessibilityIdentifier("settings.hints.creditHistory")
+    } header: {
+      Text(verbatim: t("settings.hints"))
+    }
+  }
+
+  private var needsEssentials: Bool {
+    guard let snapshot = compute.snapshot else { return false }
+    if case .needsEssentials = snapshot.burnout { return true }
+    return PlanningHintSettings.burnoutNeedsEssentials(snapshot.dataset.categories)
   }
 }

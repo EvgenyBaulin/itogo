@@ -16,14 +16,14 @@ struct PlanningRibbonView: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         Label {
-          Text(verbatim: t("layout.ribbon.title")).font(.headline)
+          Text(verbatim: t("layout.ribbon.title")).appFont(.headline)
         } icon: {
           Image(systemName: "calendar.day.timeline.left").foregroundStyle(.secondary)
         }
         .accessibilityAddTraits(.isHeader)
         Spacer(minLength: 8)
         Text(verbatim: Self.totals(ribbon, environment))
-          .font(.callout.monospacedDigit())
+          .appFont(.callout.monospacedDigit())
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .minimumScaleFactor(0.8)
@@ -53,7 +53,7 @@ struct PlanningRibbonView: View {
             "layout.ribbon.withoutRate", table: "Planning",
             ribbon.withoutRate.map(\.code).joined(separator: ", "))
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -90,10 +90,10 @@ struct PlanningRibbonView: View {
     let isToday = day == environment.today
     return VStack(spacing: 0) {
       Text(verbatim: environment.dates.shortWeekday(environment.calendar.weekdayIndex(day)))
-        .font(.caption2)
+        .appFont(.caption2)
         .foregroundStyle(.tertiary)
       Text(verbatim: "\(day.day)")
-        .font(.caption.monospacedDigit().weight(isToday ? .bold : .regular))
+        .appFont(.caption.monospacedDigit().weight(isToday ? .bold : .regular))
         .foregroundStyle(isToday ? .primary : .secondary)
     }
     .lineLimit(1)
@@ -143,7 +143,7 @@ struct PlanningRibbonView: View {
         .foregroundStyle(income ? Color.green : Color.secondary)
       if count > 1 {
         Text(verbatim: "\(count)")
-          .font(.caption2.monospacedDigit())
+          .appFont(.caption2.monospacedDigit())
           .foregroundStyle(.secondary)
       }
     }

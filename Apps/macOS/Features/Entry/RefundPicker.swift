@@ -53,7 +53,7 @@ final class RefundPickerModel {
       entries: entries, index: RefundIndex(entries: entries, debts: [:]), tree: tree,
       since: since, calendar: calendar,
       query: showsAll ? RefundQuery(latestDay: query.latestDay) : query,
-      placeNames: placeNames)
+      placeNames: placeNames, plans: instalmentPlans())
     candidates = found.candidates
     narrowed = found.narrowed
     if let selectedId, !candidates.contains(where: { $0.id == selectedId }) {
@@ -61,6 +61,13 @@ final class RefundPickerModel {
     }
     // One purchase fits what the line said: it is picked already.
     if selectedId == nil, narrowed, candidates.count == 1 { selectedId = candidates[0].id }
+  }
+
+  /// The instalment plans, open or not: a thing bought on one can be returned.
+  private func instalmentPlans() -> [UUID: Debt] {
+    let debts = (try? references?.debts(includeClosed: true)) ?? []
+    return Dictionary(
+      debts.filter(\.isInstalmentPlan).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
   }
 
   var selected: RefundCandidate? { candidates.first { $0.id == selectedId } }
@@ -136,7 +143,7 @@ struct RefundPicker: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(verbatim: t("refund.title"))
-        .font(.headline)
+        .appFont(.headline)
       if let picker {
         content(picker)
       }
@@ -158,7 +165,7 @@ struct RefundPicker: View {
     HStack {
       if picker.narrowed {
         Text(verbatim: t("refund.narrowed"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         Button(t("refund.showAll")) { picker.showsAll = true }
           .buttonStyle(.link)
@@ -204,7 +211,7 @@ struct RefundPicker: View {
     }
     if let key = picker.refusalKey, picker.selected != nil {
       Text(verbatim: t(key))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.red)
     }
     HStack {
@@ -240,7 +247,7 @@ struct RefundPicker: View {
           verbatim: [environment.dates.longDay(day), place].compactMap { $0 }.joined(
             separator: " · ")
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         if candidate.isPartOfASplit {
           Text(
@@ -248,14 +255,14 @@ struct RefundPicker: View {
               "refund.partOfSplit", table: "Entry",
               money.exact(candidate.purchase.transaction.amountE4, currency: candidate.currency))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
       Spacer()
       VStack(alignment: .trailing, spacing: 2) {
         Text(verbatim: money.exact(candidate.part.amountE4, currency: candidate.currency))
-          .font(.body.monospacedDigit())
+          .appFont(.body.monospacedDigit())
         if candidate.refunded.raw > 0 {
           Label {
             Text(
@@ -265,7 +272,7 @@ struct RefundPicker: View {
           } icon: {
             Image(systemName: "arrow.uturn.left.circle")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }

@@ -119,7 +119,7 @@ struct DayList<Header: View, MenuItems: View>: View {
   private func emptyRow(_ text: String) -> some View {
     VStack(spacing: 8) {
       Image(systemName: "list.bullet.rectangle")
-        .font(.title)
+        .appFont(.title)
         .foregroundStyle(.secondary)
       Text(verbatim: text)
         .foregroundStyle(.secondary)
@@ -150,7 +150,7 @@ struct DayHeader: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline) {
       Text(verbatim: title)
-        .font(.headline)
+        .appFont(.headline)
       Spacer()
       RowTotalsLine(totals: totals)
     }
@@ -186,7 +186,7 @@ struct RowTotalsLine: View {
         }
       }
     }
-    .font(.subheadline)
+    .appFont(.subheadline)
   }
 }
 
@@ -294,7 +294,7 @@ struct TransactionRow: View {
               title: environment.language(Palette.qualityKey(quality)))
           }
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Spacer()
@@ -303,12 +303,12 @@ struct TransactionRow: View {
           verbatim: environment.money.exact(
             entry.transaction.amountE4, currency: entry.transaction.currency)
         )
-        .font(.body.monospacedDigit())
+        .appFont(.body.monospacedDigit())
         if let approximate = ApproximateText.of(
           entry.transaction, environment: environment, compute: compute)
         {
           Text(verbatim: approximate)
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
             .accessibilityIdentifier("operation.approximate")
         }
@@ -364,7 +364,7 @@ struct TransferRow: View {
               .lineLimit(1)
           }
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Spacer()
@@ -372,12 +372,12 @@ struct TransferRow: View {
         Text(
           verbatim: environment.money.exact(transfer.fromAmountE4, currency: transfer.fromCurrency)
         )
-        .font(.body.monospacedDigit())
+        .appFont(.body.monospacedDigit())
         if transfer.isExchange {
           let received = environment.money.exact(
             transfer.toAmountE4, currency: transfer.toCurrency)
           Text(verbatim: "→ \(received)")
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
       }

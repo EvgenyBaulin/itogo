@@ -4,9 +4,10 @@ import Testing
 
 @testable import CoreCSV
 
-/// The 26 file names of the export, in their one fixed order: the 18 of the first schema,
+/// The 31 file names of the export, in their one fixed order: the 18 of the first schema,
 /// then the three the accounts brought, then the cards and their cashback rules, then the banks,
-/// then the assets and their valuations, at the end.
+/// then the assets and their valuations, then the instalments and costs of the debts, the rules
+/// of allocation, the custom currencies and the settings, at the end.
 private let specifiedFileNames = [
   "transactions.csv", "transaction_parts.csv", "reimbursement_links.csv", "people.csv",
   "payment_methods.csv", "places.csv", "events.csv", "categories.csv", "templates.csv",
@@ -14,18 +15,64 @@ private let specifiedFileNames = [
   "goals.csv", "debts.csv", "debt_entries.csv", "reconciliations.csv", "rates.csv",
   "account_groups.csv", "transfers.csv", "reconciliation_balances.csv", "cards.csv",
   "cashback_rules.csv", "banks.csv", "assets.csv", "asset_valuations.csv",
+  "debt_instalments.csv", "debt_costs.csv", "allocation_rules.csv", "custom_currencies.csv",
+  "settings.csv",
 ]
 
-@Suite("ExportTables describes the 26 files of the export")
+@Suite("ExportTables describes the 31 files of the export")
 struct ExportTablesDescriptionTests {
-  @Test func theTwentySixFilesInTheirOrder() {
-    #expect(ExportTables.all.count == 26)
+  @Test func theThirtyOneFilesInTheirOrder() {
+    #expect(ExportTables.all.count == 31)
     #expect(ExportTables.all.map(\.fileName) == specifiedFileNames)
     #expect(
-      ExportTables.all.suffix(5) == [
+      ExportTables.all.suffix(10) == [
         ExportTables.cards, ExportTables.cashbackRules, ExportTables.banks, ExportTables.assets,
-        ExportTables.assetValuations,
+        ExportTables.assetValuations, ExportTables.debtInstalments, ExportTables.debtCosts,
+        ExportTables.allocationRules, ExportTables.customCurrencies, ExportTables.settings,
       ])
+  }
+
+  /// The credits and the allocation of income brought five files at the end and their columns
+  /// at the end of the accounts, the categories, the goals, the debts, their journal and the
+  /// transfers: an older reader still finds its columns where they were.
+  @Test func theColumnsOfTheCreditsComeLast() {
+    #expect(ExportTables.debtInstalments.columns == ["id", "debt_id", "from_index", "amount"])
+    #expect(
+      ExportTables.debtCosts.columns == [
+        "id", "debt_id", "kind", "name", "amount", "every", "day", "in_loan", "transaction_id",
+        "sort",
+      ])
+    #expect(
+      ExportTables.allocationRules.columns == [
+        "id", "target", "goal_id", "payment_method_id", "mode", "percent", "amount", "currency",
+        "sort", "active",
+      ])
+    #expect(
+      ExportTables.customCurrencies.columns == [
+        "code", "name", "symbol", "fraction_digits", "archived", "sort",
+      ])
+    #expect(ExportTables.settings.columns == ["key", "value"])
+    #expect(
+      Array(ExportTables.paymentMethods.columns.suffix(14)) == [
+        "cushion", "credit_limit", "credit_grace", "credit_statement_day", "credit_pay_days",
+        "credit_grace_days", "credit_purchase_rate", "credit_cash_rate", "credit_min_percent",
+        "credit_min_floor", "credit_cash_fee_percent", "credit_cash_fee_fixed",
+        "credit_cash_no_grace", "main_card_id",
+      ])
+    #expect(
+      Array(ExportTables.categories.columns.suffix(3)) == ["essential", "tax_rate", "tax_npd"])
+    #expect(
+      Array(ExportTables.goals.columns.suffix(3)) == [
+        "plan_start_month", "account_id", "transfer_on_contribution",
+      ])
+    #expect(
+      Array(ExportTables.debts.columns.suffix(14)) == [
+        "repay_months", "step_days", "first_due_on", "parts", "markup", "psk", "prepay_any_day",
+        "prepay_notice_days", "planned_prepay_on", "planned_prepay", "in_ladder", "pledge",
+        "return_by", "terms_reviewed",
+      ])
+    #expect(Array(ExportTables.debtEntries.columns.suffix(2)) == ["tranche", "prepay"])
+    #expect(Array(ExportTables.transfers.columns.suffix(2)) == ["updated_at", "external_id"])
   }
 
   /// The capital brought two files at the end and one column at the end of the accounts and of
@@ -37,9 +84,9 @@ struct ExportTablesDescriptionTests {
       ])
     #expect(
       ExportTables.assetValuations.columns == ["id", "asset_id", "day", "value", "note"])
-    #expect(ExportTables.paymentMethods.columns.last == "cushion")
+    #expect(ExportTables.paymentMethods.columns[22] == "cushion")
     #expect(
-      ExportTables.categories.columns == [
+      Array(ExportTables.categories.columns.prefix(9)) == [
         "id", "parent_id", "kind", "name", "sort", "archived", "quality", "system_role",
         "essential",
       ])
@@ -72,12 +119,12 @@ struct ExportTablesDescriptionTests {
         "freq", "day", "parts_expected", "closed", "payment_method_id",
       ])
     #expect(
-      ExportTables.goals.columns == [
+      Array(ExportTables.goals.columns.prefix(9)) == [
         "id", "name", "target", "target_date", "monthly_plan", "subcategory_id", "archived",
         "currency", "plan_start_month",
       ])
     #expect(
-      ExportTables.debts.columns == [
+      Array(ExportTables.debts.columns.prefix(21)) == [
         "id", "direction", "type", "name", "person_id", "currency", "interest_rate",
         "monthly_payment", "payment_day", "remind_days_before", "payments_are_expenses",
         "origin", "note", "closed", "loans_subcategory_id", "deleted_at", "accrues_interest",
@@ -105,7 +152,7 @@ struct ExportTablesDescriptionTests {
     // The account of a bank and the settings of its cashback: the columns they brought, after
     // every older one.
     #expect(
-      ExportTables.paymentMethods.columns == [
+      Array(ExportTables.paymentMethods.columns.prefix(23)) == [
         "id", "name", "kind", "currency", "aliases", "is_default", "archived", "group_id", "sort",
         "other_currencies", "bank_id", "cashback_precision", "cashback_direction",
         "cashback_payout", "cashback_payout_day", "cashback_points_account_id", "interest_rate",
@@ -140,15 +187,15 @@ struct ExportTablesDescriptionTests {
     }
     #expect(ExportTables.transactions.columns.count == 27)
     #expect(ExportTables.transactionParts.columns.count == 17)
-    #expect(ExportTables.paymentMethods.columns.count == 23)
+    #expect(ExportTables.paymentMethods.columns.count == 36)
     #expect(ExportTables.templates.columns.count == 8)
-    #expect(ExportTables.goals.columns.count == 9)
-    #expect(ExportTables.debtEntries.columns.count == 17)
+    #expect(ExportTables.goals.columns.count == 11)
+    #expect(ExportTables.debtEntries.columns.count == 18)
     #expect(ExportTables.reconciliations.columns.count == 10)
     #expect(
       ExportTables.accountGroups.columns == ["id", "name", "in_summary", "sort", "archived"])
     #expect(
-      ExportTables.transfers.columns == [
+      Array(ExportTables.transfers.columns.prefix(11)) == [
         "id", "occurred_at", "from_payment_method_id", "from_currency", "from_amount",
         "to_payment_method_id", "to_currency", "to_amount", "note", "created_at", "updated_at",
       ])
@@ -203,6 +250,63 @@ struct ExportTablesRowTests {
     let dictionaries = try CSVReader.dictionaries(from: writer.data())
     #expect(dictionaries.count == 1)
     return dictionaries[0]
+  }
+
+  /// Every value of the credits and the allocation reads back as written: amounts as decimal
+  /// strings, flags as words, the grace period of a card in its own columns.
+  @Test func theRowsOfTheCreditsReadBack() throws {
+    let account = PaymentMethod(
+      name: "Кредитка, «Т»", kind: .card,
+      credit: CreditCardTerms(
+        limitE4: AmountE4(whole: 150_000), grace: .statement(day: 5, payDays: 25),
+        purchaseRate: Decimal(string: "29.9"), minFloorE4: AmountE4(whole: 600),
+        cashWithoutGrace: true),
+      mainCardId: UUID())
+    let accountRow = try roundTrip(ExportTables.paymentMethods, row: ExportTables.row(account))
+    #expect(accountRow["credit_limit"] == "150000")
+    #expect(accountRow["credit_grace"] == "statement")
+    #expect(accountRow["credit_statement_day"] == "5")
+    #expect(accountRow["credit_pay_days"] == "25")
+    #expect(accountRow["credit_grace_days"] == "")
+    #expect(accountRow["credit_purchase_rate"] == "29.9")
+    #expect(accountRow["credit_min_floor"] == "600")
+    #expect(accountRow["credit_cash_no_grace"] == "true")
+    #expect(accountRow["main_card_id"] == account.mainCardId?.uuidString)
+    let plain = try roundTrip(
+      ExportTables.paymentMethods, row: ExportTables.row(PaymentMethod(name: "Cash")))
+    #expect(plain["credit_limit"] == "" && plain["credit_cash_no_grace"] == "false")
+
+    let debt = Debt(
+      direction: .iOwe, type: .installment, name: "Телефон", origin: .purchase,
+      steps: DebtSteps(everyDays: 14, firstDue: DateOnly(year: 2026, month: 10, day: 12)),
+      parts: 4, markupE4: AmountE4(whole: 600), termsReviewed: true)
+    let debtRow = try roundTrip(ExportTables.debts, row: ExportTables.row(debt))
+    #expect(debtRow["step_days"] == "14")
+    #expect(debtRow["first_due_on"] == "2026-10-12")
+    #expect(debtRow["parts"] == "4")
+    #expect(debtRow["markup"] == "600")
+    #expect(debtRow["prepay_any_day"] == "true")
+    #expect(debtRow["in_ladder"] == "")
+    #expect(debtRow["pledge"] == "false")
+    #expect(debtRow["terms_reviewed"] == "true")
+
+    let rule = AllocationRule(
+      target: .cushion(nil), amount: .fixed(AmountE4(whole: 5_000), .usd), sort: 2)
+    let ruleRow = try roundTrip(ExportTables.allocationRules, row: ExportTables.row(rule))
+    #expect(ruleRow["target"] == "cushion")
+    #expect(ruleRow["mode"] == "fixed")
+    #expect(ruleRow["percent"] == "")
+    #expect(ruleRow["amount"] == "5000")
+    #expect(ruleRow["currency"] == "USD")
+    let percent = AllocationRule(target: .goal(UUID()), amount: .percent(Decimal(string: "10.5")!))
+    let percentRow = try roundTrip(ExportTables.allocationRules, row: ExportTables.row(percent))
+    #expect(percentRow["mode"] == "percent" && percentRow["percent"] == "10.5")
+
+    #expect(
+      try roundTrip(
+        ExportTables.settings,
+        row: ExportTables.settingRow(key: "debts.nudgeTemplate", value: "{имя},\n«верни»")
+      )["value"] == "{имя},\n«верни»")
   }
 
   @Test func transactionRoundTrips() throws {
@@ -572,9 +676,11 @@ struct ExportTablesRowTests {
   }
 
   /// «В этом месяце больше платежей не будет» comes after every column older than it, and only
-  /// the tranche after it: an older reader still finds the others where they were.
+  /// the tranche and the early repayment after it: an older reader still finds the others where
+  /// they were.
   @Test func aPaymentThatClosesItsTermSaysSoInTheLastColumn() throws {
-    #expect(Array(ExportTables.debtEntries.columns.suffix(2)) == ["closes_term", "tranche"])
+    #expect(
+      Array(ExportTables.debtEntries.columns.suffix(3)) == ["closes_term", "tranche", "prepay"])
     let closing = DebtEntry(
       debtId: UUID(), amountE4: AmountE4(whole: -4_000), kind: .payment, closesTerm: true)
     let plain = DebtEntry(debtId: UUID(), amountE4: AmountE4(whole: 1_000), kind: .borrowed)
@@ -1138,5 +1244,36 @@ struct ReconciliationBreakdownTests {
     let text = ReconciliationBreakdown.json(amounts)
     #expect(text?.contains("9007199254740993") == true)
     #expect(ReconciliationBreakdown.amounts(fromJSON: text) == amounts)
+  }
+}
+
+/// Every custom currency goes out to `custom_currencies.csv` and comes back from it as it was:
+/// the code, the name, the symbol or none, the digits, the archive and the order.
+@Suite("custom_currencies.csv there and back")
+struct CustomCurrenciesCSVTests {
+  static func back(_ row: [String: String]) -> CustomCurrency? {
+    guard let code = row["code"], let name = row["name"],
+      let digits = row["fraction_digits"].flatMap(Int.init),
+      let sort = row["sort"].flatMap(Int.init)
+    else { return nil }
+    let symbol = row["symbol"].flatMap { $0.isEmpty ? nil : $0 }
+    return CustomCurrency(
+      code: CurrencyCode(code), name: name, symbol: symbol, fractionDigits: digits,
+      archived: row["archived"] == "true", sort: sort)
+  }
+
+  @Test func theRowsComeBackAsTheyWent() throws {
+    let currencies = [
+      CustomCurrency(
+        code: CurrencyCode("UST"), name: "Tether, \"USDT\"", symbol: "₮", fractionDigits: 4),
+      CustomCurrency(
+        code: CurrencyCode("PTS"), name: "баллы", fractionDigits: 0, archived: true, sort: 1),
+    ]
+    var writer = CSVWriter(columns: ExportTables.customCurrencies.columns)
+    for currency in currencies { writer.append(ExportTables.row(currency)) }
+    let rows = try CSVReader.dictionaries(from: writer.data())
+    #expect(rows.map(CustomCurrenciesCSVTests.back) == currencies)
+    #expect(rows.first?["archived"] == "false")
+    #expect(rows.last?["symbol"] == "")
   }
 }

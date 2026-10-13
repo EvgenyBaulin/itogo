@@ -31,7 +31,7 @@ struct GuideCardsView: View {
     VStack(spacing: 18) {
       HStack {
         Text(verbatim: title)
-          .font(.headline)
+          .appFont(.headline)
           .foregroundStyle(.secondary)
         Spacer()
         Button(t("guide.skip")) { finish(!isLast) }
@@ -102,16 +102,16 @@ struct GuideCardsView: View {
   private func card(_ card: GuideCard) -> some View {
     VStack(spacing: 16) {
       Image(systemName: card.symbol)
-        .font(.system(size: 54, weight: .regular))
+        .font(.system(size: 54, weight: .regular))  // font-fixed: the picture of the card
         .foregroundStyle(.tint)
         .symbolEffect(.bounce, options: .nonRepeating, isActive: !reduceMotion)
         .accessibilityHidden(true)
         .frame(height: 70)
       Text(verbatim: card.title.text(russian: russian))
-        .font(.title2.weight(.semibold))
+        .appFont(.title2.weight(.semibold))
         .multilineTextAlignment(.center)
       Text(verbatim: card.body.text(russian: russian))
-        .font(.body)
+        .appFont(.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)

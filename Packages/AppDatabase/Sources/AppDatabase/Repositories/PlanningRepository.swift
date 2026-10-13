@@ -29,6 +29,16 @@ public struct PlanningRows: Sendable, Hashable {
   public var cashbackRules: [CashbackRule]
   public var assets: [Asset]
   public var assetValuations: [AssetValuation]
+  /// The sums of dues typed from a bank's app.
+  public var debtInstalments: [DebtInstalmentStep]
+  /// What else a loan costs.
+  public var debtCosts: [DebtCost]
+  public var allocationRules: [AllocationRule]
+  /// Keyed by their code.
+  public var customCurrencies: [CustomCurrency]
+  /// Rates typed by hand — the history of a custom currency —, keyed by day, currency and
+  /// source (`RateKey`).
+  public var rates: [Rate]
 
   public init(
     categories: [CoreKit.Category] = [], events: [Event] = [], goals: [Goal] = [],
@@ -38,8 +48,16 @@ public struct PlanningRows: Sendable, Hashable {
     accountGroups: [AccountGroup] = [], paymentMethods: [PaymentMethod] = [],
     transfers: [Transfer] = [], reconciledBalances: [ReconciledBalance] = [],
     cards: [PaymentCard] = [], cashbackRules: [CashbackRule] = [], banks: [Bank] = [],
-    assets: [Asset] = [], assetValuations: [AssetValuation] = []
+    assets: [Asset] = [], assetValuations: [AssetValuation] = [],
+    debtInstalments: [DebtInstalmentStep] = [], debtCosts: [DebtCost] = [],
+    allocationRules: [AllocationRule] = [], customCurrencies: [CustomCurrency] = [],
+    rates: [Rate] = []
   ) {
+    self.rates = rates
+    self.debtInstalments = debtInstalments
+    self.debtCosts = debtCosts
+    self.allocationRules = allocationRules
+    self.customCurrencies = customCurrencies
     self.banks = banks
     self.assets = assets
     self.assetValuations = assetValuations
@@ -87,6 +105,12 @@ public struct PlanningRowIDs: Sendable, Hashable {
   public var cashbackRules: [UUID]
   public var assets: [UUID]
   public var assetValuations: [UUID]
+  public var debtInstalments: [UUID]
+  public var debtCosts: [UUID]
+  public var allocationRules: [UUID]
+  /// Custom currencies are keyed by their code.
+  public var customCurrencies: [CurrencyCode]
+  public var rates: [RateKey]
 
   public init(
     categories: [UUID] = [], events: [UUID] = [], goals: [UUID] = [], debts: [UUID] = [],
@@ -95,8 +119,14 @@ public struct PlanningRowIDs: Sendable, Hashable {
     reconciliations: [UUID] = [], accountGroups: [UUID] = [], paymentMethods: [UUID] = [],
     transfers: [UUID] = [], reconciledBalances: [UUID] = [], cards: [UUID] = [],
     cashbackRules: [UUID] = [], banks: [UUID] = [], assets: [UUID] = [],
-    assetValuations: [UUID] = []
+    assetValuations: [UUID] = [], debtInstalments: [UUID] = [], debtCosts: [UUID] = [],
+    allocationRules: [UUID] = [], customCurrencies: [CurrencyCode] = [], rates: [RateKey] = []
   ) {
+    self.rates = rates
+    self.debtInstalments = debtInstalments
+    self.debtCosts = debtCosts
+    self.allocationRules = allocationRules
+    self.customCurrencies = customCurrencies
     self.banks = banks
     self.assets = assets
     self.assetValuations = assetValuations
@@ -452,17 +482,24 @@ public struct PlanningRepository: Sendable {
     let rows = change.upsert
     try journal.upsert(rows.accountGroups, db: db)
     try journal.upsert(rows.banks, db: db)
-    try journal.upsert(rows.paymentMethods, db: db)
+    // The main card of an account is set once its cards are written (the schema holds it to a
+    // card of the account): the account goes in without it first.
+    try journal.upsert(rows.paymentMethods.map(\.withoutMainCard), db: db)
     // An account written as the main one takes the flag from every other, as a save of it
     // does (`ReferenceRepository.save`); of two written as main, the later one keeps it.
     if let main = rows.paymentMethods.last(where: \.isDefault) {
       try journal.takeMainFlag(for: main.id, db: db)
     }
     try journal.upsert(rows.cards, db: db)
+    try Self.setMainCards(of: rows.paymentMethods, db: db)
     try journal.upsert(Self.parentsFirst(rows.categories), db: db)
     try journal.upsert(rows.events, db: db)
     try journal.upsert(rows.goals, db: db)
     try journal.upsert(rows.debts, db: db)
+    try journal.upsert(rows.allocationRules, db: db)
+    try journal.upsertCustomCurrencies(rows.customCurrencies, db: db)
+    try journal.upsertRates(rows.rates, db: db)
+    try journal.upsert(rows.debtInstalments, db: db)
     try journal.upsert(rows.scheduled, db: db)
     try journal.upsert(rows.prices, db: db)
     try journal.upsert(rows.expected, db: db)
@@ -491,6 +528,7 @@ public struct PlanningRepository: Sendable {
     written += rewrites.written
     try Self.refuseMissingCharge(of: rows.debtEntries, db: db)
     try journal.upsert(rows.debtEntries, db: db)
+    try journal.upsert(rows.debtCosts, db: db)
     try journal.upsert(rows.expectedLinks, db: db)
     try journal.upsert(rows.transfers, db: db)
     try journal.upsert(rows.reconciliations, db: db)
@@ -506,6 +544,11 @@ public struct PlanningRepository: Sendable {
     try journal.delete(Transfer.self, ids: gone.transfers, db: db)
     try journal.delete(ExpectedIncomeLink.self, ids: gone.expectedLinks, db: db)
     try journal.delete(DebtEntry.self, ids: gone.debtEntries, db: db)
+    try journal.delete(DebtCost.self, ids: gone.debtCosts, db: db)
+    try journal.delete(DebtInstalmentStep.self, ids: gone.debtInstalments, db: db)
+    try journal.delete(AllocationRule.self, ids: gone.allocationRules, db: db)
+    try journal.deleteRates(gone.rates, db: db)
+    try journal.deleteCustomCurrencies(gone.customCurrencies, db: db)
     try journal.delete(CashbackRule.self, ids: gone.cashbackRules, db: db)
     try journal.delete(Asset.self, ids: gone.assets, db: db)
     try journal.delete(Budget.self, ids: gone.budgets, db: db)
@@ -844,6 +887,13 @@ public struct PlanningRepository: Sendable {
     try Self.deleteAll(Transfer.self, ids: added.transfers, db: db)
     try Self.deleteAll(ExpectedIncomeLink.self, ids: added.expectedLinks, db: db)
     try Self.deleteAll(DebtEntry.self, ids: added.debtEntries, db: db)
+    try Self.deleteAll(DebtCost.self, ids: added.debtCosts, db: db)
+    try Self.deleteAll(DebtInstalmentStep.self, ids: added.debtInstalments, db: db)
+    try Self.deleteAll(AllocationRule.self, ids: added.allocationRules, db: db)
+    for key in added.rates { _ = try Rate.deleteOne(db, key: key.databaseKey) }
+    for code in added.customCurrencies {
+      _ = try CustomCurrency.deleteOne(db, key: code.code)
+    }
     try Self.deleteAll(CashbackRule.self, ids: added.cashbackRules, db: db)
     try Self.deleteAll(AssetValuation.self, ids: added.assetValuations, db: db)
     try Self.deleteAll(Asset.self, ids: added.assets, db: db)
@@ -861,12 +911,17 @@ public struct PlanningRepository: Sendable {
     let before = undo.before
     for row in before.accountGroups { try row.save(db) }
     for row in before.banks { try row.save(db) }
-    for row in before.paymentMethods { try row.save(db) }
+    for row in before.paymentMethods { try row.withoutMainCard.save(db) }
     for row in before.cards { try row.save(db) }
+    try Self.setMainCards(of: before.paymentMethods, db: db)
     for category in Self.parentsFirst(before.categories) { try category.save(db) }
     for row in before.events { try row.save(db) }
     for row in before.goals { try row.save(db) }
     for row in before.debts { try row.save(db) }
+    for row in before.allocationRules { try row.save(db) }
+    for row in before.customCurrencies { try row.save(db) }
+    for row in before.rates { try row.save(db) }
+    for row in before.debtInstalments { try row.save(db) }
     for row in before.scheduled { try row.save(db) }
     for row in before.prices { try row.save(db) }
     for row in before.expected { try row.save(db) }
@@ -875,6 +930,7 @@ public struct PlanningRepository: Sendable {
     for row in before.assets { try row.save(db) }
     for row in before.assetValuations { try row.save(db) }
     for row in before.debtEntries { try row.save(db) }
+    for row in before.debtCosts { try row.save(db) }
     for row in before.expectedLinks { try row.save(db) }
     for row in before.transfers { try row.save(db) }
     for row in before.reconciliations { try row.save(db) }
@@ -918,6 +974,9 @@ public struct PlanningRepository: Sendable {
     try Self.restoreRowIDs(before.assets, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.assetValuations, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.debtEntries, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.debtCosts, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.debtInstalments, undo.rowIDs, db: db)
+    try Self.restoreRowIDs(before.allocationRules, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.expectedLinks, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.prices, undo.rowIDs, db: db)
     try Self.restoreRowIDs(before.reconciliations, undo.rowIDs, db: db)
@@ -1043,6 +1102,18 @@ public struct PlanningRepository: Sendable {
 
   // MARK: Helpers
 
+  /// Gives each account its main card, written after its cards: the schema refuses a main card
+  /// that is not a card of the account yet. An account without one is left as it was written.
+  private static func setMainCards(of accounts: [PaymentMethod], db: Database) throws {
+    for account in accounts {
+      guard let card = try AccountRepository.keepingOwnMainCard(account, db: db).mainCardId
+      else { continue }
+      try db.execute(
+        sql: "UPDATE payment_methods SET main_card_id = ? WHERE id = ?",
+        arguments: [card.uuidString, account.id.uuidString])
+    }
+  }
+
   private static func setting(_ key: String, db: Database) throws -> String? {
     try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = ?", arguments: [key])
   }
@@ -1116,6 +1187,8 @@ struct UndoJournal {
   /// Links a deletion clears in tables the planning does not write.
   private(set) var cleared: [ClearedReference] = []
   private var seen: Set<RowKey> = []
+  private var seenCodes: Set<CurrencyCode> = []
+  private var seenRates: Set<RateKey> = []
 
   private struct RowKey: Hashable {
     var table: String
@@ -1132,6 +1205,53 @@ struct UndoJournal {
         }
       }
       try row.save(db)
+    }
+  }
+
+  /// The custom currencies, keyed by their code rather than by an id.
+  mutating func upsertCustomCurrencies(_ rows: [CustomCurrency], db: Database) throws {
+    for row in rows {
+      if seenCodes.insert(row.code).inserted {
+        if let current = try CustomCurrency.fetchOne(db, key: row.code.code) {
+          before.customCurrencies.append(current)
+        } else {
+          inserted.customCurrencies.append(row.code)
+        }
+      }
+      try row.save(db)
+    }
+  }
+
+  /// The rates, keyed by day, currency and source rather than by an id.
+  mutating func upsertRates(_ rows: [Rate], db: Database) throws {
+    for row in rows {
+      let key = RateKey(row)
+      if seenRates.insert(key).inserted {
+        if let current = try Rate.fetchOne(db, key: key.databaseKey) {
+          before.rates.append(current)
+        } else {
+          inserted.rates.append(key)
+        }
+      }
+      try row.save(db)
+    }
+  }
+
+  /// Keys that are not there are passed over.
+  mutating func deleteRates(_ keys: [RateKey], db: Database) throws {
+    for key in keys {
+      guard let current = try Rate.fetchOne(db, key: key.databaseKey) else { continue }
+      if seenRates.insert(key).inserted { before.rates.append(current) }
+      _ = try Rate.deleteOne(db, key: key.databaseKey)
+    }
+  }
+
+  /// Codes that are not there are passed over.
+  mutating func deleteCustomCurrencies(_ codes: [CurrencyCode], db: Database) throws {
+    for code in codes {
+      guard let current = try CustomCurrency.fetchOne(db, key: code.code) else { continue }
+      if seenCodes.insert(code).inserted { before.customCurrencies.append(current) }
+      _ = try CustomCurrency.deleteOne(db, key: code.code)
     }
   }
 
@@ -1280,6 +1400,11 @@ extension Goal: PlanningRow {
     try refuseIfOperations(
       "SELECT 1 FROM transaction_parts WHERE goal_id = :id", point: id, db: db)
   }
+
+  /// Its rule of allocation goes with it (`ON DELETE CASCADE`), kept whole for ⌘Z.
+  static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
+    try journal.keepRows(AllocationRule.self, where: "goal_id", is: id, db: db)
+  }
 }
 
 extension Debt: PlanningRow {
@@ -1291,9 +1416,11 @@ extension Debt: PlanningRow {
       "SELECT 1 FROM transactions WHERE debt_id = :id OR credit_debt_id = :id", point: id, db: db)
   }
 
-  /// Its journal goes with it.
+  /// Its journal, the sums of its dues typed from the bank and its costs go with it.
   static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
     try journal.keepRows(DebtEntry.self, where: "debt_id", is: id, db: db)
+    try journal.keepRows(DebtInstalmentStep.self, where: "debt_id", is: id, db: db)
+    try journal.keepRows(DebtCost.self, where: "debt_id", is: id, db: db)
   }
 }
 
@@ -1392,6 +1519,7 @@ extension PaymentMethod: PlanningRow {
       UNION ALL SELECT 1 FROM debt_entries WHERE payment_method_id = :id
       UNION ALL SELECT 1 FROM payment_methods WHERE cashback_points_account_id = :id
       UNION ALL SELECT 1 FROM payment_methods WHERE interest_account_id = :id
+      UNION ALL SELECT 1 FROM goals WHERE account_id = :id
       """, point: id, db: db)
   }
 
@@ -1404,6 +1532,7 @@ extension PaymentMethod: PlanningRow {
     try journal.keepRows(PaymentCard.self, where: "payment_method_id", is: id, db: db)
     try journal.keepRows(CashbackRule.self, where: "payment_method_id", is: id, db: db)
     try journal.keepRows(ExpectedIncome.self, where: "payment_method_id", is: id, db: db)
+    try journal.keepRows(AllocationRule.self, where: "payment_method_id", is: id, db: db)
   }
 }
 
@@ -1421,9 +1550,11 @@ extension PaymentCard: PlanningRow {
       """, point: id, db: db)
   }
 
-  /// Its cashback rules go with it (`ON DELETE CASCADE`), kept whole for ⌘Z.
+  /// Its cashback rules go with it (`ON DELETE CASCADE`), kept whole for ⌘Z; an account whose
+  /// main card it is lets go of it (`ON DELETE SET NULL`), kept whole too.
   static func keepDependents(of id: UUID, journal: inout UndoJournal, db: Database) throws {
     try journal.keepRows(CashbackRule.self, where: "card_id", is: id, db: db)
+    try journal.keepRows(PaymentMethod.self, where: "main_card_id", is: id, db: db)
   }
 }
 
@@ -1451,4 +1582,28 @@ extension Asset: PlanningRow {
 extension AssetValuation: PlanningRow {
   static var rows: WritableKeyPath<PlanningRows, [Self]> { \.assetValuations }
   static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.assetValuations }
+}
+
+extension DebtInstalmentStep: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.debtInstalments }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.debtInstalments }
+}
+
+extension DebtCost: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.debtCosts }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.debtCosts }
+}
+
+extension AllocationRule: PlanningRow {
+  static var rows: WritableKeyPath<PlanningRows, [Self]> { \.allocationRules }
+  static var ids: WritableKeyPath<PlanningRowIDs, [UUID]> { \.allocationRules }
+}
+
+extension PaymentMethod {
+  /// The account as written before its cards are: without its main card.
+  fileprivate var withoutMainCard: PaymentMethod {
+    var account = self
+    account.mainCardId = nil
+    return account
+  }
 }

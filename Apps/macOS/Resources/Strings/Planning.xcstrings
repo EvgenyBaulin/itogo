@@ -343,6 +343,91 @@
         }
       }
     },
+    "advice.load.bank": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A bank counts stricter: a credit card as 5% of its limit, not of the debt."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Банк считает строже: кредитка — 5 % от лимита, а не от долга."
+          }
+        }
+      }
+    },
+    "advice.load.high": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "high"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "высокая"
+          }
+        }
+      }
+    },
+    "advice.load.history": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The load by month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нагрузка по месяцам"
+          }
+        }
+      }
+    },
+    "advice.load.thresholds": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Bank of Russia calls a load high from 50% and very high from 80%."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ЦБ считает нагрузку высокой от 50 %, очень высокой — от 80 %."
+          }
+        }
+      }
+    },
+    "advice.load.veryHigh": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "very high"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "очень высокая"
+          }
+        }
+      }
+    },
     "advice.months": {
       "extractionState": "manual",
       "localizations": {
@@ -3636,6 +3721,57 @@
         }
       }
     },
+    "form.goal.account": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where the money of the goal is"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Где лежат деньги цели"
+          }
+        }
+      }
+    },
+    "form.goal.account.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A contribution moves no money. Name the account if the money of the goal is kept apart."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Взнос в цель денег не двигает. Укажите счёт, если деньги цели лежат отдельно."
+          }
+        }
+      }
+    },
+    "form.goal.account.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not set"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не указано"
+          }
+        }
+      }
+    },
     "form.goal.archivedNamesake": {
       "extractionState": "manual",
       "localizations": {
@@ -3870,6 +4006,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сумма цели"
+          }
+        }
+      }
+    },
+    "form.goal.transfers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "And transfer to this account when allocating"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "И переводить на этот счёт при распределении"
+          }
+        }
+      }
+    },
+    "form.goal.transfers.hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When an income is allocated: the contribution and a transfer to this account, one step; the sheet can untick it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "При распределении дохода — взнос и перевод на этот счёт одним шагом; в листе галочку можно снять."
           }
         }
       }
@@ -4862,6 +5032,23 @@
         }
       }
     },
+    "free.cardDue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credit card «%@» — to pay by %@: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кредитка «%@» — к оплате до %@: %@"
+          }
+        }
+      }
+    },
     "free.cushion": {
       "extractionState": "manual",
       "localizations": {
@@ -4909,6 +5096,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Учитывая запланированные События и траты"
+          }
+        }
+      }
+    },
+    "free.half": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Until %@: %@ · %@ a day"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "До %@: %@ · в день %@"
           }
         }
       }
@@ -5079,6 +5283,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "без курса на сегодня, не в строках: %@"
+          }
+        }
+      }
+    },
+    "free.salaryLate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The salary did not come? It was expected on %@ — the half of the month goes on"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зарплата не пришла? Ждали %@ — половина месяца продлевается"
           }
         }
       }
@@ -5693,6 +5914,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Платежи"
+          }
+        }
+      }
+    },
+    "layout.block.selfEmployment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Self-employment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Самозанятость"
           }
         }
       }
@@ -6676,6 +6914,23 @@
         }
       }
     },
+    "layout.total.selfEmployment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "≈ %@ by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "≈ %@ до %@"
+          }
+        }
+      }
+    },
     "limit.badTotal": {
       "extractionState": "manual",
       "localizations": {
@@ -6767,13 +7022,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The reconciliation category takes no limit"
+            "value": "Reconciliation and the self-employed tax take no limit"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "На категорию сверки лимит не ставится"
+            "value": "На «Сверку» и налог самозанятого лимит не ставится"
           }
         }
       }
@@ -7876,6 +8131,23 @@
         }
       }
     },
+    "planning.free.creditCards": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credit cards to pay (out of the summary)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кредитки к оплате (вне сводки)"
+          }
+        }
+      }
+    },
     "planning.free.debts": {
       "extractionState": "manual",
       "localizations": {
@@ -7940,6 +8212,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "план взносов на цели до этой даты"
+          }
+        }
+      }
+    },
+    "planning.free.npdTax": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax of self-employment ≈ — not your money"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог самозанятого ≈ — не ваши деньги"
           }
         }
       }
@@ -9907,6 +10196,57 @@
         }
       }
     },
+    "scheduled.npd": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax of self-employment for %@ ≈ %@ by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог НПД за %@ ≈ %@ до %@"
+          }
+        }
+      }
+    },
+    "scheduled.npd.accruing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax of self-employment for %@ ≈ %@ so far — by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог НПД за %@ ≈ %@ пока — до %@"
+          }
+        }
+      }
+    },
+    "scheduled.npd.symbol": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог"
+          }
+        }
+      }
+    },
     "scheduled.paidByOperation": {
       "extractionState": "manual",
       "localizations": {
@@ -9958,6 +10298,108 @@
         }
       }
     },
+    "scheduled.tax": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simplified tax (USN) for %@ ≈ %@ by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог УСН за %@ ≈ %@ до %@"
+          }
+        }
+      }
+    },
+    "scheduled.tax.accruing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simplified tax (USN) for %@ ≈ %@ so far — by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог УСН за %@ ≈ %@ пока — до %@"
+          }
+        }
+      }
+    },
+    "scheduled.tax.quarter.1": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Q1 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I квартал %@"
+          }
+        }
+      }
+    },
+    "scheduled.tax.quarter.2": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Q2 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "II квартал %@"
+          }
+        }
+      }
+    },
+    "scheduled.tax.quarter.3": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Q3 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "III квартал %@"
+          }
+        }
+      }
+    },
+    "scheduled.tax.quarter.4": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Q4 %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "IV квартал %@"
+          }
+        }
+      }
+    },
     "scheduled.title": {
       "extractionState": "manual",
       "localizations": {
@@ -10005,6 +10447,91 @@
           "stringUnit": {
             "state": "translated",
             "value": "пробный период до %@"
+          }
+        }
+      }
+    },
+    "selfEmployed.offer.enable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включить…"
+          }
+        }
+      }
+    },
+    "selfEmployed.offer.later": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is asked once: turn it on any time in Settings → Planning."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Больше не спросим: включить можно в «Настройки → Планирование»."
+          }
+        }
+      }
+    },
+    "selfEmployed.offer.notNow": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not now"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не сейчас"
+          }
+        }
+      }
+    },
+    "selfEmployed.offer.text": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It looks like income of the self-employed. The app can count the tax, remind of its due day on the 28th and keep it out of the free sum."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Похоже, у вас доход самозанятого. Приложение может считать налог НПД, напоминать о сроке 28-го числа и не считать налог свободными деньгами."
+          }
+        }
+      }
+    },
+    "selfEmployed.offer.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Are you self-employed?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вы самозанятый?"
           }
         }
       }

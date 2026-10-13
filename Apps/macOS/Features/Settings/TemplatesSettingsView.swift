@@ -49,7 +49,7 @@ struct TemplatesSettingsView: View {
       .frame(minHeight: 240)
 
       Text(verbatim: t("templates.hint"))
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
     }
     .padding()
@@ -110,6 +110,7 @@ struct TemplatesSettingsView: View {
         .foregroundStyle(.secondary)
         .accessibilityLabel(Text(verbatim: t("templates.inArchive")))
       Text(verbatim: template.text)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         .lineLimit(1)
       Spacer(minLength: 6)
@@ -135,13 +136,13 @@ struct TemplatesSettingsView: View {
     if let amount = template.amountE4 {
       let currency = Self.amountCurrency(of: template, defaultCurrency: environment.defaultCurrency)
       Text(verbatim: environment.money.exact(amount, currency: currency))
-        .font(.callout.monospacedDigit())
+        .appFont(.callout.monospacedDigit())
         .foregroundStyle(.secondary)
     }
     Text(
       verbatim: environment.format("templates.used", table: "Settings", counts: template.useCount)
     )
-    .font(.caption)
+    .appFont(.callout)
     .foregroundStyle(.secondary)
   }
 

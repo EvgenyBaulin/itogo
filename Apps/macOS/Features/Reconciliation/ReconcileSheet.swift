@@ -60,7 +60,7 @@ struct ReconcileSheet: View {
       rows: compared, counted: counted, rubPerUnit: snapshot?.context.rubPerUnit ?? [:])
     let notHeld = Self.differencesNotHeld(rows: compared, counted: counted)
     VStack(alignment: .leading, spacing: 12) {
-      Text(verbatim: t("reconcile.title")).font(.headline)
+      Text(verbatim: t("reconcile.title")).appFont(.headline)
       Text(verbatim: t("reconcile.accountsQuestion"))
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -127,14 +127,18 @@ struct ReconcileSheet: View {
         } icon: {
           Image(systemName: "exclamationmark.octagon")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.red)
       }
       HStack {
         if let last = snapshot?.planning.lastReconciliation {
           Button(t("reconcile.findMissing")) {
-            environment.pendingTransactionsRange = DayRange(last.date, environment.today)
-            openWindow(id: "transactions")
+            Self.findMissing(
+              since: last.date, today: environment.today,
+              typing: ReconcileTyping(typed: typed, blank: blank, unticked: unticked),
+              in: environment)
+            dismiss()
+            OperationsScreenOpening.open(with: openWindow)
           }
         }
         Spacer()
@@ -173,6 +177,12 @@ struct ReconcileSheet: View {
     .frame(width: 620)
     .onAppear {
       now = Date()
+      // Back from «Найти пропущенные…»: what was typed before is here again.
+      if let kept = ReconcileDraftKeeper.shared.take() {
+        typed = kept.typed
+        blank = kept.blank
+        unticked = kept.unticked
+      }
       // The card of Overview asked for the first counts to decide on: they are in the history.
       if ReconcileHistoryRequest.shared.isRequested {
         ReconcileHistoryRequest.shared.isRequested = false
@@ -205,12 +215,12 @@ struct ReconcileSheet: View {
           } icon: {
             Image(systemName: "eye.slash")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
         if let note = Self.note(for: row, accounts: snapshot.dataset.paymentMethods) {
           Text(verbatim: t(note))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
       }
@@ -229,7 +239,7 @@ struct ReconcileSheet: View {
         } icon: {
           Image(systemName: "flag")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .help(t("reconcile.first"))
       }
@@ -297,7 +307,7 @@ struct ReconcileSheet: View {
               table: "Planning", environment.money.exact(difference.magnitude, currency: currency)))
         }
       }
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
     }
@@ -327,7 +337,7 @@ struct ReconcileSheet: View {
     } icon: {
       Image(systemName: symbol)
     }
-    .font(.caption)
+    .appFont(.caption)
     .foregroundStyle(.secondary)
   }
 
@@ -552,7 +562,7 @@ struct ReconcileSheet: View {
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.trailing)
         }
-        .font(.caption)
+        .appFont(.caption)
         ForEach(Self.candidates(candidates, of: item), id: \.id) { candidate in
           fixButton(candidate, snapshot: snapshot)
         }
@@ -574,7 +584,7 @@ struct ReconcileSheet: View {
       Spacer(minLength: 8)
       if let name {
         Text(verbatim: name)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       // Content, not a floating control: a plain small button, never glass.
@@ -599,7 +609,7 @@ struct ReconcileSheet: View {
       Spacer(minLength: 8)
       if let name {
         Text(verbatim: name)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
       // Content, not a floating control: a plain small button, never glass.
@@ -621,7 +631,7 @@ struct ReconcileSheet: View {
     HStack {
       Spacer(minLength: 8)
       Text(verbatim: Self.answerText(wasBefore, environment.language))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       Button(t("reconcile.answer.forget")) {
         environment.forgetCountAnswer(reconciliation: reconciliation)
@@ -752,6 +762,18 @@ struct ReconcileSheet: View {
     dismiss()
   }
 
+  /// «Найти пропущенные…»: «Операции» shows the days from the last reconciliation to today,
+  /// and the sheet closes — standing over the main window it would hide the table. What the
+  /// owner typed is kept, and the sheet opened again starts from it; an untouched sheet keeps
+  /// nothing.
+  static func findMissing(
+    since last: DateOnly, today: DateOnly, typing: ReconcileTyping, in environment: AppEnvironment
+  ) {
+    environment.pendingTransactionsRange = DayRange(last, today)
+    if !typing.isEmpty { ReconcileDraftKeeper.shared.keep(typing) }
+    environment.showsReconciliation = false
+  }
+
   /// Writes the reconciliation: nil when it landed, or the key of what the sheet says when it
   /// did not. A refused save keeps the sheet open with the money counted in it — and says so,
   /// rather than leave a button that seems to do nothing (the journal has `reconcile.failed`).
@@ -775,4 +797,31 @@ final class ReconcileHistoryRequest {
   static let shared = ReconcileHistoryRequest()
 
   var isRequested = false
+}
+
+/// What the owner typed into the reconciliation sheet: the amounts by balance, the fields he
+/// emptied and the starting points he unticked.
+struct ReconcileTyping: Equatable {
+  var typed: [BalanceKey: AmountE4]
+  var blank: Set<BalanceKey>
+  var unticked: Set<BalanceKey>
+
+  var isEmpty: Bool { typed.isEmpty && blank.isEmpty && unticked.isEmpty }
+}
+
+/// The typing of a sheet «Найти пропущенные…» closed, until the sheet opens again and takes it:
+/// the counts the owner made are not lost while he looks through the operations.
+@MainActor
+final class ReconcileDraftKeeper {
+  static let shared = ReconcileDraftKeeper()
+
+  private var kept: ReconcileTyping?
+
+  func keep(_ typing: ReconcileTyping) { kept = typing }
+
+  /// The kept typing, once: the sheet after that starts from the books.
+  func take() -> ReconcileTyping? {
+    defer { kept = nil }
+    return kept
+  }
 }

@@ -286,13 +286,17 @@ struct SampleFeatureCoverageTests {
     Self.expectEveryMonthKnown(Self.set(testCase), label: testCase.testDescription)
   }
 
-  /// The balances the app works out are the ones the layers kept, and no account but one whose
-  /// starting balance was below zero — a credit card — is ever below zero.
+  /// The balances the app works out are the ones the layers kept, and no account but a credit
+  /// card — one whose starting balance was below zero, or one with the terms of a credit card —
+  /// is ever below zero.
   static func expectTheBalancesKept(
     _ set: SampleDataSet, balances: AccountBalances, label: String
   ) {
+    let creditCards = Set(set.paymentMethods.filter(\.isCreditCard).map(\.id))
     let owing = Set(
-      set.reconciledBalances.filter { $0.isStartingPoint && $0.actualE4.isNegative }.map(\.key))
+      set.reconciledBalances.filter {
+        ($0.isStartingPoint && $0.actualE4.isNegative) || creditCards.contains($0.accountId)
+      }.map(\.key))
     #expect(balances.unassignedOperations == 0, "\(label)")
     #expect(Set(balances.keys) == Set(set.accountExpectations.keys), "\(label)")
     for key in balances.keys {

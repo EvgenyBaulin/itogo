@@ -42,11 +42,11 @@ struct AnalyticsCard<Value: Sendable, Content: View, Accessory: View>: View {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         VStack(alignment: .leading, spacing: 2) {
           Text(verbatim: title)
-            .font(.headline)
+            .appFont(.headline)
             .accessibilityAddTraits(.isHeader)
           if let subtitle {
             Text(verbatim: subtitle)
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }

@@ -57,7 +57,7 @@ struct EntrySettingsView: View {
         } icon: {
           Image(systemName: "keyboard")
         }
-        .font(.caption)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       }
@@ -99,7 +99,7 @@ struct EntrySettingsView: View {
 
   private func hint(_ key: String) -> some View {
     Text(verbatim: t(key))
-      .font(.caption)
+      .appFont(.callout)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
   }

@@ -22,6 +22,7 @@ struct BackupSettingsView: View {
         LabeledContent {
           HStack(spacing: 8) {
             Text(verbatim: mirror?.lastPathComponent ?? "—")
+              .appFont(.callout)
               .foregroundStyle(.secondary)
             Button(environment.language("settings.backups.choose", table: "Settings")) {
               chooseFolder()
@@ -34,9 +35,11 @@ struct BackupSettingsView: View {
       } footer: {
         if AppPaths.dataSet != nil {
           Text(verbatim: environment.language(Self.dataSetMirrorsNowhereKey, table: "Settings"))
+            .appFont(.callout)
             .foregroundStyle(.secondary)
         } else if mirror != nil {
           Text(verbatim: environment.language(Self.beforeUpdateCopiesKey, table: "Settings"))
+            .appFont(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -58,6 +61,7 @@ struct BackupSettingsView: View {
       Section {
         if copies.isEmpty {
           Text(verbatim: environment.language("backups.empty", table: "Settings"))
+            .appFont(.callout)
             .foregroundStyle(.secondary)
         } else {
           let listing = Self.listing(of: copies)
@@ -96,7 +100,7 @@ struct BackupSettingsView: View {
   private func row(_ url: URL) -> some View {
     HStack {
       Text(verbatim: url.lastPathComponent)
-        .font(.callout.monospaced())
+        .appFont(.callout.monospaced())
       Spacer()
       Button(environment.language("backups.restore", table: "Settings")) {
         pendingRestore = url

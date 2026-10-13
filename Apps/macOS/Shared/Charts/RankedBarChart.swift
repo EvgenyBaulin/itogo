@@ -63,7 +63,7 @@ struct RankedBarChart: View {
         overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
       ) {
         Text(verbatim: bar.caption)
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
           .fixedSize()
       }
@@ -76,7 +76,7 @@ struct RankedBarChart: View {
         AxisValueLabel {
           if let id = value.as(String.self), let bar = byId[id] {
             Text(verbatim: Self.axisName(bar))
-              .font(bar.isChild ? .caption : .callout)
+              .appFont(bar.isChild ? .caption : .callout)
               .foregroundStyle(bar.isChild ? .secondary : .primary)
               .lineLimit(1)
               .truncationMode(.tail)
@@ -93,7 +93,7 @@ struct RankedBarChart: View {
             verbatim: scale == .money
               ? ChartAxis.money(value, money) : ChartAxis.count(value, money)
           )
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
         }
       }
     }

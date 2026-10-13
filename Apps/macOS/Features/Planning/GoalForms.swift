@@ -29,7 +29,7 @@ struct GoalForm: View {
     let namesake = Self.namesake(of: goal, isNew: original == nil, among: goals)
     let taken = Self.liveNamesake(of: goal, among: goals)
     VStack(alignment: .leading) {
-      Text(verbatim: t(original == nil ? "form.goal.new" : "form.goal.edit")).font(.headline)
+      Text(verbatim: t(original == nil ? "form.goal.new" : "form.goal.edit")).appFont(.headline)
       Form {
         TextField(t("form.name"), text: $goal.name)
           .onChange(of: goal.name) { _, _ in deletionNote = nil }
@@ -87,10 +87,11 @@ struct GoalForm: View {
             verbatim: environment.format(
               "form.goal.planHint", table: "Planning", environment.dates.monthTitle(start))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         }
+        GoalAccountFields(goal: $goal)
       }
       .formStyle(.grouped)
       FormButtons(
@@ -106,7 +107,7 @@ struct GoalForm: View {
       }
     }
     .padding(20)
-    .frame(width: 460, height: 440)
+    .frame(width: 460, height: 520)
     .onAppear {
       guard !loaded else { return }
       loaded = true
@@ -149,7 +150,7 @@ struct GoalForm: View {
       }
       if let deletionNote {
         Text(verbatim: t(deletionNote))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -298,6 +299,65 @@ struct GoalForm: View {
   private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
 }
 
+// MARK: - Where the money of a goal lies
+
+/// «Где лежат деньги цели» — the account the money of the goal is kept on, or none — and «И
+/// переводить на этот счёт при распределении»: ticked, a contribution from the sheet of an
+/// allocation is a contribution and a transfer to that account in one step of ⌘Z; the sheet
+/// may untick it for one line, and remembers it. A contribution never moves money by itself.
+struct GoalAccountFields: View {
+  @Dependency(\.environment) private var environment
+  @Dependency(\.compute) private var compute
+  @Binding var goal: Goal
+
+  var body: some View {
+    let accounts = Self.offered(
+      compute.snapshot?.dataset.paymentMethods ?? [], keeping: goal.accountId)
+    let locale = environment.language.locale
+    let items = AccountCardChoices.items(
+      accounts: FormAccounts.offered(accounts, locale: locale), cards: [],
+      banks: compute.snapshot?.dataset.banks ?? [], among: accounts, locale: locale)
+    Picker(
+      t("form.goal.account"),
+      selection: Binding(
+        get: { goal.accountId }, set: { goal = Self.withAccount(goal, $0) })
+    ) {
+      Text(verbatim: t("form.goal.account.none")).tag(UUID?.none)
+      ForEach(items) { Text(verbatim: $0.name).tag(Optional($0.id)) }
+    }
+    .accessibilityIdentifier("goal.account")
+    Toggle(t("form.goal.transfers"), isOn: $goal.transfersOnContribution)
+      .disabled(goal.accountId == nil)
+      .accessibilityIdentifier("goal.transfers")
+    Text(verbatim: t(goal.accountId == nil ? "form.goal.account.hint" : "form.goal.transfers.hint"))
+      .appFont(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+
+  /// The live accounts, and the goal's own when it was archived since — a form never drops what
+  /// the goal holds.
+  static func offered(_ accounts: [PaymentMethod], keeping kept: UUID?) -> [PaymentMethod] {
+    accounts.filter { !$0.archived || $0.id == kept }
+  }
+
+  /// The goal with `accountId`; without an account there is nothing to transfer to, so the
+  /// tick goes too.
+  static func withAccount(_ goal: Goal, _ accountId: UUID?) -> Goal {
+    var goal = goal
+    goal.accountId = accountId
+    if accountId == nil { goal.transfersOnContribution = false }
+    return goal
+  }
+
+  private func t(_ key: String) -> String { environment.language(key, table: "Planning") }
+
+  static let keys = [
+    "form.goal.account", "form.goal.account.none", "form.goal.transfers",
+    "form.goal.account.hint", "form.goal.transfers.hint",
+  ]
+}
+
 struct GoalMoveForm: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
@@ -325,7 +385,7 @@ struct GoalMoveForm: View {
           withdraw ? "form.withdraw.title" : "form.contribute.title", table: "Planning",
           status.goal.name)
       )
-      .font(.headline)
+      .appFont(.headline)
       Form {
         LabeledContent(t("form.amount")) {
           HStack {
@@ -341,7 +401,7 @@ struct GoalMoveForm: View {
             verbatim: environment.format(
               "form.goal.otherCurrency", table: "Planning", status.currency.code)
           )
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
         }
         if amount.raw > 0, check == .tooMuch {
           Text(
@@ -349,7 +409,7 @@ struct GoalMoveForm: View {
               "form.withdraw.tooMuch", table: "Planning",
               environment.money.exact(status.saved, currency: status.currency))
           )
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         } else if amount.raw > 0, check == .noRate {
           Label {
@@ -359,7 +419,7 @@ struct GoalMoveForm: View {
           } icon: {
             Image(systemName: "hourglass")
           }
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         }
         DatePicker(t("form.date"), selection: $date)
@@ -372,7 +432,7 @@ struct GoalMoveForm: View {
               "goals.needed", table: "Planning",
               environment.money.rounded(needed, currency: status.currency))
           )
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
         }
       }
       .formStyle(.grouped)

@@ -518,7 +518,8 @@ final class SettingsAccessibilityTests: XCTestCase {
     defer { environment.language.choice = before }
     for choice in [AppLanguage.Choice.russian, .english] {
       environment.language.choice = choice
-      for tile in OverviewTile.allCases {
+      // The tiles that wait to be added have no card yet.
+      for tile in OverviewTile.allCases where tile.isShownUnnamed {
         let name = OverviewTileText.name(of: tile, environment)
         let window = show(
           OverviewCardView(tile: tile, actions: OperationActions())

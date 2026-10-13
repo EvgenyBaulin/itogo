@@ -72,14 +72,14 @@ struct IncomeForecastCard: View {
     ) { income in
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: "≈ \(environment.money.rounded(income.value ?? .zero))")
-          .font(.title2.monospacedDigit())
+          .appFont(.title2.monospacedDigit())
         PlanningFigure(label: t("overview.incomeForecast.received"), amount: income.received)
         if income.expectedRemaining.raw > 0 {
           PlanningFigure(
             label: t("overview.incomeForecast.expected"), amount: income.expectedRemaining)
         }
         Text(verbatim: t(Self.sourceKey(income.source)))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         if income.lowData {
           Label {
@@ -87,7 +87,7 @@ struct IncomeForecastCard: View {
           } icon: {
             Image(systemName: "hourglass")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -125,14 +125,14 @@ struct BalanceForecastCard: View {
           Text(
             verbatim: "≈ \(environment.money.rounded(total.middle, currency: total.currency))"
           )
-          .font(model.totals.count == 1 ? .title2.monospacedDigit() : .title3.monospacedDigit())
+          .appFont(model.totals.count == 1 ? .title2.monospacedDigit() : .title3.monospacedDigit())
         }
         Text(
           verbatim: environment.format(
             "overview.balanceForecast.through", table: OverviewTileText.table,
             environment.dates.dayAndMonth(model.through))
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         if model.leftOut {
           Label {
@@ -141,7 +141,7 @@ struct BalanceForecastCard: View {
           } icon: {
             Image(systemName: "exclamationmark.circle")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
         if model.lowData {
@@ -150,7 +150,7 @@ struct BalanceForecastCard: View {
           } icon: {
             Image(systemName: "hourglass")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -197,7 +197,7 @@ struct IOweCard: View {
       } else {
         VStack(alignment: .leading, spacing: 5) {
           Text(verbatim: environment.money.rounded(debts.totalIOweRub))
-            .font(.title2.monospacedDigit())
+            .appFont(.title2.monospacedDigit())
           if debts.monthlyPaymentsRub.raw > 0 {
             PlanningFigure(label: t("overview.iOwe.monthly"), amount: debts.monthlyPaymentsRub)
           }
@@ -210,7 +210,7 @@ struct IOweCard: View {
               )
               .monospacedDigit()
             }
-            .font(.callout)
+            .appFont(.callout)
             .accessibilityElement(children: .combine)
             if let next = line.nextPayment {
               Text(
@@ -218,7 +218,7 @@ struct IOweCard: View {
                   "overview.iOwe.next", table: OverviewTileText.table,
                   environment.dates.dayAndMonth(next))
               )
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
               .foregroundStyle(.secondary)
             }
           }
@@ -228,7 +228,7 @@ struct IOweCard: View {
                 "overview.anomaliesMore", table: OverviewTileText.table,
                 counts: debts.iOwe.count - Self.shown)
             )
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
           }
         }
@@ -252,7 +252,7 @@ private struct LastOperationLines: View {
     if let moment = OverviewSummary.lastRecordedAt(snapshot.dataset) {
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: OverviewText.lastRecord(moment, environment))
-          .font(.callout)
+          .appFont(.callout)
         if let entry = OverviewTileText.lastOperation(in: snapshot.dataset) {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: OverviewTileText.symbol(of: entry.transaction.kind))
@@ -267,7 +267,7 @@ private struct LastOperationLines: View {
             )
             .monospacedDigit()
           }
-          .font(.callout)
+          .appFont(.callout)
           .accessibilityElement(children: .combine)
         }
       }
@@ -319,10 +319,10 @@ struct LastCountAndRecordCard: View {
                 "overview.reconciliationAgo", table: "Planning",
                 counts: max(0, last.date.days(to: snapshot.today)))
             )
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
           }
-          .font(.callout)
+          .appFont(.callout)
           .accessibilityElement(children: .combine)
         } else {
           Text(
@@ -357,16 +357,17 @@ struct FreeMoneyCard: View {
       title: OverviewTileText.name(of: .freeMoney, environment),
       state: compute.states.data.flatMap { snapshot, at in
         snapshot.planning.freeMoney.state == .noReconciliation
-          ? .notEnoughData : .ready(snapshot.planning.freeMoney, at: at)
+          ? .notEnoughData : .ready(snapshot, at: at)
       },
       fillsHeight: true, emptyReason: t("free.noReconciliation"),
       retry: { compute.retry(ComputeStep.data) }
-    ) { free in
+    ) { snapshot in
+      let free = snapshot.planning.freeMoney
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: environment.money.rounded(free.main ?? .zero))
-          .font(.title2.monospacedDigit())
+          .appFont(.title2.monospacedDigit())
         Text(verbatim: t(free.goalSavings > .zero ? "free.mainSpendable" : "free.main"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         let grey = free.grey ?? .zero
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -380,7 +381,7 @@ struct FreeMoneyCard: View {
           Text(verbatim: environment.money.rounded(grey))
             .monospacedDigit()
         }
-        .font(.callout)
+        .appFont(.callout)
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .combine)
         Text(
@@ -388,8 +389,22 @@ struct FreeMoneyCard: View {
             "free.perDay", table: "Planning", environment.money.rounded(free.dailyGuide),
             free.days)
         )
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
+        // A month paid twice: the free sum through the next income, as Planning says it.
+        if let half = snapshot.planning.halfFreeMoney(ledger: snapshot.ledger),
+          let grey = half.grey
+        {
+          Text(
+            verbatim: environment.format(
+              "free.half", table: "Planning",
+              PlanningBlockText.dayText(half.until, environment), environment.money.rounded(grey),
+              environment.money.rounded(half.dailyGuide))
+          )
+          .appFont(.caption.monospacedDigit())
+          .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("overview.free.half")
+        }
       }
     }
   }

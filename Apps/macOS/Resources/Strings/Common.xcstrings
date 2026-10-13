@@ -2457,6 +2457,23 @@
         }
       }
     },
+    "section.operations": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transactions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Операции"
+          }
+        }
+      }
+    },
     "section.overview": {
       "extractionState": "manual",
       "localizations": {
@@ -2487,23 +2504,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Планирование"
-          }
-        }
-      }
-    },
-    "section.spending": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Spending"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Траты"
           }
         }
       }

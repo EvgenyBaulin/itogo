@@ -74,6 +74,9 @@ struct DebtSheetView: View {
   @State private var closesDebt = true
   /// «В этом месяце больше платежей не будет»: a payment smaller than the due closes it.
   @State private var closesTerm = false
+  /// «Уменьшить срок / Уменьшить платёж» of a payment above the dues; `nil` — the answer offered
+  /// first (`DebtPrepayment.question`).
+  @State private var prepayChoice: PrepayChoice?
   /// «Платёж за этот месяц уже сделан?» of a loan written on its payment day: unanswered until
   /// the owner says; the form does not save before.
   @State private var monthPaid: Bool?
@@ -88,13 +91,13 @@ struct DebtSheetView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Text(verbatim: title).font(.headline)
+      Text(verbatim: title).appFont(.headline)
       Form { fields }
         .formStyle(.grouped)
       if let failed {
         // Never left open without a word (review of the app, 19.09).
         Text(verbatim: failed)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -254,7 +257,7 @@ struct DebtSheetView: View {
         } icon: {
           Image(systemName: "info.circle")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
       Picker(t("form.direction"), selection: $debt.direction) {
@@ -278,7 +281,7 @@ struct DebtSheetView: View {
       }
       LabeledContent(t("form.balance")) { amountField($amount) }
       if amount.isNegative {
-        Text(verbatim: t("form.balance.negative")).font(.caption).foregroundStyle(.secondary)
+        Text(verbatim: t("form.balance.negative")).appFont(.caption).foregroundStyle(.secondary)
       }
       Toggle(t("form.moneyMovedToday"), isOn: $moneyMoved)
       accountRows
@@ -298,7 +301,7 @@ struct DebtSheetView: View {
         .pickerStyle(.segmented)
         .accessibilityIdentifier("debt.create.monthPaid")
         Text(verbatim: t(monthPaid == nil ? "form.monthPaid.ask" : "form.monthPaid.hint"))
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
     case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _), .offset(let debt):
@@ -312,12 +315,30 @@ struct DebtSheetView: View {
               ? "form.pay.expense"
               : (debt.direction == .iOwe ? "form.pay.notExpense" : "form.pay.returned"))
         )
-        .font(.caption).foregroundStyle(.secondary)
+        .appFont(.caption).foregroundStyle(.secondary)
+        if let question = prepayQuestion {
+          Picker(
+            environment.format(
+              "prepay.question", table: "Debts",
+              environment.money.exact(question.excess, currency: debt.currency)),
+            selection: Binding(
+              get: { prepayChoice ?? question.choice }, set: { prepayChoice = $0 })
+          ) {
+            Text(verbatim: t("prepay.term")).tag(PrepayChoice.term)
+            Text(verbatim: t("prepay.payment")).tag(PrepayChoice.payment)
+            Text(verbatim: t("prepay.forward")).tag(PrepayChoice.forward)
+          }
+          .pickerStyle(.radioGroup)
+          .accessibilityIdentifier("debt.pay.prepay")
+          Text(verbatim: t("prepay.hint"))
+            .appFont(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         if offersClosingTerm {
           Toggle(t("form.pay.closesTerm"), isOn: $closesTerm)
             .accessibilityIdentifier("debt.pay.closesTerm")
           Text(verbatim: t("form.pay.closesTermHint"))
-            .font(.caption).foregroundStyle(.secondary)
+            .appFont(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
         if paysOff, let balance {
@@ -337,7 +358,7 @@ struct DebtSheetView: View {
                 environment.money.exact(split.left, currency: debt.currency),
                 environment.money.exact(split.over, currency: debt.currency))
             )
-            .font(.caption).foregroundStyle(.secondary)
+            .appFont(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
           }
         }
@@ -353,7 +374,7 @@ struct DebtSheetView: View {
         if let share = DebtRules.parseShare(shareText),
           let part = try? DebtRules.share(of: fullAmount, share: share)
         {
-          Text(verbatim: environment.money.exact(part, currency: debt.currency)).font(
+          Text(verbatim: environment.money.exact(part, currency: debt.currency)).appFont(
             .caption.monospacedDigit())
         }
       } else {
@@ -378,7 +399,7 @@ struct DebtSheetView: View {
       LabeledContent(t("form.amount")) { amountField($amount, currency: debt.currency) }
       if amount > balance {
         // Refused, not capped: the source would close with money on it.
-        Text(verbatim: t("form.transfer.tooMuch")).font(.caption).foregroundStyle(.secondary)
+        Text(verbatim: t("form.transfer.tooMuch")).appFont(.caption).foregroundStyle(.secondary)
       }
       DatePicker(t("form.date"), selection: $date, displayedComponents: .date)
     case .adjust(let debt, let carried):
@@ -394,7 +415,7 @@ struct DebtSheetView: View {
             "form.adjust.negative", table: "Debts",
             environment.money.exact(over, currency: debt.currency))
         )
-        .font(.caption).foregroundStyle(.secondary)
+        .appFont(.caption).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       }
       TextField(t("form.note"), text: $text)
@@ -433,7 +454,7 @@ struct DebtSheetView: View {
         direction: debt.direction
       ).contains(.mainPaymentMissing) {
         Text(verbatim: t("schedule.issue.mainPayment"))
-          .font(.caption).foregroundStyle(.secondary)
+          .appFont(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
     }
@@ -539,12 +560,13 @@ struct DebtSheetView: View {
     case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _):
       let closing = paysOff && closesDebt
       let closesTheTerm = offersClosingTerm && closesTerm
+      let prepay = prepayQuestion.map { prepayChoice ?? $0.choice }
       return (
         t("debts.pay"), amount.raw > 0 && complete,
         { moment in
           actions.pay(
             debt, amount: amount, on: moment, paymentMethodId: method, closing: closing,
-            charged: charged, closesTerm: closesTheTerm)
+            charged: charged, closesTerm: closesTheTerm, prepay: prepay)
         }
       )
     case .offset(let debt):
@@ -706,6 +728,21 @@ struct DebtSheetView: View {
       return DebtTerms.offersClosing(debt, paying: amount, dues: dues(of: debt))
     default:
       return false
+    }
+  }
+
+  /// «Сверх платежа X — Уменьшить срок / Уменьшить платёж / Это платёж вперёд» of a payment of a
+  /// loan above what its dues ask by the day of the form; never when it pays the debt off.
+  private var prepayQuestion: (excess: AmountE4, choice: PrepayChoice)? {
+    switch sheet {
+    case .pay(let debt), .payAt(let debt, _, _), .repay(let debt, _, _):
+      guard !paysOff else { return nil }
+      return DebtPrepayment.question(
+        debt: debt, amount: amount, day: environment.calendar.day(of: date), dues: dues(of: debt),
+        journal: compute.snapshot?.dataset.planning.debtEntries.filter { $0.debtId == debt.id }
+          ?? [])
+    default:
+      return nil
     }
   }
 

@@ -3,21 +3,38 @@ import Testing
 
 @testable import CoreKit
 
-/// The tiles of Overview as the flat list of the builds before groups kept them: twenty-two kinds,
+/// The tiles of Overview as the flat list of the builds before groups kept them: twenty-four kinds,
 /// all of them can be shown at once, the twelve of 1.2 in their order first by default, and a
 /// stored line from anywhere — another build, an archive of another Mac, a hand edit — that
 /// always reads as a list the grid can show.
 @Suite("The tiles of Overview")
 struct OverviewTilesTests {
-  /// Twenty-two kinds, in the order of the settings; the raw values are what is stored.
-  @Test func twentyTwoKindsInTheOrderOfTheSettings() {
+  /// Twenty-four kinds, in the order of the settings; the raw values are what is stored.
+  @Test func twentyFourKindsInTheOrderOfTheSettings() {
     #expect(
       OverviewTile.allCases.map(\.rawValue) == [
         "monthToDate", "topCategories", "qualities", "canSave", "spendingForecast",
         "incomeForecast", "balanceForecast", "limits", "upcoming", "expectedIncome", "owedToMe",
         "iOwe", "event", "lastCount", "lastRecord", "lastCountAndRecord", "worthALook",
-        "freeMoney", "currencyChart", "spendingCalendar", "capital", "cushion",
+        "freeMoney", "currencyChart", "spendingCalendar", "capital", "cushion", "installments",
+        "selfEmployment",
       ])
+  }
+
+  /// The instalments and the self-employment are chosen, never shown by default, and wait in
+  /// «План»; a stored line reads them back.
+  @Test func theInstalmentsAndTheSelfEmploymentAreChosenNotStandard() {
+    #expect(!OverviewTiles.standard.contains(.installments))
+    #expect(!OverviewTiles.standard.contains(.selfEmployment))
+    #expect(OverviewTile.installments.defaultGroup == .plan)
+    #expect(OverviewTile.selfEmployment.defaultGroup == .plan)
+    #expect(
+      !OverviewTile.installments.isShownUnnamed && !OverviewTile.selfEmployment.isShownUnnamed)
+    #expect(
+      OverviewTile.allCases.filter { !$0.isShownUnnamed } == [.installments, .selfEmployment])
+    #expect(
+      OverviewTiles.decode("installments,selfEmployment,limits")
+        == [.installments, .selfEmployment, .limits])
   }
 
   /// The capital and the cushion are chosen, never shown by default, and read back from a stored

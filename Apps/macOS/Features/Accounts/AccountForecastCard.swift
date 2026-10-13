@@ -88,16 +88,16 @@ private struct AccountForecastLines: View {
       VStack(alignment: .leading, spacing: 4) {
         if let header = pair.header {
           Text(verbatim: header)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
         if let middle = pair.middle {
           VStack(alignment: .leading, spacing: 2) {
             Text(verbatim: middle)
-              .font(.title3.monospacedDigit())
+              .appFont(.title3.monospacedDigit())
             if let range = pair.range {
               Text(verbatim: range)
-                .font(.caption.monospacedDigit())
+                .appFont(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
             }
           }
@@ -111,7 +111,7 @@ private struct AccountForecastLines: View {
             Text(verbatim: row.value)
               .monospacedDigit()
           }
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(row.isEstimate ? .secondary : .primary)
           .accessibilityElement(children: .combine)
         }
@@ -132,7 +132,7 @@ private struct AccountForecastLines: View {
       } icon: {
         Image(systemName: note.symbol)
       }
-      .font(.caption)
+      .appFont(.caption)
       .foregroundStyle(.secondary)
     }
   }

@@ -49,6 +49,8 @@ struct OverviewCardView: View {
     case .spendingCalendar: CalendarTileCard()
     case .capital: CapitalTileCard()
     case .cushion: CushionTileCard()
+    case .installments: InstalmentsTileCard()
+    case .selfEmployment: SelfEmploymentTile()
     }
   }
 }
@@ -115,7 +117,7 @@ private struct TopCategoriesCard: View {
                 .monospacedDigit()
               ShareText(basisPoints: node.share)
             }
-            .font(.callout)
+            .appFont(.callout)
             ShareBar(basisPoints: node.share)
           }
           .accessibilityElement(children: .combine)
@@ -157,7 +159,7 @@ private struct QualitiesCard: View {
                 .monospacedDigit()
               ShareText(basisPoints: node.share)
             }
-            .font(.callout)
+            .appFont(.callout)
             .accessibilityElement(children: .combine)
           }
         }
@@ -170,7 +172,7 @@ private struct QualitiesCard: View {
           Text(verbatim: environment.language("overview.badChange", table: "Overview"))
           ComparisonLine(change: summary.bad, span: summary.previousSpan)
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .combine)
       }
@@ -201,7 +203,7 @@ private struct ForecastCard: View {
       let forecast = model.forecast
       VStack(alignment: .leading, spacing: 4) {
         Text(verbatim: "≈ \(environment.money.rounded(forecast.p50))")
-          .font(.title2.monospacedDigit())
+          .appFont(.title2.monospacedDigit())
         // With no day left the interval is a point: the figure above says it all.
         if forecast.p10 != forecast.p90 {
           Text(
@@ -210,7 +212,7 @@ private struct ForecastCard: View {
               locale: environment.language.locale, environment.money.rounded(forecast.p10),
               environment.money.rounded(forecast.p90))
           )
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
         }
         if forecast.lowData {
@@ -219,7 +221,7 @@ private struct ForecastCard: View {
           } icon: {
             Image(systemName: "hourglass")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
         Text(
@@ -227,10 +229,10 @@ private struct ForecastCard: View {
             "overview.forecastPlannedAmount", table: "Overview",
             environment.money.rounded(model.planned))
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         Text(verbatim: OverviewText.modelComputed(model.computedAt, environment))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.tertiary)
       }
     }
@@ -263,10 +265,10 @@ private struct FigureLine: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Text(verbatim: label)
-        .font(.callout)
+        .appFont(.callout)
       Spacer(minLength: 8)
       Text(verbatim: environment.money.rounded(amount))
-        .font(.title3.monospacedDigit())
+        .appFont(.title3.monospacedDigit())
     }
     .accessibilityElement(children: .combine)
   }
@@ -286,7 +288,7 @@ struct ComparisonLine: View {
         .accessibilityHidden(true)
       Text(verbatim: OverviewText.comparison(text, span: span, environment))
     }
-    .font(.caption.monospacedDigit())
+    .appFont(.caption.monospacedDigit())
     .foregroundStyle(.secondary)
   }
 }
@@ -339,7 +341,7 @@ private struct QualityBar: View {
             .overlay {
               ViewThatFits(in: .horizontal) {
                 Image(systemName: Palette.qualitySymbol(quality))
-                  .font(.caption2.weight(.semibold))
+                  .appFont(.caption2.weight(.semibold))
                   .foregroundStyle(.background)
                   .padding(.horizontal, 3)
                 Color.clear
@@ -447,13 +449,13 @@ struct GoalsExceedRow: View {
       } icon: {
         Image(systemName: "exclamationmark.triangle")
       }
-      .font(.callout)
+      .appFont(.callout)
       Text(
         verbatim: environment.format(
           "overview.goalsExceedDetail", table: "Overview", environment.money.rounded(goals),
           environment.money.rounded(money))
       )
-      .font(.caption.monospacedDigit())
+      .appFont(.caption.monospacedDigit())
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Button(environment.language("overview.openGoals", table: "Overview")) {
@@ -488,7 +490,7 @@ struct ArchivedMoneyRow: View {
       } icon: {
         Image(systemName: "archivebox")
       }
-      .font(.callout)
+      .appFont(.callout)
       Button(environment.language("overview.archivedMoney.move", table: "Overview"), action: move)
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -502,12 +504,16 @@ struct ArchivedMoneyRow: View {
 /// «Это нормально» is the «Аномалии» section of the Analytics window, opened from the toolbar
 /// like any other. The card says «ничего необычного» when the rules ran and found nothing in
 /// the month — that is an answer, not an absence of one.
-private struct AnomaliesCard: View {
+struct AnomaliesCard: View {
   @Dependency(\.environment) private var environment
   @Dependency(\.compute) private var compute
   @Environment(\.dependencies) private var dependencies
   /// The archived account whose money the sheet moves.
   @State private var moving: PaymentMethod?
+  /// The lines of 1.9 settled on this card, hidden until the data is read again.
+  @State private var settled: Set<String> = []
+  /// What a line of 1.9 opened.
+  @State private var opened: WorthALookSheet?
   /// How many fit on a card before «и ещё N».
   private static let shown = 3
 
@@ -524,10 +530,20 @@ private struct AnomaliesCard: View {
       state: compute.states.anomalies, fillsHeight: true,
       retry: { compute.retry(ComputeStep.anomalies) }
     ) { report in
-      let lines = OverviewText.anomalyLines(
-        report, today: compute.snapshot?.today ?? environment.today,
-        free: compute.snapshot?.planning.freeMoney, shown: Self.shown, archived: archived)
+      let notes = Self.notes(compute.snapshot, settled: settled)
+      let lines = Self.lines(
+        OverviewText.anomalyLines(
+          report, today: compute.snapshot?.today ?? environment.today,
+          free: compute.snapshot?.planning.freeMoney, shown: Self.shown, archived: archived),
+        notes: notes)
       VStack(alignment: .leading, spacing: 6) {
+        if let snapshot = compute.snapshot {
+          ForEach(notes) { note in
+            WorthALookNoteRow(
+              note: note, snapshot: snapshot, settled: { settled.insert($0) },
+              open: { opened = $0 })
+          }
+        }
         ForEach(lines) { line in
           switch line {
           case .goalsExceed(let goals, let money):
@@ -540,9 +556,9 @@ private struct AnomaliesCard: View {
                 verbatim: environment.language(
                   "analytics.anomaly.\(anomaly.rule.rawValue)", table: "Analytics")
               )
-              .font(.callout)
+              .appFont(.callout)
               Text(verbatim: environment.dates.dayAndMonth(anomaly.day))
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             }
           case .more(let count):
@@ -550,7 +566,7 @@ private struct AnomaliesCard: View {
               verbatim: environment.language.format(
                 "overview.anomaliesMore", table: "Overview", counts: count)
             )
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
           case .nothingUnusual:
             Text(verbatim: environment.language("overview.anomaliesNone", table: "Overview"))
@@ -563,6 +579,46 @@ private struct AnomaliesCard: View {
     .sheet(item: $moving) { account in
       ArchivedMoneySheet(leftoversOf: account) { _ in moving = nil }
         .handingOver(dependencies)
+    }
+    .sheet(item: $opened) { sheet in
+      switch sheet {
+      case .allocate(let request): AllocationSheetView(request: request).handingOver(dependencies)
+      case .monthRest(let offer): MonthRestSheet(offer: offer).handingOver(dependencies)
+      case .pay(let month): NPDPaymentSheet(month: month).handingOver(dependencies)
+      }
+    }
+    // A new read brings the marks of this Mac in: what was settled is gone from the data.
+    .onChange(of: compute.generation) { _, _ in settled = [] }
+  }
+
+  /// The lines of 1.9 the card shows: those of the core, less those settled here.
+  static func notes(_ snapshot: DataSnapshot?, settled: Set<String>) -> [WorthALookNote] {
+    guard let snapshot else { return [] }
+    return WorthALook.notes(of: snapshot).filter { !settled.contains($0.id) }
+  }
+
+  /// «Ничего необычного» speaks only for a card with nothing else on it.
+  static func lines(
+    _ lines: [OverviewText.AnomalyLine], notes: [WorthALookNote]
+  )
+    -> [OverviewText.AnomalyLine]
+  {
+    notes.isEmpty ? lines : lines.filter { $0 != .nothingUnusual }
+  }
+}
+
+/// The tile «Самозанятость»: the figures of the block of Planning, under the name of the tile.
+private struct SelfEmploymentTile: View {
+  @Dependency(\.environment) private var environment
+  @Dependency(\.compute) private var compute
+
+  var body: some View {
+    ComputedBlock(
+      title: OverviewTileText.name(of: .selfEmployment, environment),
+      state: compute.states.data, fillsHeight: true,
+      retry: { compute.retry(ComputeStep.data) }
+    ) { _ in
+      SelfEmploymentTileCard()
     }
   }
 }

@@ -78,6 +78,7 @@ struct DatabaseFileToolsTests {
       try DatabaseStack.pendingMigrations(fileAt: crashed, schema: TestSupport.schemaSource)
         == [
           "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+          "0009_credit_and_allocation",
         ])
   }
 
@@ -278,6 +279,7 @@ struct ReadingWithoutTheIndexTests {
       try DatabaseStack.pendingMigrations(fileAt: crashed, schema: TestSupport.schemaSource)
         == [
           "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+          "0009_credit_and_allocation",
         ])
 
     #expect(try Data(contentsOf: crashed) == main, "the main file was written into")

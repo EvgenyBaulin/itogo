@@ -28,6 +28,7 @@ enum PlanningBlockText {
     case .goals: "goals.title"
     case .events: "events.title"
     case .advice: "advice.title"
+    case .selfEmployment: "layout.block.selfEmployment"
     }
   }
 
@@ -43,6 +44,7 @@ enum PlanningBlockText {
     case .goals: "target"
     case .events: "party.popper"
     case .advice: "lightbulb"
+    case .selfEmployment: "briefcase"
     }
   }
 
@@ -121,6 +123,13 @@ enum PlanningBlockText {
     case .advice:
       guard let adviceCount, adviceCount > 0 else { return nil }
       return environment.format("layout.total.advice", table: table, counts: adviceCount)
+    case .selfEmployment:
+      guard let block = SelfEmploymentBlock.build(npd: planning.npd, today: snapshot.today),
+        block.taxToPayE4.raw > 0, let due = block.due
+      else { return nil }
+      return environment.format(
+        "layout.total.selfEmployment", table: table, money.rounded(block.taxToPayE4),
+        dayText(due, environment))
     }
   }
 
@@ -178,7 +187,7 @@ enum PlanningBlockText {
     case .limits: ("layout.empty.limits", "layout.empty.limits.add")
     case .goals: ("layout.empty.goals", "layout.empty.goals.add")
     case .events: ("layout.empty.events", "layout.empty.events.add")
-    case .freeMoney, .advice: nil
+    case .freeMoney, .advice, .selfEmployment: nil
     }
   }
 
@@ -219,6 +228,15 @@ enum PlanningBlockText {
     "layout.empty.payments.add", "layout.empty.subscriptions", "layout.empty.subscriptions.add",
     "layout.empty.expected", "layout.empty.expected.add", "layout.empty.limits",
     "layout.empty.limits.add", "layout.empty.goals", "layout.empty.goals.add",
-    "layout.empty.events", "layout.empty.events.add",
+    "layout.empty.events", "layout.empty.events.add", "layout.block.selfEmployment",
+    "layout.total.selfEmployment",
   ]
+
+  // MARK: Which blocks show
+
+  /// The blocks of `order` the screen shows: «Самозанятость» only while self-employment is on —
+  /// off, nothing of it is seen. The order itself keeps the block where the owner put it.
+  static func shown(_ order: [PlanningBlock], selfEmployed: Bool) -> [PlanningBlock] {
+    selfEmployed ? order : order.filter { $0 != .selfEmployment }
+  }
 }

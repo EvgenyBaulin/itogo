@@ -60,6 +60,10 @@ public struct FreeMoney: Hashable, Sendable {
     public static let stillExpected = "planning.free.expected"
     /// The money of the safety cushion kept out of the main figure.
     public static let cushion = "planning.free.cushion"
+    /// «Налог самозанятого ≈ X — не ваши деньги».
+    public static let npdTax = "planning.free.npdTax"
+    /// «Кредитка «…» к оплате до …», for the cards out of the summary.
+    public static let creditCards = "planning.free.creditCards"
   }
 
   /// A group left out of the summary, with its own total.
@@ -136,6 +140,14 @@ public struct FreeMoney: Hashable, Sendable {
       lines.append(FreeToSpendLine(key: Key.goalPlans, sign: .minus, amount: plan.goalPlans))
     }
     lines.append(FreeToSpendLine(key: Key.events, sign: .minus, amount: plan.events))
+    // Lines of their own only when they take something: with self-employment off and no credit
+    // card out of the summary the lines are the ones they always were.
+    if !plan.npdTax.isZero {
+      lines.append(FreeToSpendLine(key: Key.npdTax, sign: .minus, amount: plan.npdTax))
+    }
+    if !plan.creditCards.isZero {
+      lines.append(FreeToSpendLine(key: Key.creditCards, sign: .minus, amount: plan.creditCards))
+    }
 
     let moneyNow = accounts.inSummaryTotalRub
     let goalSavings = plan.subtractsGoalSavings ? plan.goalSavings : .zero

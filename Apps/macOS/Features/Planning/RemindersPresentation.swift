@@ -1,5 +1,6 @@
 import AppCore
 import Foundation
+import SwiftUI
 
 /// What the main window shows of the reminders sheet when the reminders of the day are counted:
 /// the daily reminders once a day, and — at every launch, once — the due dates passed and
@@ -33,4 +34,130 @@ struct RemindersPresentation: Equatable {
 
   /// Whether the day's reminders are marked shown by this sheet.
   var marksDailyShown: Bool { !daily.isEmpty }
+}
+
+// MARK: - The questions after the reminders
+
+/// A question the main window asks by itself once a launch, after the reminders of the day:
+/// the debts made before the new terms of debts came, one by one, then — once ever — whether
+/// to count the tax of self-employment.
+enum LaunchQuestion: Identifiable, Equatable {
+  case debtReview([DebtReviewItem])
+  case selfEmployment
+
+  var id: String {
+    switch self {
+    case .debtReview: "debtReview"
+    case .selfEmployment: "selfEmployment"
+    }
+  }
+}
+
+extension RemindersPresentation {
+  /// The next question to ask, or `nil` for none.
+  ///
+  /// * `waits` — another question of the window is on screen or still to come (the setup of
+  ///   the accounts, a report after a crash, the reminders): one question at a time;
+  /// * `locked` — nothing is asked over the cover of the locked app, and nothing is counted
+  ///   as asked: it comes after the unlock;
+  /// * `suppressed` — the launch said «no reminders»; `dataSet` — a set of synthetic data never
+  ///   asks: its debts are not the owner's;
+  /// * the old debts first, while some are left to review and they were not asked this launch
+  ///   («Позже» asks again next time); then the offer of self-employment, once.
+  static func nextQuestion(
+    debtReview: [DebtReviewItem], offersSelfEmployment: Bool, asked: Set<String>,
+    waits: Bool, locked: Bool, suppressed: Bool = false, dataSet: Bool = false
+  ) -> LaunchQuestion? {
+    guard !waits, !locked, !suppressed, !dataSet else { return nil }
+    if !debtReview.isEmpty, !asked.contains(LaunchQuestion.debtReview([]).id) {
+      return .debtReview(debtReview)
+    }
+    if offersSelfEmployment, !asked.contains(LaunchQuestion.selfEmployment.id) {
+      return .selfEmployment
+    }
+    return nil
+  }
+}
+
+/// The one offer to count the tax of self-employment: made while it is off and was never
+/// offered, once an income was written in a category whose name — or the name of a category
+/// above it — speaks of self-employment («самозанятость», «ГПХ», «self-employed»).
+enum SelfEmploymentOffer {
+  /// The words of a name that mean self-employment, lower case.
+  static let words = ["самозан", "гпх", "self-employ", "self employ"]
+
+  static func isSelfEmployedName(_ name: String) -> Bool {
+    let folded = name.lowercased()
+    return words.contains { folded.contains($0) }
+  }
+
+  /// Whether a category or one above it is named as self-employment.
+  static func isSelfEmployed(_ categoryId: UUID?, tree: CategoryTree) -> Bool {
+    var current = tree.category(categoryId)
+    var seen: Set<UUID> = []
+    while let category = current, seen.insert(category.id).inserted {
+      if isSelfEmployedName(category.name) { return true }
+      current = tree.category(category.parentId)
+    }
+    return false
+  }
+
+  static func offers(dataset: Dataset, tree: CategoryTree) -> Bool {
+    let settings = dataset.selfEmployment
+    guard !settings.enabled, !settings.offered else { return false }
+    return dataset.entries.contains { entry in
+      entry.transaction.kind == .income && !entry.transaction.isDeleted
+        && entry.parts.contains { isSelfEmployed($0.categoryId, tree: tree) }
+    }
+  }
+}
+
+/// The sheets of `LaunchQuestion`, on the root of the main window: shown one at a time, never
+/// over the cover of the locked app (`PrivacyLock.presenting`), each once a launch.
+struct LaunchQuestionSheets: ViewModifier {
+  let deps: AppDependencies
+  /// Another question of the window is on screen or still to come.
+  let waits: Bool
+  @State private var shown: LaunchQuestion?
+  /// What was asked this launch, kept for every window of it.
+  @MainActor static var asked: Set<String> = []
+
+  func body(content: Content) -> some View {
+    content
+      .sheet(item: deps.environment.lock.presenting($shown)) { question in
+        switch question {
+        case .debtReview(let items):
+          DebtReviewSheet(items: items).appDependencies(deps)
+        case .selfEmployment:
+          SelfEmploymentOfferSheet().appDependencies(deps)
+        }
+      }
+      .onChange(of: deps.compute.generation, initial: true) { _, _ in ask() }
+      .onChange(of: waits) { _, _ in ask() }
+      .onChange(of: deps.environment.lock.isLocked) { _, _ in ask() }
+  }
+
+  private func ask() {
+    guard shown == nil, !AppEnvironment.isTestHost, let snapshot = deps.compute.snapshot else {
+      return
+    }
+    guard
+      let question = RemindersPresentation.nextQuestion(
+        debtReview: snapshot.planning.debtReview,
+        offersSelfEmployment: SelfEmploymentOffer.offers(
+          dataset: snapshot.dataset, tree: snapshot.ledger.tree),
+        asked: Self.asked, waits: waits, locked: deps.environment.lock.isLocked,
+        suppressed: LaunchOptions.current.suppressesReminders, dataSet: AppPaths.dataSet != nil)
+    else { return }
+    Self.asked.insert(question.id)
+    if question == .selfEmployment { SelfEmploymentOfferSheet.markOffered(deps.environment) }
+    shown = question
+  }
+}
+
+extension View {
+  /// The questions of `LaunchQuestion`, after those the window asks first (`waits`).
+  func launchQuestions(_ deps: AppDependencies, waits: Bool) -> some View {
+    modifier(LaunchQuestionSheets(deps: deps, waits: waits))
+  }
 }

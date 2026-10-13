@@ -20,6 +20,10 @@ public enum PlanningBlock: String, CaseIterable, Sendable, Hashable, Codable {
   case events
   /// «Подсказки».
   case advice
+  /// «Самозанятость»: the income of the month, the tax to pay and by when, the deduction and
+  /// the limit of the year. Shown only while self-employment is on; last, so the order the
+  /// owner set before it came stays as it was.
+  case selfEmployment
 
   /// The blocks whose lists are long and show only the nearest few until «Показать все».
   /// Limits have their own number, set in the settings of Planning; free money, events and
@@ -27,7 +31,7 @@ public enum PlanningBlock: String, CaseIterable, Sendable, Hashable, Codable {
   public var hasShortList: Bool {
     switch self {
     case .payments, .subscriptions, .expectedIncome, .goals: true
-    case .freeMoney, .limits, .events, .advice: false
+    case .freeMoney, .limits, .events, .advice, .selfEmployment: false
     }
   }
 }

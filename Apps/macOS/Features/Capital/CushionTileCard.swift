@@ -29,12 +29,12 @@ struct CushionTileContent: View {
     VStack(alignment: .leading, spacing: 6) {
       if let months = CushionText.shortMonths(status, environment) {
         Text(verbatim: months)
-          .font(.title2.monospacedDigit())
+          .appFont(.title2.monospacedDigit())
           .accessibilityIdentifier("overview.cushion.months")
         CushionBar(status: status, settings: settings)
       }
       Text(verbatim: CushionText.tileHint(status, settings: settings, environment))
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       Button(CushionText.t("cushion.planning.open", environment)) {

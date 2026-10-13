@@ -810,7 +810,6 @@ final class AccountRefusalWordsTests: XCTestCase {
     let issues: [AccountSetupModel.Issue] = [
       .noAccount, .emptyName(id), .nameTaken(id), .nameArchived(id), .emptyGroupName(id),
       .groupNameTaken(id), .groupNameArchived(id), .noMain, .mainInExcludedGroup,
-      .tooManyCurrencies,
     ]
     let keys =
       issues.map(\.messageKey) + ["onboarding.issue.nameArchivedStored"]

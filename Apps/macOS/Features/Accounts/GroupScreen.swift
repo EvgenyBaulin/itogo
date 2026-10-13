@@ -69,7 +69,7 @@ struct GroupScreen: View {
           .foregroundStyle(.secondary)
           .accessibilityHidden(true)
           Text(verbatim: section.group?.name ?? t("sidebar.total"))
-            .font(.title2.weight(.semibold))
+            .appFont(.title2.weight(.semibold))
         }
         Spacer()
         buttons
@@ -123,14 +123,14 @@ struct GroupScreen: View {
         Text(verbatim: t("sidebar.total"))
           .foregroundStyle(.secondary)
         Text(verbatim: section.totalRub.map { environment.money.rounded($0) } ?? "—")
-          .font(.title3.monospacedDigit())
+          .appFont(.title3.monospacedDigit())
         if !section.withoutRate.isEmpty {
           Text(
             verbatim: environment.format(
               "sidebar.withoutRate", table: AccountText.table,
               section.withoutRate.map(\.code).joined(separator: ", "))
           )
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -142,7 +142,7 @@ struct GroupScreen: View {
         } icon: {
           Image(systemName: "eye.slash")
         }
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
       }
     }
@@ -154,7 +154,7 @@ struct GroupScreen: View {
   private func accounts(_ section: GroupContent) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       Text(verbatim: t("account.group.accounts"))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .accessibilityAddTraits(.isHeader)
       ForEach(section.accounts, id: \.account.id) { line in
@@ -178,12 +178,12 @@ struct GroupScreen: View {
                 .monospacedDigit()
               if let caption = figure.caption {
                 Text(verbatim: caption)
-                  .font(.caption)
+                  .appFont(.caption)
                   .foregroundStyle(.secondary)
               }
             }
             Image(systemName: "chevron.right")
-              .font(.caption)
+              .appFont(.caption)
               .foregroundStyle(.tertiary)
               .accessibilityHidden(true)
           }

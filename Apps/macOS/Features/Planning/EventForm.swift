@@ -36,7 +36,7 @@ struct EventForm: View {
       of: event, among: compute.snapshot?.dataset.events ?? [])
     VStack(alignment: .leading) {
       Text(verbatim: t(original == nil ? "events.form.new" : "events.form.edit"))
-        .font(.headline)
+        .appFont(.headline)
       Form {
         TextField(text: $name) { Text(verbatim: t("events.form.name")) }
         if let start, let end {
@@ -53,12 +53,12 @@ struct EventForm: View {
           }
         }
         Text(verbatim: t("events.form.budgetHint"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         if let issue {
           Text(verbatim: t("events.issue.\(issue.rawValue)"))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
       }

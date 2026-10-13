@@ -1,3 +1,4 @@
+import AppCore
 import SwiftUI
 
 /// Settings → Appearance: light, dark or the system's, the one accent colour of the app, and the
@@ -23,6 +24,7 @@ struct AppearanceSettingsView: View {
         .pickerStyle(.inline)
       } footer: {
         Text(verbatim: environment.language("settings.appearance.hint", table: "Settings"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -40,6 +42,32 @@ struct AppearanceSettingsView: View {
         }
       } footer: {
         Text(verbatim: environment.language("settings.appearance.accentHint", table: "Settings"))
+          .appFont(.callout)
+          .foregroundStyle(.secondary)
+      }
+
+      Section {
+        Picker(selection: $theme.fontSize) {
+          ForEach(AppFontSize.allCases, id: \.self) { size in
+            Text(verbatim: environment.language(size.settingsKey, table: "Settings")).tag(size)
+          }
+        } label: {
+          Text(verbatim: environment.language("settings.appearance.fontSize", table: "Settings"))
+        }
+        .accessibilityIdentifier("settings.appearance.fontSize")
+
+        Picker(selection: $theme.currencyStyle) {
+          ForEach(CurrencyStyle.allCases, id: \.self) { style in
+            Text(verbatim: Self.currencyStyleTitle(style, environment)).tag(style)
+          }
+        } label: {
+          Text(
+            verbatim: environment.language("settings.appearance.currencyStyle", table: "Settings"))
+        }
+        .accessibilityIdentifier("settings.appearance.currencyStyle")
+      } footer: {
+        Text(verbatim: environment.language("settings.appearance.textHint", table: "Settings"))
+          .appFont(.callout)
           .foregroundStyle(.secondary)
       }
 
@@ -48,6 +76,18 @@ struct AppearanceSettingsView: View {
     .formStyle(.grouped)
     .padding()
     .accessibilityIdentifier("settings.appearance")
+  }
+}
+
+extension AppearanceSettingsView {
+  /// A choice of «Валюта» with what it writes: «Значок — 1,250 ₽», «Код — 1,250 RUB»,
+  /// «Название — 1,250 руб.» (in English «Name» shows the code, and says so).
+  static func currencyStyleTitle(_ style: CurrencyStyle, _ environment: AppEnvironment) -> String {
+    let sample = MoneyFormatter(locale: environment.language.locale, currencyStyle: style)
+      .exact(AmountE4(whole: 1_250))
+    return environment.format(
+      "settings.appearance.currencyStyle.choice", table: "Settings",
+      environment.language(style.settingsKey, table: "Settings"), sample)
   }
 }
 

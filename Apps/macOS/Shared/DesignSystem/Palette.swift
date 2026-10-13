@@ -74,10 +74,10 @@ public enum Palette {
 public struct QualityTag: View {
   private let quality: Quality
   private let title: String
-  private let font: Font
+  private let font: AppFont
 
   /// `font` is the caption of a row by default; a card sets it to its own lines.
-  public init(quality: Quality, title: String, font: Font = .caption) {
+  public init(quality: Quality, title: String, font: AppFont = .caption) {
     self.quality = quality
     self.title = title
     self.font = font
@@ -91,6 +91,6 @@ public struct QualityTag: View {
     }
     .foregroundStyle(Palette.quality(quality))
     .labelStyle(.titleAndIcon)
-    .font(font)
+    .appFont(font)
   }
 }

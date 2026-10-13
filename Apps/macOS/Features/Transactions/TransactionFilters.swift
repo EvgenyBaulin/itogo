@@ -1,7 +1,7 @@
 import AppCore
 import Foundation
 
-/// The filters of the Transactions window and the text of its search box, as the sidebar
+/// The filters of «Операции» and the text of its search box, as the popover of filters
 /// edits them. Pure, so the rules of resetting are tested without a window:
 ///
 /// * the type narrows the categories on offer to its kind, and a category of the other kind
@@ -10,7 +10,9 @@ import Foundation
 /// * another category drops the subcategory, exactly as the ↓ panel does;
 /// * a value archived after it was chosen is dropped (`keep(within:)`) — but a place, a person
 ///   and an event, which the filter goes on offering from the archive, are kept;
-/// * «Reset» brings everything back, the search included.
+/// * «Reset» brings everything back, the search included;
+/// * the period starts as «All time»: the table shows the newest months of the whole history,
+///   and the search looks through all of it.
 struct TransactionFilters: Hashable, Sendable {
   enum PeriodChoice: String, CaseIterable, Hashable, Sendable {
     case thisMonth, lastMonth, thisYear, allTime, custom
@@ -26,7 +28,7 @@ struct TransactionFilters: Hashable, Sendable {
     }
   }
 
-  var period: PeriodChoice = .thisMonth
+  var period: PeriodChoice = .allTime
   /// The two days of «Custom range». Kept when another period is chosen, so going back to
   /// the custom one finds them as they were.
   var customStart: DateOnly
@@ -127,7 +129,19 @@ struct TransactionFilters: Hashable, Sendable {
     return plain != self
   }
 
-  /// Back to this month, nothing else chosen, nothing searched. The custom days stay.
+  /// How many filters narrow the table, the search aside: the period other than «All time»
+  /// counts one, an account or a card one, and every other choice one.
+  var activeCount: Int {
+    var count = period == .allTime ? 0 : 1
+    count +=
+      [
+        kind != nil, categoryId != nil, subcategoryId != nil, quality != nil, forWhom != nil,
+        personId != nil, placeId != nil, eventId != nil, accountOrCard != nil, status != nil,
+      ].filter { $0 }.count
+    return count
+  }
+
+  /// Back to the whole history, nothing else chosen, nothing searched. The custom days stay.
   mutating func reset() {
     let (start, end) = (customStart, customEnd)
     self = TransactionFilters(today: start)

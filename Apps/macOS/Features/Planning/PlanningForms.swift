@@ -100,7 +100,7 @@ struct FormButtons: View {
     VStack(alignment: .trailing, spacing: 6) {
       if let failed {
         Text(verbatim: failed)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }

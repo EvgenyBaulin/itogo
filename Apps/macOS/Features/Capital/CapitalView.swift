@@ -77,11 +77,11 @@ struct CapitalView: View {
     VStack(alignment: .leading, spacing: 4) {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
         Text(verbatim: CapitalText.t("capital.title", environment))
-          .font(.largeTitle.bold())
+          .appFont(.largeTitle.bold())
           .accessibilityAddTraits(.isHeader)
         if let capital = compute.snapshot?.planning.capital {
           Text(verbatim: environment.money.rounded(capital.now.netRub))
-            .font(.largeTitle.monospacedDigit())
+            .appFont(.largeTitle.monospacedDigit())
             .accessibilityIdentifier("capital.net")
         }
       }
@@ -95,7 +95,7 @@ struct CapitalView: View {
           } icon: {
             Image(systemName: CapitalText.arrow(of: change))
           }
-          .font(.callout.monospacedDigit())
+          .appFont(.callout.monospacedDigit())
           .foregroundStyle(.secondary)
           .accessibilityIdentifier("capital.change")
         }
@@ -200,6 +200,9 @@ struct CapitalViewModel: Hashable {
     var rows: [Row]
     /// What the rows add up to, in rubles.
     var totalRub: AmountE4
+    /// The block's share of its column: the shares of its rows added up, so the folded row and
+    /// its rows never disagree; `nil` while no row of it has a share.
+    var shareBp: Int?
 
     var id: String {
       [kind.rawValue, accountGroupId?.uuidString, assetKind?.rawValue]
@@ -299,7 +302,9 @@ struct CapitalViewModel: Hashable {
   ) -> Group {
     Group(
       kind: kind, accountGroupId: accountGroupId, accountGroupName: name, assetKind: assetKind,
-      rows: rows, totalRub: rows.reduce(.zero) { $0 + ($1.line.amountRub ?? .zero) })
+      rows: rows, totalRub: rows.reduce(.zero) { $0 + ($1.line.amountRub ?? .zero) },
+      shareBp: rows.contains { $0.shareBp != nil }
+        ? rows.reduce(0) { $0 + ($1.shareBp ?? 0) } : nil)
   }
 
   /// The debts I owe of a credit card named like an account below zero, by the folded name.

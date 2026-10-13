@@ -1,4 +1,5 @@
 import CoreAccounting
+import CoreAnalytics
 import CoreKit
 import CorePlanning
 import Foundation
@@ -80,5 +81,84 @@ public enum WorthALook {
     lines += all.prefix(shown).map { .anomaly($0) }
     if all.count > shown { lines.append(.more(all.count - shown)) }
     return lines.isEmpty ? [.nothingUnusual] : lines
+  }
+}
+
+/// A line of «Стоит посмотреть» the version of income allocation, self-employment and the
+/// credits brought: each with what the app shows it with. The lines of `WorthALook.lines` stay
+/// as they were; these go above them (`WorthALook.notes`).
+public enum WorthALookNote: Hashable, Sendable, Identifiable {
+  /// A reminder of a debt or a credit card (`DebtReminders`).
+  case debt(DebtReminder)
+  /// «Налог НПД за октябрь ≈ X — до 28 ноября»: from `remindDaysBefore` days before the due
+  /// day, and after it while unpaid.
+  case npdDue(NPDMonth)
+  /// «Зарплата не пришла?»: the day of the next term passed without the income.
+  case salaryLate(PayHalf)
+  /// «Распределить X?»: an income of the last 30 days not allocated in full; `leftE4` in the
+  /// currency of the income.
+  case allocate(incomeId: UUID, leftE4: AmountE4, currency: CurrencyCode)
+  /// «Остаток сентября — X».
+  case monthRest(MonthRestOffer)
+  /// «До лимита самозанятого осталось X» from 90 % of it, «Лимит превышен» above it.
+  case npdLimit(NPDYear)
+  /// «Похоже на усталость: N мелких покупок за неделю, обычно M».
+  case burnout(BurnoutSignal)
+
+  public var id: String {
+    switch self {
+    case .debt(let reminder): "debt:\(reminder.id)"
+    case .npdDue(let month): "npdDue:\(month.month.iso)"
+    case .salaryLate(let half): "salaryLate:\(half.nextIncomeId):\(half.nextIncomeDay.iso)"
+    case .allocate(let id, _, _): "allocate:\(id)"
+    case .monthRest(let offer): "monthRest:\(offer.month.iso)"
+    case .npdLimit(let year): "npdLimit:\(year.year)"
+    case .burnout(let signal): "burnout:\(signal.through.iso)"
+    }
+  }
+}
+
+extension WorthALook {
+  /// The share of the limit of self-employment from which «Стоит посмотреть» speaks of it, in
+  /// basis points.
+  public static let npdLimitWarningBp = 9_000
+
+  /// The lines of 1.9 in order: reminders of debts and cards, the tax due, the salary not come,
+  /// incomes to allocate (newest first), the rest of the month, the limit of the year, burnout —
+  /// the last only while it may show this week (`Burnout.shows`).
+  public static func notes(
+    planning: PlanningSnapshot, ledger: Ledger, today: DateOnly, burnout: BurnoutCheck = .quiet,
+    burnoutEnabled: Bool = true, burnoutLastShownWeek: String? = nil
+  ) -> [WorthALookNote] {
+    var notes = planning.debtReminders.map(WorthALookNote.debt)
+    if let npd = planning.npd {
+      let reference = ledger.dataset.selfEmployment.reference
+      for month in npd.months where month.state == .due || month.state == .overdue {
+        guard month.toPayE4.raw > 0,
+          today >= month.due.adding(days: -reference.remindDaysBefore)
+        else { continue }
+        notes.append(.npdDue(month))
+      }
+    }
+    if let half = planning.payHalf, half.late { notes.append(.salaryLate(half)) }
+    for id in planning.allocationOffers {
+      guard let entry = ledger.entry(id) else { continue }
+      let done = Allocation.distributed(
+        incomeId: id, ledger: ledger, transfers: ledger.dataset.transfers)
+      let left = entry.transaction.amountE4 - done
+      guard left.raw > 0 else { continue }
+      notes.append(.allocate(incomeId: id, leftE4: left, currency: entry.transaction.currency))
+    }
+    if let offer = planning.monthRest { notes.append(.monthRest(offer)) }
+    if let year = planning.npd?.year, year.exceeded || year.shareBp >= npdLimitWarningBp {
+      notes.append(.npdLimit(year))
+    }
+    if case .signal(let signal) = burnout,
+      Burnout.shows(
+        burnout, enabled: burnoutEnabled, lastShownWeek: burnoutLastShownWeek, today: today)
+    {
+      notes.append(.burnout(signal))
+    }
+    return notes
   }
 }

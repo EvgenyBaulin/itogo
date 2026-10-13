@@ -408,7 +408,7 @@ struct TransactionEditor: View {
           verbatim: environment.language(
             errorKey, table: TransactionEditorModel.table(ofErrorKey: errorKey))
         )
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.red)
       }
 
@@ -505,17 +505,17 @@ struct TransactionEditor: View {
     case .sheet:
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: environment.language("action.edit"))
-          .font(.headline)
+          .appFont(.headline)
         if let refundMark { RefundMarkLabel(mark: refundMark) }
       }
     case .inspector:
       // The operation as it is named in the table, and when it happened.
       VStack(alignment: .leading, spacing: 2) {
         RowTitleText(title: editor.title)
-          .font(.headline)
+          .appFont(.headline)
           .lineLimit(2)
         Text(verbatim: environment.dates.moment(editor.entry.transaction.occurredAt))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         if let refundMark { RefundMarkLabel(mark: refundMark) }
       }
@@ -555,7 +555,7 @@ struct RefundMarkLabel: View {
     } icon: {
       Image(systemName: RefundMarkText.symbol)
     }
-    .font(.caption)
+    .appFont(.caption)
     .accessibilityElement(children: .combine)
   }
 }

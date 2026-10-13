@@ -103,11 +103,12 @@ public enum RefundCandidates {
 
   /// `index` is built over the same operations and knows what refunds already took back.
   /// `since` nil means every purchase ever made. `placeNames` lets a word of the line find a
-  /// purchase by its place.
+  /// purchase by its place. `plans` — the instalment plans by id: a purchase bought on one is
+  /// offered too (`RefundRules.isRefundable`, `creditDebt`).
   public static func list(
     entries: some Sequence<TransactionEntry>, index: RefundIndex, tree: CategoryTree,
     since: DateOnly?, calendar: CalendarContext, query: RefundQuery = RefundQuery(),
-    placeNames: [UUID: String] = [:]
+    placeNames: [UUID: String] = [:], plans: [UUID: Debt] = [:]
   ) -> (candidates: [RefundCandidate], narrowed: Bool) {
     var all: [RefundCandidate] = []
     for entry in entries {
@@ -116,7 +117,9 @@ public enum RefundCandidates {
       let day = calendar.day(of: transaction.occurredAt)
       if let since, day < since { continue }
       if let latest = query.latestDay, day > latest { continue }
-      for part in entry.parts where RefundRules.isRefundable(part: part, in: entry, tree: tree) {
+      let plan = transaction.creditDebtId.flatMap { plans[$0] }
+      for part in entry.parts
+      where RefundRules.isRefundable(part: part, in: entry, tree: tree, creditDebt: plan) {
         let left = RefundRules.remaining(part: part, index: index)
         guard left.raw > 0 else { continue }
         all.append(

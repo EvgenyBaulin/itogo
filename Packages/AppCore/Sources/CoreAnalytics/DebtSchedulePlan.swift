@@ -58,9 +58,33 @@ public enum DebtSchedulePlan {
   }
 
   /// The whole schedule of `debt` (`instalments`), with where its main schedule starts and what
-  /// it asks for.
+  /// it asks for. An instalment plan asks for its parts (`InstalmentPlan.instalments`). `typed`
+  /// are the sums of dues typed from the bank's app (`debt_instalments`): each holds from its due
+  /// until the next step of either kind (`DebtInstalments.merged`).
   public static func plan(
     debt: Debt, journal: [DebtEntry], firstDue: DateOnly, paymentDay: Int, today: DateOnly,
+    calendar: CalendarContext, typed: [DebtInstalmentStep] = []
+  ) -> Plan {
+    let bank = typed.filter { $0.debtId == debt.id }
+    if debt.isInstalmentPlan {
+      let parts = InstalmentPlan.instalments(
+        debt: debt,
+        price: InstalmentPlan.price(of: debt, journal: journal.filter { $0.debtId == debt.id }))
+      let first = parts.amount(at: 0)
+      return Plan(
+        instalments: .merged(computed: parts, typed: bank),
+        mainAmount: first.raw > 0 ? first : nil)
+    }
+    var computed = computedPlan(
+      debt: debt, journal: journal, firstDue: firstDue, paymentDay: paymentDay,
+      calendar: calendar)
+    computed.instalments = .merged(computed: computed.instalments, typed: bank)
+    return computed
+  }
+
+  /// The schedule as the debt's terms and journal work it out, before any sum typed by hand.
+  private static func computedPlan(
+    debt: Debt, journal: [DebtEntry], firstDue: DateOnly, paymentDay: Int,
     calendar: CalendarContext
   ) -> Plan {
     let lines = journal.filter { $0.debtId == debt.id }

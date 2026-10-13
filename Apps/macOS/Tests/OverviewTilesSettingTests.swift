@@ -41,7 +41,8 @@ final class OverviewTilesSettingTests: XCTestCase {
     XCTAssertEqual(AppEnvironment.overviewCollapsedKey, "overview.collapsed")
     let environment = AppEnvironment()
     XCTAssertEqual(environment.overviewLayout, .standard)
-    XCTAssertEqual(environment.overviewTiles.count, OverviewTile.allCases.count)
+    XCTAssertEqual(
+      environment.overviewTiles.count, OverviewTile.allCases.filter(\.isShownUnnamed).count)
     XCTAssertNil(stored)
     XCTAssertNil(storedLayout)
 
@@ -62,8 +63,9 @@ final class OverviewTilesSettingTests: XCTestCase {
     XCTAssertEqual(layout, OverviewLayout(tiles: [.freeMoney, .limits, .monthToDate]))
     XCTAssertEqual(Array(layout.tiles(in: .money).prefix(2)), [.freeMoney, .monthToDate])
     XCTAssertEqual(layout.tiles(in: .plan).first, .limits)
-    XCTAssertEqual(layout.shown.count, OverviewTile.allCases.count)
-    XCTAssertTrue(layout.hidden.isEmpty)
+    // Every tile but the ones that wait to be added.
+    XCTAssertEqual(layout.shown.count, OverviewTile.allCases.filter(\.isShownUnnamed).count)
+    XCTAssertEqual(layout.hidden, [.installments, .selfEmployment])
 
     UserDefaults.standard.set("tilesOfTomorrow,iOwe,iOwe", forKey: AppEnvironment.overviewTilesKey)
     XCTAssertEqual(AppEnvironment().overviewLayout, OverviewLayout(tiles: [.iOwe]))

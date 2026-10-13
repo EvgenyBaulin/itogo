@@ -6,7 +6,7 @@ import Testing
 
 @testable import AppDatabase
 
-/// Every value of the database reaches the export and comes back from it: the 26 files are
+/// Every value of the database reaches the export and comes back from it: the 31 files are
 /// read back with the CSV reader, and each cell is checked against the raw value of its column
 /// in SQLite by a rule written apart from the export — an amount times 10 000 is the stored
 /// integer, a boolean is a word, an instant is the stored one to the second in UTC, a
@@ -22,14 +22,19 @@ struct ExportRoundTripPropertyTests {
   private static let booleans: Set<String> = [
     "archived", "is_default", "reimbursable", "rate_provisional", "pinned", "recurring_yearly",
     "payments_are_expenses", "closed", "rollover", "active", "in_summary", "records_difference",
-    "closes_term", "accrues_interest", "tranche", "cushion", "essential",
+    "closes_term", "accrues_interest", "tranche", "cushion", "essential", "prepay_any_day",
+    "in_ladder", "pledge", "terms_reviewed", "credit_cash_no_grace", "transfer_on_contribution",
+    "tax_npd", "in_loan",
   ]
   /// Columns holding an instant, written in UTC to the second.
   private static let instants: Set<String> = [
     "occurred_at", "created_at", "updated_at", "deleted_at", "reconciled_at", "fetched_at",
   ]
   /// Columns holding a decimal kept as text.
-  private static let decimals: Set<String> = ["rate", "rub_per_unit", "interest_rate", "share"]
+  private static let decimals: Set<String> = [
+    "rate", "rub_per_unit", "interest_rate", "share", "psk", "credit_purchase_rate",
+    "credit_cash_rate", "credit_min_percent", "credit_cash_fee_percent", "tax_rate", "percent",
+  ]
   /// Columns holding a currency code.
   private static let currencies: Set<String> = [
     "currency", "account_currency", "reimbursement_currency", "from_currency", "to_currency",
@@ -113,7 +118,13 @@ struct ExportRoundTripPropertyTests {
         }
         #expect(
           mapping.allSatisfy(databaseColumns.contains), "\(label): \(name) has a column nowhere")
-        let key = name == "rates" ? ["date", "currency", "source"] : ["id"]
+        let key =
+          switch name {
+          case "rates": ["date", "currency", "source"]
+          case "custom_currencies": ["code"]
+          case "settings": ["key"]
+          default: ["id"]
+          }
         let stored = try Row.fetchAll(db, sql: "SELECT * FROM \(name)")
         #expect(rows.count == stored.count, "\(label): \(name) rows")
         var byKey: [String: Row] = [:]
@@ -149,7 +160,7 @@ struct ExportRoundTripPropertyTests {
     }
   }
 
-  /// A history with accounts — every one of the 26 tables has rows, and every column the cards
+  /// A history with accounts — every one of the 31 tables has rows, and every column the cards
   /// brought a value somewhere — whose texts carry what a CSV file must never break on.
   @Test func aHistoryWithAccountsAndOddTextsIsExportedValueForValue() throws {
     let stack = try PlanningUndoPropertyTests.stack()
@@ -209,7 +220,7 @@ struct ExportRoundTripPropertyTests {
     try expectEveryValueKept(stack, "seed \(seed)")
   }
 
-  /// The archive of a history: the database snapshot and the 26 files go in, and opening the
+  /// The archive of a history: the database snapshot and the 31 files go in, and opening the
   /// archive — plain or sealed with a password — gives every one of them back byte for byte;
   /// the database inside holds the same data as the one it was taken of.
   @Test func theArchiveGivesBackEveryFileByteForByte() throws {
@@ -237,17 +248,17 @@ struct ExportRoundTripPropertyTests {
     try builder.add(path: ArchivePaths.settings, data: settings)
     files[ArchivePaths.settings] = settings
 
-    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 8)
+    let plain = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 9)
     #expect(plain.files == files)
-    #expect(plain.csvTables.count == 26)
-    #expect(plain.manifest.schemaVersion == 8)
+    #expect(plain.csvTables.count == 31)
+    #expect(plain.manifest.schemaVersion == 9)
 
     var random = SeededRandom(seed: 7)
     let sealed = try builder.build(
       password: "пароль 🔑", cipher: RoundTripCipher(), random: &random, iterations: 1_000)
     #expect(ArchiveOpener.isEncrypted(sealed))
     let opened = try ArchiveOpener.open(
-      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 8)
+      sealed, password: "пароль 🔑", cipher: RoundTripCipher(), supportedSchemaVersion: 9)
     #expect(opened.files == files)
 
     let inside = folder.appendingPathComponent("inside.sqlite")
@@ -276,6 +287,7 @@ struct ExportRoundTripPropertyTests {
             && !Self.addedByTheBanks.contains("\(table.fileName):\($0)")
             && !Self.addedByTheLoans.contains("\(table.fileName):\($0)")
             && !Self.addedByTheCapital.contains("\(table.fileName):\($0)")
+            && !Self.addedByTheCredits.contains("\(table.fileName):\($0)")
         })
     }
     var counts: [String: Int] = [:]
@@ -311,7 +323,7 @@ struct ExportRoundTripPropertyTests {
     }
     try builder.add(path: ArchivePaths.settings, text: #"{"language":"ru"}"#)
 
-    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 8)
+    let opened = try ArchiveOpener.open(try builder.build(), supportedSchemaVersion: 9)
     #expect(opened.manifest.schemaVersion == 3)
     #expect(opened.csvTables.count == 18)
 
@@ -323,6 +335,7 @@ struct ExportRoundTripPropertyTests {
       try DatabaseStack.pendingMigrations(fileAt: staged, schema: TestSupport.schemaSource)
         == [
           "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+          "0009_credit_and_allocation",
         ])
     let stack = try DatabaseStack(url: staged, schema: TestSupport.schemaSource)
     defer { try? stack.close() }
@@ -333,7 +346,8 @@ struct ExportRoundTripPropertyTests {
     }
     for table in [
       "account_groups", "transfers", "reconciliation_balances", "cashback_rules", "assets",
-      "asset_valuations",
+      "asset_valuations", "debt_instalments", "debt_costs", "allocation_rules",
+      "custom_currencies",
     ] {
       #expect(after[table] == 0)
     }
@@ -341,7 +355,7 @@ struct ExportRoundTripPropertyTests {
   }
 
   /// The archive checks its manifest against the rows it counts in each file, and it counts
-  /// them the way the reader reads them: for the 26 files of an export and for tables of drawn
+  /// them the way the reader reads them: for the 31 files of an export and for tables of drawn
   /// texts full of quotes and line breaks.
   @Test func theArchiveCountsTheRowsTheReaderReads() throws {
     let stack = try PlanningUndoPropertyTests.stack()
@@ -409,7 +423,7 @@ struct ExportRoundTripPropertyTests {
     #expect(
       tables.subtracting(exported) == [
         "anomaly_dismissals", "category_feedback", "currencies", "expected_income_links",
-        "import_batches", "import_mappings", "ml_models", "settings",
+        "import_batches", "import_mappings", "ml_models",
       ])
   }
 
@@ -455,6 +469,24 @@ struct ExportRoundTripPropertyTests {
     "payment_methods.csv:cushion", "categories.csv:essential",
   ]
 
+  /// The columns the credits and the allocation of income added.
+  private static let addedByTheCredits: Set<String> = Set(
+    [
+      "step_days", "first_due_on", "parts", "markup", "psk", "prepay_any_day",
+      "prepay_notice_days", "planned_prepay_on", "planned_prepay", "in_ladder", "pledge",
+      "return_by", "terms_reviewed",
+    ].map { "debts.csv:\($0)" }
+      + [
+        "credit_limit", "credit_grace", "credit_statement_day", "credit_pay_days",
+        "credit_grace_days", "credit_purchase_rate", "credit_cash_rate", "credit_min_percent",
+        "credit_min_floor", "credit_cash_fee_percent", "credit_cash_fee_fixed",
+        "credit_cash_no_grace", "main_card_id",
+      ].map { "payment_methods.csv:\($0)" }
+      + [
+        "debt_entries.csv:prepay", "goals.csv:account_id", "goals.csv:transfer_on_contribution",
+        "transfers.csv:external_id", "categories.csv:tax_rate", "categories.csv:tax_npd",
+      ])
+
   /// Cards on two accounts of the history, one with other names that break a CSV cell; the
   /// cashback rules of one of them, a month and a category among them; operations and a payment
   /// that name a card, cashback typed for some purchases; a payment of an event, the plan start
@@ -467,8 +499,10 @@ struct ExportRoundTripPropertyTests {
       let category = try String.fetchOne(
         db, sql: "SELECT id FROM categories WHERE kind = 'expense' ORDER BY rowid LIMIT 1")
       let event = try String.fetchOne(db, sql: "SELECT id FROM events ORDER BY rowid LIMIT 1")
+      var firstCard: String?
       for (index, account) in accounts.enumerated() {
         let card = UUID().uuidString
+        if index == 0 { firstCard = card }
         try db.execute(
           sql: """
             INSERT INTO cards (id, payment_method_id, name, aliases, sort, archived)
@@ -592,7 +626,116 @@ struct ExportRoundTripPropertyTests {
         arguments: [
           UUID().uuidString, car, UUID().uuidString, car, UUID().uuidString, flat,
         ])
+      try Self.addCredits(db, accounts: accounts, firstCard: firstCard)
     }
+  }
+
+  /// The terms of a credit card and its main card, a loan with every new term, a pledge, an
+  /// early repayment, a goal on an account, a transfer the allocation wrote, a tax on income, the
+  /// sums of dues, a cost of a loan, the rules of allocation, a custom currency and the settings
+  /// of self-employment — with texts that break a cell.
+  private static func addCredits(
+    _ db: Database, accounts: [String], firstCard: String?
+  ) throws {
+    if let account = accounts.first {
+      try db.execute(
+        sql: """
+          UPDATE payment_methods SET credit_limit_e4 = 1500000000, credit_grace = 'statement',
+            credit_statement_day = 5, credit_pay_days = 25, credit_purchase_rate = '29.9',
+            credit_cash_rate = '49.9', credit_min_percent = '8', credit_min_floor_e4 = 6000000,
+            credit_cash_fee_percent = '2.9', credit_cash_fee_fixed_e4 = 2900000,
+            credit_cash_no_grace = 1, main_card_id = ?
+          WHERE id = ?
+          """,
+        arguments: [firstCard, account])
+    }
+    if accounts.count == 2, let account = accounts.last {
+      try db.execute(
+        sql: """
+          UPDATE payment_methods SET credit_limit_e4 = 500000000, credit_grace = 'purchase',
+            credit_grace_days = 100
+          WHERE id = ?
+          """,
+        arguments: [account])
+      try db.execute(
+        sql: """
+          UPDATE goals SET account_id = ?, transfer_on_contribution = 1
+          WHERE id IN (SELECT id FROM goals ORDER BY rowid LIMIT 1)
+          """,
+        arguments: [account])
+    }
+    try db.execute(
+      sql: """
+        UPDATE debts SET step_days = 14, first_due_on = '2026-10-12', psk = '21.473',
+          prepay_any_day = 0, prepay_notice_days = 30, planned_prepay_on = '2026-12-01',
+          planned_prepay_e4 = 1000000000, in_ladder = 0, terms_reviewed = 1
+        WHERE id IN (SELECT id FROM debts WHERE direction = 'i_owe' ORDER BY rowid LIMIT 1)
+        """)
+    try db.execute(
+      sql: """
+        UPDATE debts SET pledge = 1, return_by = '2027-01-31'
+        WHERE id IN (SELECT id FROM debts WHERE direction = 'owed_to_me' ORDER BY rowid LIMIT 1)
+        """)
+    try db.execute(
+      sql: """
+        UPDATE debt_entries SET prepay = 'payment'
+        WHERE id IN (SELECT id FROM debt_entries WHERE kind = 'payment' ORDER BY rowid LIMIT 1)
+        """)
+    try db.execute(
+      sql: """
+        UPDATE transfers SET external_id = 'alloc:' || id || ':' || lower(hex(randomblob(4)))
+        WHERE id IN (SELECT id FROM transfers ORDER BY rowid LIMIT 1)
+        """)
+    try db.execute(
+      sql: """
+        UPDATE categories SET tax_rate = '4', tax_npd = 1
+        WHERE id IN (
+          SELECT id FROM categories WHERE kind = 'income' AND system_role IS NULL
+          ORDER BY rowid LIMIT 1)
+        """)
+    let debts = try String.fetchAll(db, sql: "SELECT id FROM debts ORDER BY rowid LIMIT 2")
+    let operation = try String.fetchOne(
+      db, sql: "SELECT id FROM transactions WHERE kind = 'expense' ORDER BY rowid LIMIT 1")
+    for (index, debt) in debts.enumerated() {
+      try db.execute(
+        sql: """
+          INSERT INTO debt_instalments (id, debt_id, from_index, amount_e4) VALUES
+            (?, ?, 0, 26500000), (?, ?, 3, 26500100)
+          """,
+        arguments: [UUID().uuidString, debt, UUID().uuidString, debt])
+      try db.execute(
+        sql: """
+          INSERT INTO debt_costs (id, debt_id, kind, name, amount_e4, every, day, in_loan,
+            transaction_id, sort)
+          VALUES (?, ?, ?, ?, ?, ?, '2026-09-01', ?, ?, ?)
+          """,
+        arguments: [
+          UUID().uuidString, debt, index == 0 ? "insurance" : "fee",
+          index == 0 ? "Страховка, «жизни»\n\"полис\"" : nil, 450000000,
+          index == 0 ? "once" : "yearly", index == 0, index == 0 ? operation : nil, index,
+        ])
+    }
+    let goal = try String.fetchOne(db, sql: "SELECT id FROM goals ORDER BY rowid LIMIT 1")
+    try db.execute(
+      sql: """
+        INSERT INTO allocation_rules (id, target, goal_id, payment_method_id, mode, percent,
+          amount_e4, currency, sort, active)
+        VALUES (?, 'goal', ?, NULL, 'percent', '10.25', NULL, NULL, 0, 1),
+          (?, 'cushion', NULL, ?, 'fixed', NULL, 50000000, 'USD', 1, 0)
+        """,
+      arguments: [UUID().uuidString, goal, UUID().uuidString, accounts.last])
+    try db.execute(
+      sql: """
+        INSERT INTO custom_currencies (code, name, symbol, fraction_digits, archived, sort)
+        VALUES ('TTH', 'Tether, «стейбл»', '₮', 4, 0, 0), ('BTC', 'Bitcoin', NULL, 4, 1, 1)
+        """)
+    try db.execute(
+      sql: """
+        INSERT INTO settings (key, value) VALUES
+          ('selfEmployed.enabled', '1'), ('debts.nudgeTemplate', '{имя}, верни, «пожалуйста»,
+        {сумма}')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """)
   }
 }
 

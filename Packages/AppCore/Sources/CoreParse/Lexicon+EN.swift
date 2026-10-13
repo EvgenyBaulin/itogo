@@ -116,5 +116,9 @@ extension Lexicon {
   static let englishTransferFromMarkers: Set<String> = ["from"]
   static let englishTransferToMarkers: Set<String> = ["to", "into"]
   static let englishGoalMarkers: Set<String> = ["goal", "goals"]
+  /// "coffee 250 from account": the money leaves the account itself, not its card.
+  static let englishWithoutCardPhrases: [[String]] = [
+    ["from", "account"], ["from", "the", "account"], ["by", "account"],
+  ]
   static let englishDebtMarkers: Set<String> = ["loan", "loans", "credit", "debt", "mortgage"]
 }

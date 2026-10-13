@@ -240,8 +240,8 @@ final class LegacyArchiveImportTests: XCTestCase {
     let environment = await start()
     XCTAssertEqual(environment.state, .ready)
     let stack = try XCTUnwrap(environment.stack)
-    XCTAssertEqual(try stack.appliedMigrations().count, 8)
-    XCTAssertEqual(stack.applied.applied, 5)
+    XCTAssertEqual(try stack.appliedMigrations().count, 9)
+    XCTAssertEqual(stack.applied.applied, 6)
     XCTAssertEqual(
       UpgradeFromFirstVersionTests.accountsStep(stack.applied.dataSteps),
       ["mainKept": 1, "mainChosen": 0, "mainCreated": 0, "defaultsCleared": 2, "assigned": 3])
@@ -252,7 +252,10 @@ final class LegacyArchiveImportTests: XCTestCase {
     let copy = try XCTUnwrap(copies.first)
     XCTAssertEqual(
       try DatabaseStack.pendingMigrations(fileAt: copy, schema: BundleSchemaSource()),
-      ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital"],
+      [
+        "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+        "0009_credit_and_allocation",
+      ],
       "the copy is not the database as the older version left it")
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: copy), counts)
 
@@ -331,13 +334,16 @@ final class MigrationAtStartTests: XCTestCase {
     let environment = await start()
 
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 8)
+    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 9)
     let copy = try XCTUnwrap(copies().first { $0.hasSuffix("-before-migration.sqlite") })
     let url = AppPaths.backupsDirectory.appendingPathComponent(copy)
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: url), counts)
     XCTAssertEqual(
       try DatabaseStack.pendingMigrations(fileAt: url, schema: BundleSchemaSource()),
-      ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital"])
+      [
+        "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+        "0009_credit_and_allocation",
+      ])
     // The copy, then what the update did — counts, never a value.
     var lines: [String] = []
     for _ in 0..<50 {
@@ -374,7 +380,10 @@ final class MigrationAtStartTests: XCTestCase {
       fileAt: AppPaths.databaseURL, schema: BundleSchemaSource())
     XCTAssertEqual(
       pending,
-      ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital"],
+      [
+        "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+        "0009_credit_and_allocation",
+      ],
       "the database was updated without a copy")
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: AppPaths.databaseURL), counts)
     XCTAssertEqual(copies(), [])
@@ -390,7 +399,7 @@ final class MigrationAtStartTests: XCTestCase {
     XCTAssertTrue(environment.forgetFailedStart())
     await environment.start()
     XCTAssertEqual(environment.state, .ready)
-    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 8)
+    XCTAssertEqual(try environment.stack?.appliedMigrations().count, 9)
     XCTAssertEqual(copies().filter { $0.hasSuffix("-before-migration.sqlite") }.count, 1)
   }
 
@@ -411,7 +420,10 @@ final class MigrationAtStartTests: XCTestCase {
     XCTAssertEqual(
       try DatabaseStack.pendingMigrations(
         fileAt: AppPaths.databaseURL, schema: BundleSchemaSource()),
-      ["0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital"],
+      [
+        "0004_accounts", "0005_cards", "0006_banks", "0007_debts_and_deposits", "0008_capital",
+        "0009_credit_and_allocation",
+      ],
       "a damaged database was updated")
     XCTAssertEqual(try DatabaseStack.rowCounts(fileAt: AppPaths.databaseURL), counts)
     XCTAssertEqual(copies(), [], "a copy that failed its check was left")
@@ -548,7 +560,8 @@ final class MigrationAtStartTests: XCTestCase {
 
     let enabled = try settings.enabledCurrencies()
     XCTAssertEqual(Array(enabled.prefix(2)), [.rub, pounds])
-    XCTAssertEqual(enabled.count, CurrencyCode.maxEnabled)
+    // The ten of a fresh install after the two on already: there is no limit any more.
+    XCTAssertEqual(enabled.count, CurrencyCode.defaultEnabled.count + 1)
     XCTAssertTrue(enabled.contains(.usd))
     XCTAssertEqual(try settings.string("app.seeded"), "1")
   }

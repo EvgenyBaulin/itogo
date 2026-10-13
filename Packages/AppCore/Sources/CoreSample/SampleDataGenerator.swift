@@ -56,6 +56,16 @@ public struct SampleDataSet: Sendable {
   /// adds them (`withCapitalLayer`).
   public var assets: [Asset] = []
   public var assetValuations: [AssetValuation] = []
+  /// What else the loans cost, and the sums of dues typed from a bank's app; none unless a layer
+  /// adds them (`withCreditLayer`).
+  public var debtCosts: [DebtCost] = []
+  public var debtInstalments: [DebtInstalmentStep] = []
+  /// How the owner allocates an income; none unless a layer adds them (`withAllocationLayer`).
+  public var allocationRules: [AllocationRule] = []
+  /// Currencies outside the Bank of Russia list and their rates typed by hand (`manual`), oldest
+  /// first; none unless a layer adds them (`withAllocationLayer`).
+  public var customCurrencies: [CustomCurrency] = []
+  public var rates: [Rate] = []
 
   public init(
     categories: [CoreKit.Category],

@@ -32,6 +32,10 @@ public struct RefinementResult: Hashable, Sendable {
 /// A request that fails is tried once more two seconds later, and a refinement never spends
 /// more than thirty seconds on the network: there is no retrying in a loop. A day after today
 /// that the bank has not published yet is asked about again once an hour at most.
+///
+/// A custom currency — a code outside ISO 4217, with rates typed by hand — is never asked
+/// about: the bank publishes none (`RateTable.isAskedOfTheBank`). Its rate is the one the
+/// owner typed for the day or before it, and before the first one there is none.
 public actor RateService {
   /// How patient the refinement is with the network.
   public struct Policy: Sendable {
@@ -119,7 +123,7 @@ public actor RateService {
   /// the entry line calls it after a save, and a failure is left to the pipeline.
   public func refresh(day: DateOnly, currency: CurrencyCode) async {
     let key = day.iso
-    guard !isClosed, !isAnswered(key) else { return }
+    guard RateTable.isAskedOfTheBank(currency), !isClosed, !isAnswered(key) else { return }
     let table = (try? repository.table()) ?? RateTable()
     guard table.needsFetch(currency: currency, on: day) else { return }
     _ = try? await fetchAndStore(day, retrying: false)

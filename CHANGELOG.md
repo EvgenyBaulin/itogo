@@ -7,6 +7,187 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.9.0] — 2026-10-13
+
+Credit as the bank keeps it — instalment plans, credit cards with a statement and a grace period,
+early repayment, a payoff ladder and the true cost of a loan —; the allocation of an income by
+your own rules; self-employment with its tax counted by itself; and an easier app: Transactions
+as a screen of the main window, settings with a sidebar and a search, the size of the text, how a
+currency is written and currencies of your own. The database schema moves to 9: the update only
+adds columns and five tables, and before it the app makes a checked copy of the database
+(`-before-migration`).
+
+### Added
+
+- **A new debt, step by step** — Debts → **New debt** asks what it is (a bank loan, a mortgage,
+  an education loan of the state programme, instalments, a purchase on credit, a credit card, I
+  owe a person, owed to me, a pledge or deposit), then the sum and the day, then the payments with
+  only the fields of that kind, and shows **How it will be** — the schedule, the interest or the
+  markup in it — before **Save**. A mortgage is a bank loan with a schedule, not a kind of its own.
+  **Credit card** makes no debt: it chooses or creates the account of the card and opens its terms.
+  Editing a debt keeps the form it had, with the new fields.
+- **Instalments** — a purchase paid in parts: 4 payments every two weeks by default, the first on
+  the day of the purchase, or once a month. The parts are equal to the kopeck and the remainder
+  goes to the last (1,000 in 3 → 333.33, 333.33, 333.34). What the plan costs above the price is
+  spent part by part: every payment writes its share of the markup as an expense in the debt's
+  subcategory of «Credits», and editing or deleting the payment rewrites or takes it in the same
+  step of ⌘Z. A sum the bank's app shows for a due can be typed in and wins over the worked-out
+  one. In the ↓ panel, **On credit** offers instalments too.
+- **A thing bought in instalments, returned** — the refund asks whether the bank **lowers the
+  debt** (the default) or **gives it back to the card**: lowering it, what was already paid off
+  the price goes back to the account and the rest comes off the debt, in one step of ⌘Z; a plan
+  brought to zero offers to close.
+- **«Instalments»** — a line on top of «I owe», «In instalments: 34,000 ₽ · next 2,500 ₽ on
+  14 November», and a new Overview tile (Plan group), added from **Edit → Add Tile**.
+- **Credit cards** — a credit card stays an account below zero; its terms are in the account
+  editor: the limit, the rates on purchases and on cash and transfers, the grace period («a
+  statement every month on day N, pay within M days» — 25 by default — or «N days from the first
+  purchase»), the minimum payment (a percent of the debt, not below a floor), the fee for cash
+  and transfers (a percent plus a fixed sum) and «cash and transfers have no grace period». The
+  screen of the card shows **Available X of Y**, **Pay by … : X not to pay interest · minimum
+  payment Y**, the statements, and cash and transfers «interest runs at once».
+  - A statement not paid in full by its day loses the grace period: interest appears as a grey
+    **≈**, counted from the day of each purchase at the purchase rate until it is paid off, oldest
+    first, until a statement is paid in full again; cash and transfers without a grace period
+    count from the first day at their own rate, with the fee. **Record interest…** writes what the
+    statement says (in «Credits → Credit card interest») and replaces the estimate. «≈» is never
+    money: not in balances, the free sum, the forecast or Capital.
+  - Cash and transfers from a credit card write the bank's fee by themselves, as an expense in
+    «Fees» with the transfer: filled in from the terms, seen and editable before it is saved.
+  - A card out of the summary adds a grey line «Credit cards to pay (out of the summary)» to the
+    free sum; a card in the summary changes nothing there — its minus is already in the money now.
+  - A credit card kept both as an account and as a credit-card debt offers **Keep only the
+    account**: the debt is deleted (softly), its rate moves into the card's terms; one step of ⌘Z.
+- **The main card of an account** — a purchase is made with a card by default: the card named in
+  the line, else the card last used at that place, else the account's **main card** (Settings →
+  Accounts and «Make main» on the account screen), else its only card. «со счёта» / «from
+  account» in the line, or **Card · Account** in the ↓ panel and the form at the side, pays from
+  the account with no card.
+- **Fees, insurance and the true cost of a loan** — **Fees and insurance…** on a loan: a fee,
+  insurance or another cost, once, every month or every year, once-paid ones «included in the
+  loan» or not. The card shows the overpay (all payments and costs minus what was received) and
+  the **real rate ≈** worked out as the full cost of credit is, and a word when it differs from
+  the contract's by more than half a point. A cost paid once is written as an expense on its day
+  with the loan; insurance can be given back within 30 days, and «Worth a look» says until when.
+- **Early repayment** — a payment on a loan above what its due still asks asks **Lower the
+  payment**, **Shorten the term** or **It is a payment ahead** (the last answer for that debt is
+  suggested; the first time — the term) and keeps the choice on the journal line; a payment ahead
+  closes the next dues, as in 1.8. Interest counts by days; a bank that takes
+  early repayments only on a payment day lowers the debt on the next one. **Plan an early
+  repayment…** keeps the day and the sum (not money) and «Worth a look» reminds to file the
+  application N days before (one by default).
+- **Payoff ladder** in Debts — the money above the minimum payments («On average N is left a
+  month» suggests it), the **avalanche** (highest rate first, the default) or the **snowball**
+  (smallest balance first) with what the avalanche saves, the month you are free of debts, the
+  interest on the way and the order; a debt or a credit card can be left out. Worked out anew on
+  every look.
+- **Debt load** in the Planning hints — the payments of every debt you owe in a month plus 5 % of
+  credit card debt, against the median earnings of six full months, with 12 months of history
+  and the Bank of Russia's thresholds (50 %, 80 %) as words, not colours.
+- **Pledges and deposits** — a debt owed to me with «Due back by», reminded a week before and
+  after; **Write off…** turns what was not returned into spending in the category you choose and
+  closes it.
+- **Remind…** on a debt owed to me — a polite text with the name, the sum, what for and the day,
+  edited and copied; your edit becomes the template of the next one.
+- **Reminders in «Worth a look»** — the application for an early repayment, a pledge due back,
+  insurance that can still be given back, a credit card to pay by its day or a grace period lost,
+  and twice a year (1 February and 1 August) the credit history, with a link to Gosuslugi opened
+  in the browser; **Done** puts a reminder away on this Mac, and the credit history can be turned
+  off in Settings → Planning.
+- **Debts written before 1.9** — nothing is worked out anew. After the launch reminders, each open
+  debt you owe is asked about once: a loan — its fees and insurance, the full cost of credit, early
+  repayment on any day, the days of notice, the ladder; a purchase on credit — whether it is an
+  instalment plan; a credit card kept as a debt — keeping only the account. **Save** and **Not
+  needed** mark the debt seen, **Later** asks another time.
+- **Allocating an income** — after an income in «Earnings» the line says «Recorded. Allocate
+  120,000 ₽?» with **Allocate…**, and «Worth a look» keeps the offer for 30 days (**Not now**
+  puts it away).
+  The sheet fills its lines from your **rules** — N % of the income after the tax of
+  self-employment, or a fixed sum, into a goal, to an account or to the safety cushion — and shows
+  what only is shown: payments, dues of debts, the tax and what is left of the limits until the
+  next expected income. **Unallocated** is what stays, and nothing has to be zero. **Record**
+  writes the contributions and transfers in one step of ⌘Z; the income remembers it («Allocated
+  70,000 of 120,000»). A goal that is reached gets only what it lacks and asks to drop its rule;
+  a raise («N more than usual») can be spread by the rules. Deleting an allocated income asks
+  whether to delete its allocation too.
+- **Where the money of a goal lies** — a goal can name its account and «Also move the money
+  there» when it gets a contribution from the allocation.
+- **Two halves of the month** — with an expected income twice a month, the free sum gets a second
+  line «Until the 25th: X · Y a day», and «The salary did not come?» when its day passed without
+  it. On the 1st, **What is left of September** offers to put the rest of the month on the cushion
+  or into a goal.
+- **Self-employment** — **I'm self-employed** in Settings → Planning (offered once after a first
+  income of the kind or «смз» in the line). The ready categories «Earnings → Self-employment →
+  from individuals (4 %) / from organisations (6 %)», or a tax rate on your own income categories.
+  The tax counts itself at the Bank of Russia rate of the day, with the deduction (asked once),
+  the 100-ruble rule and the due date of the 28th: «tax ≈ 240 ₽ (4 %)» in grey under the amount of
+  an income, a grey line «Tax of self-employment ≈ — not your money» in the free sum from the day
+  of the income, «Tax for October ≈ X by 28 November» with **Pay…** in Planning (checked against
+  «Мой налог»; what the tax office charged differently is shown), the limit of the year with a
+  warning from 90 %, a **Self-employment** block in Planning and an Overview tile. The tax paid is
+  an expense in «Taxes → Tax of self-employment», which takes no limit. Another rate on an income
+  category (the simplified tax, 6 %) gets the tax ≈, the line in the free sum and a payment in
+  Planning once a quarter, due the 28th of the month after the quarter — without the deduction or
+  the 100-ruble rule.
+- **A hint about burnout** — at most once a week in «Worth a look», when small unnecessary
+  purchases of a week are well above your usual week; it needs the necessary categories marked
+  and can be turned off in Settings → Planning.
+- **Currencies of your own** — Settings → Currencies: a code of three Latin capitals that is not
+  an ISO code, a name, a symbol and decimals, with rates typed by hand day by day; the Bank of
+  Russia is never asked for them, and a day before the first rate has no rate. The line reads the
+  code, and the symbol stuck to the number.
+- **Text size** — Settings → Appearance: Small, Regular, Large or Extra Large, for every window;
+  amounts keep digits of one width.
+- **How a currency is written** — Settings → Appearance: Symbol (the default), Code or Name (a
+  Russian name only in Russian) on screens, charts and «Why so»; CSV files and the fields you type
+  into stay as they were.
+- «What's new in 1.9» — six cards; the sample and the demo have a credit card, instalments, an
+  early repayment, a pledge, allocation rules, self-employment and a currency of their own.
+
+### Changed
+
+- **Transactions is a screen of the main window** — «Spending» (⌘4) became **Transactions**, the
+  full table with its filters, search, inspector and bulk actions; **Columns…** chooses the
+  columns, their order and width, **Reset to Defaults** brings back the standard ones. The
+  separate Transactions window is gone: ⌘⇧T, ⌘F and the toolbar button open the screen in the main
+  window, and the screen keeps its filters while you look elsewhere.
+- **Settings** — a sidebar of sections with a search that finds a setting by its caption in either
+  language; captions are easier to read; every window opened from the settings (the tutorial, the
+  password, cashback rules, a new bank…) opens over them.
+- **Currencies** — the limit of 10 currencies is gone: turn on any currency of the Bank of Russia.
+- **Capital** — the groups of accounts are folded at first; what you open is kept on this Mac.
+- The debt load hint counts as described above, in place of payments against the estimate of the
+  month's income.
+- The database schema is 9 (`Schema/0009_credit_and_allocation.sql`): new columns of `debts`
+  (steps of payments, parts and markup, the full cost of credit, early repayment, the ladder,
+  pledges, `terms_reviewed`), `debt_entries.prepay`, the credit card terms and `main_card_id` of
+  `payment_methods`, `goals.account_id` and `transfer_on_contribution`, `transfers.external_id`,
+  `categories.tax_rate` and `tax_npd`, and the tables `debt_instalments`, `debt_costs`,
+  `allocation_rules`, `custom_currencies`; nothing is rewritten and no row is added. The CSV
+  export has 31 files: `debt_instalments`, `debt_costs`, `allocation_rules`, `custom_currencies`
+  and `settings` (the whole settings table of the database) at the end, the new columns last. The
+  transfer archive carries schema 9 and still opens archives of schema 8 and older.
+
+### Fixed
+
+- **The Transactions table could make AppKit reenter its own delegate** — the table was made with
+  its rows already in it, and AppKit reported a «reentrant NSTableView» while the window was
+  being laid out (in 1.8 too). The table is now made empty and filled once it is on screen.
+- **Search ignores «ё»** — «елка» finds «Ёлка» in the operations and the transfers of
+  Transactions, as names are compared everywhere else.
+- **Find missing operations…** in the reconciliation sheet closes the sheet, which hid the table,
+  and what you typed into it comes back when you open it again.
+
+### Upgrading
+
+The update of the database is one way: before it the app makes a checked copy with the suffix
+`-before-migration`, which rotation never removes, also in your backup folder. Going back to 1.8
+means restoring that copy. A row of `debts`, `payment_methods`, `goals` or `categories` edited by
+hand into something its checks forbid stops the update (the database stays at 1.8 and nothing is
+changed); the copy and the backup folder keep your data.
+
+A currency of your own is three Latin capitals: USDT is written as, say, `UST`.
+
 ## [1.8.1] — 2026-10-12
 
 A fix for a lockout: with «Lock Itogo» on, a window the app opened by itself at launch could hide the way to unlock it.

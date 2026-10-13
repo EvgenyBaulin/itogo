@@ -6,10 +6,10 @@ import XCTest
 
 @testable import Itogo
 
-/// The selection bar of the Transactions window, in the real window on synthetic data, with the
-/// inspector open: three operations selected bring the bar up and the window stays as it was;
-/// scrolled to the end, the last row stands above the bar, not under it; Esc in the table takes
-/// the selection away and the bar with it.
+/// The selection bar over «Операции» of the main window, on synthetic data, with the editor open
+/// beside the table: three operations selected bring the bar up — in the entry line's glass — and
+/// the window stays as it was; scrolled to the end, the last row stands above the bar and the
+/// line, not under them; Esc in the table takes the selection away and the bar with it.
 @MainActor
 final class TransactionsSelectionBarTests: XCTestCase {
   private var environment: AppEnvironment!
@@ -21,6 +21,7 @@ final class TransactionsSelectionBarTests: XCTestCase {
   private var defaults: UserDefaults!
   private var windows: [NSWindow] = []
   private var dataDirectoryBefore: String?
+  private var entryStyleBefore: EntryStyle?
   private var missingReadersBefore: Set<String> = []
   private var rows: [TransactionEntry] = []
   private let food = CoreKit.Category(kind: .expense, name: "Food")
@@ -49,6 +50,8 @@ final class TransactionsSelectionBarTests: XCTestCase {
     compute.onSnapshot = { [store] snapshot in store?.show(snapshot.ledger) }
     suiteName = "itogo-selection-bar-\(UUID().uuidString)"
     defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    entryStyleBefore = environment.entryStyle
+    environment.entryStyle = .line
     seed()
   }
 
@@ -59,6 +62,7 @@ final class TransactionsSelectionBarTests: XCTestCase {
     }
     windows = []
     defaults?.removePersistentDomain(forName: suiteName)
+    if let entryStyleBefore { environment?.entryStyle = entryStyleBefore }
     if let environment { await environment.close() }
     if let dataDirectoryBefore {
       setenv("ITOGO_DATA_DIR", dataDirectoryBefore, 1)
@@ -100,13 +104,12 @@ final class TransactionsSelectionBarTests: XCTestCase {
     let actions = OperationActions()
     self.actions = actions
     let root =
-      AppScenes.root(deps, window: .transactions, launches: false) { deps in
-        SecondaryWindow(
-          titleKey: "window.transactions", minWidth: TransactionsRootView.minimumWidth
-        ) {
-          TransactionsRootView(deps: deps, actions: actions, editing: editing)
-        }
+      AppScenes.root(deps, window: .main, launches: false) { deps in
+        MainWindow(
+          deps: deps, actions: actions, selection: .section(.operations),
+          operations: OperationsScreenState(editing: editing))
       }
+      .environment(\.windowWidth, 1_120)
       .defaultAppStorage(defaults)
     let controller = NSHostingController(rootView: root)
     controller.sceneBridgingOptions = [.toolbars]
@@ -133,17 +136,18 @@ final class TransactionsSelectionBarTests: XCTestCase {
     } while Date() < deadline
   }
 
+  /// The table of «Операции»: of the tables of the window — the sidebar is one too — the one
+  /// with columns.
   private func table(in window: NSWindow) -> NSTableView? {
     guard let root = window.contentView else { return nil }
-    return Self.first(of: root)
+    var tables: [NSTableView] = []
+    Self.all(of: root, into: &tables)
+    return tables.first { $0.tableColumns.count > 1 }
   }
 
-  private static func first<V: NSView>(of view: NSView) -> V? {
-    if let found = view as? V { return found }
-    for subview in view.subviews {
-      if let found: V = first(of: subview) { return found }
-    }
-    return nil
+  private static func all<V: NSView>(of view: NSView, into found: inout [V]) {
+    if let match = view as? V { found.append(match) }
+    for subview in view.subviews { all(of: subview, into: &found) }
   }
 
   private func waitForRows(_ window: NSWindow) throws -> NSTableView {

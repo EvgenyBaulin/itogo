@@ -494,6 +494,465 @@
         }
       }
     },
+    "look.action.allocate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allocate…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Распределить…"
+          }
+        }
+      }
+    },
+    "look.action.decline": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No need"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не надо"
+          }
+        }
+      }
+    },
+    "look.action.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Готово"
+          }
+        }
+      }
+    },
+    "look.action.gosuslugi": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Gosuslugi"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть Госуслуги"
+          }
+        }
+      }
+    },
+    "look.action.hideBurnout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't show"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не показывать"
+          }
+        }
+      }
+    },
+    "look.action.openAccount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the account"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть счёт"
+          }
+        }
+      }
+    },
+    "look.action.openDebts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Debts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть «Долги»"
+          }
+        }
+      }
+    },
+    "look.action.openPlanning": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Planning"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть «Планирование»"
+          }
+        }
+      }
+    },
+    "look.action.pay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pay…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заплатить…"
+          }
+        }
+      }
+    },
+    "look.action.putAway": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Put away…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разложить…"
+          }
+        }
+      }
+    },
+    "look.action.stopCreditHistory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't remind"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не напоминать"
+          }
+        }
+      }
+    },
+    "look.allocate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allocate %@?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Распределить %@?"
+          }
+        }
+      }
+    },
+    "look.burnout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looks like fatigue: small purchases this week — %lld, usually — %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Похоже на усталость: мелких покупок за неделю — %lld, обычно — %lld"
+          }
+        }
+      }
+    },
+    "look.cardGrace": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credit card «%@»: the grace period of the statement of %@ is lost — interest ≈ %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кредитка «%@»: льготный период выписки %@ потерян — проценты ≈ %@"
+          }
+        }
+      }
+    },
+    "look.cardPayBy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credit card «%@»: pay %@ by %@ to pay no interest"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кредитка «%@»: внесите %@ до %@, чтобы не платить проценты"
+          }
+        }
+      }
+    },
+    "look.cardPayBy.minimum": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "minimum payment %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "минимальный платёж %@"
+          }
+        }
+      }
+    },
+    "look.creditHistory": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request your credit history — free twice a year from every bureau"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запросите кредитную историю — дважды в год бесплатно в каждом бюро"
+          }
+        }
+      }
+    },
+    "look.insurance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The insurance of «%@» can be given back until %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Страховку по «%@» можно вернуть до %@"
+          }
+        }
+      }
+    },
+    "look.monthRest": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What is left of %@ — %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток за %@ — %@"
+          }
+        }
+      }
+    },
+    "look.npdDue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax of self-employment for %@ ≈ %@ — by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог НПД за %@ ≈ %@ — до %@"
+          }
+        }
+      }
+    },
+    "look.npdLimit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ left to the limit of self-employment (%@ used)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "До лимита самозанятого осталось %@ (использовано %@)"
+          }
+        }
+      }
+    },
+    "look.npdLimitExceeded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Over the limit of self-employment: %@ this year against %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лимит самозанятого превышен: доход за год %@ при лимите %@"
+          }
+        }
+      }
+    },
+    "look.npdOverdue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax of self-employment for %@ ≈ %@ — it was due on %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог НПД за %@ ≈ %@ — срок был %@"
+          }
+        }
+      }
+    },
+    "look.pledgeDue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deposit «%@» — due back by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Залог «%@» — вернуть до %@"
+          }
+        }
+      }
+    },
+    "look.pledgeOverdue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deposit «%@» not returned — it was due on %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Залог «%@» не вернули — срок был %@"
+          }
+        }
+      }
+    },
+    "look.prepay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Early repayment of «%@» on %@ for %@: file the application by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Досрочка «%@» %@ на %@: подайте заявление до %@"
+          }
+        }
+      }
+    },
+    "look.salaryLate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The salary did not come? It was expected on %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зарплата не пришла? Ждали %@"
+          }
+        }
+      }
+    },
     "overview.anomalies": {
       "extractionState": "manual",
       "localizations": {
@@ -1276,6 +1735,127 @@
         }
       }
     },
+    "overview.instalments.count": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld plan"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld plans"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld рассрочки"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld рассрочек"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld рассрочка"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld рассрочки"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "overview.instalments.next": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · next %@ on %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · ближайшее %@ %@"
+          }
+        }
+      }
+    },
+    "overview.instalments.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No instalment plans"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рассрочек нет"
+          }
+        }
+      }
+    },
+    "overview.instalments.open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Debts"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть «Долги»"
+          }
+        }
+      }
+    },
+    "overview.instalments.withoutRate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some plans are in a currency without a rate: left out of the sum"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Часть рассрочек — в валюте без курса: в сумму не вошла"
+          }
+        }
+      }
+    },
     "overview.lastCount.none": {
       "extractionState": "manual",
       "localizations": {
@@ -1701,6 +2281,23 @@
         }
       }
     },
+    "overview.tile.installments": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalments"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рассрочки"
+          }
+        }
+      }
+    },
     "overview.tile.lastCount": {
       "extractionState": "manual",
       "localizations": {
@@ -1820,6 +2417,23 @@
         }
       }
     },
+    "overview.tile.selfEmployment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Self-employment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Самозанятость"
+          }
+        }
+      }
+    },
     "overview.tile.spendingCalendar": {
       "extractionState": "manual",
       "localizations": {
@@ -1935,57 +2549,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Почему так"
-          }
-        }
-      }
-    },
-    "spending.search": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Search"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Поиск"
-          }
-        }
-      }
-    },
-    "spending.search.nothing": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nothing found"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ничего не найдено"
-          }
-        }
-      }
-    },
-    "spending.search.prompt": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Search by words, category or place"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Поиск по словам, категории или месту"
           }
         }
       }
@@ -3464,6 +4027,23 @@
         }
       }
     },
+    "why.free.creditCards": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Credit cards out of the summary"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кредитки вне сводки"
+          }
+        }
+      }
+    },
     "why.free.cushion": {
       "extractionState": "manual",
       "localizations": {
@@ -3630,6 +4210,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сделайте первую сверку: без сверенного остатка свободной суммы нет."
+          }
+        }
+      }
+    },
+    "why.free.npdTax": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax of self-employment ≈"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог самозанятого ≈"
           }
         }
       }
@@ -4099,6 +4696,91 @@
         }
       }
     },
+    "why.instalments.count": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plans"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рассрочек"
+          }
+        }
+      }
+    },
+    "why.instalments.nextTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coming first"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ближайшие"
+          }
+        }
+      }
+    },
+    "why.instalments.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No instalment plans"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рассрочек нет"
+          }
+        }
+      }
+    },
+    "why.instalments.payment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@"
+          }
+        }
+      }
+    },
+    "why.instalments.total": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left to pay"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Осталось заплатить"
+          }
+        }
+      }
+    },
     "why.limits.carry": {
       "extractionState": "manual",
       "localizations": {
@@ -4150,6 +4832,23 @@
         }
       }
     },
+    "why.look.allocate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An income to allocate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доход, который можно распределить"
+          }
+        }
+      }
+    },
     "why.look.anomaly": {
       "extractionState": "manual",
       "localizations": {
@@ -4184,6 +4883,59 @@
         }
       }
     },
+    "why.look.burnout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld small purchase this week, usually %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld small purchases this week, usually %lld"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld мелкие покупки за неделю, обычно %lld"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld мелких покупок за неделю, обычно %lld"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld мелкая покупка за неделю, обычно %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld мелкой покупки за неделю, обычно %lld"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "why.look.count": {
       "extractionState": "manual",
       "localizations": {
@@ -4201,6 +4953,23 @@
         }
       }
     },
+    "why.look.debtReminder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A reminder of a debt or a card"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Напоминание о долге или карте"
+          }
+        }
+      }
+    },
     "why.look.goals": {
       "extractionState": "manual",
       "localizations": {
@@ -4214,6 +4983,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "На целях %1$@, на счетах в сводке %2$@ — похоже, деньги целей потрачены"
+          }
+        }
+      }
+    },
+    "why.look.monthRest": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What is left of %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток за %@"
           }
         }
       }
@@ -4288,6 +5074,57 @@
         }
       }
     },
+    "why.look.npdDue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax of self-employment for %@ — by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог НПД за %@ — до %@"
+          }
+        }
+      }
+    },
+    "why.look.npdLimit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close to the limit of self-employment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Близко к лимиту самозанятого"
+          }
+        }
+      }
+    },
+    "why.look.npdLimitExceeded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Over the limit of self-employment"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лимит самозанятого превышен"
+          }
+        }
+      }
+    },
     "why.look.reference": {
       "extractionState": "manual",
       "localizations": {
@@ -4301,6 +5138,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$@ против %2$@"
+          }
+        }
+      }
+    },
+    "why.look.salaryLate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The salary did not come?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зарплата не пришла?"
           }
         }
       }
@@ -4611,6 +5465,23 @@
         }
       }
     },
+    "why.open.operations": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Transactions"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть «Операции»"
+          }
+        }
+      }
+    },
     "why.open.planning": {
       "extractionState": "manual",
       "localizations": {
@@ -4641,23 +5512,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сверить…"
-          }
-        }
-      }
-    },
-    "why.open.spending": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open Spending"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Открыть «Траты»"
           }
         }
       }
@@ -5259,6 +6113,23 @@
         }
       }
     },
+    "why.rule.installments": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What the open instalment plans and purchases on credit still ask, in rubles at today's rate."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сколько ещё должны открытые рассрочки и покупки в кредит, в рублях по курсу сегодня."
+          }
+        }
+      }
+    },
     "why.rule.lastCount": {
       "extractionState": "manual",
       "localizations": {
@@ -5378,6 +6249,23 @@
         }
       }
     },
+    "why.rule.selfEmployment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The tax of a month: income by the rate of the Bank of Russia of its day × the rate, less the deduction, to the kopeck; below 100 ₽ it goes on to the next month; due on the 28th."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог месяца: доход по курсу ЦБ дня × ставка минус вычет, до копейки; меньше 100 ₽ переносится; срок — 28-е следующего месяца."
+          }
+        }
+      }
+    },
     "why.rule.spendingCalendar": {
       "extractionState": "manual",
       "localizations": {
@@ -5459,6 +6347,261 @@
           "stringUnit": {
             "state": "translated",
             "value": "Необычное за последний месяц, найденное правилами, деньги целей, которые похоже потрачены, и деньги на счетах в архиве."
+          }
+        }
+      }
+    },
+    "why.selfEmployed.carried": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carried from the month before (below 100 ₽)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перенесено с прошлого месяца (меньше 100 ₽)"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.deduction": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deduction"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вычет"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.deductionLeft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deduction left: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток вычета: %@"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.deductionUnknown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The deduction left is not said: counted without it."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остаток вычета не указан: считается без него."
+          }
+        }
+      }
+    },
+    "why.selfEmployed.income": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Income of the month"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доход месяца"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.monthTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax for %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Налог за %@"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.off": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Self-employment is off"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Самозанятость выключена"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.rates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rates: 4 % from individuals, 6 % from organisations; the deduction makes them 3 % and 4 %."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ставки: 4 % с физлиц, 6 % с организаций; вычет делает их 3 % и 4 %."
+          }
+        }
+      }
+    },
+    "why.selfEmployed.rounding": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rounding and carry"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Округление и перенос"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.taxBefore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Income × rate"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доход × ставка"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.toPay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To pay by %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "К уплате до %@"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.yearIncome": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Income this year"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доход за год"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.yearLeft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Осталось"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.yearLimit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Limit"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лимит"
+          }
+        }
+      }
+    },
+    "why.selfEmployed.yearTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The year"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Год"
           }
         }
       }

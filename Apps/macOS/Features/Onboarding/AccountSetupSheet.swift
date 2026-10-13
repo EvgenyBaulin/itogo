@@ -27,7 +27,7 @@ struct AccountSetupSheet: View {
     VStack(spacing: 0) {
       VStack(alignment: .leading, spacing: 6) {
         Text(verbatim: t("onboarding.title"))
-          .font(.title2.bold())
+          .appFont(.title2.bold())
           .accessibilityAddTraits(.isHeader)
         Text(verbatim: t("onboarding.intro"))
           .foregroundStyle(.secondary)
@@ -81,7 +81,7 @@ struct AccountSetupSheet: View {
           } icon: {
             Image(systemName: "info.circle")
           }
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -200,7 +200,7 @@ struct AccountSetupSheet: View {
       if account.kind == .card {
         // What a credit card holds is typed as what is owed, with a minus.
         Text(verbatim: environment.language("account.balance.creditHint", table: "Accounts"))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -226,7 +226,7 @@ struct AccountSetupSheet: View {
           }
         } else {
           Text(verbatim: t("onboarding.account.existing"))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
       }
@@ -241,7 +241,7 @@ struct AccountSetupSheet: View {
             Image(systemName: "star.fill")
           }
           .labelStyle(.titleAndIcon)
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
         }
       }
@@ -280,7 +280,7 @@ struct AccountSetupSheet: View {
               environment.money.exact(expected, currency: currency),
               signed(difference, currency))
           )
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
         }
         Spacer(minLength: 0)
@@ -310,7 +310,7 @@ struct AccountSetupSheet: View {
         Text(verbatim: environment.format("onboarding.balance", table: "Onboarding", currency.code))
         if isMain {
           Text(verbatim: t("onboarding.currency.main"))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
       }
@@ -386,7 +386,7 @@ struct AccountSetupSheet: View {
       Text(verbatim: t("onboarding.groups"))
     } footer: {
       Text(verbatim: t("onboarding.groups.footer"))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -424,7 +424,7 @@ struct AccountSetupSheet: View {
       Text(verbatim: t("onboarding.main"))
     } footer: {
       Text(verbatim: t("onboarding.main.footer"))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -478,7 +478,7 @@ struct AccountSetupSheet: View {
         .disabled(
           isWriting || readFailed || model?.hasExpected != true || model?.issues.isEmpty == false)
     }
-    .font(.callout)
+    .appFont(.callout)
     .padding(16)
   }
 
@@ -511,7 +511,6 @@ struct AccountSetupSheet: View {
       guard let plan = model?.plan(at: at) else { return }
       switch AccountSetupWrites.finish(plan, environment: environment, store: store) {
       case .written: dismiss()
-      case .tooManyCurrencies: failureKey = "onboarding.issue.tooManyCurrencies"
       case .failed: failureKey = "onboarding.failure.write"
       }
     }

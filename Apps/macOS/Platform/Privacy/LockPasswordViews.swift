@@ -35,11 +35,11 @@ struct LockPasswordFields: View {
           Image(systemName: "exclamationmark.octagon")
         }
         .foregroundStyle(.red)
-        .font(.callout)
+        .appFont(.callout)
       } else {
         Text(verbatim: language("privacy.password.rule"))
           .foregroundStyle(.secondary)
-          .font(.callout)
+          .appFont(.callout)
       }
       HStack {
         Spacer()
@@ -99,7 +99,7 @@ struct LockPasswordSheet: View {
         verbatim: language(
           purpose == .first ? "privacy.password.title" : "privacy.password.change")
       )
-      .font(.headline)
+      .appFont(.headline)
       Text(verbatim: language("privacy.password.explain"))
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)

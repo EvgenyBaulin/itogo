@@ -96,7 +96,7 @@ struct ForecastChart: View {
             .symbolSize(70)
             .annotation(position: .trailing, alignment: .leading, spacing: 4) {
               Text(verbatim: middleText)
-                .font(.caption.monospacedDigit().weight(.semibold))
+                .appFont(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.primary)
                 .fixedSize()
             }
@@ -108,7 +108,7 @@ struct ForecastChart: View {
             .symbolSize(0)
             .annotation(position: .topTrailing, alignment: .leading, spacing: 2) {
               Text(verbatim: rangeText)
-                .font(.caption.monospacedDigit())
+                .appFont(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .fixedSize()
             }
@@ -123,7 +123,7 @@ struct ForecastChart: View {
           AxisValueLabel {
             if let day = value.as(Int.self), let text = xLabels[day] {
               Text(verbatim: text)
-                .font(.caption.monospacedDigit())
+                .appFont(.caption.monospacedDigit())
             }
           }
         }
@@ -133,7 +133,7 @@ struct ForecastChart: View {
           AxisGridLine()
           AxisValueLabel {
             Text(verbatim: ChartAxis.money(value, money))
-              .font(.caption.monospacedDigit())
+              .appFont(.caption.monospacedDigit())
           }
         }
       }

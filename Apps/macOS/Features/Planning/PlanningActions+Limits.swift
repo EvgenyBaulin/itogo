@@ -21,8 +21,7 @@ extension PlanningActions {
   ) -> BudgetIssue? {
     guard let snapshot = compute.snapshot else { return nil }
     let limitless =
-      environment.map { LimitWrites.limitless($0, snapshot) }
-      ?? snapshot.dataset.planning.settings.limitlessCategoryIds
+      environment.map { LimitWrites.limitless($0, snapshot) } ?? LimitWrites.onScreen(snapshot)
     return LimitRules.validate(
       budget, tree: snapshot.ledger.tree, existing: snapshot.dataset.planning.budgets,
       limitless: limitless)

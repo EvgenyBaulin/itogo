@@ -121,10 +121,20 @@ struct EntryBar<Accessory: View>: View {
   @State private var kindChosen = false
   /// The form at the side: the saved operation selected in a list, edited in the form.
   @State private var editing: TransactionEditorModel?
+  /// «Сверх платежа X — уменьшить срок или платёж?», waiting for the owner's answer.
+  @State private var prepayQuestion: PrepayQuestion?
+  /// A thing bought in instalments, returned: the sheet that asks how the bank gives it back.
+  @State private var instalmentReturn: InstalmentReturnRequest?
+  /// «Распределить…» under the line, after an income.
+  @State private var allocation: AllocationRequest?
+  /// «Включить…» of the offer to count the tax of self-employment.
+  @State private var settingUpSelfEmployment = false
   @Namespace private var glass
 
   private var interpreter: any LineInterpreter {
-    CoreLineInterpreter(vocabulary: environment.vocabulary, calendar: environment.calendar)
+    CoreLineInterpreter(
+      vocabulary: environment.vocabulary, calendar: environment.calendar,
+      catalog: environment.currencyCatalog)
   }
 
   var body: some View {
@@ -159,7 +169,7 @@ struct EntryBar<Accessory: View>: View {
     // The open panel shows what the line says as it is typed, not only after Enter. The notice
     // that an operation became a plan has said what it had to: the next line starts clean.
     .onChange(of: text) { _, _ in
-      if case .planned = message { message = nil }
+      if message?.isNotice == true { message = nil }
       readTheLineIntoThePanel()
     }
     // The form at the side follows the selection of the window's lists: one operation selected
@@ -197,6 +207,22 @@ struct EntryBar<Accessory: View>: View {
     // Written there, the repayment clears the line like a save; cancelled, the line stays.
     .sheet(item: $repayment) { form in
       DebtSheetView(sheet: form, onDone: { if let model { finishSaving(model) } })
+        .handingOver(dependencies)
+    }
+    // A thing bought in instalments, returned: written there, split as the owner says, the line
+    // clears like a save; cancelled, the line stays.
+    .sheet(item: $instalmentReturn) { request in
+      InstalmentReturnSheet(refund: request.refund, debt: request.debt) { written in
+        if written, let model { finishSaving(model) }
+      }
+      .handingOver(dependencies)
+    }
+    .sheet(item: $allocation) { request in
+      AllocationSheetView(request: request)
+        .handingOver(dependencies)
+    }
+    .sheet(isPresented: $settingUpSelfEmployment) {
+      SelfEmploymentSetupSheet()
         .handingOver(dependencies)
     }
     // The ↓ panel asks for the picker through the model: read here, in the body, so the ask
@@ -261,6 +287,31 @@ struct EntryBar<Accessory: View>: View {
         Text(verbatim: question.message(environment))
       }
     }
+    .background {
+      Color.clear.confirmationDialog(
+        prepayQuestion.map { $0.title(environment) } ?? "",
+        isPresented: Binding(
+          get: { prepayQuestion != nil }, set: { if !$0 { prepayQuestion = nil } }),
+        titleVisibility: .visible, presenting: prepayQuestion
+      ) { question in
+        ForEach(question.choices, id: \.self) { choice in
+          Button(environment.language(PrepayQuestion.key(of: choice), table: "Entry")) {
+            answerPrepay(choice)
+          }
+        }
+        Button(environment.language("action.cancel"), role: .cancel) {}
+      } message: { _ in
+        Text(verbatim: environment.language("entry.prepay.message", table: "Entry"))
+      }
+    }
+  }
+
+  /// «Уменьшить срок», «Уменьшить платёж» or «Это платёж вперёд»: the payment is written with
+  /// the answer.
+  private func answerPrepay(_ choice: PrepayChoice) {
+    guard let model else { return }
+    model.prepayChoice = choice
+    continueSaving(model)
   }
 
   /// «Очистить» of the form: what was typed is dropped and the defaults are laid again.
@@ -610,7 +661,7 @@ struct EntryBar<Accessory: View>: View {
       if quick.confirming {
         VStack(alignment: .leading, spacing: 8) {
           Text(verbatim: environment.language("entry.quick.willWrite", table: "Entry"))
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
           Text(verbatim: QuickEntrySummary.text(of: model, environment: environment))
             .fixedSize(horizontal: false, vertical: true)
@@ -774,28 +825,50 @@ struct EntryBar<Accessory: View>: View {
   private var caption: some View {
     if let message, message.isError {
       Text(verbatim: message.text(environment))
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.red)
         .padding(.horizontal, captionInset)
         .accessibilityIdentifier("entry.caption")
     } else if let message {
-      // A question, not an error: a symbol and words, in the secondary colour.
-      Label {
-        Text(verbatim: message.text(environment))
-      } icon: {
-        Image(systemName: message.symbol)
+      // A question, not an error: a symbol and words, in the secondary colour — and what it
+      // offers to do, a button beside it.
+      HStack(spacing: 8) {
+        Label {
+          Text(verbatim: message.text(environment))
+        } icon: {
+          Image(systemName: message.symbol)
+        }
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("entry.caption")
+        if let action = message.actionKey {
+          Button(environment.language(action, table: "Entry")) { act(on: message) }
+            .buttonStyle(.link)
+            .accessibilityIdentifier("entry.caption.action")
+        }
       }
-      .font(.caption)
-      .foregroundStyle(.secondary)
+      .appFont(.caption)
       .padding(.horizontal, captionInset)
-      .accessibilityIdentifier("entry.caption")
     } else if let preview {
       // "Результат виден сразу": the amount a formula comes to, before Enter.
       Text(verbatim: preview)
-        .font(.caption.monospacedDigit())
+        .appFont(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
         .padding(.horizontal, captionInset)
     }
+  }
+
+  /// The button of a notice under the line: the sheet it offers.
+  private func act(on notice: EntryLineMessage) {
+    switch notice {
+    case .allocate(let incomeId, _):
+      allocation = AllocationRequest(incomeId: incomeId)
+      AppLog.info("entry.allocateOpened", .ui, "the allocation of an income was opened")
+    case .offerSelfEmployment:
+      settingUpSelfEmployment = true
+    default:
+      return
+    }
+    message = nil
   }
 
   /// A plain button: the panel is glass already, and glass is never put on glass.
@@ -829,7 +902,7 @@ struct EntryBar<Accessory: View>: View {
   /// Opened, never toggled: ⌘N twice in a row must not close the form it just opened.
   ///
   /// The focus is asked for twice, the way ⌘F asks for the search field
-  /// (`TransactionsRootView.takeSearchFocus`): a click on a toolbar can move the first
+  /// (`OperationsScreen.takeSearchFocus`): a click on a toolbar can move the first
   /// responder on its way in, after the action has already run.
   private func startNewOperation() {
     message = nil
@@ -1145,6 +1218,26 @@ struct EntryBar<Accessory: View>: View {
         count: questions.count, reconciliation: questions.reconciliation, questions: questions)
       return
     }
+    // A payment of a loan above what its due asks: the bank shortens the term or lowers the
+    // payment, or it pays the next dues ahead, and the line says which (`DebtPrepayment`). Asked once; the answer of the last
+    // time comes first.
+    if askingForGaps, model.prepayChoice == nil, let question = prepayQuestion(for: model) {
+      prepayQuestion = question
+      AppLog.info("entry.prepayAsked", .ui, "a payment above its due was asked about")
+      return
+    }
+    // A thing bought in instalments, returned: the bank lowers the debt or pays to the card —
+    // the sheet asks, and writes it.
+    if let plan = model.instalmentPlanOfTheRefund {
+      do {
+        instalmentReturn = InstalmentReturnRequest(
+          refund: try EntrySave.refundEntry(model, environment: environment), debt: plan)
+        message = nil
+      } catch {
+        message = .error(EntryCommit.errorKey(of: error))
+      }
+      return
+    }
     // Money back from a person closes parts, and which ones the confirmation shows: nothing
     // is written here. Its rate and what the account received are worked out there.
     if model.recordsThroughReimbursementSheet {
@@ -1168,10 +1261,41 @@ struct EntryBar<Accessory: View>: View {
       // A debt opened by this purchase is a name the line should know next time.
       if written.openedCredit?.isNew == true { environment.refreshVocabulary() }
       templates.remember(model.draft, categories: model.categories + model.archivedCategories)
-      finishSaving(model)
+      let notice = EntryAfterSaving.notice(
+        for: written.entry, saidSelfEmployed: model.lineSaysSelfEmployed,
+        tree: model.categoryTree, selfEmployment: selfEmploymentSettings(),
+        allocation: compute.snapshot?.dataset.allocationSettings ?? .standard,
+        money: environment.money)
+      if notice == .offerSelfEmployment { SelfEmploymentOfferSheet.markOffered(environment) }
+      finishSaving(model, then: notice)
     } catch {
       message = .error(EntryCommit.errorKey(of: error))
     }
+  }
+
+  /// The question of a payment above its due, when there is one to ask (`DebtPrepayment`).
+  private func prepayQuestion(for model: EntryDraftModel) -> PrepayQuestion? {
+    guard let debt = model.debtBeingPaid, debt.currency == model.draft.currency else { return nil }
+    let snapshot = compute.snapshot
+    let dues = snapshot?.planning.debts.iOwe.first { $0.debt.id == debt.id }?.dues
+    let journal =
+      (try? environment.references?.debtEntries(debtId: debt.id))
+      ?? snapshot?.dataset.planning.debtEntries.filter { $0.debtId == debt.id } ?? []
+    guard
+      let asked = DebtPrepayment.question(
+        debt: debt, amount: model.draft.amount,
+        day: environment.calendar.day(of: model.draft.occurredAt), dues: dues, journal: journal)
+    else { return nil }
+    return PrepayQuestion(excess: asked.excess, currency: debt.currency, suggested: asked.choice)
+  }
+
+  /// Self-employment as the database has it now: whether it is on and whether it was offered.
+  private func selfEmploymentSettings() -> SelfEmploymentSettings {
+    var values: [String: String] = [:]
+    for key in [SelfEmploymentSettings.enabledKey, SelfEmploymentSettings.offeredKey] {
+      if let value = (try? environment.settings?.string(key)) ?? nil { values[key] = value }
+    }
+    return SelfEmploymentSettings(storedValues: values)
   }
 
   /// The operation went in — here, or in the reimbursement sheet: the line, the panel and the
@@ -1243,9 +1367,19 @@ enum EntrySave {
       ? environment.rublesConverter(for: model.draft)
       : try model.refundRubles(index: model.refundIndexNow())
     _ = try convert(model.draft.amount)
-    let credit = openCreditIfNeeded(model, environment: environment)
+    var credit = openCreditIfNeeded(model, environment: environment)
     // What the kind has no field for stays out of what is written.
     let entry = try model.draftForSaving.materialize(rublesConverter: convert)
+    // «Рассрочка частями»: the plan is made from the purchase as written — the price and the
+    // markup in its first line, the parts and their days in the debt (`InstalmentPlan.make`).
+    var openingLine: DebtEntry?
+    if let opened = credit, opened.isNew,
+      let plan = model.instalmentPlan(
+        for: entry, name: opened.debt.name, calendar: environment.calendar)
+    {
+      credit = (plan.debt, true)
+      openingLine = plan.line
+    }
     let paidDebt = model.debtPaid(by: entry)
     let repayment = repaymentSetting(of: paidDebt, by: entry, environment: environment)
     let saved: Bool
@@ -1254,17 +1388,39 @@ enum EntrySave {
       paidDebt: paidDebt, expectedIncomeId: model.expectedIncomeId,
       day: environment.calendar.day(of: model.draft.occurredAt),
       paidDebtBalance: repayment?.balance, surplus: repayment?.surplus,
-      closesTerm: model.closesDebtTerm)
+      closesTerm: model.closesDebtTerm, openingLine: openingLine)
     {
       // A payment of a loan that accrues interest writes the interest it pays as an operation of
-      // its own in «Кредиты», in the same change.
-      saved = store.apply(
-        DebtInterestPayment.parting(change, paying: paidDebt, environment: environment))
+      // its own in «Кредиты», in the same change; a payment of an instalment plan, its markup.
+      var parted = DebtInterestPayment.parting(change, paying: paidDebt, environment: environment)
+      // A payment above its due was answered: a shorter term, a smaller payment, or ahead.
+      if let paidDebt {
+        parted = DebtPrepayment.marking(parted, debt: paidDebt, choice: model.prepayChoice)
+      }
+      if openingLine != nil {
+        AppLog.info(
+          "debts.instalment.created", .db, "a purchase was bought in instalments",
+          [LogPair("parts", .count(credit?.debt.parts ?? 0))])
+      }
+      saved = store.apply(parted)
     } else {
       saved = store.save(entry)
     }
     guard saved else { return nil }
     return Written(entry: entry, openedCredit: credit, paidDebt: paidDebt)
+  }
+
+  /// The refund the draft of `model` writes, as `write` would make it — the rate of the day,
+  /// what the account received, the rubles of the purchase — without writing it: the sheet of a
+  /// thing bought in instalments writes it, split as the owner says (`InstalmentReturnSheet`).
+  static func refundEntry(
+    _ model: EntryDraftModel, environment: AppEnvironment
+  ) throws -> TransactionEntry {
+    environment.applyRate(to: &model.draft)
+    model.refreshCharge()
+    let convert = try model.refundRubles(index: model.refundIndexNow())
+    _ = try convert(model.draft.amount)
+    return try model.draftForSaving.materialize(rublesConverter: convert)
   }
 
   /// Money given back on a debt owed to me follows the one rule of repayments
@@ -1306,6 +1462,18 @@ enum EntrySave {
       return (existing, false)
     }
 
+    // An instalment plan: the debt is made once the purchase is (`EntryDraftModel.instalmentPlan`),
+    // under the id the purchase points at now.
+    if plan.instalments {
+      let debt = Debt(
+        direction: .iOwe, type: .installment,
+        name: model.draft.note ?? environment.language("entry.instalments.name", table: "Entry"),
+        currency: model.draft.currency, paymentsAreExpenses: false, origin: .purchase,
+        parts: plan.payments, termsReviewed: true)
+      model.draft.creditDebtId = debt.id
+      return (debt, true)
+    }
+
     // A debt of its own for this purchase: its payments are not expenses, because the
     // expense is this very operation. It is written with the purchase, not before it.
     // The count of payments chosen is in the instalment: a debt is paid off in ⌈balance ÷
@@ -1317,7 +1485,9 @@ enum EntrySave {
       currency: model.draft.currency,
       monthlyPaymentE4: plan.monthlyAmount.isZero ? nil : plan.monthlyAmount,
       paymentsAreExpenses: false,
-      origin: .purchase)
+      origin: .purchase,
+      // A debt made in 1.9 has nothing to be asked about later (`DebtReview`).
+      termsReviewed: true)
     model.draft.creditDebtId = debt.id
     return (debt, true)
   }

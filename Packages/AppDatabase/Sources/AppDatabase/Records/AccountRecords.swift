@@ -62,7 +62,8 @@ extension Transfer: @retroactive FetchableRecord, @retroactive PersistableRecord
       toAmountE4: try RowMapping.amount(row, "to_amount_e4"),
       note: row["note"],
       createdAt: try RowMapping.instant(row, "created_at"),
-      updatedAt: try RowMapping.instant(row, "updated_at"))
+      updatedAt: try RowMapping.instant(row, "updated_at"),
+      externalId: row["external_id"])
   }
 
   public func encode(to container: inout PersistenceContainer) throws {
@@ -77,6 +78,7 @@ extension Transfer: @retroactive FetchableRecord, @retroactive PersistableRecord
     container["note"] = note
     container["created_at"] = StoredInstant.databaseValue(createdAt)
     container["updated_at"] = StoredInstant.databaseValue(updatedAt)
+    container["external_id"] = externalId
   }
 }
 

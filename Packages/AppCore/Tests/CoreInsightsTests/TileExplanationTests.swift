@@ -222,10 +222,10 @@ struct TileExplanationTests {
       .spendingForecast: .analytics(.forecast),
       .incomeForecast: .planning, .balanceForecast: .allAccounts, .limits: .planning,
       .upcoming: .planning, .expectedIncome: .planning, .owedToMe: .analytics(.others),
-      .iOwe: .debts, .event: .planning, .lastCount: .reconciliation, .lastRecord: .spending,
-      .lastCountAndRecord: .spending, .worthALook: .analytics(.anomalies), .freeMoney: .planning,
+      .iOwe: .debts, .event: .planning, .lastCount: .reconciliation, .lastRecord: .operations,
+      .lastCountAndRecord: .operations, .worthALook: .analytics(.anomalies), .freeMoney: .planning,
       .currencyChart: nil, .spendingCalendar: .calendar, .capital: .capital,
-      .cushion: .capital,
+      .cushion: .capital, .installments: .debts, .selfEmployment: .planning,
     ]
     #expect(Set(expected.keys) == Set(OverviewTile.allCases))
     for (tile, destination) in expected {

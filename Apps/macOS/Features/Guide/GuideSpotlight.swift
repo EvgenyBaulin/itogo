@@ -138,7 +138,7 @@ private struct GuideArrow: View {
 
   var body: some View {
     Image(systemName: "arrowtriangle.up.fill")
-      .font(.system(size: 14))
+      .font(.system(size: 14))  // font-fixed: the arrow is placed by its size
       .foregroundStyle(.background)
       .shadow(radius: 1)
       .rotationEffect(rotation)
@@ -173,23 +173,23 @@ struct GuideCaptionCard: View {
     VStack(alignment: .leading, spacing: 8) {
       if position.total > 1 {
         Text(verbatim: String(format: t("guide.spot.step"), position.number, position.total))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .monospacedDigit()
       }
       Text(verbatim: step.text.text(russian: russian))
-        .font(.headline)
+        .appFont(.headline)
         .fixedSize(horizontal: false, vertical: true)
       if let why = step.why {
         Text(verbatim: why.text(russian: russian))
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
       HStack(spacing: 8) {
         if let keys = step.keys {
           Text(verbatim: keys)
-            .font(.callout.monospaced())
+            .appFont(.callout.monospaced())
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(RoundedRectangle(cornerRadius: 4).fill(.background.secondary))

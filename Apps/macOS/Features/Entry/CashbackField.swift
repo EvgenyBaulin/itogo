@@ -151,7 +151,7 @@ struct CashbackField: View {
           .foregroundStyle(.secondary)
       }
       caption
-        .font(.caption)
+        .appFont(.caption)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(leading ? .leading : .trailing)
         .fixedSize(horizontal: false, vertical: leading)

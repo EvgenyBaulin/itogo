@@ -22,7 +22,7 @@ struct AssetsSection: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .firstTextBaseline) {
         Text(verbatim: CapitalText.t("capital.assets.title", environment))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
           .accessibilityAddTraits(.isHeader)
         Spacer(minLength: 8)
@@ -33,20 +33,20 @@ struct AssetsSection: View {
       }
       if assets.isEmpty {
         Text(verbatim: CapitalText.t("capital.assets.empty", environment))
-          .font(.callout)
+          .appFont(.callout)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
       ForEach(live) { asset in row(asset) }
       if !gone.isEmpty {
         Text(verbatim: CapitalText.t("capital.assets.disposed", environment))
-          .font(.subheadline.weight(.semibold))
+          .appFont(.subheadline.weight(.semibold))
           .padding(.top, 4)
         ForEach(gone) { asset in row(asset) }
       }
       if let refusal {
         Text(verbatim: CapitalText.t(refusal, environment))
-          .font(.caption)
+          .appFont(.caption)
           .foregroundStyle(.secondary)
       }
     }
@@ -63,11 +63,11 @@ struct AssetsSection: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: asset.name)
         Text(verbatim: subtitle(asset, latest))
-          .font(.caption.monospacedDigit())
+          .appFont(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
         if let note = asset.note {
           Text(verbatim: note)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }

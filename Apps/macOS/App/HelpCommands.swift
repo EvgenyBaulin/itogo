@@ -20,13 +20,15 @@ struct HelpCommands: Commands {
   var body: some Commands {
     CommandGroup(replacing: .help) {
       Button(environment.language("guide.menu.tour", table: "Guide")) {
-        GuideStore.shared.show(GuideCatalog.firstLaunch)
+        AppWindows.intoMain { GuideStore.shared.show(GuideCatalog.firstLaunch) }
       }
       Button(environment.language("guide.menu.whatsNew", table: "Guide")) {
-        if let latest = GuideCatalog.whatsNew.last { GuideStore.shared.show(latest) }
+        AppWindows.intoMain {
+          if let latest = GuideCatalog.whatsNew.last { GuideStore.shared.show(latest) }
+        }
       }
       Button(environment.language("guide.menu.whereToClick", table: "Guide")) {
-        GuideStore.shared.showsWhereToClick = true
+        AppWindows.intoMain { GuideStore.shared.showsWhereToClick = true }
       }
       Divider()
       if GuideStore.shared.isTutorial {
