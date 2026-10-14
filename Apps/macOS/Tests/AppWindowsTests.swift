@@ -177,9 +177,8 @@ final class AppWindowsTests: XCTestCase {
     XCTAssertTrue(transactions.isVisible, "it did not come forward")
     // AppKit reorders the windows of an app that is not active only loosely; while the test host
     // is the active app, the window stands in front of the main one.
-    if NSApp.isActive {
-      XCTAssertLessThan(transactions.orderedIndex, main.orderedIndex, "behind the main window")
-    }
+    try TestEnvironment.requireActiveApp()
+    XCTAssertLessThan(transactions.orderedIndex, main.orderedIndex, "behind the main window")
     XCTAssertEqual(AppWindows.openRoles().filter { $0 == role }.count, 1)
   }
 

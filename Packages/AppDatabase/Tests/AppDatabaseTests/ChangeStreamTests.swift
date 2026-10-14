@@ -40,20 +40,30 @@ struct ChangeStreamTests {
       try repository.save(try TestSupport.makeEntry(note: "row \(number)"))
     }
 
+    // The listener's task may not have begun to observe when the ten writes were done — the
+    // main actor wrote them before the task ran — and a change made before the observation
+    // starts is not announced. So one more write each second, until one arrives.
     let clock = ContinuousClock()
     let deadline = clock.now + .seconds(10)
+    var nextWrite = clock.now + .seconds(1)
+    var more = 0
     while await counter.value == 0, clock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
+      if clock.now >= nextWrite {
+        try repository.save(try TestSupport.makeEntry(note: "more \(more)"))
+        more += 1
+        nextWrite = clock.now + .seconds(1)
+      }
     }
     let received = await counter.value
     #expect(received >= 1)
-    #expect(received <= 10)
+    #expect(received <= 10 + more)
 
     listener.cancel()
     await listener.value
     // With the stream gone, writes go on as before.
     try repository.save(try TestSupport.makeEntry(note: "after"))
-    #expect(try repository.count() == 11)
+    #expect(try repository.count() == 11 + more)
   }
 
   /// Cancelling the listener stops the observation itself, not only the stream. A yield on a

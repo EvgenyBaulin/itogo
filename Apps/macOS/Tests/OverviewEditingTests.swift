@@ -227,13 +227,18 @@ final class OverviewEditingTests: XCTestCase {
               let window = window(width: width, screen: screen)
               let started = Date()
               var records: [Record] = []
-              for _ in 0..<40 {
+              // Passes until eight in a row agree and nothing is left to lay out — counted in
+              // time, not in passes: on a busy Mac one pass does less, and a layout that loops
+              // still never settles within the ten seconds.
+              while Date().timeIntervalSince(started) < 10 {
                 window.updateConstraintsIfNeeded()
                 window.layoutIfNeeded()
                 window.displayIfNeeded()
                 spin(0.01)
                 records.append(record(window))
-                if records.count >= 8, records.suffix(8).allSatisfy({ $0 == records.last }) {
+                if records.count >= 8, records.suffix(8).allSatisfy({ $0 == records.last }),
+                  !(window.contentView?.needsLayout ?? false)
+                {
                   break
                 }
               }

@@ -247,7 +247,8 @@ public struct GuideVersion: Hashable, Sendable, Comparable, CustomStringConverti
   /// «1.4.0», «1.4», «v1.4.2» — nil for anything else.
   public init?(_ text: String) {
     let trimmed = text.hasPrefix("v") ? String(text.dropFirst()) : text
-    let numbers = trimmed.split(separator: ".").map { Int($0) }
+    // Empty pieces are kept, so «1..2» or «1.4.» is no version rather than 1.2 or 1.4.
+    let numbers = trimmed.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
     guard numbers.count >= 2, numbers.count <= 3, numbers.allSatisfy({ $0 != nil }),
       let major = numbers[0], let minor = numbers[1]
     else { return nil }

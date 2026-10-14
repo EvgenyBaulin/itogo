@@ -81,8 +81,15 @@ final class CurrencyChartCardTests: XCTestCase {
     try TestEnvironment.requireSwiftUIAccessibility()
     UserDefaults.standard.set("EUR/RUB|week", forKey: CurrencyChartCard.storageKey)
     let window = show()
-    let picker = try XCTUnwrap(
-      WindowAccessibility.element(identified: "overview.currencyChart.pair", in: window))
+    // SwiftUI builds the tree of a new window when it gets to it: on a busy Mac later than the
+    // half second `show()` waits, so the test waits for the picker itself, up to ten seconds.
+    var found = WindowAccessibility.element(identified: "overview.currencyChart.pair", in: window)
+    let deadline = Date().addingTimeInterval(10)
+    while found == nil, Date() < deadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+      found = WindowAccessibility.element(identified: "overview.currencyChart.pair", in: window)
+    }
+    let picker = try XCTUnwrap(found)
     let shown = WindowAccessibility.attribute(picker, "accessibilityValue").map { "\($0)" } ?? ""
     XCTAssertTrue(shown.contains("EUR/RUB"), shown)
     let texts = WindowAccessibility.elements(in: window).map(WindowAccessibility.text(of:))

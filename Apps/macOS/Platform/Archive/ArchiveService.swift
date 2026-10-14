@@ -342,11 +342,12 @@ enum ArchiveImportFlow {
   /// interface language and the theme of the old one. A value this build does not know is
   /// passed over in silence: an archive from another machine does not get to write whatever
   /// it likes into the owner's defaults.
-  static func applyPortableSettings(_ opened: ArchiveOpener.OpenedArchive) {
+  static func applyPortableSettings(
+    _ opened: ArchiveOpener.OpenedArchive, to defaults: UserDefaults = .standard
+  ) {
     guard let data = opened.settings,
       let values = (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
     else { return }
-    let defaults = UserDefaults.standard
     if let language = values["language"], let choice = AppLanguage.Choice(rawValue: language) {
       // With the language of the menus beside it, as the settings write a choice.
       AppLanguage.store(choice, in: defaults)

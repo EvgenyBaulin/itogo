@@ -8,8 +8,10 @@
 # Every prerequisite of `verify` must be reached by a `make` the workflow runs, directly or
 # through a target whose prerequisites include it. Left out on purpose: `fmt`, which rewrites
 # files instead of judging them; `lint`, advisory in style, which
-# the Makefile runs within `ci-checks` for the one rule it enforces; and `check-toolchain`, which
-# `test-core` asks for itself.
+# the Makefile runs within `ci-checks` for the one rule it enforces; `check-toolchain`, which
+# `test-core` asks for itself; `bench`, whose time budgets are set for the author's Mac and say
+# nothing on a runner of another speed; and `check-skips`, since CI skips what its screen and
+# its session cannot show (TestEnvironment) — on the author's Mac no test is skipped.
 #
 # And every job of every workflow has a limit of its own (`timeout-minutes`), and every
 # `xcodebuild … test` gives each test one: without them a test that hangs holds a runner for
@@ -55,7 +57,7 @@ set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "${here}/.." && pwd)"
-optional=" fmt lint check-toolchain "
+optional=" fmt lint check-toolchain bench check-skips "
 
 # The prerequisites of one rule, one per line. Lines ending in a backslash are joined first; a
 # line that sets a variable for a target (`test-one: XCB_TIME = 600`) is not a rule.

@@ -508,10 +508,10 @@ final class TransactionColumnWidthTests: XCTestCase {
 
 /// «All time» of the large sample (about 20 000 operations over two years, the set of the
 /// performance suites): the filtering and the rows of the table, timed the way the window
-/// makes them off the main thread. Off unless `ITOGO_BENCH=1` reaches the
-/// test host — `TEST_RUNNER_ITOGO_BENCH=1 make test` — like the suites of the packages:
-/// a Debug build says little about the app, and the numbers are printed
-/// for reference only. The output carries times and counts only, never an amount.
+/// makes them off the main thread. They run in every `make test` — no test is skipped on the
+/// author's Mac — and print their numbers for reference only: a Debug build says little about
+/// the app's speed, the budgets are `make bench`'s. The output carries times and counts only,
+/// never an amount.
 final class TransactionTableMeasurementTests: XCTestCase {
   private static let endingOn = DateOnly(year: 2026, month: 9, day: 18)
 
@@ -528,13 +528,7 @@ final class TransactionTableMeasurementTests: XCTestCase {
       calendar: .moscow)
   }()
 
-  private func skipUnlessTiming() throws {
-    try XCTSkipUnless(
-      ProcessInfo.processInfo.environment["ITOGO_BENCH"] == "1", "set ITOGO_BENCH=1 to time")
-  }
-
   func testAllTimeOfTheLargeSample() throws {
-    try skipUnlessTiming()
     let endingOn = Self.endingOn
     let ledger = Self.ledger
 
@@ -579,7 +573,6 @@ final class TransactionTableMeasurementTests: XCTestCase {
   /// numbers are why the window shows a few months at a time.
   @MainActor
   func testTheTableOfAllTime() throws {
-    try skipUnlessTiming()
     let ledger = Self.ledger
     let found = TransactionListing.build(EntryFilter().apply(to: ledger), ledger: ledger)
     for months in [TransactionListing.monthsPerPage, found.months.count] {

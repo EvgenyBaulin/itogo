@@ -60,10 +60,10 @@ struct Settings19Tests {
     #expect(settings == .standard)
     let debts = DebtSettings(storedValues: [
       DebtSettings.ladderExtraKey: "lots", DebtSettings.nudgeTemplateKey: "  \n",
-      DebtSettings.ladderAccountsOutKey: "x, \(UUID(uuid: UUID_NULL).uuidString)",
+      DebtSettings.ladderAccountsOutKey: "x, 00000000-0000-0000-0000-000000000000",
     ])
     #expect(debts.ladderExtraE4 == nil && debts.nudgeTemplate == nil)
-    #expect(debts.ladderAccountsOut == [UUID(uuid: UUID_NULL)])
+    #expect(debts.ladderAccountsOut == [UUID(uuidString: "00000000-0000-0000-0000-000000000000")!])
     let allocation = AllocationSettings(storedValues: [
       AllocationSettings.monthRestTargetKey: "goal:nothing",
       AllocationSettings.monthRestDoneKey: "2026-10-01",

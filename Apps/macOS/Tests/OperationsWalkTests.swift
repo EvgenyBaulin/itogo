@@ -173,6 +173,7 @@ final class EntryWalkTests: XCTestCase {
 
   /// The keyboard comes back to the line when the list gives it back.
   func testTheLineTakesTheKeyboardBack() async throws {
+    try TestEnvironment.requireActiveApp()
     let host = try await EntryHost(opensDetails: false)
     self.host = host
     // SwiftUI follows the keyboard of a window only while its app is the active one: the host of
@@ -182,8 +183,7 @@ final class EntryWalkTests: XCTestCase {
     // the runner of CI, whose screen has none, the line stayed without it with the app active and
     // its window key. And only in the active app.
     try TestEnvironment.requireSwiftUIAccessibility()
-    try XCTSkipUnless(
-      NSApp.isActive, "the app is not active: SwiftUI does not move the keyboard in its windows")
+    try TestEnvironment.requireActiveApp()
     let line = try host.line()
     host.window.makeFirstResponder(nil)
     host.settle(0.1)
@@ -193,8 +193,17 @@ final class EntryWalkTests: XCTestCase {
     func lineHasTheKeyboard() -> Bool {
       ((host.window.firstResponder as? NSTextView)?.delegate as? NSTextField) === line
     }
-    let deadline = Date().addingTimeInterval(3)
-    while !lineHasTheKeyboard(), Date() < deadline { host.settle(0.05) }
+    // The app may have come to the front only a moment ago, while the window was still settling
+    // as key; the list gives the keyboard back once more each second, up to ten seconds.
+    let deadline = Date().addingTimeInterval(10)
+    var asked = Date()
+    while !lineHasTheKeyboard(), Date() < deadline {
+      host.settle(0.05)
+      if Date().timeIntervalSince(asked) > 1 {
+        NotificationCenter.default.post(name: .returnToEntryLine, object: nil)
+        asked = Date()
+      }
+    }
     XCTAssertTrue(
       lineHasTheKeyboard(),
       "the line has the keyboard (app active \(NSApp.isActive), window key \(host.window.isKeyWindow))"

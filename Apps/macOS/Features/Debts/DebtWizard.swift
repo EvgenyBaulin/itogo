@@ -255,8 +255,10 @@ struct DebtWizardModel {
       return preview
     case .instalments:
       let total = amount + markup
-      let amounts = InstalmentPlan.parts(total: total, count: parts)
+      // Each part is its share of the price and its share of the markup, as the plan saved asks
+      // (`InstalmentPlan.instalments`), not a share of the two together.
       let shares = InstalmentPlan.markupShares(markup: markup, count: parts)
+      let amounts = zip(InstalmentPlan.parts(total: amount, count: parts), shares).map { $0 + $1 }
       let days: [DateOnly]
       if everyTwoWeeks {
         days = InstalmentPlan.dueDays(

@@ -40,6 +40,27 @@ enum TestEnvironment {
     )
   }
 
+  /// Makes the test host the active app, for a test of what SwiftUI does only in the active app —
+  /// moving the keyboard of a window, ordering windows strictly. On CI the test skips: a runner's
+  /// session hands the activation out loosely. On this Mac no test is skipped, so the host takes
+  /// the front for the moment of the test (such classes run alone, after the parallel workers —
+  /// scripts/serial-tests.txt), and a host that cannot become active fails the test with why.
+  static func requireActiveApp(file: StaticString = #filePath, line: UInt = #line) throws {
+    if NSApp.isActive { return }
+    try XCTSkipIf(isCI, "the runner of CI does not hand the activation out to the test host")
+    NSApp.activate(ignoringOtherApps: true)
+    let deadline = Date().addingTimeInterval(5)
+    while !NSApp.isActive, Date() < deadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    if !NSApp.isActive {
+      XCTFail("the test host could not become the active app", file: file, line: line)
+      throw InactiveHost()
+    }
+  }
+
+  struct InactiveHost: Error {}
+
   /// Skips the calling test when no screen of this Mac is as wide as the window it lays out.
   static func requireScreen(width: CGFloat) throws {
     let widest = NSScreen.screens.map(\.visibleFrame.width).max() ?? 0

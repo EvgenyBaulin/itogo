@@ -110,4 +110,20 @@ final class BundleContentsTests: XCTestCase {
     #endif
     XCTAssertNotNil(Bundle.main.image(forResource: icon), "the icon \(icon) is not in the bundle")
   }
+
+  /// The icon comes from the owner's Icon Composer file, and each build carries only its own:
+  /// the compiled `.icns` of this build is there, the other one is not.
+  func testEachBuildCarriesOnlyItsOwnIcon() throws {
+    #if DEBUG
+      let own = "AppIconDebug", other = "AppIcon"
+    #else
+      let own = "AppIcon", other = "AppIconDebug"
+    #endif
+    XCTAssertNotNil(Bundle.main.url(forResource: own, withExtension: "icns"))
+    XCTAssertNil(Bundle.main.url(forResource: other, withExtension: "icns"))
+    let catalog = try XCTUnwrap(Bundle.main.url(forResource: "Assets", withExtension: "car"))
+    let bytes = try Data(contentsOf: catalog)
+    XCTAssertNotNil(bytes.range(of: Data("\(own)_Assets/".utf8)), "\(own) layers are missing")
+    XCTAssertNil(bytes.range(of: Data("\(other)_Assets/".utf8)), "\(other) layers are inside")
+  }
 }

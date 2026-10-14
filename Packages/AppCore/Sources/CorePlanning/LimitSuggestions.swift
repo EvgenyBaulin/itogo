@@ -145,7 +145,11 @@ public enum LimitSuggestions {
   public static func roundedUp(_ amount: AmountE4) -> AmountE4 {
     guard amount.raw > 0 else { return .zero }
     let step = amount < largeFrom ? smallStep : largeStep
-    let steps = (amount.raw + step.raw - 1) / step.raw
+    // An amount near the top of the range keeps itself: padding it to the next step must not
+    // trap, as the multiplication below does not.
+    let (padded, tooBig) = amount.raw.addingReportingOverflow(step.raw - 1)
+    guard !tooBig else { return amount }
+    let steps = padded / step.raw
     let (value, overflow) = steps.multipliedReportingOverflow(by: step.raw)
     return overflow ? amount : AmountE4(raw: value)
   }

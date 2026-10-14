@@ -100,9 +100,12 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_PREVIEWS: YES
         LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+        # The icon is the owner's Icon Composer file (AppIcon.icon, layered for Liquid Glass).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Info.plist reads the icon's name from here, so the Debug build can wear its own.
         ITOGO_APP_ICON: AppIcon
+        # Each build carries only its own icon: the shipped bundle has no Debug band in it.
+        EXCLUDED_SOURCE_FILE_NAMES: AppIconDebug.icon
         # The owner's copy opens an archive on a double click; a build from the repository
         # declares the same type, but only as an alternative (Debug below).
         ITOGO_ARCHIVE_HANDLER_RANK: Owner
@@ -131,8 +134,11 @@ targets:
           # The same icon with a red «DEBUG» band, so the two copies differ in the Dock. The
           # name stays: InfoPlist.xcstrings names the app in both languages, and a name per
           # configuration would take a script after the build.
+          # AppIconDebug.icon is AppIcon.icon with one more group on top, the band
+          # (Icon/Sources/make-debug-band.swift draws it).
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDebug
           ITOGO_APP_ICON: AppIconDebug
+          EXCLUDED_SOURCE_FILE_NAMES: AppIcon.icon
         Release:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DIRECT_DISTRIBUTION
         AppStore:

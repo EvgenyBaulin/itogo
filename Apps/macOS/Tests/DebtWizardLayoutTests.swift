@@ -56,8 +56,25 @@ final class DebtWizardLayoutTests: XCTestCase {
             window.makeKeyAndOrderFront(nil)
             host.settle(0.3)
             let content = try XCTUnwrap(window.contentView)
-            content.layoutSubtreeIfNeeded()
             let place = "\(language) \(width) \(kind) \(step)"
+            // A busy Mac lays the step out later than the pause above: the fields are read once
+            // their frames stop moving (up to ten seconds), so the test measures the layout the
+            // sheet settles in, not one on its way there.
+            func shown() -> [CGRect] {
+              content.layoutSubtreeIfNeeded()
+              return controls(in: content).filter { !$0.isHidden && $0.frame.width > 0 }
+                .map { $0.convert($0.bounds, to: nil) }
+            }
+            var last = shown()
+            var same = 0
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline {
+              host.settle(0.1)
+              let now = shown()
+              same = now == last && !content.needsLayout ? same + 1 : 0
+              if same >= 3 { break }
+              last = now
+            }
             let found = controls(in: content).filter { !$0.isHidden && $0.frame.width > 0 }
             // The kind and the preview are SwiftUI's own; the fields of the other steps are AppKit's.
             if step == .amount || step == .payments {

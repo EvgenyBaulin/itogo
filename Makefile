@@ -168,6 +168,10 @@ check-appstore-clean:
 	@id=$$(plutil -extract CFBundleIdentifier raw "$(STORE_APP)/Contents/Info.plist"); \
 	    if [ "$$id" != "$(RELEASE_ID)" ]; then \
 	    echo "appstore: the bundle is $$id, not $(RELEASE_ID)"; exit 1; fi
+	@test -f "$(STORE_APP)/Contents/Resources/AppIcon.icns" || \
+	    (echo "appstore: the bundle has no AppIcon.icns" && exit 1)
+	@if grep -q AppIconDebug "$(STORE_APP)/Contents/Resources/Assets.car"; then \
+	    echo "appstore: the Debug icon is inside the bundle"; exit 1; fi
 	@echo "appstore: no updater inside"
 # The bundle was built to be looked at, not opened: Launch Services learnt of it during the
 # build and would offer it next to the owner's copy. Both the registration and the bundle go.
@@ -234,7 +238,8 @@ test-core: build-dir check-toolchain
 	@mkdir -p $(LOGS)
 	set -o pipefail; if [ -f "$(PYENV_MARKER)" ]; then export ITOGO_PYTHON="$(PYENV_PYTHON)"; fi; \
 	    $(AWAKE) $(TMO) 900 $(SWIFT) test --package-path Packages/AppCore \
-	    --scratch-path $(SPM_SCRATCH)/spm-appcore 2>&1 | tee $(LOGS)/test-core.log
+	    --scratch-path $(SPM_SCRATCH)/spm-appcore --skip PerformanceTests \
+	    2>&1 | tee $(LOGS)/test-core.log
 
 # A venv with pandas for the CSV check (scripts/requirements-dev.txt), built from scratch:
 # outside the repository, with no pip cache left behind. A failed install leaves no marker,
@@ -254,25 +259,42 @@ test-db: build-dir check-toolchain
 	@mkdir -p $(LOGS)
 	@cp Packages/AppDatabase/Package.resolved $(BUILD_DIR)/appdatabase-resolved.before
 	set -o pipefail; $(AWAKE) $(TMO) 900 $(SWIFT) test --package-path Packages/AppDatabase \
-	    --scratch-path $(SPM_SCRATCH)/spm-appdatabase 2>&1 | tee $(LOGS)/test-db.log
+	    --scratch-path $(SPM_SCRATCH)/spm-appdatabase --skip PerformanceTests \
+	    2>&1 | tee $(LOGS)/test-db.log
 	@cmp -s $(BUILD_DIR)/appdatabase-resolved.before Packages/AppDatabase/Package.resolved || \
 	    (echo "test-db: the run rewrote Packages/AppDatabase/Package.resolved; commit SwiftPM's own file" && exit 1)
 
 # Performance suites, in release and on about 20 000 synthetic operations: the ledger and
 # every Analytics section for twelve months, then loading the same history from a WAL file
-# and everything after it. `make test-core`, `make test-db` and `make verify` skip them,
-# since only `ITOGO_BENCH=1` switches them on. Each release build has a
+# and everything after it. `make test-core` and `make test-db` leave them out (`--skip`, a
+# stopwatch in a debug build says nothing); `make verify` runs them here, in release, since
+# only `ITOGO_BENCH=1` switches them on. Each release build has a
 # scratch directory of its own, so it never throws away the debug one.
 bench: build-dir check-toolchain
-	ITOGO_BENCH=1 $(AWAKE) $(TMO) 1800 $(SWIFT) test -c release --package-path Packages/AppCore \
-	    --scratch-path $(SPM_SCRATCH)/spm-appcore-release --filter Performance
-	ITOGO_BENCH=1 $(AWAKE) $(TMO) 1800 $(SWIFT) test -c release --package-path Packages/AppDatabase \
-	    --scratch-path $(SPM_SCRATCH)/spm-appdatabase-release --filter Performance
+	@mkdir -p $(LOGS)
+	set -o pipefail; { ITOGO_BENCH=1 $(AWAKE) $(TMO) 1800 $(SWIFT) test -c release \
+	    --package-path Packages/AppCore --scratch-path $(SPM_SCRATCH)/spm-appcore-release \
+	    --filter Performance && \
+	  ITOGO_BENCH=1 $(AWAKE) $(TMO) 1800 $(SWIFT) test -c release \
+	    --package-path Packages/AppDatabase --scratch-path $(SPM_SCRATCH)/spm-appdatabase-release \
+	    --filter Performance; } 2>&1 | tee $(LOGS)/bench.log
 
+# The tests of the app run in TEST_WORKERS copies of the test host at once, each with a bundle id
+# and so a container, settings and files of its own (scripts/test-parallel.py); the classes of
+# scripts/serial-tests.txt, which need the one active app, run after them one by one.
+# The build is made once, for testing; the time each class took is kept for the next run's
+# spread. On this Mac a skipped test fails the run: every test runs here. `TEST_WORKERS=1` runs
+# everything in one copy, as before.
+# Every core but two: past that the windows of the tests are laid out more slowly than they wait.
+TEST_WORKERS ?= $(shell n=$$(sysctl -n hw.ncpu); [ "$$n" -gt 3 ] && echo $$((n - 2)) || echo 1)
 test: generate
 	@mkdir -p $(LOGS)
 	set -o pipefail; $(XCB_DEV) -scheme $(SCHEME) -configuration Debug \
-	    -only-testing:ItogoTests $(TEST_TIME) test 2>&1 | tee $(LOGS)/test.log
+	    -only-testing:ItogoTests build-for-testing 2>&1 | tee $(LOGS)/test-build.log
+	$(AWAKE) $(TMO) $(XCB_TIME) scripts/test-parallel.py --products $(DERIVED)/Build/Products \
+	    --logs $(LOGS) --workers $(TEST_WORKERS) --serial scripts/serial-tests.txt \
+	    --times $(BUILD_ROOT)/test-times.tsv --sign "$(DEV_IDENTITY)" \
+	    --prepend $(LOGS)/test-build.log -- $(TEST_TIME)
 
 # One test, or one class, on a short leash: `make test-one T=ItogoTests/SomeTests[/testSomething]`.
 # A test that never runs is a failure too — a class that the project does not know about yet
@@ -437,6 +459,18 @@ check-warnings:
 # `Build.nosync` link, xcodebuild judged them «outside of the allowed root paths» and refused to
 # delete them, one warning each. These carry no line number, and `check-warnings` reads only
 # diagnostics that point at a line of our code — hence a check of their own, over the same logs.
+# No test is skipped on this Mac: a skipped test is a check that did not happen. The tests of
+# the app say so themselves (scripts/test-parallel.py); this reads the logs of the packages and
+# of `make bench`. CI skips by design (no screen, no pandas on Linux) and does not run it.
+check-skips:
+	@found=$$(cat $(LOGS)/test-core.log $(LOGS)/test-db.log $(LOGS)/bench.log 2>/dev/null | \
+	    grep -aE "^➜ (Test|Suite) .* skipped" | sort -u); \
+	    if [ -n "$$found" ]; then echo "$$found"; echo "skips: some tests did not run"; exit 1; fi
+	@test -f $(LOGS)/test.log || (echo "skips: nothing to read — run make test first" && exit 1)
+	@found=$$(grep -aE "^Test Case '.*' skipped" $(LOGS)/test.log | sort -u); \
+	    if [ -n "$$found" ]; then echo "$$found"; echo "skips: some tests did not run"; exit 1; fi
+	@echo "skips: none"
+
 check-stale:
 	@missing=""; for log in $(LOGS)/build.log $(LOGS)/test.log; do \
 	    [ -f "$$log" ] || missing="$$missing $$log"; \
@@ -631,7 +665,8 @@ ci-checks: lint check-warnings check-stale check-core-purity check-environment c
 
 # `check-appstore-clean` comes before `check-warnings` on purpose: it is what builds the store
 # configuration, and `check-warnings` reads that build's log with the others.
-verify: check-toolchain fmt lint test-core test-db build test check-appstore-clean ci-checks
+verify: check-toolchain fmt lint test-core test-db bench build test check-appstore-clean \
+	    ci-checks check-skips
 	@if [ -f "$(PYENV_MARKER)" ]; then echo "pandas: checked"; \
 	    else echo "pandas: NOT checked (run make pyenv)"; fi
 	@echo "verify: green"

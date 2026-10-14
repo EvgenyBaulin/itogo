@@ -34,10 +34,14 @@ public enum DebtPrepay {
   /// вперёд» too —, else `.term`.
   public static func defaultChoice(debtId: UUID, journal: [DebtEntry]) -> PrepayChoice {
     let answered = journal.filter { $0.debtId == debtId && $0.prepay != nil }
-    let last = answered.max { left, right in
-      let leftKey = (left.date?.iso ?? "", left.occurredAt ?? .distantPast)
-      let rightKey = (right.date?.iso ?? "", right.occurredAt ?? .distantPast)
-      return leftKey < rightKey
+    // The journal comes in the order it was written: of two answers of one day and moment the
+    // later one is the last given, so a tie goes to the later line (`max` keeps the first).
+    func key(_ line: DebtEntry) -> (String, Date) {
+      (line.date?.iso ?? "", line.occurredAt ?? .distantPast)
+    }
+    let last = answered.reduce(nil as DebtEntry?) { latest, line in
+      guard let latest else { return line }
+      return key(line) < key(latest) ? latest : line
     }
     return last?.prepay ?? .term
   }

@@ -7,6 +7,32 @@ All notable changes to Itogo are recorded here. The format follows
 The database schema and the transfer-archive format are versioned separately from the app,
 and both move forward only.
 
+## [1.9.1] — 2026-10-14
+
+A new icon, and an app checked by almost twice as many tests.
+
+### Changed
+
+- The icon is a layered Icon Composer icon, with the glass of macOS 26. The Debug build wears the
+  same icon with a red «DEBUG» band, and each build carries only its own.
+
+### Fixed
+
+- «Suggest limits…» no longer traps on an amount at the very top of the range.
+- When two answers about an early repayment were given on the same day, the next payment offered
+  the first of them instead of the last.
+- The preview of an instalment plan in the new-debt wizard showed parts a few kopecks off the plan
+  it then saved: price and markup are now divided each on its own, as the plan divides them.
+- A version string with an empty part («1..2», «1.4.») is no longer read as a version.
+
+### Development
+
+- The tests of the app — 4 247 of them, up from 2 606 — run in several copies of the test host at
+  once, each with a bundle id and so a container of its own; the few that need the active app run
+  after them, one by one. A full run takes about three minutes instead of twenty-three.
+- No test is skipped on the author's Mac: a skipped test fails `make test`, and the performance
+  budgets (`make bench`) are part of `make verify`.
+
 ## [1.9.0] — 2026-10-13
 
 Credit as the bank keeps it — instalment plans, credit cards with a statement and a grace period,
