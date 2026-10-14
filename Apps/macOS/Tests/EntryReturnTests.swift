@@ -65,6 +65,18 @@ final class EntryHost {
     RunLoop.main.run(until: Date().addingTimeInterval(seconds))
   }
 
+  /// Settles until the condition holds, up to `timeout` seconds: a slow Mac (a runner of CI) opens
+  /// the panel later than a fixed pause.
+  @discardableResult
+  func settle(until condition: () -> Bool, timeout: TimeInterval = 10) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition(), Date() < deadline { settle(0.05) }
+    return condition()
+  }
+
+  /// Whether the ↓ panel is open: its amount field is on screen.
+  var panelIsOpen: Bool { textFields().contains { $0.placeholderString == "0" } }
+
   func textFields(in view: NSView? = nil) -> [NSTextField] {
     guard let view = view ?? window.contentView else { return [] }
     return view.subviews.flatMap { subview -> [NSTextField] in

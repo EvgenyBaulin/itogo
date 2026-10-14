@@ -204,7 +204,7 @@ def keep_in_front(executable, stop):
                  f"(first process whose unix id is {pid}) to "
                  "if not frontmost then set frontmost to true"],
                 capture_output=True)
-        stop.wait(1.0)
+        stop.wait(0.5)
 
 
 def main():

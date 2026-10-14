@@ -49,7 +49,9 @@ enum TestEnvironment {
     if NSApp.isActive { return }
     try XCTSkipIf(isCI, "the runner of CI does not hand the activation out to the test host")
     NSApp.activate(ignoringOtherApps: true)
-    let deadline = Date().addingTimeInterval(5)
+    // The runner of the serial classes brings the host to the front from outside; right after
+    // the parallel workers, with their hosts still quitting, that can take a while.
+    let deadline = Date().addingTimeInterval(20)
     while !NSApp.isActive, Date() < deadline {
       RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     }

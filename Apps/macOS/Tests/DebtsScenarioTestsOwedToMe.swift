@@ -15,6 +15,7 @@ final class DebtsScenarioTestsOwedToMe: DebtsScenarioCase {
     return person
   }
 
+  @discardableResult
   private func lend(
     _ whole: Int64, to person: Person?, name: String, daysAgo: Int = 3
   ) async throws -> Debt {

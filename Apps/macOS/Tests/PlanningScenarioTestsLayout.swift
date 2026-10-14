@@ -11,19 +11,13 @@ import XCTest
 @MainActor
 final class PlanningScenarioTestsLayout: XCTestCase {
   private typealias S = PlanningScenario
-  private var suiteName = ""
-  private var defaults: UserDefaults!
+  // XCTest makes an instance for every test, so every test has a domain of its own.
+  private let suiteName = "itogo.tests.c.\(UUID())"
+  private lazy var defaults = UserDefaults(suiteName: suiteName) ?? .standard
 
-  override func setUp() {
-    super.setUp()
-    suiteName = "itogo.tests.c.\(UUID())"
-    defaults = UserDefaults(suiteName: suiteName)
-  }
-
-  override func tearDown() {
+  override func tearDown() async throws {
     defaults.removePersistentDomain(forName: suiteName)
-    defaults = nil
-    super.tearDown()
+    try await super.tearDown()
   }
 
   // MARK: The order of the blocks

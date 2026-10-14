@@ -267,10 +267,8 @@ final class EntryGapTests: XCTestCase {
       }, "the first category of the menu")
     let editor = try host.type("coffee 250", into: try host.line())
     editor.insertNewline(nil)
-    host.settle()
+    XCTAssertTrue(host.settle(until: { host.panelIsOpen }), "the panel is open")
     XCTAssertEqual(try host.transactions.count(), 0, "nothing saved at the first Enter")
-    XCTAssertNotNil(
-      host.textFields().first { $0.placeholderString == "0" }, "the panel is open")
 
     try returnInTheLine(of: host)
     XCTAssertEqual(try host.transactions.count(), 0, "the second Return waits for a category")

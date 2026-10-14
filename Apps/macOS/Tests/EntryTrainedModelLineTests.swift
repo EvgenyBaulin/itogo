@@ -99,10 +99,8 @@ final class EntryTrainedModelLineTests: XCTestCase {
     let (host, _) = try await openLine()
     let editor = try host.type("абв 250", into: try host.line())
     editor.insertNewline(nil)
-    host.settle()
+    XCTAssertTrue(host.settle(until: { host.panelIsOpen }), "the panel is open")
     XCTAssertEqual(try host.transactions.count(), 0, "nothing written at Enter")
-    XCTAssertNotNil(
-      host.textFields().first { $0.placeholderString == "0" }, "the panel is open")
     try XCTUnwrap(host.window.firstResponder as? NSTextView).insertNewline(nil)
     host.settle()
     XCTAssertEqual(try host.transactions.count(), 0, "nor at the next Return")
